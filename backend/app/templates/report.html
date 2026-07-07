@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>应急响应分析报告</title>
+    <style>{{ css }}</style>
+</head>
+<body>
+<div class="report-container">
+
+    <!-- 封面 -->
+    <div class="report-cover">
+        <h1>个人应急响应分析报告</h1>
+        <p class="subtitle">IR Platform Analysis Report</p>
+        <div class="meta-info">
+            {% if data.case %}
+            <p>案件名称: {{ data.case.name }}</p>
+            <p>案件编号: {{ data.case.case_number or '未分配' }}</p>
+            {% endif %}
+            <p>主机名称: {{ data.host.hostname }}</p>
+            <p>IP 地址: {{ data.host.ip_address or 'N/A' }}</p>
+            <p>操作系统: {{ data.host.os_type or 'N/A' }} {{ data.host.os_version or '' }}</p>
+            <p>报告生成时间: {{ data.report_time }}</p>
+        </div>
+    </div>
+
+    <!-- 风险评估概要 -->
+    <div class="section">
+        <h2 class="section-title">风险评估概要</h2>
+        {% if data.analysis %}
+        <div class="info-card">
+            <p>
+                <span class="label">风险等级:</span>
+                <span class="risk-badge risk-{{ data.analysis.risk_level }}">
+                    {{ {'critical': '严重', 'high': '高危', 'medium': '中危', 'low': '低危', 'info': '信息'}.get(data.analysis.risk_level, data.analysis.risk_level) }}
+                </span>
+            </p>
+            <p><span class="label">风险分数:</span> {{ data.analysis.risk_score }} / 100</p>
+            <p><span class="label">发现问题数:</span> {{ data.analysis.total_findings }}</p>
+            <p><span class="label">分析时间:</span> {{ data.analysis.analyzed_at }}</p>
+        </div>
+        <div class="info-card">
+            <p>{{ data.analysis.summary }}</p>
+        </div>
+        {% else %}
+        <p>暂无分析结果，请先执行分析。</p>
+        {% endif %}
+    </div>
+
+    <!-- 统计概览 -->
+    <div class="section">
+        <h2 class="section-title">统计概览</h2>
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value">{{ data.stats.abnormal_process_count }}</div>
+                <div class="stat-label">异常进程</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ data.stats.suspicious_connection_count }}</div>
+                <div class="stat-label">可疑外连</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ data.stats.suspicious_startup_count }}</div>
+                <div class="stat-label">可疑启动项</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ data.stats.suspicious_persistence_count }}</div>
+                <div class="stat-label">可疑持久化</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ data.stats.ioc_hit_count }}</div>
+                <div class="stat-label">IOC 命中</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 主机画像 -->
+    {% if data.profile %}
+    <div class="section page-break">
+        <h2 class="section-title">主机画像</h2>
+        {% if data.profile.system_summary %}
+        <div class="info-card">
+            {% for key, value in data.profile.system_summary.items() %}
+            <p><span class="label">{{ {'hostname': '主机名', 'os': '操作系统', 'os_version': '系统版本', 'architecture': '架构', 'uptime_seconds': '运行时间(秒)', 'timezone': '时区', 'install_date': '安装日期'}.get(key, key) }}:</span> <span class="value">{{ value }}</span></p>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% if data.profile.cpu_info %}
+        <div class="info-card">
+            <p><span class="label">CPU 型号:</span> <span class="value">{{ data.profile.cpu_info.get('model', 'N/A') }}</span></p>
+            <p><span class="label">物理核心:</span> <span class="value">{{ data.profile.cpu_info.get('cores', 'N/A') }}</span></p>
+            <p><span class="label">逻辑核心:</span> <span class="value">{{ data.profile.cpu_info.get('logical_cores', 'N/A') }}</span></p>
+        </div>
+        {% endif %}
+        {% if data.profile.memory_info %}
+        <div class="info-card">
+            <p><span class="label">内存总量:</span> <span class="value">{{ data.profile.memory_info.get('total_gb', 'N/A') }} GB</span></p>
+            <p><span class="label">可用内存:</span> <span class="value">{{ data.profile.memory_info.get('available_gb', 'N/A') }} GB</span></p>
+        </div>
+        {% endif %}
+        {% if data.profile.user_accounts %}
+        <table>
+            <thead>
+                <tr>
+                    <th>用户名</th>
+                    <th>UID</th>
+                    <th>管理员</th>
+                    <th>禁用</th>
+                    <th>最后登录</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in data.profile.user_accounts %}
+                <tr>
+                    <td>{{ user.username }}</td>
+                    <td>{{ user.uid or 'N/A' }}</td>
+                    <td>{{ '是' if user.is_admin else '否' }}</td>
+                    <td>{{ '是' if user.is_disabled else '否' }}</td>
+                    <td>{{ user.last_logon or 'N/A' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- 异常进程 -->
+    {% if data.abnormal_processes %}
+    <div class="section page-break">
+        <h2 class="section-title">异常进程 ({{ data.abnormal_processes|length }})</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>PID</th>
+                    <th>进程名</th>
+                    <th>路径</th>
+                    <th>命令行</th>
+                    <th>严重程度</th>
+                    <th>命中原因</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for proc in data.abnormal_processes %}
+                <tr>
+                    <td>{{ proc.pid or 'N/A' }}</td>
+                    <td>{{ proc.process_name or 'N/A' }}</td>
+                    <td>{{ (proc.process_path or 'N/A')[:50] }}</td>
+                    <td>{{ (proc.command_line or 'N/A')[:60] }}</td>
+                    <td><span class="severity-tag severity-{{ proc.severity }}">{{ proc.severity }}</span></td>
+                    <td>{{ (proc.reason or '')[:60] }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    <!-- 可疑外连 -->
+    {% if data.suspicious_connections %}
+    <div class="section page-break">
+        <h2 class="section-title">可疑外连 ({{ data.suspicious_connections|length }})</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>协议</th>
+                    <th>本地地址</th>
+                    <th>远程地址</th>
+                    <th>远程端口</th>
+                    <th>进程</th>
+                    <th>严重程度</th>
+                    <th>命中原因</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for conn in data.suspicious_connections %}
+                <tr>
+                    <td>{{ conn.protocol or 'N/A' }}</td>
+                    <td>{{ conn.local_address }}:{{ conn.local_port }}</td>
+                    <td>{{ conn.remote_address }}</td>
+                    <td>{{ conn.remote_port }}</td>
+                    <td>{{ conn.process_name or 'N/A' }}</td>
+                    <td><span class="severity-tag severity-{{ conn.severity }}">{{ conn.severity }}</span></td>
+                    <td>{{ (conn.reason or '')[:50] }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    <!-- 持久化痕迹 -->
+    {% if data.persistence_items %}
+    <div class="section page-break">
+        <h2 class="section-title">持久化痕迹 ({{ data.persistence_items|length }})</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>类型</th>
+                    <th>名称</th>
+                    <th>命令</th>
+                    <th>位置</th>
+                    <th>可疑</th>
+                    <th>原因</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in data.persistence_items %}
+                <tr>
+                    <td>{{ item.type or 'N/A' }}</td>
+                    <td>{{ item.name or 'N/A' }}</td>
+                    <td>{{ (item.command or 'N/A')[:50] }}</td>
+                    <td>{{ (item.location or 'N/A')[:40] }}</td>
+                    <td>{{ '⚠ 可疑' if item.is_suspicious else '正常' }}</td>
+                    <td>{{ (item.reason or '')[:50] }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    <!-- IOC 命中 -->
+    {% if data.ioc_hits %}
+    <div class="section page-break">
+        <h2 class="section-title">IOC 命中 ({{ data.ioc_hits|length }})</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>IOC 类型</th>
+                    <th>IOC 值</th>
+                    <th>命中位置</th>
+                    <th>上下文</th>
+                    <th>严重程度</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for hit in data.ioc_hits %}
+                <tr>
+                    <td>{{ hit.ioc_type or 'N/A' }}</td>
+                    <td>{{ hit.ioc_value or 'N/A' }}</td>
+                    <td>{{ hit.matched_in or 'N/A' }}</td>
+                    <td>{{ (hit.context or '')[:50] }}</td>
+                    <td><span class="severity-tag severity-{{ hit.severity }}">{{ hit.severity }}</span></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    <!-- 时间线 -->
+    {% if data.timeline_events %}
+    <div class="section page-break">
+        <h2 class="section-title">时间线事件 ({{ data.timeline_events|length }})</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>时间</th>
+                    <th>类型</th>
+                    <th>来源</th>
+                    <th>描述</th>
+                    <th>严重程度</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for event in data.timeline_events %}
+                <tr>
+                    <td>{{ event.timestamp or 'N/A' }}</td>
+                    <td>{{ event.event_type or 'N/A' }}</td>
+                    <td>{{ event.source or 'N/A' }}</td>
+                    <td>{{ (event.description or '')[:60] }}</td>
+                    <td><span class="severity-tag severity-{{ event.severity }}">{{ event.severity }}</span></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    <!-- 处置建议 -->
+    {% if data.recommendations %}
+    <div class="section page-break">
+        <h2 class="section-title">处置建议</h2>
+        <div class="recommendations">
+            <ul>
+                {% for rec in data.recommendations %}
+                <li>{{ rec }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if data.ai_report %}
+    <!-- AI 深度分析 -->
+    <div class="section page-break">
+        <h2 class="section-title">🤖 AI 深度分析</h2>
+        <p class="ai-note">以下内容由 AI 模型 ({{ data.ai_report.model_used }}) 自动生成，仅供参考，模型消耗 Token: {{ data.ai_report.tokens_used }}</p>
+        
+        {% if data.ai_report.risk_assessment %}
+        <h3>风险评估</h3>
+        <div class="info-card">
+            <p style="white-space: pre-wrap;">{{ data.ai_report.risk_assessment }}</p>
+        </div>
+        {% endif %}
+        
+        {% if data.ai_report.threat_analysis %}
+        <h3>威胁分析</h3>
+        <div class="info-card">
+            <p style="white-space: pre-wrap;">{{ data.ai_report.threat_analysis }}</p>
+        </div>
+        {% endif %}
+        
+        {% if data.ai_report.timeline_analysis %}
+        <h3>时间线解读</h3>
+        <div class="info-card">
+            <p style="white-space: pre-wrap;">{{ data.ai_report.timeline_analysis }}</p>
+        </div>
+        {% endif %}
+        
+        {% if data.ai_report.recommendations %}
+        <h3>AI 处置建议</h3>
+        <div class="info-card">
+            <p style="white-space: pre-wrap;">{{ data.ai_report.recommendations }}</p>
+        </div>
+        {% endif %}
+        
+        <details>
+            <summary>查看 AI 完整回复</summary>
+            <pre style="white-space: pre-wrap; font-size: 12px; background: #f5f5f5; padding: 10px; max-height: 400px; overflow-y: auto;">{{ data.ai_report.raw_response }}</pre>
+        </details>
+    </div>
+    {% endif %}
+
+    <!-- 页脚 -->
+    <div class="report-footer">
+        <p>本报告由个人应急响应平台自动生成 — {{ data.report_time }}</p>
+    </div>
+
+</div>
+</body>
+</html>

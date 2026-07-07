@@ -1,0 +1,193 @@
+%% 类图：数据模型与服务类关系
+classDiagram
+    class Case {
+        +int id
+        +str name
+        +str case_number
+        +str description
+        +str status
+        +str created_at
+        +str updated_at
+    }
+
+    class Host {
+        +int id
+        +int case_id
+        +str hostname
+        +str ip_address
+        +str os_type
+        +str status
+        +str raw_json_path
+    }
+
+    class ImportRecord {
+        +int id
+        +int host_id
+        +str file_name
+        +str status
+        +str data_summary
+    }
+
+    class HostProfile {
+        +int id
+        +int host_id
+        +str cpu_info
+        +str memory_info
+        +str installed_software
+        +str user_accounts
+    }
+
+    class AnalysisResult {
+        +int id
+        +int host_id
+        +str risk_level
+        +int risk_score
+        +int total_findings
+        +str summary
+    }
+
+    class AbnormalProcess {
+        +int id
+        +int host_id
+        +int pid
+        +str process_name
+        +str reason
+        +str severity
+    }
+
+    class SuspiciousConnection {
+        +int id
+        +int host_id
+        +str remote_address
+        +int remote_port
+        +str reason
+        +str severity
+    }
+
+    class TimelineEvent {
+        +int id
+        +int host_id
+        +str timestamp
+        +str event_type
+        +str description
+        +str severity
+    }
+
+    class IocHit {
+        +int id
+        +int host_id
+        +str ioc_type
+        +str ioc_value
+        +str matched_in
+    }
+
+    class PersistenceItem {
+        +int id
+        +int host_id
+        +str type
+        +str name
+        +str command
+        +bool is_suspicious
+    }
+
+    class Rule {
+        +int id
+        +str name
+        +str category
+        +str rule_type
+        +str condition
+        +str severity
+        +bool enabled
+    }
+
+    class CaseService {
+        +create_case(data) Case
+        +get_case(id) Case
+        +list_cases(page, size, search) list
+        +update_case(id, data) Case
+        +delete_case(id) void
+    }
+
+    class HostService {
+        +create_host(case_id, data) Host
+        +get_host(id) Host
+        +list_hosts(case_id) list
+        +delete_host(id) void
+    }
+
+    class ImportService {
+        +import_json(host_id, file) ImportRecord
+        +validate_schema(data) bool
+        +save_raw_json(host_id, data) str
+    }
+
+    class AnalysisService {
+        +analyze(host_id) AnalysisResult
+        +get_analysis(host_id) dict
+    }
+
+    class ReportService {
+        +generate_html(host_id) str
+        +generate_pdf(host_id) bytes
+    }
+
+    class RuleEngine {
+        +load_rules() list
+        +evaluate(data, rules) list
+        +match_rule(data_item, rule) bool
+    }
+
+    class ProfileBuilder {
+        +build(raw_data) HostProfile
+    }
+
+    class AnomalyDetector {
+        +detect_processes(data, rules) list
+        +detect_connections(data, rules) list
+        +detect_startup_items(data, rules) list
+    }
+
+    class TimelineBuilder {
+        +build(raw_data) list
+        +sort_events(events) list
+    }
+
+    class IocChecker {
+        +check(data, ioc_list) list
+    }
+
+    class PersistenceFinder {
+        +find_all(raw_data) list
+        +assess_suspicious(items, rules) list
+    }
+
+    class RiskAssessor {
+        +assess(findings) dict
+        +calculate_score(findings) int
+    }
+
+    Case "1" --> "*" Host : contains
+    Host "1" --> "*" ImportRecord : has
+    Host "1" --> "1" HostProfile : has
+    Host "1" --> "1" AnalysisResult : has
+    Host "1" --> "*" AbnormalProcess : has
+    Host "1" --> "*" SuspiciousConnection : has
+    Host "1" --> "*" TimelineEvent : has
+    Host "1" --> "*" IocHit : has
+    Host "1" --> "*" PersistenceItem : has
+
+    CaseService --> Case
+    HostService --> Host
+    ImportService --> ImportRecord
+    AnalysisService --> AnalysisResult
+    AnalysisService --> ProfileBuilder
+    AnalysisService --> AnomalyDetector
+    AnalysisService --> TimelineBuilder
+    AnalysisService --> IocChecker
+    AnalysisService --> PersistenceFinder
+    AnalysisService --> RiskAssessor
+    AnalysisService --> RuleEngine
+    ReportService --> AnalysisResult
+    ReportService --> HostProfile
+    RuleEngine --> Rule
+    AnomalyDetector --> Rule

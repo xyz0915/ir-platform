@@ -1,0 +1,290 @@
+[
+  {
+    "name": "powershell_encoded_command",
+    "description": "检测 PowerShell 编码命令执行（常见于恶意脚本）",
+    "category": "process",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "powershell.*(-enc|-encodedcommand)\\s+", "flags": "ignorecase"},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "powershell_bypass_execution",
+    "description": "PowerShell 绕过执行策略",
+    "category": "process",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "powershell.*-ExecutionPolicy.*(Bypass|Unrestricted)", "flags": "ignorecase"},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "certutil_download",
+    "description": "certutil 用于下载文件（常见于恶意下载行为）",
+    "category": "process",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "certutil.*-urlcache.*-split", "flags": "ignorecase"},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "bitsadmin_download",
+    "description": "bitsadmin 用于下载文件",
+    "category": "process",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "bitsadmin.*/transfer", "flags": "ignorecase"},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "suspicious_mshta",
+    "description": "mshta 执行远程脚本",
+    "category": "process",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "mshta.*(http|https|javascript|vbscript)", "flags": "ignorecase"},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "regsvr32_squiblydoo",
+    "description": "regsvr32 执行远程脚本（Squiblydoo 技术）",
+    "category": "process",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "regsvr32.*/s.*/u.*(http|https|scrobi)", "flags": "ignorecase"},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "wmic_process_create",
+    "description": "WMIC 远程进程创建",
+    "category": "process",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "wmic.*process.*call.*create", "flags": "ignorecase"},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "rundll32_suspicious",
+    "description": "rundll32 加载可疑模块",
+    "category": "process",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "rundll32.*(shell32|javascript|http)", "flags": "ignorecase"},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "cmd_powershell_chain",
+    "description": "cmd 启动 powershell（常见于恶意脚本链）",
+    "category": "process",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "cmd.*/c.*powershell", "flags": "ignorecase"},
+    "severity": "medium",
+    "enabled": true
+  },
+  {
+    "name": "nc_netcat_listener",
+    "description": "netcat 监听模式（可能为后门）",
+    "category": "process",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(nc|netcat).*-l.*-p", "flags": "ignorecase"},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "orphan_process",
+    "description": "无父进程的孤立进程",
+    "category": "behavior",
+    "rule_type": "behavior",
+    "condition": {"pattern": "orphan_process", "description": "进程无父进程或父进程已退出"},
+    "severity": "medium",
+    "enabled": true
+  },
+  {
+    "name": "suspicious_parent_child",
+    "description": "办公软件启动脚本解释器（常见于宏攻击）",
+    "category": "behavior",
+    "rule_type": "behavior",
+    "condition": {"pattern": "suspicious_parent", "description": "可疑父进程启动脚本解释器"},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "unsigned_process",
+    "description": "非系统目录的可执行进程",
+    "category": "behavior",
+    "rule_type": "behavior",
+    "condition": {"pattern": "unsigned_process", "description": "进程不在系统目录中运行"},
+    "severity": "low",
+    "enabled": true
+  },
+  {
+    "name": "c2_port_4444",
+    "description": "连接 Metasploit 默认端口 4444",
+    "category": "network",
+    "rule_type": "list",
+    "condition": {"field": "remote_port", "values": [4444], "match_mode": "exact"},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "c2_port_6667",
+    "description": "连接 IRC 端口 6667（可能为 C2 通信）",
+    "category": "network",
+    "rule_type": "list",
+    "condition": {"field": "remote_port", "values": [6667], "match_mode": "exact"},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "c2_port_1337",
+    "description": "连接黑客常用端口 1337",
+    "category": "network",
+    "rule_type": "list",
+    "condition": {"field": "remote_port", "values": [1337], "match_mode": "exact"},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "c2_port_4443",
+    "description": "连接可疑端口 4443",
+    "category": "network",
+    "rule_type": "list",
+    "condition": {"field": "remote_port", "values": [4443], "match_mode": "exact"},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "c2_port_5555",
+    "description": "连接 Android Debug 端口 5555",
+    "category": "network",
+    "rule_type": "list",
+    "condition": {"field": "remote_port", "values": [5555], "match_mode": "exact"},
+    "severity": "medium",
+    "enabled": true
+  },
+  {
+    "name": "c2_port_8888",
+    "description": "连接可疑端口 8888",
+    "category": "network",
+    "rule_type": "list",
+    "condition": {"field": "remote_port", "values": [8888], "match_mode": "exact"},
+    "severity": "medium",
+    "enabled": true
+  },
+  {
+    "name": "known_bad_ip_1",
+    "description": "连接已知恶意 IP 185.220.101.1",
+    "category": "ioc",
+    "rule_type": "list",
+    "condition": {"field": "remote_address", "values": ["185.220.101.1", "185.220.101.2", "185.220.101.3"], "match_mode": "exact"},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "known_bad_ip_2",
+    "description": "连接已知恶意 IP 104.244.72.115",
+    "category": "ioc",
+    "rule_type": "list",
+    "condition": {"field": "remote_address", "values": ["104.244.72.115", "104.244.74.211"], "match_mode": "exact"},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "known_bad_ip_3",
+    "description": "连接已知恶意 IP 91.219.236.166",
+    "category": "ioc",
+    "rule_type": "list",
+    "condition": {"field": "remote_address", "values": ["91.219.236.166", "192.42.116.14"], "match_mode": "exact"},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "suspicious_c2_domain",
+    "description": "连接已知恶意 C2 域名",
+    "category": "network",
+    "rule_type": "list",
+    "condition": {"field": "remote_address", "values": ["malware-c2.example.com", "botnet-cc.example.net", "trojan-download.example.org"], "match_mode": "contains"},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "suspicious_run_key",
+    "description": "可疑 Run 键项（非系统标准启动项）",
+    "category": "startup",
+    "rule_type": "regex",
+    "condition": {"field": "command", "pattern": "(powershell|cmd|wscript|cscript|mshta|regsvr32)", "flags": "ignorecase"},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "startup_temp_path",
+    "description": "启动项指向临时目录",
+    "category": "startup",
+    "rule_type": "regex",
+    "condition": {"field": "command", "pattern": "(\\\\Temp\\\\|\\\\Users\\\\Public\\\\|/tmp/|/var/tmp/)", "flags": "ignorecase"},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "suspicious_scheduled_task",
+    "description": "可疑计划任务（执行脚本解释器）",
+    "category": "persistence",
+    "rule_type": "regex",
+    "condition": {"field": "command", "pattern": "(powershell|cmd /c|wscript|mshta)", "flags": "ignorecase"},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "suspicious_service_path",
+    "description": "服务二进制路径指向非系统目录",
+    "category": "persistence",
+    "rule_type": "regex",
+    "condition": {"field": "command", "pattern": "(\\\\Temp\\\\|\\\\Users\\\\Public\\\\|/tmp/|/var/tmp/|\\\\AppData\\\\)", "flags": "ignorecase"},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "wmi_subscription",
+    "description": "WMI 事件订阅（高级持久化技术）",
+    "category": "persistence",
+    "rule_type": "regex",
+    "condition": {"field": "type", "pattern": "wmi", "flags": "ignorecase"},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "hidden_cron_job",
+    "description": "隐藏的 cron 任务（执行下载或反弹 shell）",
+    "category": "persistence",
+    "rule_type": "regex",
+    "condition": {"field": "command", "pattern": "(wget|curl|nc |bash -i|python.*import)", "flags": "ignorecase"},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "suspicious_startup_folder",
+    "description": "启动文件夹中的可执行文件",
+    "category": "startup",
+    "rule_type": "regex",
+    "condition": {"field": "type", "pattern": "startup_folder", "flags": "ignorecase"},
+    "severity": "medium",
+    "enabled": true
+  },
+  {
+    "name": "high_connection_count",
+    "description": "进程连接数异常（超过50个外连）",
+    "category": "behavior",
+    "rule_type": "threshold",
+    "condition": {"field": "connection_count", "operator": ">", "value": 50},
+    "severity": "medium",
+    "enabled": true
+  },
+  {
+    "name": "remote_desktop_suspicious",
+    "description": "检测到远程控制软件运行",
+    "category": "behavior",
+    "rule_type": "regex",
+    "condition": {"field": "name", "pattern": "(teamviewer|anydesk|vnc|rustdesk|sunlogin)", "flags": "ignorecase"},
+    "severity": "low",
+    "enabled": true
+  }
+]

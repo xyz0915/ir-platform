@@ -1,0 +1,200 @@
+/* 报告样式 */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: "Microsoft YaHei", "SimHei", "Helvetica Neue", Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: #333;
+    background: #fff;
+}
+
+.report-container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px;
+}
+
+/* 封面 */
+.report-cover {
+    text-align: center;
+    padding: 60px 0;
+    border-bottom: 3px solid #409EFF;
+    margin-bottom: 30px;
+}
+
+.report-cover h1 {
+    font-size: 28px;
+    color: #303133;
+    margin-bottom: 10px;
+}
+
+.report-cover .subtitle {
+    font-size: 16px;
+    color: #909399;
+    margin-bottom: 30px;
+}
+
+.report-cover .meta-info {
+    font-size: 14px;
+    color: #606266;
+    line-height: 2;
+}
+
+/* 章节 */
+.section {
+    margin-bottom: 30px;
+    page-break-inside: avoid;
+}
+
+.section-title {
+    font-size: 18px;
+    color: #303133;
+    border-left: 4px solid #409EFF;
+    padding-left: 10px;
+    margin-bottom: 15px;
+    font-weight: bold;
+}
+
+/* 风险等级标签 */
+.risk-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 14px;
+    font-weight: bold;
+    color: #fff;
+}
+
+.risk-critical { background-color: #F56C6C; }
+.risk-high { background-color: #E6A23C; }
+.risk-medium { background-color: #E6A23C; }
+.risk-low { background-color: #409EFF; }
+.risk-info { background-color: #909399; }
+
+/* 信息卡片 */
+.info-card {
+    background: #f5f7fa;
+    border-radius: 4px;
+    padding: 15px;
+    margin-bottom: 15px;
+}
+
+.info-card .label {
+    color: #909399;
+    font-weight: bold;
+    display: inline-block;
+    width: 120px;
+}
+
+.info-card .value {
+    color: #303133;
+}
+
+/* 表格 */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 15px;
+    font-size: 13px;
+}
+
+th {
+    background: #f5f7fa;
+    color: #606266;
+    font-weight: bold;
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 2px solid #EBEEF5;
+}
+
+td {
+    padding: 8px 10px;
+    border-bottom: 1px solid #EBEEF5;
+    color: #606266;
+}
+
+tr:hover td {
+    background: #f5f7fa;
+}
+
+/* 严重程度标签 */
+.severity-tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+.severity-critical { background-color: #F56C6C; color: #fff; }
+.severity-high { background-color: #E6A23C; color: #fff; }
+.severity-medium { background-color: #E6A23C; color: #fff; }
+.severity-low { background-color: #409EFF; color: #fff; }
+.severity-info { background-color: #909399; color: #fff; }
+
+/* 统计卡片 */
+.stats-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.stat-card {
+    flex: 1;
+    min-width: 150px;
+    background: #f5f7fa;
+    border-radius: 4px;
+    padding: 15px;
+    text-align: center;
+}
+
+.stat-card .stat-value {
+    font-size: 24px;
+    font-weight: bold;
+    color: #303133;
+}
+
+.stat-card .stat-label {
+    font-size: 12px;
+    color: #909399;
+    margin-top: 5px;
+}
+
+/* 建议列表 */
+.recommendations {
+    background: #fdf6ec;
+    border-left: 4px solid #E6A23C;
+    padding: 15px;
+    border-radius: 4px;
+}
+
+.recommendations ul {
+    list-style: disc;
+    padding-left: 20px;
+}
+
+.recommendations li {
+    margin-bottom: 8px;
+    color: #606266;
+}
+
+/* 页脚 */
+.report-footer {
+    text-align: center;
+    padding: 20px 0;
+    border-top: 1px solid #EBEEF5;
+    margin-top: 30px;
+    color: #909399;
+    font-size: 12px;
+}
+
+/* 分页控制 */
+.page-break {
+    page-break-before: always;
+}

@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+backend/venv/
+backend/.pytest_cache/
+
+# Environment
+.env
+*.env.local
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Agent build artifacts
+agent/build/
+agent/dist/
+agent/*.spec
+
+# Database & data (runtime data, not source)
+backend/data/ir_platform.db
+backend/data/test_ir_platform.db
+backend/data/imports/
+backend/data/agents/
+
+# WorkBuddy internal
+.workbuddy/
+blobs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Coverage
+htmlcov/
+.coverage

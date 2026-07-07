@@ -1,0 +1,144 @@
+{
+  "metadata": {
+    "agent_version": "1.0.0",
+    "collection_time": "2025-07-06T17:00:58+08:00",
+    "platform": "windows",
+    "hostname": "TEST-HOST-001",
+    "operator": "admin"
+  },
+  "system_info": {
+    "hostname": "TEST-HOST-001",
+    "os": "Windows 10 Pro",
+    "os_version": "10.0.19045",
+    "architecture": "x86_64",
+    "install_date": "2023-01-15",
+    "uptime_seconds": 86400,
+    "timezone": "Asia/Shanghai",
+    "cpu": {"model": "Intel i7-10700", "cores": 8, "logical_cores": 16},
+    "memory": {"total_gb": 32, "available_gb": 16},
+    "disks": [{"device": "C:", "total_gb": 500, "free_gb": 200, "fs_type": "NTFS"}]
+  },
+  "users": [
+    {"username": "admin", "uid": 500, "home_dir": "C:\\Users\\admin", "last_logon": "2025-07-06T10:00:00", "is_admin": true, "is_disabled": false},
+    {"username": "guest", "uid": 501, "home_dir": "C:\\Users\\guest", "last_logon": "2025-07-05T08:00:00", "is_admin": false, "is_disabled": true}
+  ],
+  "processes": [
+    {"pid": 100, "ppid": 1, "name": "System", "path": "C:\\Windows\\System32\\ntoskrnl.exe", "command_line": "", "user": "SYSTEM", "start_time": "2025-07-06T08:00:00", "threads": 4, "connections": []},
+    {"pid": 1234, "ppid": 100, "name": "powershell.exe", "path": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "command_line": "powershell.exe -enc SQBFAFgA", "user": "admin", "start_time": "2025-07-06T10:00:00", "threads": 1, "connections": []},
+    {"pid": 5678, "ppid": 1234, "name": "cmd.exe", "path": "C:\\Windows\\System32\\cmd.exe", "command_line": "cmd.exe /c powershell -ExecutionPolicy Bypass", "user": "admin", "start_time": "2025-07-06T10:01:00", "threads": 1, "connections": []},
+    {"pid": 9999, "ppid": 0, "name": "suspicious.exe", "path": "C:\\Users\\Public\\suspicious.exe", "command_line": "suspicious.exe --connect 185.220.101.1", "user": "admin", "start_time": "2025-07-06T10:05:00", "threads": 2, "connections": []}
+  ],
+  "services": [
+    {"name": "Spooler", "display_name": "Print Spooler", "status": "running", "start_type": "auto", "binary_path": "C:\\Windows\\System32\\spoolsv.exe", "account": "LocalSystem"},
+    {"name": "MalwareSvc", "display_name": "Malware Service", "status": "running", "start_type": "auto", "binary_path": "C:\\Users\\Public\\malware.exe", "account": "LocalSystem"}
+  ],
+  "startup_items": [
+    {"name": "SecurityHealth", "command": "C:\\Windows\\System32\\SecurityHealthSystray.exe", "location": "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run", "user": "all", "type": "registry"},
+    {"name": "MalwareStartup", "command": "powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\\Users\\Public\\malware.ps1", "location": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run", "user": "admin", "type": "registry"}
+  ],
+  "network": {
+    "connections": [
+      {"protocol": "TCP", "local_address": "0.0.0.0", "local_port": 445, "remote_address": "192.168.1.100", "remote_port": 443, "state": "ESTABLISHED", "pid": 1234, "process_name": "chrome.exe"},
+      {"protocol": "TCP", "local_address": "0.0.0.0", "local_port": 12345, "remote_address": "185.220.101.1", "remote_port": 4444, "state": "ESTABLISHED", "pid": 9999, "process_name": "suspicious.exe"},
+      {"protocol": "TCP", "local_address": "0.0.0.0", "local_port": 54321, "remote_address": "104.244.72.115", "remote_port": 6667, "state": "ESTABLISHED", "pid": 9999, "process_name": "suspicious.exe"}
+    ],
+    "interfaces": [
+      {"name": "Ethernet0", "ip": "192.168.1.50", "mac": "00:11:22:33:44:55", "netmask": "255.255.255.0", "gateway": "192.168.1.1"}
+    ],
+    "dns_cache": [
+      {"domain": "malware-c2.example.com", "type": "A", "value": "185.220.101.1", "ttl": 300}
+    ],
+    "hosts_file": "127.0.0.1 localhost",
+    "routing_table": [
+      {"destination": "0.0.0.0", "gateway": "192.168.1.1", "interface": "Ethernet0", "metric": 25}
+    ]
+  },
+  "files": {
+    "recent_files": [
+      {"path": "C:\\Users\\admin\\Documents\\report.docx", "modified": "2025-07-06T09:00:00", "size": 102400}
+    ],
+    "suspicious_files": [
+      {"path": "C:\\Users\\Public\\malware.exe", "modified": "2025-07-06T10:05:00", "size": 204800, "reason": "Located in Users\\Public"}
+    ],
+    "temp_files": []
+  },
+  "registry": {
+    "run_keys": [
+      {"key": "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run", "name": "SecurityHealth", "value": "C:\\Windows\\System32\\SecurityHealthSystray.exe"},
+      {"key": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run", "name": "MalwareStartup", "value": "powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\\Users\\Public\\malware.ps1"}
+    ],
+    "services": [],
+    "scheduled_tasks": [],
+    "shell_extensions": []
+  },
+  "logs": {
+    "system": [
+      {"time": "2025-07-06T10:00:00", "source": "Service Control Manager", "description": "MalwareSvc service started", "event_id": 7036}
+    ],
+    "security": [
+      {"time": "2025-07-06T10:02:00", "source": "Microsoft-Windows-Security-Auditing", "description": "Logon failure for user admin", "event_id": 4625}
+    ],
+    "application": [],
+    "syslog": []
+  },
+  "security": {
+    "antivirus": [
+      {"name": "Windows Defender", "displayName": "Windows Defender Antivirus", "status": "enabled"}
+    ],
+    "firewall_rules": [],
+    "audit_policy": {},
+    "event_ids_summary": {
+      "4624": 15,
+      "4625": 3,
+      "4688": 42,
+      "4720": 1
+    }
+  },
+  "browser": {
+    "chrome": {"history": [{"url": "https://malware-c2.example.com/download", "title": "Download", "visit_time": "2025-07-06T10:03:00"}], "downloads": [], "extensions": []},
+    "firefox": {"history": [], "downloads": [], "extensions": []},
+    "edge": {"history": [], "downloads": [], "extensions": []},
+    "ie": {"history": [], "downloads": []}
+  },
+  "usb": {
+    "devices": [],
+    "mount_history": []
+  },
+  "remote_control": {
+    "teamviewer": {},
+    "anydesk": {},
+    "vnc": {},
+    "rustdesk": {},
+    "sunlogin": {}
+  },
+  "persistence": {
+    "run_keys": [
+      {"name": "MalwareStartup", "command": "powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\\Users\\Public\\malware.ps1", "location": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run", "user": "admin"}
+    ],
+    "scheduled_tasks": [
+      {"name": "MalwareTask", "command": "cmd /c C:\\Users\\Public\\malware.exe", "location": "\\Microsoft\\Windows\\MalwareTask", "user": "SYSTEM"}
+    ],
+    "services": [
+      {"name": "MalwareSvc", "command": "C:\\Users\\Public\\malware.exe", "location": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\MalwareSvc", "user": "LocalSystem"}
+    ],
+    "startup_folder": [],
+    "wmi_subscriptions": [
+      {"name": "WMIEventFilter", "command": "powershell.exe -enc SQBFAFgA", "location": "ROOT\\subscription", "user": "SYSTEM"}
+    ],
+    "cron_jobs": [],
+    "systemd_units": [],
+    "rc_local": []
+  },
+  "ioc": {
+    "known_bad_ips": ["185.220.101.1", "104.244.72.115"],
+    "known_bad_domains": ["malware-c2.example.com"],
+    "known_bad_hashes": [],
+    "matched_items": [
+      {"ioc_type": "ip", "ioc_value": "185.220.101.1", "matched_in": "network_connections", "context": "Connection to known bad IP on port 4444", "severity": "critical"}
+    ]
+  },
+  "timeline": [
+    {"timestamp": "2025-07-06T10:00:00+08:00", "event_type": "process", "source": "processes", "description": "powershell.exe started with encoded command", "details": {"pid": 1234}},
+    {"timestamp": "2025-07-06T10:05:00+08:00", "event_type": "process", "source": "processes", "description": "suspicious.exe started", "details": {"pid": 9999}}
+  ]
+}

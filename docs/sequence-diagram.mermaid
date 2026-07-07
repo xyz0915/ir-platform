@@ -1,0 +1,83 @@
+%% 核心流程：JSON 导入 → 分析 → 报告生成
+sequenceDiagram
+    participant U as 用户
+    participant F as 前端 Vue
+    participant B as 后端 FastAPI
+    participant DB as SQLite
+    participant FS as 文件系统
+    participant AS as AnalysisService
+    participant PB as ProfileBuilder
+    participant AD as AnomalyDetector
+    participant TB as TimelineBuilder
+    participant IC as IocChecker
+    participant PF as PersistenceFinder
+    participant RA as RiskAssessor
+    participant RE as RuleEngine
+    participant RS as ReportService
+
+    Note over U,FS: 阶段1: JSON 导入
+    U->>F: 选择 JSON 文件并上传
+    F->>B: POST /api/hosts/{id}/import (file)
+    B->>B: ImportService.validate_schema(data)
+    B->>FS: 保存原始 JSON 文件
+    B->>DB: INSERT import_records
+    B->>DB: UPDATE hosts SET status='imported'
+    B-->>F: 返回 ImportRecord (success)
+
+    Note over U,AS: 阶段2: 自动分析
+    U->>F: 点击"开始分析"
+    F->>B: POST /api/hosts/{id}/analyze
+    B->>FS: 读取原始 JSON
+    B->>AS: analyze(host_id, raw_data)
+    AS->>RE: load_rules()
+    RE->>DB: SELECT * FROM rules WHERE enabled=1
+    RE-->>AS: 返回规则列表
+
+    AS->>PB: build(raw_data)
+    PB-->>AS: HostProfile
+    AS->>DB: INSERT/UPDATE host_profiles
+
+    AS->>AD: detect_processes(raw_data, rules)
+    AD-->>AS: [AbnormalProcess]
+    AS->>AD: detect_connections(raw_data, rules)
+    AD-->>AS: [SuspiciousConnection]
+    AS->>AD: detect_startup_items(raw_data, rules)
+    AD-->>AS: [SuspiciousStartupItem]
+
+    AS->>PF: find_all(raw_data)
+    PF->>PF: assess_suspicious(items, rules)
+    PF-->>AS: [PersistenceItem]
+
+    AS->>IC: check(raw_data, ioc_rules)
+    IC-->>AS: [IocHit]
+
+    AS->>TB: build(raw_data)
+    TB->>TB: 汇总进程/网络/日志/文件时间戳
+    TB->>TB: sort_events()
+    TB-->>AS: [TimelineEvent]
+
+    AS->>RA: assess(all_findings)
+    RA->>RA: calculate_score(findings)
+    RA-->>AS: {risk_level, risk_score, summary}
+
+    AS->>DB: 批量 INSERT 分析结果（多表）
+    AS->>DB: UPDATE hosts SET status='analyzed'
+    AS-->>B: AnalysisResult
+    B-->>F: 返回分析完成
+
+    Note over U,RS: 阶段3: 报告生成
+    U->>F: 点击"查看报告"
+    F->>B: GET /api/hosts/{id}/report
+    B->>RS: generate_html(host_id)
+    RS->>DB: 查询 case + host + profile + analysis
+    RS->>DB: 查询 timeline + ioc + persistence + connections
+    RS->>RS: Jinja2 模板渲染
+    RS-->>B: HTML 字符串
+    B-->>F: 返回 HTML 报告
+
+    U->>F: 点击"导出 PDF"
+    F->>B: GET /api/hosts/{id}/report/pdf
+    B->>RS: generate_pdf(host_id)
+    RS->>RS: HTML → WeasyPrint → PDF
+    RS-->>B: PDF bytes
+    B-->>F: 返回 PDF 文件下载

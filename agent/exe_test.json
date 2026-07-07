@@ -1,0 +1,58 @@
+{
+  "metadata": {
+    "agent_version": "1.0.0",
+    "collection_time": "2026-07-06T21:21:57.423624+08:00",
+    "platform": "windows",
+    "hostname": "DESKTOP-NCR4EED",
+    "operator": "agent"
+  },
+  "system_info": {
+    "hostname": "DESKTOP-NCR4EED",
+    "os": "Windows 10",
+    "os_version": "10.0.19045",
+    "architecture": "AMD64",
+    "install_date": "2026-06-30",
+    "uptime_seconds": 266171,
+    "timezone": "中国标准时间",
+    "cpu": {
+      "model": "Intel64 Family 6 Model 158 Stepping 10, GenuineIntel",
+      "cores": 4,
+      "logical_cores": 8
+    },
+    "memory": {
+      "total_gb": 15.88,
+      "available_gb": 7.66
+    },
+    "disks": [
+      {
+        "device": "C:\\",
+        "total_gb": 119.24,
+        "free_gb": 56.87,
+        "fs_type": "NTFS",
+        "mountpoint": "C:\\"
+      },
+      {
+        "device": "E:\\",
+        "total_gb": 930.35,
+        "free_gb": 902.54,
+        "fs_type": "NTFS",
+        "mountpoint": "E:\\"
+      }
+    ]
+  },
+  "users": [],
+  "processes": [],
+  "services": [],
+  "startup_items": [],
+  "network": {},
+  "files": {},
+  "registry": {},
+  "logs": {},
+  "security": {},
+  "browser": {},
+  "usb": {},
+  "remote_control": {},
+  "persistence": {},
+  "ioc": {},
+  "timeline": []
+}
