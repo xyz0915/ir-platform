@@ -25,7 +25,22 @@ export default {
   getAbnormalProcesses(hostId) {
     return request.get(`/hosts/${hostId}/abnormal-processes`)
   },
+  getProcessTree(hostId) {
+    return request.get(`/hosts/${hostId}/process-tree`)
+  },
   getStartupItems(hostId) {
     return request.get(`/hosts/${hostId}/startup-items`)
+  },
+  getUsers(hostId) {
+    return request.get(`/hosts/${hostId}/users`)
+  },
+  getServices(hostId) {
+    return request.get(`/hosts/${hostId}/services`)
+  },
+  getUsb(hostId) {
+    return request.get(`/hosts/${hostId}/usb`)
+  },
+  getRemoteControl(hostId) {
+    return request.get(`/hosts/${hostId}/remote-control`)
   }
 }

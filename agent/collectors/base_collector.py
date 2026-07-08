@@ -15,13 +15,19 @@ class BaseCollector(ABC):
     Attributes:
         name: 采集器名称.
         platform: 支持的平台列表 (["windows"], ["linux"], ["windows", "linux"]).
+        log_days: 采集最近 N 天的数据（默认 7 天）.
     """
 
     name: str = "base"
     platform: list = ["windows", "linux"]
 
-    def __init__(self) -> None:
-        """初始化采集器."""
+    def __init__(self, log_days: int = 7) -> None:
+        """初始化采集器.
+
+        Args:
+            log_days: 采集最近 N 天的数据，默认 7 天.
+        """
+        self.log_days: int = log_days
         self.logger = logging.getLogger(f"collector.{self.name}")
 
     @abstractmethod

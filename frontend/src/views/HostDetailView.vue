@@ -55,8 +55,20 @@
         <el-tab-pane label="主机画像" name="profile">
           <ProfileCard :profile="profile" />
         </el-tab-pane>
+        <el-tab-pane label="进程树" name="tree">
+          <ProcessTreeChart
+            :tree-data="processTree"
+            :abnormal-pids="abnormalPidsForTree"
+            @node-click="handleNodeClick"
+          />
+        </el-tab-pane>
         <el-tab-pane label="异常进程" name="processes">
-          <AbnormalProcessTable :data="abnormalProcesses" />
+          <ProcessStatsCards :data="abnormalProcesses" />
+          <AbnormalProcessTable
+            :data="abnormalProcesses"
+            @view-detail="handleViewDetail"
+            style="margin-top: 16px"
+          />
         </el-tab-pane>
         <el-tab-pane label="可疑外连" name="connections">
           <SuspiciousConnTable :data="suspiciousConnections" />
@@ -64,14 +76,36 @@
         <el-tab-pane label="持久化痕迹" name="persistence">
           <PersistenceTable :data="persistenceItems" />
         </el-tab-pane>
+        <el-tab-pane label="可疑启动项" name="startup">
+          <SuspiciousStartupTable :data="startupItems" />
+        </el-tab-pane>
         <el-tab-pane label="IOC 命中" name="ioc">
           <IocTable :data="iocHits" />
         </el-tab-pane>
         <el-tab-pane label="时间线" name="timeline">
           <TimelineChart :events="timelineEvents" />
         </el-tab-pane>
+        <el-tab-pane label="用户账户" name="users">
+          <UsersTable :data="users" />
+        </el-tab-pane>
+        <el-tab-pane label="系统服务" name="services">
+          <ServicesTable :data="services" />
+        </el-tab-pane>
+        <el-tab-pane label="USB 记录" name="usb">
+          <UsbTable :data="usb" />
+        </el-tab-pane>
+        <el-tab-pane label="远程工具" name="remote_control">
+          <RemoteControlTable :data="remoteControl" />
+        </el-tab-pane>
       </el-tabs>
     </div>
+
+    <!-- 进程详情面板 -->
+    <ProcessDetailPanel
+      :visible="detailPanelVisible"
+      :process-info="selectedProcess"
+      @update:visible="detailPanelVisible = $event"
+    />
 
     <HostImportDialog ref="importDialogRef" :host-id="Number(hostId)" @success="onImportSuccess" />
     <AgentDownloadDialog ref="agentDialogRef" />
@@ -90,11 +124,19 @@ import ProfileCard from '@/components/ProfileCard.vue'
 import AbnormalProcessTable from '@/components/AbnormalProcessTable.vue'
 import SuspiciousConnTable from '@/components/SuspiciousConnTable.vue'
 import PersistenceTable from '@/components/PersistenceTable.vue'
+import SuspiciousStartupTable from '@/components/SuspiciousStartupTable.vue'
 import IocTable from '@/components/IocTable.vue'
 import TimelineChart from '@/components/TimelineChart.vue'
+import UsersTable from '@/components/UsersTable.vue'
+import ServicesTable from '@/components/ServicesTable.vue'
+import UsbTable from '@/components/UsbTable.vue'
+import RemoteControlTable from '@/components/RemoteControlTable.vue'
 import HostImportDialog from '@/components/HostImportDialog.vue'
 import AgentDownloadDialog from '@/components/AgentDownloadDialog.vue'
 import AiAnalysisDialog from '@/components/AiAnalysisDialog.vue'
+import ProcessTreeChart from '@/components/ProcessTreeChart.vue'
+import ProcessDetailPanel from '@/components/ProcessDetailPanel.vue'
+import ProcessStatsCards from '@/components/ProcessStatsCards.vue'
 import { getAiConfig } from '@/api/ai'
 
 const route = useRoute()
@@ -110,8 +152,19 @@ const activeTab = ref('profile')
 const abnormalProcesses = ref([])
 const suspiciousConnections = ref([])
 const persistenceItems = ref([])
+const startupItems = ref([])
 const iocHits = ref([])
 const timelineEvents = ref([])
+const users = ref([])
+const services = ref([])
+const usb = ref([])
+const remoteControl = ref([])
+
+// 新增：进程树相关数据
+const processTree = ref({})
+const abnormalPidsForTree = ref([])
+const selectedProcess = ref(null)
+const detailPanelVisible = ref(false)
 
 const importDialogRef = ref(null)
 const agentDialogRef = ref(null)
@@ -170,22 +223,43 @@ async function loadProfile() {
 }
 
 async function loadAllResults() {
+  // Phase 1: Core analysis results — all must succeed
   try {
-    const [procRes, connRes, persRes, iocRes, tlRes] = await Promise.all([
+    const [procRes, connRes, persRes, startupRes, iocRes, tlRes] = await Promise.all([
       analysisApi.getAbnormalProcesses(hostId),
       analysisApi.getSuspiciousConnections(hostId),
       analysisApi.getPersistence(hostId),
+      analysisApi.getStartupItems(hostId),
       analysisApi.getIocHits(hostId),
       analysisApi.getTimeline(hostId)
     ])
     abnormalProcesses.value = procRes.data
     suspiciousConnections.value = connRes.data
     persistenceItems.value = persRes.data
+    startupItems.value = startupRes.data
     iocHits.value = iocRes.data
     timelineEvents.value = tlRes.data
+
+    // 提取异常 PID 列表用于进程树
+    abnormalPidsForTree.value = abnormalProcesses.value.map(p => p.pid)
   } catch (error) {
-    // handled
+    // handled by axios interceptor
   }
+
+  // Phase 2: Process tree data
+  try {
+    const treeRes = await analysisApi.getProcessTree(hostId)
+    processTree.value = treeRes.data
+  } catch (error) {
+    processTree.value = {}
+    ElMessage.error('进程树数据加载失败')
+  }
+
+  // Phase 3: Collection data tabs — tolerate 404, show empty lists on failure
+  try { users.value = (await analysisApi.getUsers(hostId)).data } catch (e) { users.value = [] }
+  try { services.value = (await analysisApi.getServices(hostId)).data } catch (e) { services.value = [] }
+  try { usb.value = (await analysisApi.getUsb(hostId)).data } catch (e) { usb.value = [] }
+  try { remoteControl.value = (await analysisApi.getRemoteControl(hostId)).data } catch (e) { remoteControl.value = [] }
 }
 
 async function handleAnalyze() {
@@ -229,6 +303,25 @@ function handleAiAnalyze() {
 
 function onImportSuccess() {
   loadHost()
+}
+
+/** 进程树节点点击事件 */
+function handleNodeClick(nodeData) {
+  selectedProcess.value = nodeData
+  // 如果节点是异常进程，尝试从 abnormalProcesses 中获取更完整的信息
+  if (nodeData.is_abnormal) {
+    const matchedProc = abnormalProcesses.value.find(p => p.pid === nodeData.pid)
+    if (matchedProc) {
+      selectedProcess.value = matchedProc
+    }
+  }
+  detailPanelVisible.value = true
+}
+
+/** 异常进程表格查看详情事件 */
+function handleViewDetail(row) {
+  selectedProcess.value = row
+  detailPanelVisible.value = true
 }
 
 function handleTabChange() {

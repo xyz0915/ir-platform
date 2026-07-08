@@ -41,7 +41,7 @@ def startup_event() -> None:
 
 
 # 注册 API 路由
-from app.api import auth, cases, hosts, import_data, analysis, report, agent, rules, ai  # noqa: E402
+from app.api import auth, cases, hosts, import_data, analysis, report, agent, rules, ai, whitelist  # noqa: E402
 
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(cases.router, prefix="/api/cases", tags=["案件"])
@@ -52,12 +52,20 @@ app.include_router(report.router, prefix="/api", tags=["报告"])
 app.include_router(agent.router, prefix="/api/agent", tags=["Agent"])
 app.include_router(rules.router, prefix="/api/rules", tags=["规则"])
 app.include_router(ai.router, prefix="/api/ai", tags=["AI分析"])
+app.include_router(whitelist.router, prefix="/api", tags=["白名单"])
 
 
 @app.get("/api/health")
 def health_check() -> dict:
     """健康检查接口."""
     return {"code": 0, "data": {"status": "ok"}, "message": "success"}
+
+
+@app.get("/api/routes-debug")
+def list_routes() -> dict:
+    """列出所有已注册的路由路径（诊断用）."""
+    routes = [r.path for r in app.routes if hasattr(r, "path")]
+    return {"code": 0, "data": routes, "message": "success"}
 
 
 # 挂载前端静态文件（生产模式）

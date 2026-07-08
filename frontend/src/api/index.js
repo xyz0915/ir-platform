@@ -38,7 +38,12 @@ request.interceptors.response.use(
         ElMessage.error('登录已过期，请重新登录')
         router.push('/login')
       } else if (status === 404) {
-        ElMessage.error('资源不存在')
+        // 采集数据 Tab 端点可能未注册（users/services/usb/remote-control），不弹窗
+        const url = error.config?.url || ''
+        const isCollectionTab = /\/hosts\/\d+\/(users|services|usb|remote-control)$/.test(url)
+        if (!isCollectionTab) {
+          ElMessage.error('资源不存在')
+        }
       } else if (status >= 500) {
         ElMessage.error('服务器内部错误')
       } else {

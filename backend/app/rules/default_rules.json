@@ -4,7 +4,7 @@
     "description": "检测 PowerShell 编码命令执行（常见于恶意脚本）",
     "category": "process",
     "rule_type": "regex",
-    "condition": {"field": "command_line", "pattern": "powershell.*(-enc|-encodedcommand)\\s+", "flags": "ignorecase"},
+    "condition": {"field": "command_line", "pattern": "powershell.*(-enc|-encodedcommand)\\s+", "flags": "ignorecase", "_meta": {"mitre_attack": "T1059/001"}},
     "severity": "high",
     "enabled": true
   },
@@ -13,7 +13,7 @@
     "description": "PowerShell 绕过执行策略",
     "category": "process",
     "rule_type": "regex",
-    "condition": {"field": "command_line", "pattern": "powershell.*-ExecutionPolicy.*(Bypass|Unrestricted)", "flags": "ignorecase"},
+    "condition": {"field": "command_line", "pattern": "powershell.*-ExecutionPolicy.*(Bypass|Unrestricted)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1059/001"}},
     "severity": "high",
     "enabled": true
   },
@@ -22,7 +22,7 @@
     "description": "certutil 用于下载文件（常见于恶意下载行为）",
     "category": "process",
     "rule_type": "regex",
-    "condition": {"field": "command_line", "pattern": "certutil.*-urlcache.*-split", "flags": "ignorecase"},
+    "condition": {"field": "command_line", "pattern": "certutil.*-urlcache.*-split", "flags": "ignorecase", "_meta": {"mitre_attack": "T1105"}},
     "severity": "high",
     "enabled": true
   },
@@ -31,7 +31,7 @@
     "description": "bitsadmin 用于下载文件",
     "category": "process",
     "rule_type": "regex",
-    "condition": {"field": "command_line", "pattern": "bitsadmin.*/transfer", "flags": "ignorecase"},
+    "condition": {"field": "command_line", "pattern": "bitsadmin.*/transfer", "flags": "ignorecase", "_meta": {"mitre_attack": "T1197"}},
     "severity": "high",
     "enabled": true
   },
@@ -40,7 +40,7 @@
     "description": "mshta 执行远程脚本",
     "category": "process",
     "rule_type": "regex",
-    "condition": {"field": "command_line", "pattern": "mshta.*(http|https|javascript|vbscript)", "flags": "ignorecase"},
+    "condition": {"field": "command_line", "pattern": "mshta.*(http|https|javascript|vbscript)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1218/005"}},
     "severity": "critical",
     "enabled": true
   },
@@ -49,7 +49,7 @@
     "description": "regsvr32 执行远程脚本（Squiblydoo 技术）",
     "category": "process",
     "rule_type": "regex",
-    "condition": {"field": "command_line", "pattern": "regsvr32.*/s.*/u.*(http|https|scrobi)", "flags": "ignorecase"},
+    "condition": {"field": "command_line", "pattern": "regsvr32.*/s.*/u.*(http|https|scrobi)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1218/011"}},
     "severity": "critical",
     "enabled": true
   },
@@ -58,7 +58,7 @@
     "description": "WMIC 远程进程创建",
     "category": "process",
     "rule_type": "regex",
-    "condition": {"field": "command_line", "pattern": "wmic.*process.*call.*create", "flags": "ignorecase"},
+    "condition": {"field": "command_line", "pattern": "wmic.*process.*call.*create", "flags": "ignorecase", "_meta": {"mitre_attack": "T1047"}},
     "severity": "high",
     "enabled": true
   },
@@ -67,7 +67,7 @@
     "description": "rundll32 加载可疑模块",
     "category": "process",
     "rule_type": "regex",
-    "condition": {"field": "command_line", "pattern": "rundll32.*(shell32|javascript|http)", "flags": "ignorecase"},
+    "condition": {"field": "command_line", "pattern": "rundll32.*(shell32|javascript|http)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1218/011"}},
     "severity": "high",
     "enabled": true
   },
@@ -76,7 +76,7 @@
     "description": "cmd 启动 powershell（常见于恶意脚本链）",
     "category": "process",
     "rule_type": "regex",
-    "condition": {"field": "command_line", "pattern": "cmd.*/c.*powershell", "flags": "ignorecase"},
+    "condition": {"field": "command_line", "pattern": "cmd.*/c.*powershell", "flags": "ignorecase", "_meta": {"mitre_attack": "T1059/001"}},
     "severity": "medium",
     "enabled": true
   },
@@ -85,7 +85,7 @@
     "description": "netcat 监听模式（可能为后门）",
     "category": "process",
     "rule_type": "regex",
-    "condition": {"field": "command_line", "pattern": "(nc|netcat).*-l.*-p", "flags": "ignorecase"},
+    "condition": {"field": "command_line", "pattern": "(nc|netcat).*-l.*-p", "flags": "ignorecase", "_meta": {"mitre_attack": "T1571"}},
     "severity": "high",
     "enabled": true
   },
@@ -94,7 +94,7 @@
     "description": "无父进程的孤立进程",
     "category": "behavior",
     "rule_type": "behavior",
-    "condition": {"pattern": "orphan_process", "description": "进程无父进程或父进程已退出"},
+    "condition": {"pattern": "orphan_process", "description": "进程无父进程或父进程已退出", "_meta": {"mitre_attack": "T1059"}},
     "severity": "medium",
     "enabled": true
   },
@@ -103,7 +103,7 @@
     "description": "办公软件启动脚本解释器（常见于宏攻击）",
     "category": "behavior",
     "rule_type": "behavior",
-    "condition": {"pattern": "suspicious_parent", "description": "可疑父进程启动脚本解释器"},
+    "condition": {"pattern": "suspicious_parent", "description": "可疑父进程启动脚本解释器", "_meta": {"mitre_attack": "T1566/001"}},
     "severity": "high",
     "enabled": true
   },
@@ -112,7 +112,7 @@
     "description": "非系统目录的可执行进程",
     "category": "behavior",
     "rule_type": "behavior",
-    "condition": {"pattern": "unsigned_process", "description": "进程不在系统目录中运行"},
+    "condition": {"pattern": "unsigned_process", "description": "进程不在系统目录中运行", "_meta": {"mitre_attack": "T1036"}},
     "severity": "low",
     "enabled": true
   },
@@ -121,7 +121,7 @@
     "description": "连接 Metasploit 默认端口 4444",
     "category": "network",
     "rule_type": "list",
-    "condition": {"field": "remote_port", "values": [4444], "match_mode": "exact"},
+    "condition": {"field": "remote_port", "values": [4444], "match_mode": "exact", "_meta": {"mitre_attack": "T1571"}},
     "severity": "critical",
     "enabled": true
   },
@@ -130,7 +130,7 @@
     "description": "连接 IRC 端口 6667（可能为 C2 通信）",
     "category": "network",
     "rule_type": "list",
-    "condition": {"field": "remote_port", "values": [6667], "match_mode": "exact"},
+    "condition": {"field": "remote_port", "values": [6667], "match_mode": "exact", "_meta": {"mitre_attack": "T1571"}},
     "severity": "high",
     "enabled": true
   },
@@ -139,7 +139,7 @@
     "description": "连接黑客常用端口 1337",
     "category": "network",
     "rule_type": "list",
-    "condition": {"field": "remote_port", "values": [1337], "match_mode": "exact"},
+    "condition": {"field": "remote_port", "values": [1337], "match_mode": "exact", "_meta": {"mitre_attack": "T1571"}},
     "severity": "high",
     "enabled": true
   },
@@ -148,7 +148,7 @@
     "description": "连接可疑端口 4443",
     "category": "network",
     "rule_type": "list",
-    "condition": {"field": "remote_port", "values": [4443], "match_mode": "exact"},
+    "condition": {"field": "remote_port", "values": [4443], "match_mode": "exact", "_meta": {"mitre_attack": "T1571"}},
     "severity": "high",
     "enabled": true
   },
@@ -157,7 +157,7 @@
     "description": "连接 Android Debug 端口 5555",
     "category": "network",
     "rule_type": "list",
-    "condition": {"field": "remote_port", "values": [5555], "match_mode": "exact"},
+    "condition": {"field": "remote_port", "values": [5555], "match_mode": "exact", "_meta": {"mitre_attack": "T1571"}},
     "severity": "medium",
     "enabled": true
   },
@@ -166,7 +166,7 @@
     "description": "连接可疑端口 8888",
     "category": "network",
     "rule_type": "list",
-    "condition": {"field": "remote_port", "values": [8888], "match_mode": "exact"},
+    "condition": {"field": "remote_port", "values": [8888], "match_mode": "exact", "_meta": {"mitre_attack": "T1571"}},
     "severity": "medium",
     "enabled": true
   },
@@ -175,7 +175,7 @@
     "description": "连接已知恶意 IP 185.220.101.1",
     "category": "ioc",
     "rule_type": "list",
-    "condition": {"field": "remote_address", "values": ["185.220.101.1", "185.220.101.2", "185.220.101.3"], "match_mode": "exact"},
+    "condition": {"field": "remote_address", "values": ["185.220.101.1", "185.220.101.2", "185.220.101.3"], "match_mode": "exact", "_meta": {"mitre_attack": "T1571"}},
     "severity": "critical",
     "enabled": true
   },
@@ -184,7 +184,7 @@
     "description": "连接已知恶意 IP 104.244.72.115",
     "category": "ioc",
     "rule_type": "list",
-    "condition": {"field": "remote_address", "values": ["104.244.72.115", "104.244.74.211"], "match_mode": "exact"},
+    "condition": {"field": "remote_address", "values": ["104.244.72.115", "104.244.74.211"], "match_mode": "exact", "_meta": {"mitre_attack": "T1571"}},
     "severity": "critical",
     "enabled": true
   },
@@ -193,7 +193,7 @@
     "description": "连接已知恶意 IP 91.219.236.166",
     "category": "ioc",
     "rule_type": "list",
-    "condition": {"field": "remote_address", "values": ["91.219.236.166", "192.42.116.14"], "match_mode": "exact"},
+    "condition": {"field": "remote_address", "values": ["91.219.236.166", "192.42.116.14"], "match_mode": "exact", "_meta": {"mitre_attack": "T1571"}},
     "severity": "critical",
     "enabled": true
   },
@@ -202,7 +202,7 @@
     "description": "连接已知恶意 C2 域名",
     "category": "network",
     "rule_type": "list",
-    "condition": {"field": "remote_address", "values": ["malware-c2.example.com", "botnet-cc.example.net", "trojan-download.example.org"], "match_mode": "contains"},
+    "condition": {"field": "remote_address", "values": ["malware-c2.example.com", "botnet-cc.example.net", "trojan-download.example.org"], "match_mode": "contains", "_meta": {"mitre_attack": "T1571"}},
     "severity": "critical",
     "enabled": true
   },
@@ -211,7 +211,7 @@
     "description": "可疑 Run 键项（非系统标准启动项）",
     "category": "startup",
     "rule_type": "regex",
-    "condition": {"field": "command", "pattern": "(powershell|cmd|wscript|cscript|mshta|regsvr32)", "flags": "ignorecase"},
+    "condition": {"field": "command", "pattern": "(powershell|cmd|wscript|cscript|mshta|regsvr32)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1547/001"}},
     "severity": "high",
     "enabled": true
   },
@@ -220,7 +220,7 @@
     "description": "启动项指向临时目录",
     "category": "startup",
     "rule_type": "regex",
-    "condition": {"field": "command", "pattern": "(\\\\Temp\\\\|\\\\Users\\\\Public\\\\|/tmp/|/var/tmp/)", "flags": "ignorecase"},
+    "condition": {"field": "command", "pattern": "(\\\\Temp\\\\|\\\\Users\\\\Public\\\\|/tmp/|/var/tmp/)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1547/001"}},
     "severity": "high",
     "enabled": true
   },
@@ -229,7 +229,7 @@
     "description": "可疑计划任务（执行脚本解释器）",
     "category": "persistence",
     "rule_type": "regex",
-    "condition": {"field": "command", "pattern": "(powershell|cmd /c|wscript|mshta)", "flags": "ignorecase"},
+    "condition": {"field": "command", "pattern": "(powershell|cmd /c|wscript|mshta)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1053/005"}},
     "severity": "high",
     "enabled": true
   },
@@ -238,7 +238,7 @@
     "description": "服务二进制路径指向非系统目录",
     "category": "persistence",
     "rule_type": "regex",
-    "condition": {"field": "command", "pattern": "(\\\\Temp\\\\|\\\\Users\\\\Public\\\\|/tmp/|/var/tmp/|\\\\AppData\\\\)", "flags": "ignorecase"},
+    "condition": {"field": "command", "pattern": "(\\\\Temp\\\\|\\\\Users\\\\Public\\\\|/tmp/|/var/tmp/|\\\\AppData\\\\)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1543/003"}},
     "severity": "high",
     "enabled": true
   },
@@ -247,7 +247,7 @@
     "description": "WMI 事件订阅（高级持久化技术）",
     "category": "persistence",
     "rule_type": "regex",
-    "condition": {"field": "type", "pattern": "wmi", "flags": "ignorecase"},
+    "condition": {"field": "type", "pattern": "wmi", "flags": "ignorecase", "_meta": {"mitre_attack": "T1546/003"}},
     "severity": "critical",
     "enabled": true
   },
@@ -256,17 +256,8 @@
     "description": "隐藏的 cron 任务（执行下载或反弹 shell）",
     "category": "persistence",
     "rule_type": "regex",
-    "condition": {"field": "command", "pattern": "(wget|curl|nc |bash -i|python.*import)", "flags": "ignorecase"},
+    "condition": {"field": "command", "pattern": "(wget|curl|nc |bash -i|python.*import)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1053/003"}},
     "severity": "high",
-    "enabled": true
-  },
-  {
-    "name": "suspicious_startup_folder",
-    "description": "启动文件夹中的可执行文件",
-    "category": "startup",
-    "rule_type": "regex",
-    "condition": {"field": "type", "pattern": "startup_folder", "flags": "ignorecase"},
-    "severity": "medium",
     "enabled": true
   },
   {
@@ -274,7 +265,7 @@
     "description": "进程连接数异常（超过50个外连）",
     "category": "behavior",
     "rule_type": "threshold",
-    "condition": {"field": "connection_count", "operator": ">", "value": 50},
+    "condition": {"field": "connection_count", "operator": ">", "value": 50, "_meta": {"mitre_attack": "T1041"}},
     "severity": "medium",
     "enabled": true
   },
@@ -283,8 +274,649 @@
     "description": "检测到远程控制软件运行",
     "category": "behavior",
     "rule_type": "regex",
-    "condition": {"field": "name", "pattern": "(teamviewer|anydesk|vnc|rustdesk|sunlogin)", "flags": "ignorecase"},
+    "condition": {"field": "name", "pattern": "(teamviewer|anydesk|vnc|rustdesk|sunlogin)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1219"}},
     "severity": "low",
+    "enabled": true
+  },
+  {
+    "name": "suspicious_startup_folder",
+    "description": "启动文件夹中的可执行文件",
+    "category": "startup",
+    "rule_type": "regex",
+    "condition": {"field": "type", "pattern": "startup_folder", "flags": "ignorecase", "_meta": {"mitre_attack": "T1547/001"}},
+    "severity": "medium",
+    "enabled": true
+  },
+
+  {
+    "name": "phishing_doc_macro",
+    "description": "钓鱼文档宏执行（Word/Excel 启动脚本宿主进程）",
+    "category": "execution",
+    "rule_type": "composite",
+    "condition": {
+      "logic": "AND",
+      "sub_rules": [
+        {"type": "regex", "field": "parent_name", "pattern": "(winword|excel|powerpnt)\\.exe", "flags": "ignorecase"},
+        {"type": "regex", "field": "name", "pattern": "(powershell|cmd|wscript|cscript|mshta)\\.exe", "flags": "ignorecase"}
+      ],
+      "_meta": {"mitre_attack": "T1566/001"}
+    },
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "exploit_script_download",
+    "description": "检测漏洞利用脚本下载执行（CVE exploit 特征）",
+    "category": "execution",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(Invoke-WebRequest|Invoke-RestMethod|wget|curl).*(Invoke-|Get-Exploit|CVE-|exploit)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1203"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "malicious_macro_indicator",
+    "description": "恶意宏特征：AutoOpen/AutoClose/Document_Open 等自动执行宏",
+    "category": "execution",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(AutoOpen|AutoClose|Auto_Open|Document_Open|Workbook_Open)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1566/001"}},
+    "severity": "high",
+    "enabled": true
+  },
+
+  {
+    "name": "wmic_lolbin_execution",
+    "description": "WMIC 作为 LOLBin 执行（间接命令执行）",
+    "category": "execution",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "wmic.*/format:", "flags": "ignorecase", "_meta": {"mitre_attack": "T1047"}},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "cmd_obfuscated_execution",
+    "description": "CMD 混淆执行（双引号/脱字符混淆）",
+    "category": "execution",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "cmd.*(\\^.{0,3}){3,}", "flags": "ignorecase", "_meta": {"mitre_attack": "T1059/003"}},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "powershell_download_cradle",
+    "description": "PowerShell 下载 cradle（IEX/Invoke-Expression 远程加载）",
+    "category": "execution",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(iex|Invoke-Expression|Invoke-WebRequest|Net\\.WebClient).*(http|https)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1059/001"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "mshta_inline_script",
+    "description": "MSHTA 内联脚本执行",
+    "category": "execution",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "mshta.*(javascript|vbscript):", "flags": "ignorecase", "_meta": {"mitre_attack": "T1218/005"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "cscript_wscript_download",
+    "description": "CScript/WScript 下载并执行远程脚本",
+    "category": "execution",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(cscript|wscript).*(http|https).*\\.(vbs|js|vbe|jse|wsf|hta)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1059/005"}},
+    "severity": "high",
+    "enabled": true
+  },
+
+  {
+    "name": "wmi_persistence_behavior",
+    "description": "WMI 事件订阅持久化（__EventFilter/__FilterToConsumerBinding）",
+    "category": "persistence",
+    "rule_type": "behavior",
+    "condition": {"pattern": "persistence_wmi", "description": "WMI 事件订阅持久化检测", "_meta": {"mitre_attack": "T1546/003"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "com_hijack_persistence",
+    "description": "COM 对象劫持持久化（CLSID InprocServer32 篡改）",
+    "category": "persistence",
+    "rule_type": "behavior",
+    "condition": {"pattern": "persistence_com_hijack", "description": "COM 劫持持久化检测", "_meta": {"mitre_attack": "T1546/015"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "image_file_execution_hijack",
+    "description": "映像劫持（Image File Execution Options Debugger 键）",
+    "category": "persistence",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "Image File Execution Options.*Debugger", "flags": "ignorecase", "_meta": {"mitre_attack": "T1546/012"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "dll_search_order_hijack",
+    "description": "DLL 搜索顺序劫持（非系统目录 DLL 加载）",
+    "category": "persistence",
+    "rule_type": "behavior",
+    "condition": {"pattern": "dll_sideload", "description": "DLL 侧加载/搜索顺序劫持检测", "_meta": {"mitre_attack": "T1574/001"}},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "appinit_dlls_persistence",
+    "description": "AppInit_DLLs 持久化注册表项",
+    "category": "persistence",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "AppInit_DLLs|LoadAppInit_DLLs", "flags": "ignorecase", "_meta": {"mitre_attack": "T1546/010"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "screensaver_persistence",
+    "description": "屏幕保护程序持久化（.scr 文件替换）",
+    "category": "persistence",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(SCRNSAVE\\.EXE|ScreenSaveActive|\\.scr)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1546/002"}},
+    "severity": "high",
+    "enabled": true
+  },
+
+  {
+    "name": "uac_bypass_detection",
+    "description": "UAC 绕过检测（fodhelper/eventvwr 等白名单绕过）",
+    "category": "privilege_escalation",
+    "rule_type": "behavior",
+    "condition": {"pattern": "uac_bypass", "description": "UAC 绕过行为检测", "_meta": {"mitre_attack": "T1548/002"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "token_theft_escalation",
+    "description": "Token 窃取/操作提权",
+    "category": "privilege_escalation",
+    "rule_type": "behavior",
+    "condition": {"pattern": "token_manipulation", "description": "Token 操作提权检测", "_meta": {"mitre_attack": "T1134"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "service_permission_escalation",
+    "description": "服务权限提升（sc config 修改服务二进制路径）",
+    "category": "privilege_escalation",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "sc\\s+(config|create).*binPath", "flags": "ignorecase", "_meta": {"mitre_attack": "T1543/003"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "scheduled_task_escalation",
+    "description": "计划任务权限提升（高权限计划任务执行）",
+    "category": "privilege_escalation",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "schtasks.*(/create|/run).*(/ru\\s+system|/rl\\s+highest)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1053/005"}},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "sticky_keys_escalation",
+    "description": "辅助功能替换提权（sethc/utilman 替换 cmd.exe）",
+    "category": "privilege_escalation",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(sethc|utilman|osk|narrator|magnify)\\.exe.*(copy|ren|move)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1546/008"}},
+    "severity": "critical",
+    "enabled": true
+  },
+
+  {
+    "name": "obfuscated_execution_evasion",
+    "description": "混淆执行绕过检测（base64/字符串拼接/编码）",
+    "category": "defense_evasion",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(FromBase64String|-enc\\s+[A-Za-z0-9+/=]{100,}|\\[System\\.Convert\\]::)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1027"}},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "log_clearing_evasion",
+    "description": "日志清除/事件日志删除检测",
+    "category": "defense_evasion",
+    "rule_type": "behavior",
+    "condition": {"pattern": "defense_evasion", "description": "防御规避：日志清除/时间戳篡改检测", "_meta": {"mitre_attack": "T1070"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "security_product_disable",
+    "description": "安全产品禁用/干扰检测",
+    "category": "defense_evasion",
+    "rule_type": "behavior",
+    "condition": {"pattern": "antivirus_tamper", "description": "杀软干扰/禁用行为检测", "_meta": {"mitre_attack": "T1562/001"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "code_signing_bypass",
+    "description": "代码签名绕过（reg add 禁用签名验证）",
+    "category": "defense_evasion",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "reg.*add.*(DisableSignatureValidation|DisableIntegrityChecks|DisableDriverSignature)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1553/006"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "process_injection_indicator",
+    "description": "进程注入特征（CreateRemoteThread/VirtualAllocEx/WriteProcessMemory）",
+    "category": "defense_evasion",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(CreateRemoteThread|VirtualAllocEx|WriteProcessMemory|NtCreateThreadEx|QueueUserAPC|SetThreadContext)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1055"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "amsi_bypass_attempt",
+    "description": "AMSI 绕过尝试（设置 AMSI 相关注册表或内存修补）",
+    "category": "defense_evasion",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(amsi|AMSI).*(disable|bypass|fail|initFailed|patch)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1562/001"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "sysmon_tampering",
+    "description": "Sysmon 干扰/卸载检测",
+    "category": "defense_evasion",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "sysmon.*(-u|-c.*uninstall|sc\\s+delete\\s+sysmon)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1562/001"}},
+    "severity": "high",
+    "enabled": true
+  },
+
+  {
+    "name": "lsass_dump_detection",
+    "description": "LSASS 进程凭据转储检测（procdump/mimikatz/comsvcs）",
+    "category": "credential",
+    "rule_type": "behavior",
+    "condition": {"pattern": "credential_dump", "description": "凭据转储行为检测", "_meta": {"mitre_attack": "T1003/001"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "sam_dump_detection",
+    "description": "SAM 注册表 Hive 导出检测",
+    "category": "credential",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "reg.*save.*(sam|system|security)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1003/002"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "ntds_dump_detection",
+    "description": "NTDS.dit 域控凭据导出检测",
+    "category": "credential",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(ntdsutil|vssadmin.*ntds|ntds\\.dit)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1003/003"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "dpapi_credential_theft",
+    "description": "DPAPI 凭据解密/窃取检测",
+    "category": "credential",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(dpapi|CryptUnprotectData|vaultcmd|vaultcli)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1003/004"}},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "browser_credential_theft",
+    "description": "浏览器凭据窃取（Chrome/Edge/Firefox 密码数据库访问）",
+    "category": "credential",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(Login Data|Web Data|logins\\.json|key4\\.db|cookies\\.sqlite|places\\.sqlite)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1003"}},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "lsa_secrets_dump",
+    "description": "LSA Secrets 导出检测",
+    "category": "credential",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(lsadump|LsaRetrievePrivateData|secretsdump)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1003/004"}},
+    "severity": "critical",
+    "enabled": true
+  },
+
+  {
+    "name": "system_discovery_recon",
+    "description": "系统信息探测（≥3个侦察命令组合执行）",
+    "category": "discovery",
+    "rule_type": "behavior",
+    "condition": {"pattern": "discovery_recon", "description": "系统信息探测行为检测", "_meta": {"mitre_attack": "T1082"}},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "network_scan_behavior",
+    "description": "网络扫描行为检测（大量连接不同IP）",
+    "category": "discovery",
+    "rule_type": "behavior",
+    "condition": {"pattern": "network_scan", "description": "网络扫描行为检测", "_meta": {"mitre_attack": "T1046"}},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "domain_discovery_commands",
+    "description": "域环境探测命令（nltest/net group/dsquery）",
+    "category": "discovery",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(nltest|net group.*domain|dsquery|netdom|adfind|BloodHound|Sharphound)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1482"}},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "sensitive_file_search",
+    "description": "敏感文件搜索（密码/密钥/配置文件批量查找）",
+    "category": "discovery",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(findstr|select-string|grep).*(passwd|password|secret|key|credential|\\.pem|\\.key|\\.pfx|\\.config)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1083"}},
+    "severity": "medium",
+    "enabled": true
+  },
+
+  {
+    "name": "psexec_lateral_movement",
+    "description": "PSExec 横向移动检测",
+    "category": "lateral",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "psexec.*\\\\\\\\", "flags": "ignorecase", "_meta": {"mitre_attack": "T1570"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "wmi_remote_execution",
+    "description": "WMI 远程执行横向移动检测",
+    "category": "lateral",
+    "rule_type": "behavior",
+    "condition": {"pattern": "lateral_movement", "description": "横向移动行为检测", "_meta": {"mitre_attack": "T1047"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "rdp_tunnel_detection",
+    "description": "RDP 隧道/跳板检测（端口转发/RDP 包装器）",
+    "category": "lateral",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(plink|ssh.*-L|ssh.*-R|rdpwrap|termsrv\\.dll|RDPWrap)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1021/001"}},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "ssh_lateral_tunnel",
+    "description": "SSH 横向隧道/代理检测",
+    "category": "lateral",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "ssh.*(-D\\s+\\d+|-L\\s+\\d+|-R\\s+\\d+|DynamicForward)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1572"}},
+    "severity": "high",
+    "enabled": true
+  },
+
+  {
+    "name": "data_staging_directory",
+    "description": "数据暂存目录检测（临时目录大量文件写入）",
+    "category": "discovery",
+    "rule_type": "composite",
+    "condition": {
+      "logic": "AND",
+      "sub_rules": [
+        {"type": "regex", "field": "path", "pattern": "(\\\\Temp\\\\|\\\\Users\\\\Public\\\\Documents)", "flags": "ignorecase"},
+        {"type": "threshold", "field": "file_count", "operator": ">", "value": 10}
+      ],
+      "_meta": {"mitre_attack": "T1074/001"}
+    },
+    "severity": "medium",
+    "enabled": true
+  },
+  {
+    "name": "clipboard_capture",
+    "description": "剪贴板数据捕获检测",
+    "category": "discovery",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(Get-Clipboard|clipboard|System\\.Windows\\.Clipboard|GTK\\.Clipboard)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1115"}},
+    "severity": "medium",
+    "enabled": true
+  },
+
+  {
+    "name": "data_compression_exfil",
+    "description": "数据压缩并外传检测（压缩工具+网络上传组合）",
+    "category": "exfiltration",
+    "rule_type": "behavior",
+    "condition": {"pattern": "data_exfil", "description": "数据压缩外传行为检测", "_meta": {"mitre_attack": "T1048"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "dns_tunnel_exfil",
+    "description": "DNS 隧道数据外传检测（大 DNS 查询/nslookup 循环）",
+    "category": "exfiltration",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(nslookup|dig|Resolve-DnsName).*(-q=|-type=|txt.*[A-Za-z0-9+/=]{50,})", "flags": "ignorecase", "_meta": {"mitre_attack": "T1048/003"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "icmp_tunnel_exfil",
+    "description": "ICMP 隧道数据外传检测",
+    "category": "exfiltration",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(ping|icmp).*(-l\\s+[1-9]\\d{2,}|icmpsh|ptunnel|icmpsend)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1048/003"}},
+    "severity": "critical",
+    "enabled": true
+  },
+
+  {
+    "name": "known_c2_framework",
+    "description": "已知 C2 框架特征检测（CobaltStrike/Metasploit/Empire 等）",
+    "category": "network",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(cobaltstrike|metasploit|empire|powersploit|sliver|havoc|brute.ratel|covenant|mythic)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1571"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "dns_c2_beaconing",
+    "description": "DNS C2 Beaconing 检测（固定间隔 DNS 查询）",
+    "category": "network",
+    "rule_type": "threshold",
+    "condition": {"field": "dns_query_count", "operator": ">", "value": 100, "_meta": {"mitre_attack": "T1571"}},
+    "severity": "high",
+    "enabled": false
+  },
+  {
+    "name": "domain_fronting_detection",
+    "description": "域前置检测（CDN 域名到非预期后端通信）",
+    "category": "network",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(cloudfront\\.net|azureedge\\.net|akamaiedge\\.net).*Host:", "flags": "ignorecase", "_meta": {"mitre_attack": "T1572"}},
+    "severity": "high",
+    "enabled": false
+  },
+  {
+    "name": "webshell_file_detection",
+    "description": "WebShell 文件检测（常见 WebShell 文件名特征）",
+    "category": "network",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(shell|cmd|uploader|b374k|c99|r57|weevely|chopper|antsword|godzilla|behinder)\\.(php|jsp|asp|aspx|war|jspx)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1505/003"}},
+    "severity": "critical",
+    "enabled": true
+  },
+
+  {
+    "name": "ransomware_behavior_pattern",
+    "description": "勒索软件行为检测（批量加密+删除卷影副本）",
+    "category": "impact",
+    "rule_type": "behavior",
+    "condition": {"pattern": "ransomware_behavior", "description": "勒索软件行为检测", "_meta": {"mitre_attack": "T1486"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "data_destruction_indicator",
+    "description": "数据破坏检测（批量删除/格式化/磁盘覆写）",
+    "category": "impact",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(format\\s+[a-z]:|diskpart.*clean|del /f /s|rm -rf|shred|wipe|dd if=/dev)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1485"}},
+    "severity": "critical",
+    "enabled": true
+  },
+
+  {
+    "name": "credential_dump_behavior",
+    "description": "凭据导出综合行为检测（LSASS/SAM/注册表凭据访问）",
+    "category": "credential",
+    "rule_type": "behavior",
+    "condition": {"pattern": "credential_dump", "description": "综合凭据导出行为检测", "_meta": {"mitre_attack": "T1003"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "webshell_process_activity",
+    "description": "WebShell 进程活动检测（Web 进程执行系统命令）",
+    "category": "network",
+    "rule_type": "behavior",
+    "condition": {"pattern": "webshell_activity", "description": "WebShell 特征进程活动检测", "_meta": {"mitre_attack": "T1505/003"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "privilege_escalation_composite",
+    "description": "权限提升综合检测（UAC绕过或Token操作且非系统进程）",
+    "category": "privilege_escalation",
+    "rule_type": "composite",
+    "condition": {
+      "logic": "OR",
+      "sub_rules": [
+        {"type": "behavior", "pattern": "uac_bypass", "description": "UAC 绕过"},
+        {"type": "behavior", "pattern": "token_manipulation", "description": "Token 操作"}
+      ],
+      "_meta": {"mitre_attack": "T1548"}
+    },
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "kerberoasting_detection",
+    "description": "Kerberoasting 攻击检测（大量 Kerberos TGS 请求）",
+    "category": "credential",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(GetUserSPNs|Kerberoast|Invoke-Kerberoast|rubeus.*kerberoast|\\.kirbi)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1558/003"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "dcsync_detection",
+    "description": "DCSync 攻击检测（目录复制服务访问）",
+    "category": "credential",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(DCSync|Get-ADReplAccount|mimikatz.*lsadump::dcsync)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1003/006"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "pass_the_hash_detection",
+    "description": "Pass-the-Hash 攻击检测",
+    "category": "lateral",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(sekurlsa::pth|mimikatz.*pth|Invoke-WMIExec.*-Hash|Invoke-SMBExec.*-Hash)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1550/002"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "dll_hijack_behavior",
+    "description": "DLL 侧加载行为检测",
+    "category": "persistence",
+    "rule_type": "behavior",
+    "condition": {"pattern": "dll_sideload", "description": "DLL 侧加载行为检测", "_meta": {"mitre_attack": "T1574/002"}},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "parent_pid_spoofing",
+    "description": "父进程PID欺骗检测（ppid参数传递）",
+    "category": "defense_evasion",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(ppid|ParentProcessId|Start-Process.*-Credential)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1134/004"}},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "reflective_dll_injection",
+    "description": "反射式 DLL 注入检测",
+    "category": "defense_evasion",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(ReflectiveLoader|Invoke-ReflectivePEInjection|LoadLibrary.*Memory)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1055"}},
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "smb_share_enumeration",
+    "description": "SMB 共享枚举/访问检测（横向移动前奏）",
+    "category": "discovery",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "(net view|net share|Get-SmbShare|smbclient -L)", "flags": "ignorecase", "_meta": {"mitre_attack": "T1135"}},
+    "severity": "medium",
+    "enabled": true
+  },
+  {
+    "name": "scheduled_task_lateral",
+    "description": "计划任务远程创建（schtasks /s 远程主机）",
+    "category": "lateral",
+    "rule_type": "regex",
+    "condition": {"field": "command_line", "pattern": "schtasks.*(/create|/run).*/s\\s+\\S+", "flags": "ignorecase", "_meta": {"mitre_attack": "T1053/005"}},
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "process_chain_attack",
+    "description": "检测 ≥3 级可疑进程链路（攻击路径）",
+    "category": "behavior",
+    "rule_type": "behavior",
+    "condition": {
+      "pattern": "process_chain",
+      "min_chain_length": 3,
+      "suspicious_parent_patterns": ["winword.exe", "excel.exe", "powerpnt.exe", "outlook.exe", "chrome.exe", "firefox.exe", "msedge.exe"],
+      "suspicious_child_patterns": ["cmd.exe", "powershell.exe", "wscript.exe", "cscript.exe", "curl.exe", "wget.exe"]
+    },
+    "severity": "critical",
+    "enabled": true
+  },
+  {
+    "name": "time_cluster_burst",
+    "description": "同一时间窗口（5分钟）内 ≥5 个进程启动触发告警",
+    "category": "behavior",
+    "rule_type": "behavior",
+    "condition": {
+      "pattern": "time_cluster",
+      "window_minutes": 5,
+      "min_count": 5
+    },
+    "severity": "high",
+    "enabled": true
+  },
+  {
+    "name": "short_lived_shell",
+    "description": "powershell/cmd 进程存活时间 < 30s 触发告警",
+    "category": "behavior",
+    "rule_type": "behavior",
+    "condition": {
+      "pattern": "short_lived",
+      "target_processes": ["powershell.exe", "cmd.exe", "wscript.exe", "cscript.exe"],
+      "max_alive_seconds": 30
+    },
+    "severity": "high",
     "enabled": true
   }
 ]

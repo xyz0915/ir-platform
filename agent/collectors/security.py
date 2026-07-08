@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from collectors.base_collector import BaseCollector
+from collectors.logs import _safe_wevtutil_query
 from utils.platform import is_windows, is_linux, run_command
 
 logger = logging.getLogger(__name__)
@@ -13,6 +14,10 @@ class SecurityCollector(BaseCollector):
     """安全信息采集器.
 
     采集杀毒软件、防火墙规则、审计策略、安全事件 ID 统计.
+    安全事件查询按 log_days 时间窗口过滤.
+
+    Attributes:
+        log_days: 采集最近 N 天的安全事件（默认 7 天）.
     """
 
     name = "security"
@@ -104,13 +109,15 @@ class SecurityCollector(BaseCollector):
         return policy
 
     def _get_windows_event_summary(self) -> dict:
-        """获取安全事件 ID 统计."""
+        """获取安全事件 ID 统计（按 log_days 时间窗口过滤）."""
         summary: dict[str, int] = {}
-        # 统计最近的安全事件 ID
-        output = run_command(
-            'wevtutil qe Security /c:1000 /f:text /rd:true 2>nul | findstr "Event ID"',
-            timeout=20,
-        )
+
+        # 计算 timediff 阈值（毫秒）
+        timediff_ms = self.log_days * 86400 * 1000
+        query = f'*[System[TimeCreated[timediff(@SystemTime) <= {timediff_ms}]]]'
+
+        # 使用安全查询（timediff 带 60s 超时 + 无时间过滤 fallback）
+        output = _safe_wevtutil_query("Security", query, 1000, timeout=60)
         if output:
             for line in output.split("\n"):
                 if "Event ID" in line or "事件 ID" in line:

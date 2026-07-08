@@ -200,6 +200,18 @@ DDL_STATEMENTS = [
         updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
     )
     """,
+    # whitelist — 白名单表
+    """
+    CREATE TABLE IF NOT EXISTS whitelist (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        category        TEXT    NOT NULL,
+        pattern         TEXT    NOT NULL,
+        source          TEXT    DEFAULT 'default',
+        description     TEXT,
+        enabled         INTEGER DEFAULT 1,
+        created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
     # ai_config — AI大模型配置表
     """
     CREATE TABLE IF NOT EXISTS ai_config (
@@ -279,12 +291,7 @@ def _create_default_admin(conn: sqlite3.Connection) -> None:
 
 
 def _import_default_rules(conn: sqlite3.Connection) -> None:
-    """导入默认规则集（如果规则表为空）."""
-    cursor = conn.execute("SELECT COUNT(*) as cnt FROM rules")
-    row = cursor.fetchone()
-    if row and row["cnt"] > 0:
-        return
-
+    """导入默认规则集（upsert by name — 新增的插入，已有的更新，用户自建的保留）."""
     rules_path = Path(settings.BACKEND_DIR) / "app" / "rules" / "default_rules.json"
     if not rules_path.exists():
         logger.warning("Default rules file not found: %s", rules_path)
@@ -293,27 +300,165 @@ def _import_default_rules(conn: sqlite3.Connection) -> None:
     with open(rules_path, "r", encoding="utf-8") as f:
         rules_data = json.load(f)
 
+    # 获取数据库中已有的规则名集合
+    cursor = conn.execute("SELECT name FROM rules")
+    existing_names: set[str] = {row["name"] for row in cursor.fetchall()}
+
+    updated = 0
+    inserted = 0
+
     for rule in rules_data:
-        conn.execute(
-            """
-            INSERT INTO rules (name, description, category, rule_type, condition, severity, enabled)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                rule.get("name", ""),
-                rule.get("description", ""),
-                rule.get("category", ""),
-                rule.get("rule_type", ""),
-                json.dumps(rule.get("condition", {}), ensure_ascii=False),
-                rule.get("severity", "medium"),
-                1 if rule.get("enabled", True) else 0,
-            ),
-        )
-    logger.info("Imported %d default rules", len(rules_data))
+        name = rule.get("name", "")
+        description = rule.get("description", "")
+        category = rule.get("category", "")
+        rule_type = rule.get("rule_type", "")
+        condition = json.dumps(rule.get("condition", {}), ensure_ascii=False)
+        severity = rule.get("severity", "medium")
+        enabled = 1 if rule.get("enabled", True) else 0
+
+        if name in existing_names:
+            conn.execute(
+                """
+                UPDATE rules
+                SET description = ?, category = ?, rule_type = ?, condition = ?, severity = ?, enabled = ?
+                WHERE name = ?
+                """,
+                (description, category, rule_type, condition, severity, enabled, name),
+            )
+            updated += 1
+        else:
+            conn.execute(
+                """
+                INSERT INTO rules (name, description, category, rule_type, condition, severity, enabled)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (name, description, category, rule_type, condition, severity, enabled),
+            )
+            inserted += 1
+
+    preserved = len(existing_names) - updated
+    logger.info(
+        "Default rules import: updated=%d, inserted=%d, preserved(user)=%d, total_default=%d",
+        updated, inserted, preserved, len(rules_data),
+    )
+
+
+def _alter_abnormal_processes_table(conn: sqlite3.Connection) -> None:
+    """检测并添加 abnormal_processes 表新增的 risk_score/matched_rules/attack_path 列.
+
+    SQLite 不支持单条 ALTER TABLE 添加多列，需分三条语句执行。
+    使用 PRAGMA table_info 检测列是否已存在，不存在才 ALTER ADD COLUMN.
+    """
+    cursor = conn.execute("PRAGMA table_info(abnormal_processes)")
+    existing_columns: set[str] = {row["name"] for row in cursor.fetchall()}
+
+    new_columns: list[tuple[str, str]] = [
+        ("risk_score", "INTEGER DEFAULT 0"),
+        ("matched_rules", "TEXT"),
+        ("attack_path", "TEXT"),
+    ]
+
+    for col_name, col_type in new_columns:
+        if col_name not in existing_columns:
+            conn.execute(
+                f"ALTER TABLE abnormal_processes ADD COLUMN {col_name} {col_type}"
+            )
+            logger.info("Added column '%s' to abnormal_processes table", col_name)
+
+
+def _import_default_whitelist(conn: sqlite3.Connection) -> None:
+    """导入内置默认白名单项（upsert by category+pattern).
+
+    默认白名单包含系统路径和常见系统进程名。
+    """
+    # 获取已有的白名单项（category+pattern 组合）
+    cursor = conn.execute("SELECT category, pattern FROM whitelist")
+    existing_set: set[tuple[str, str]] = {
+        (row["category"], row["pattern"]) for row in cursor.fetchall()
+    }
+
+    # 默认路径类白名单
+    default_paths: list[str] = [
+        "C:\\Windows\\System32\\",
+        "C:\\Windows\\SysWOW64\\",
+        "C:\\Windows\\",
+        "C:\\Program Files\\Windows Defender\\",
+        "C:\\Program Files\\Microsoft\\",
+        "C:\\ProgramData\\Microsoft\\",
+        "C:\\Program Files\\Common Files\\",
+        "/usr/bin/",
+        "/usr/sbin/",
+        "/usr/lib/",
+        "/bin/",
+        "/sbin/",
+    ]
+
+    # 默认进程名类白名单
+    default_process_names: list[str] = [
+        "svchost.exe",
+        "csrss.exe",
+        "lsass.exe",
+        "lsm.exe",
+        "smss.exe",
+        "wininit.exe",
+        "winlogon.exe",
+        "services.exe",
+        "taskhostw.exe",
+        "dwm.exe",
+        "conhost.exe",
+        "rundll32.exe",
+        "MsMpEng.exe",
+        "SecurityHealthService.exe",
+        "NisSrv.exe",
+        "explorer.exe",
+        "System",
+        "sihost.exe",
+        "taskhost.exe",
+        "RuntimeBroker.exe",
+        "SearchIndexer.exe",
+    ]
+
+    inserted = 0
+    skipped = 0
+
+    # 插入路径类白名单
+    for pattern in default_paths:
+        key = ("path", pattern)
+        if key not in existing_set:
+            conn.execute(
+                """
+                INSERT INTO whitelist (category, pattern, source, description, enabled)
+                VALUES (?, ?, 'default', '系统内置路径白名单', 1)
+                """,
+                ("path", pattern),
+            )
+            inserted += 1
+        else:
+            skipped += 1
+
+    # 插入进程名类白名单
+    for pattern in default_process_names:
+        key = ("process_name", pattern)
+        if key not in existing_set:
+            conn.execute(
+                """
+                INSERT INTO whitelist (category, pattern, source, description, enabled)
+                VALUES (?, ?, 'default', '系统内置进程名白名单', 1)
+                """,
+                ("process_name", pattern),
+            )
+            inserted += 1
+        else:
+            skipped += 1
+
+    logger.info(
+        "Default whitelist import: inserted=%d, skipped(existing)=%d",
+        inserted, skipped,
+    )
 
 
 def init_db() -> None:
-    """初始化数据库：创建目录、执行建表语句、创建默认用户、导入默认规则."""
+    """初始化数据库：创建目录、执行建表语句、创建默认用户、导入默认规则、ALTER 表、导入默认白名单."""
     # 确保数据目录存在
     Path(settings.DATA_DIR).mkdir(parents=True, exist_ok=True)
     Path(settings.UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
@@ -328,6 +473,8 @@ def init_db() -> None:
         conn.commit()
         _create_default_admin(conn)
         _import_default_rules(conn)
+        _alter_abnormal_processes_table(conn)
+        _import_default_whitelist(conn)
         conn.commit()
         logger.info("Database initialized successfully at %s", settings.DB_PATH)
     except Exception:

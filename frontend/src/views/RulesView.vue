@@ -4,13 +4,21 @@
       <div class="flex-between mb-20">
         <h2 class="page-title">规则管理</h2>
         <div>
-          <el-select v-model="filterCategory" placeholder="按类别筛选" clearable style="width: 160px" @change="loadRules">
+          <el-select v-model="filterCategory" placeholder="按类别筛选" clearable style="width: 180px" @change="loadRules">
             <el-option label="进程" value="process" />
+            <el-option label="执行" value="execution" />
             <el-option label="网络" value="network" />
             <el-option label="启动项" value="startup" />
             <el-option label="持久化" value="persistence" />
             <el-option label="IOC" value="ioc" />
             <el-option label="行为" value="behavior" />
+            <el-option label="凭据" value="credential" />
+            <el-option label="横向移动" value="lateral" />
+            <el-option label="数据窃取" value="exfiltration" />
+            <el-option label="发现" value="discovery" />
+            <el-option label="防御规避" value="defense_evasion" />
+            <el-option label="权限提升" value="privilege_escalation" />
+            <el-option label="影响" value="impact" />
           </el-select>
           <el-button type="primary" @click="showCreateDialog">
             <el-icon><Plus /></el-icon> 新增规则
@@ -19,15 +27,28 @@
       </div>
       <el-table :data="rules" border stripe v-loading="loading">
         <el-table-column prop="name" label="规则名称" min-width="180" />
-        <el-table-column prop="category" label="类别" width="100">
+        <el-table-column prop="category" label="类别" width="110">
           <template #default="{ row }">
             <el-tag size="small">{{ row.category }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="rule_type" label="类型" width="90" />
+        <el-table-column prop="rule_type" label="类型" width="100" />
         <el-table-column prop="severity" label="严重程度" width="100">
           <template #default="{ row }">
             <el-tag :type="severityType(row.severity)" size="small">{{ row.severity }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="MITRE ATT&amp;CK" width="130">
+          <template #default="{ row }">
+            <el-tag
+              v-if="getMitreAttack(row)"
+              type="info"
+              size="small"
+              effect="plain"
+            >
+              {{ getMitreAttack(row) }}
+            </el-tag>
+            <span v-else style="color: #c0c4cc">—</span>
           </template>
         </el-table-column>
         <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
@@ -48,13 +69,16 @@
     </div>
 
     <!-- 规则详情对话框 -->
-    <el-dialog v-model="detailDialogVisible" title="规则详情" width="600px">
+    <el-dialog v-model="detailDialogVisible" title="规则详情" width="640px">
       <el-descriptions :column="1" border v-if="currentRule">
         <el-descriptions-item label="名称">{{ currentRule.name }}</el-descriptions-item>
         <el-descriptions-item label="描述">{{ currentRule.description }}</el-descriptions-item>
         <el-descriptions-item label="类别">{{ currentRule.category }}</el-descriptions-item>
         <el-descriptions-item label="类型">{{ currentRule.rule_type }}</el-descriptions-item>
         <el-descriptions-item label="严重程度">{{ currentRule.severity }}</el-descriptions-item>
+        <el-descriptions-item v-if="getMitreAttack(currentRule)" label="MITRE ATT&amp;CK">
+          {{ getMitreAttack(currentRule) }}
+        </el-descriptions-item>
         <el-descriptions-item label="条件">
           <pre class="condition-json">{{ JSON.stringify(currentRule.condition, null, 2) }}</pre>
         </el-descriptions-item>
@@ -62,7 +86,7 @@
     </el-dialog>
 
     <!-- 新增规则对话框 -->
-    <el-dialog v-model="createDialogVisible" title="新增规则" width="600px">
+    <el-dialog v-model="createDialogVisible" title="新增规则" width="640px">
       <el-form :model="createForm" label-width="100px">
         <el-form-item label="规则名称" required>
           <el-input v-model="createForm.name" />
@@ -70,11 +94,19 @@
         <el-form-item label="类别" required>
           <el-select v-model="createForm.category">
             <el-option label="进程" value="process" />
+            <el-option label="执行" value="execution" />
             <el-option label="网络" value="network" />
             <el-option label="启动项" value="startup" />
             <el-option label="持久化" value="persistence" />
             <el-option label="IOC" value="ioc" />
             <el-option label="行为" value="behavior" />
+            <el-option label="凭据" value="credential" />
+            <el-option label="横向移动" value="lateral" />
+            <el-option label="数据窃取" value="exfiltration" />
+            <el-option label="发现" value="discovery" />
+            <el-option label="防御规避" value="defense_evasion" />
+            <el-option label="权限提升" value="privilege_escalation" />
+            <el-option label="影响" value="impact" />
           </el-select>
         </el-form-item>
         <el-form-item label="规则类型" required>
@@ -83,6 +115,8 @@
             <el-option label="列表匹配" value="list" />
             <el-option label="阈值检测" value="threshold" />
             <el-option label="行为检测" value="behavior" />
+            <el-option label="组合条件" value="composite" />
+            <el-option label="存在性检查" value="exists" />
           </el-select>
         </el-form-item>
         <el-form-item label="严重程度">
@@ -100,8 +134,8 @@
           <el-input
             v-model="createForm.conditionStr"
             type="textarea"
-            :rows="6"
-            placeholder='{"field": "command_line", "pattern": "powershell.*-enc", "flags": "ignorecase"}'
+            :rows="8"
+            :placeholder="conditionPlaceholder"
           />
         </el-form-item>
       </el-form>
@@ -114,7 +148,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import request from '@/api/index'
 
@@ -134,6 +168,19 @@ const createForm = reactive({
   severity: 'medium',
   description: '',
   conditionStr: '{}'
+})
+
+/** 根据选中的 rule_type 动态切换 placeholder */
+const conditionPlaceholder = computed(() => {
+  const placeholders = {
+    regex: '{"field": "command_line", "pattern": "powershell.*-enc", "flags": "ignorecase"}',
+    list: '{"field": "remote_port", "values": [4444, 1337], "match_mode": "exact"}',
+    threshold: '{"field": "connection_count", "operator": ">", "value": 50}',
+    behavior: '{"pattern": "orphan_process", "description": "孤立进程检测"}',
+    composite: '{"logic": "AND", "sub_rules": [{"type": "regex", "field": "command_line", "pattern": "mimikatz"}, {"type": "exists", "field": "remote_address"}]}',
+    exists: '{"field": "remote_address"}'
+  }
+  return placeholders[createForm.rule_type] || '{}'
 })
 
 onMounted(() => {
@@ -167,6 +214,26 @@ function showCreateDialog() {
   createForm.description = ''
   createForm.conditionStr = '{}'
   createDialogVisible.value = true
+}
+
+/**
+ * 从规则的 condition._meta.mitre_attack 中提取 MITRE ATT&CK 编号.
+ * 支持两种存储位置：
+ * 1. condition._meta.mitre_attack（新增规则）
+ * 2. 直接存储在 condition.mitre_attack（兼容旧格式）
+ */
+function getMitreAttack(rule) {
+  if (!rule || !rule.condition) return null
+  const cond = typeof rule.condition === 'string'
+    ? (() => { try { return JSON.parse(rule.condition) } catch { return {} } })()
+    : rule.condition
+  if (cond._meta && cond._meta.mitre_attack) {
+    return cond._meta.mitre_attack
+  }
+  if (cond.mitre_attack) {
+    return cond.mitre_attack
+  }
+  return null
 }
 
 async function handleCreate() {

@@ -2,7 +2,7 @@
   <el-container class="app-layout">
     <el-aside width="220px" class="app-aside">
       <div class="logo">
-        <el-icon size="24"><Shield /></el-icon>
+        <el-icon size="24"><Lock /></el-icon>
         <span>应急响应平台</span>
       </div>
       <el-menu
@@ -21,6 +21,10 @@
         <el-menu-item index="/rules">
           <el-icon><Setting /></el-icon>
           <span>规则管理</span>
+        </el-menu-item>
+        <el-menu-item index="/whitelist">
+          <el-icon><CircleCheck /></el-icon>
+          <span>白名单配置</span>
         </el-menu-item>
       </el-menu>
     </el-aside>
@@ -55,7 +59,7 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { Cpu } from '@element-plus/icons-vue'
+import { Cpu, Lock, CircleCheck } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -63,6 +67,7 @@ const authStore = useAuthStore()
 
 const activeMenu = computed(() => {
   if (route.path.startsWith('/cases') || route.path.startsWith('/hosts')) return '/'
+  if (route.path === '/whitelist') return '/whitelist'
   return route.path
 })
 
@@ -72,7 +77,8 @@ const currentRouteName = computed(() => {
     'CaseDetail': '案件详情',
     'HostDetail': '主机详情',
     'Report': '分析报告',
-    'Rules': '规则管理'
+    'Rules': '规则管理',
+    'Whitelist': '白名单配置'
   }
   return names[route.name] || '应急响应平台'
 })

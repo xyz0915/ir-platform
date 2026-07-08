@@ -41,3 +41,14 @@ Thumbs.db
 # Coverage
 htmlcov/
 .coverage
+
+# Test data & logs (not source)
+agent/result.json
+agent/result1.json
+agent/test_agent.log
+agent/test_full.json
+agent/test_quick.json
+test_rules_qa.py
+
+# Deliverables (internal docs)
+deliverables/

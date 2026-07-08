@@ -91,7 +91,7 @@ class AbnormalProcess:
 
     @staticmethod
     def batch_create(host_id: int, items: list) -> int:
-        """批量创建异常进程记录."""
+        """批量创建异常进程记录（含 risk_score/matched_rules/attack_path 新增字段）."""
         if not items:
             return 0
         with get_connection() as conn:
@@ -99,12 +99,20 @@ class AbnormalProcess:
             conn.execute("DELETE FROM abnormal_processes WHERE host_id = ?", (host_id,))
             count = 0
             for item in items:
+                # matched_rules 序列化为 JSON 字符串
+                matched_rules_data = item.get("matched_rules")
+                if matched_rules_data is not None:
+                    matched_rules_str = json.dumps(matched_rules_data, ensure_ascii=False)
+                else:
+                    matched_rules_str = None
+
                 conn.execute(
                     """
                     INSERT INTO abnormal_processes
                     (host_id, pid, process_name, process_path, command_line,
-                     parent_pid, parent_name, reason, rule_name, severity, details)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     parent_pid, parent_name, reason, rule_name, severity, details,
+                     risk_score, matched_rules, attack_path)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         host_id,
@@ -118,6 +126,9 @@ class AbnormalProcess:
                         item.get("rule_name"),
                         item.get("severity", "medium"),
                         json.dumps(item.get("details", {}), ensure_ascii=False) if item.get("details") else None,
+                        item.get("risk_score", 0),
+                        matched_rules_str,
+                        item.get("attack_path"),
                     ),
                 )
                 count += 1
@@ -125,12 +136,25 @@ class AbnormalProcess:
 
     @staticmethod
     def list_by_host(host_id: int) -> list:
-        """获取主机的异常进程列表."""
+        """获取主机的异常进程列表（含 risk_score/matched_rules/attack_path 字段解析）."""
         with get_connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM abnormal_processes WHERE host_id = ?", (host_id,)
             ).fetchall()
-            return [dict(r) for r in rows]
+            result_list = []
+            for r in rows:
+                proc = dict(r)
+                # 对 matched_rules 做 JSON 解析（如果非 null）
+                if proc.get("matched_rules") and isinstance(proc.get("matched_rules"), str):
+                    try:
+                        proc["matched_rules"] = json.loads(proc["matched_rules"])
+                    except (json.JSONDecodeError, TypeError):
+                        # 解析失败时保留原字符串
+                        pass
+                elif proc.get("matched_rules") is None:
+                    proc["matched_rules"] = []
+                result_list.append(proc)
+            return result_list
 
     @staticmethod
     def delete_by_host(host_id: int) -> None:

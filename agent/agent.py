@@ -5,6 +5,7 @@ Usage:
     python agent.py --output /path/to/output.json
     python agent.py --output result.json --collect system_info,processes,network
     python agent.py --collect all  # 默认采集全部
+    python agent.py --output result.json --log-file agent.log --log-days 3
 
 在目标主机上运行，采集系统信息并输出统一格式的 JSON 文件.
 """
@@ -46,11 +47,12 @@ COLLECTOR_MAP = {
 }
 
 
-def load_collector(name: str) -> BaseCollector:
+def load_collector(name: str, log_days: int = 7) -> BaseCollector:
     """动态加载采集器实例.
 
     Args:
         name: 采集器名称（如 system_info）.
+        log_days: 采集最近 N 天的数据.
 
     Returns:
         BaseCollector 实例.
@@ -62,14 +64,15 @@ def load_collector(name: str) -> BaseCollector:
     module_path, class_name = COLLECTOR_MAP[name].rsplit(".", 1)
     module = __import__(module_path, fromlist=[class_name])
     cls = getattr(module, class_name)
-    return cls()
+    return cls(log_days=log_days)
 
 
-def run_collectors(collect_names: list) -> dict:
+def run_collectors(collect_names: list, log_days: int = 7) -> dict:
     """依次执行指定采集器.
 
     Args:
         collect_names: 要执行的采集器名称列表.
+        log_days: 采集最近 N 天的数据，传递给各采集器.
 
     Returns:
         各采集器结果的字典 {collector_name: result}.
@@ -81,7 +84,7 @@ def run_collectors(collect_names: list) -> dict:
             continue
         logger.info("Running collector: %s", name)
         try:
-            collector = load_collector(name)
+            collector = load_collector(name, log_days=log_days)
             if not collector.is_supported():
                 logger.warning("Collector %s not supported on this platform", name)
                 results[name] = {"error": "not supported", "collector": name}
@@ -123,6 +126,17 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="显示详细日志",
     )
+    parser.add_argument(
+        "--log-file",
+        default=None,
+        help="Agent 运行日志文件路径（同时输出到控制台和文件）",
+    )
+    parser.add_argument(
+        "--log-days",
+        type=int,
+        default=7,
+        help="采集最近N天的系统日志（默认7天）",
+    )
     return parser.parse_args()
 
 
@@ -152,7 +166,18 @@ def main() -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
+    # 如果指定了 --log-file，同时输出到文件
+    if args.log_file:
+        file_handler = logging.FileHandler(args.log_file, encoding="utf-8")
+        file_handler.setFormatter(logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        ))
+        logging.getLogger().addHandler(file_handler)
+        logger.info("Agent log file enabled: %s", args.log_file)
+
     logger.info("=== IR Platform Agent Starting ===")
+    logger.info("Log days filter: %d day(s)", args.log_days)
     check_privileges()
 
     # 确定要执行的采集器
@@ -163,8 +188,8 @@ def main() -> None:
 
     logger.info("Collectors to run: %s", ", ".join(collect_names))
 
-    # 执行采集
-    raw_results = run_collectors(collect_names)
+    # 执行采集（传递 log_days 参数）
+    raw_results = run_collectors(collect_names, log_days=args.log_days)
 
     # 构建元数据
     metadata = {
@@ -175,6 +200,7 @@ def main() -> None:
         if isinstance(raw_results.get("system_info"), dict)
         else "unknown",
         "operator": "agent",
+        "log_days": args.log_days,
     }
 
     # 组装输出

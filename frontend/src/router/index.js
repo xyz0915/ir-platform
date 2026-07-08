@@ -39,6 +39,11 @@ const routes = [
         component: () => import('@/views/RulesView.vue')
       },
       {
+        path: 'whitelist',
+        name: 'Whitelist',
+        component: () => import('@/views/WhitelistView.vue')
+      },
+      {
         path: 'ai',
         name: 'AiConfig',
         component: () => import('@/views/AiView.vue')

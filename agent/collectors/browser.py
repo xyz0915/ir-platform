@@ -5,6 +5,7 @@ import os
 import sqlite3
 import shutil
 import tempfile
+import time
 from typing import Any
 
 from collectors.base_collector import BaseCollector
@@ -17,6 +18,10 @@ class BrowserCollector(BaseCollector):
     """浏览器痕迹采集器.
 
     采集 Chrome/Firefox/Edge/IE 历史记录、下载记录、扩展.
+    按 log_days 过滤最近 N 天的记录.
+
+    Attributes:
+        log_days: 采集最近 N 天的浏览器记录（默认 7 天）.
     """
 
     name = "browser"
@@ -30,6 +35,14 @@ class BrowserCollector(BaseCollector):
             "edge": self._collect_edge(),
             "ie": self._collect_ie(),
         }
+
+    def _cutoff_timestamp(self) -> int:
+        """计算 log_days 前对应的 Unix 时间戳（秒）.
+
+        Returns:
+            Unix 时间戳（秒）.
+        """
+        return int(time.time() - self.log_days * 86400)
 
     def _get_browser_paths(self) -> dict:
         """获取各浏览器数据路径."""
@@ -77,21 +90,24 @@ class BrowserCollector(BaseCollector):
         }
 
     def _read_chrome_history(self, db_path: str) -> list:
-        """读取 Chrome/Edge 历史记录."""
+        """读取 Chrome/Edge 历史记录（按 log_days 过滤）."""
         history = []
         if not os.path.exists(db_path):
             return history
 
-        # 复制数据库到临时目录（避免锁定）
         tmp_path = self._copy_db_to_temp(db_path)
         if not tmp_path:
             return history
 
+        cutoff = self._cutoff_timestamp()
         try:
             conn = sqlite3.connect(tmp_path)
             cursor = conn.execute(
                 "SELECT url, title, datetime(last_visit_time/1000000-11644473600, 'unixepoch') as visit_time "
-                "FROM urls ORDER BY last_visit_time DESC LIMIT 100"
+                "FROM urls "
+                "WHERE last_visit_time/1000000-11644473600 > ? "
+                "ORDER BY last_visit_time DESC LIMIT 100",
+                (cutoff,),
             )
             for row in cursor:
                 history.append({"url": row[0], "title": row[1] or "", "visit_time": row[2] or ""})
@@ -103,7 +119,7 @@ class BrowserCollector(BaseCollector):
         return history
 
     def _read_chrome_downloads(self, db_path: str) -> list:
-        """读取 Chrome/Edge 下载记录."""
+        """读取 Chrome/Edge 下载记录（按 log_days 过滤）."""
         downloads = []
         if not os.path.exists(db_path):
             return downloads
@@ -112,12 +128,16 @@ class BrowserCollector(BaseCollector):
         if not tmp_path:
             return downloads
 
+        cutoff = self._cutoff_timestamp()
         try:
             conn = sqlite3.connect(tmp_path)
             cursor = conn.execute(
                 "SELECT target_path, tab_url, total_bytes, "
                 "datetime(start_time/1000000-11644473600, 'unixepoch') as start_time "
-                "FROM downloads ORDER BY start_time DESC LIMIT 50"
+                "FROM downloads "
+                "WHERE start_time/1000000-11644473600 > ? "
+                "ORDER BY start_time DESC LIMIT 50",
+                (cutoff,),
             )
             for row in cursor:
                 downloads.append({
@@ -183,19 +203,23 @@ class BrowserCollector(BaseCollector):
         }
 
     def _read_firefox_history(self, db_path: str) -> list:
-        """读取 Firefox 历史记录."""
+        """读取 Firefox 历史记录（按 log_days 过滤）."""
         history = []
         if not os.path.exists(db_path):
             return history
         tmp_path = self._copy_db_to_temp(db_path)
         if not tmp_path:
             return history
+
+        cutoff = self._cutoff_timestamp()
         try:
             conn = sqlite3.connect(tmp_path)
             cursor = conn.execute(
                 "SELECT url, title, datetime(last_visit_date/1000000, 'unixepoch') as visit_time "
                 "FROM moz_places WHERE last_visit_date IS NOT NULL "
-                "ORDER BY last_visit_date DESC LIMIT 100"
+                "AND last_visit_date/1000000 > ? "
+                "ORDER BY last_visit_date DESC LIMIT 100",
+                (cutoff,),
             )
             for row in cursor:
                 history.append({"url": row[0], "title": row[1] or "", "visit_time": row[2] or ""})
@@ -207,20 +231,24 @@ class BrowserCollector(BaseCollector):
         return history
 
     def _read_firefox_downloads(self, db_path: str) -> list:
-        """读取 Firefox 下载记录."""
+        """读取 Firefox 下载记录（按 log_days 过滤）."""
         downloads = []
         if not os.path.exists(db_path):
             return downloads
         tmp_path = self._copy_db_to_temp(db_path)
         if not tmp_path:
             return downloads
+
+        cutoff = self._cutoff_timestamp()
         try:
             conn = sqlite3.connect(tmp_path)
             cursor = conn.execute(
                 "SELECT p.url, datetime(a.date/1000000, 'unixepoch') as download_time "
                 "FROM moz_annos a JOIN moz_places p ON a.place_id = p.id "
                 "WHERE a.anno_attribute_id IN (SELECT id FROM moz_anno_attributes WHERE name LIKE 'download%') "
-                "ORDER BY a.date DESC LIMIT 50"
+                "AND a.date/1000000 > ? "
+                "ORDER BY a.date DESC LIMIT 50",
+                (cutoff,),
             )
             for row in cursor:
                 downloads.append({"url": row[0], "time": row[1] or ""})

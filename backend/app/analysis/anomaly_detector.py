@@ -1,83 +1,186 @@
-"""异常检测器 — 检测异常进程、可疑外连、可疑启动项."""
+"""异常检测器 — 检测异常进程、可疑外连、可疑启动项（增强版含白名单过滤+累加评分+进程链检测）."""
 
+import json
 import logging
-from typing import Any
+from typing import Any, Optional
 
 from app.rules.rule_engine import RuleEngine
 
 logger = logging.getLogger(__name__)
 
+# 累加评分权重映射
+SEVERITY_SCORES: dict[str, int] = {
+    "critical": 40,
+    "high": 25,
+    "medium": 10,
+    "low": 5,
+    "info": 2,
+}
+
+# 严重程度优先级排序
+SEVERITY_ORDER: dict[str, int] = {
+    "critical": 0,
+    "high": 1,
+    "medium": 2,
+    "low": 3,
+    "info": 4,
+}
+
 
 class AnomalyDetector:
-    """异常检测器.
+    """异常检测器（增强版）.
 
-    通过规则引擎检测进程、网络连接、启动项中的异常.
+    通过规则引擎检测进程、网络连接、启动项中的异常。
+    增强功能：
+    - 白名单过滤：传入 whitelist_service 对象，过滤掉白名单进程
+    - 全局上下文：构建 process_map 和 all_items，用于 process_chain/time_cluster 检测
+    - 累加评分：同一 PID 合并所有命中规则，累加 risk_score，提取 attack_path
     """
 
     @staticmethod
-    def detect_processes(raw_data: dict, rules: list) -> list:
-        """检测异常进程.
+    def detect_processes(raw_data: dict, rules: list, whitelist_service=None) -> list:
+        """检测异常进程（增强版）.
 
         Args:
             raw_data: Agent JSON 数据.
             rules: 规则列表.
+            whitelist_service: 白名单服务对象（可选），用于过滤白名单进程.
 
         Returns:
-            异常进程列表.
+            异常进程列表（含 risk_score/matched_rules/attack_path 字段）.
         """
         processes = raw_data.get("processes", [])
         if not isinstance(processes, list):
             return []
 
-        # 筛选进程相关规则
-        process_rules = [r for r in rules if r.get("category") in ("process", "behavior")]
-        behavior_rules = [r for r in rules if r.get("category") == "behavior"]
+        # ── 1. 白名单过滤 ─────────────────────────────────────────────
+        if whitelist_service:
+            processes = whitelist_service.filter_whitelisted(processes)
+            logger.info("After whitelist filtering: %d processes remain", len(processes))
 
-        # 为每个进程补充 parent_name 和 connection_count
-        pid_to_name = {p.get("pid"): p.get("name", "") for p in processes if isinstance(p, dict)}
+        # ── 2. 补充 parent_name 和 connection_count，构建 process_map ─
+        pid_to_proc: dict[int, dict] = {}
+        for proc in processes:
+            if isinstance(proc, dict):
+                pid = proc.get("pid")
+                if pid is not None:
+                    pid_to_proc[pid] = proc
+
         for proc in processes:
             if isinstance(proc, dict):
                 ppid = proc.get("ppid", 0)
-                proc["parent_name"] = pid_to_name.get(ppid, "")
+                parent_proc = pid_to_proc.get(ppid)
+                proc["parent_name"] = parent_proc.get("name", "") if parent_proc else ""
                 connections = proc.get("connections", [])
                 proc["connection_count"] = len(connections) if isinstance(connections, list) else 0
 
-        matches = RuleEngine.evaluate(processes, process_rules + behavior_rules)
+        # ── 3. 规则匹配（含全局上下文）──────────────────────────────
+        process_rules = [r for r in rules if r.get("category") in ("process", "behavior", "execution")]
+        global_context = {
+            "process_map": pid_to_proc,
+            "all_items": processes,
+        }
+
+        matches = RuleEngine.evaluate(
+            processes, process_rules, global_context=global_context
+        )
+
+        # ── 4. 累加评分合并 ──────────────────────────────────────────
+        abnormal_processes = AnomalyDetector._apply_accumulated_scoring(matches)
+
+        return abnormal_processes
+
+    @staticmethod
+    def _apply_accumulated_scoring(matches: list) -> list:
+        """累加评分合并 — 同一 PID 合并所有命中规则，累加 risk_score.
+
+        对每个 PID：
+        - 合并所有 matched_rules（[{name, severity, reason}]）
+        - 累加 risk_score：critical=40, high=25, medium=10, low=5, info=2
+        - risk_score = min(sum, 100)
+        - severity 取所有命中规则中最高的
+        - attack_path 从 process_chain 命中中提取
+
+        Args:
+            matches: 规则匹配结果列表.
+
+        Returns:
+            增强版异常进程列表（含 risk_score/matched_rules/attack_path）.
+        """
+        # 按 PID 聚合所有命中规则
+        pid_groups: dict[int, list] = {}
+        for match in matches:
+            item = match.get("item", {})
+            pid = item.get("pid", 0)
+            if pid not in pid_groups:
+                pid_groups[pid] = []
+            pid_groups[pid].append(match)
 
         abnormal_processes = []
-        for match in matches:
-            item = match["item"]
+        for pid, group_matches in pid_groups.items():
+            # 取第一个 match 的 item 作为基础
+            base_item = group_matches[0]["item"]
+
+            # 合并所有命中规则
+            matched_rules_list = []
+            total_score = 0
+            highest_severity = "info"
+            highest_severity_order = SEVERITY_ORDER.get("info", 4)
+            attack_path = None
+
+            for m in group_matches:
+                rule_name = m.get("rule_name", "")
+                severity = m.get("severity", "medium")
+                reason = m.get("reason", "")
+
+                matched_rules_list.append({
+                    "name": rule_name,
+                    "severity": severity,
+                    "reason": reason,
+                })
+
+                # 累加评分
+                total_score += SEVERITY_SCORES.get(severity, 2)
+
+                # 取最高严重程度
+                sev_order = SEVERITY_ORDER.get(severity, 4)
+                if sev_order < highest_severity_order:
+                    highest_severity = severity
+                    highest_severity_order = sev_order
+
+                # 提取 attack_path（从 process_chain 命中中）
+                item_data = m.get("item", {})
+                if item_data.get("_attack_path"):
+                    attack_path = item_data["_attack_path"]
+
+            # risk_score 上限 100
+            risk_score = min(total_score, 100)
+
+            # 如果没有 process_chain 命中但 PID 有父链信息，构建简单 attack_path
+            if attack_path is None and base_item.get("parent_name"):
+                attack_path = f"{base_item.get('parent_name', '')} → {base_item.get('name', '')}"
+
             abnormal_processes.append({
-                "pid": item.get("pid"),
-                "process_name": item.get("name", ""),
-                "process_path": item.get("path", ""),
-                "command_line": item.get("command_line", ""),
-                "parent_pid": item.get("ppid"),
-                "parent_name": item.get("parent_name", ""),
-                "reason": match["reason"],
-                "rule_name": match["rule_name"],
-                "severity": match["severity"],
+                "pid": base_item.get("pid"),
+                "process_name": base_item.get("name", ""),
+                "process_path": base_item.get("path", ""),
+                "command_line": base_item.get("command_line", ""),
+                "parent_pid": base_item.get("ppid"),
+                "parent_name": base_item.get("parent_name", ""),
+                "reason": group_matches[0].get("reason", ""),
+                "rule_name": group_matches[0].get("rule_name", ""),
+                "severity": highest_severity,
                 "details": {
-                    "user": item.get("user", ""),
-                    "start_time": item.get("start_time", ""),
-                    "threads": item.get("threads", 0),
+                    "user": base_item.get("user", ""),
+                    "start_time": base_item.get("start_time", ""),
+                    "threads": base_item.get("threads", 0),
                 },
+                "risk_score": risk_score,
+                "matched_rules": matched_rules_list,
+                "attack_path": attack_path,
             })
 
-        # 去重（同一 PID 可能命中多条规则，保留最严重的）
-        seen_pids: dict[int, dict] = {}
-        severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
-        for proc in abnormal_processes:
-            pid = proc.get("pid", 0)
-            if pid not in seen_pids:
-                seen_pids[pid] = proc
-            else:
-                existing_sev = severity_order.get(seen_pids[pid].get("severity", "info"), 4)
-                new_sev = severity_order.get(proc.get("severity", "info"), 4)
-                if new_sev < existing_sev:
-                    seen_pids[pid] = proc
-
-        return list(seen_pids.values())
+        return abnormal_processes
 
     @staticmethod
     def detect_connections(raw_data: dict, rules: list) -> list:

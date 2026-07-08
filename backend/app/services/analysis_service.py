@@ -10,6 +10,7 @@ from app.analysis.timeline_builder import TimelineBuilder
 from app.analysis.ioc_checker import IocChecker
 from app.analysis.persistence_finder import PersistenceFinder
 from app.analysis.risk_assessor import RiskAssessor
+from app.analysis.process_tree_builder import ProcessTreeBuilder
 from app.models.analysis import (
     AnalysisResult, HostProfile, AbnormalProcess, SuspiciousConnection,
     SuspiciousStartupItem, PersistenceItem, TimelineEvent, IocHit,
@@ -18,6 +19,7 @@ from app.models.analysis import (
 from app.models.host import Host
 from app.rules.rule_engine import RuleEngine
 from app.services.import_service import ImportService
+from app.services.whitelist_service import WhitelistService
 
 logger = logging.getLogger(__name__)
 
@@ -72,8 +74,9 @@ class AnalysisService:
         )
         logger.info("Host profile built")
 
-        # 4. 异常检测
-        abnormal_processes = AnomalyDetector.detect_processes(raw_data, rules)
+        # 4. 异常检测（含白名单过滤）
+        whitelist_service = WhitelistService()
+        abnormal_processes = AnomalyDetector.detect_processes(raw_data, rules, whitelist_service=whitelist_service)
         AbnormalProcess.batch_create(host_id, abnormal_processes)
         logger.info("Detected %d abnormal processes", len(abnormal_processes))
 
@@ -181,3 +184,37 @@ class AnalysisService:
     def get_startup_items(host_id: int) -> list:
         """获取可疑启动项列表."""
         return SuspiciousStartupItem.list_by_host(host_id)
+
+    @staticmethod
+    def get_process_tree(host_id: int) -> dict:
+        """获取进程树结构用于可视化.
+
+        Args:
+            host_id: 主机 ID.
+
+        Returns:
+            进程树字典，用于 ECharts tree series 渲染.
+        """
+        raw_data = ImportService.read_raw_json(host_id)
+        if not raw_data:
+            return {"name": "(no data)", "children": []}
+
+        processes = raw_data.get("processes", [])
+        if not isinstance(processes, list) or not processes:
+            return {"name": "(no process data)", "children": []}
+
+        # 获取异常进程列表
+        abnormal_process_list = AbnormalProcess.list_by_host(host_id)
+
+        # 构建 abnormal_pids set 和 pid_to_info map
+        abnormal_pids: set = set()
+        pid_to_info: dict = {}
+        for proc in abnormal_process_list:
+            pid = proc.get("pid")
+            if pid is not None:
+                abnormal_pids.add(pid)
+                pid_to_info[pid] = proc
+
+        # 构建进程树
+        tree = ProcessTreeBuilder.build(processes, abnormal_pids, pid_to_info)
+        return tree
