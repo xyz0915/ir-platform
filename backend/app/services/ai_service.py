@@ -787,27 +787,82 @@ class AiService:
         focus_area: Optional[str],
         base_report_id: Optional[int],
     ) -> str:
-        """构建深挖模式的附加上下文."""
-        if mode != "deep_dive":
-            return ""
+        """构建深挖/追问模式的附加上下文.
 
-        context_lines = [
-            "当前任务为 deep_dive 深挖模式，请基于已有分析继续收敛重点问题。",
-        ]
-        if focus_area:
-            context_lines.append(f"本次深挖重点领域：{focus_area}。")
+        deep_dive：基于已有分析报告深挖。
+        follow_up：补充当前会话对应的原始模块/全量数据，让 AI 能回答「这些启动项是干嘛的」类问题。
+        """
+        context_lines: list[str] = []
+
+        # 1. 反查 base_report 对应的 host_id + module_type
+        resolved_host_id = host_id
+        resolved_module: Optional[str] = None
         report = None
         if base_report_id:
             report = AiAnalysisReport.get_by_id(base_report_id)
-        if report is None:
+        if report is None and host_id:
             report = AiAnalysisReport.get_by_host(host_id)
         if report:
-            context_lines.append("以下为已有分析基线，请避免重复描述，重点补充新的论证和细节：")
+            resolved_host_id = report.get("host_id", host_id)
+            mt = report.get("module_type")
+            if mt:
+                resolved_module = mt
+        # 追问链路前端可能没传 focus_area，从报告补
+        if not focus_area and resolved_module:
+            focus_area = resolved_module
+
+        if mode == "deep_dive":
+            context_lines.append("当前任务为 deep_dive 深挖模式，请基于已有分析继续收敛重点问题。")
+        elif mode == "follow_up":
+            context_lines.append("当前为追问模式，请基于下方提供的原始取证数据和已有分析回答用户问题。")
+        else:
+            return ""
+
+        if focus_area:
+            context_lines.append(f"本次分析重点领域：{focus_area}。")
+
+        # 2. 拉该模块/全量原始数据塞进上下文
+        try:
+            # PromptBuilder 的常量是模块级，方法需实例化
+            from app.services.prompt_builder import PromptBuilder, MODULE_DATA_MAP
+            builder = PromptBuilder()
+            if resolved_module and resolved_module in MODULE_DATA_MAP:
+                # 模块追问：只拉该模块数据
+                prompts = builder.build_module(
+                    host_id=resolved_host_id,
+                    module_type=resolved_module,
+                    masked=True,
+                )
+                data_block = prompts.get("user_prompt", "")
+            else:
+                # 全量追问：拉全量（但不开知识库，避免重复干扰）
+                prompts = builder.build(
+                    host_id=resolved_host_id, masked=True, include_knowledge=False,
+                )
+                data_block = prompts.get("user_prompt", "")
+
+            # 截断到 6000 字符，避免 token 爆炸
+            if data_block:
+                context_lines.append(
+                    "## 原始取证数据（来自本主机，限参考前 6000 字符）\n"
+                    + data_block[:6000]
+                )
+        except Exception as exc:
+            logger.warning("Failed to build data context: %s", exc)
+
+        # 3. 追加已有分析报告的基线
+        if report:
+            context_lines.append("## 已有分析基线（请避免重复描述，重点补充新论证）")
             context_lines.append(f"- 风险评估：{str(report.get('risk_assessment', ''))[:500]}")
             context_lines.append(f"- 威胁分析：{str(report.get('threat_analysis', ''))[:500]}")
             context_lines.append(f"- 时间线：{str(report.get('timeline_analysis', ''))[:500]}")
-        context_lines.append("请输出更细粒度证据解释、剩余疑点和下一步排查建议。")
-        return "\n".join(context_lines)
+
+        if mode == "deep_dive":
+            context_lines.append("请输出更细粒度证据解释、剩余疑点和下一步排查建议。")
+        else:  # follow_up
+            context_lines.append("请直接回答用户问题，引用上方数据中具体字段名/值。")
+
+        return "\n\n".join(context_lines)
 
     # ================================================================
     # P2-09: 分析缓存
