@@ -6,6 +6,7 @@
 
 import json
 import logging
+import re
 from typing import Any, Optional
 
 from app.services.input_quality_service import InputQualityService
@@ -105,7 +106,36 @@ TOKEN_BUDGET_MAP: dict[str, int] = {
     "remote_control":1500,
 }
 
-# 12 个模块专属 system_prompt 骨架模板
+# 模块分析 risk_assessment 附加的质量相关字段（追加到 threat_type 之后）
+_MODULE_RISK_QUALITY_FIELDS = """,
+    "input_quality": {
+      "score": 0,
+      "level": "high/medium/low",
+      "summary": "基于本模块数据量/覆盖度的质量评估说明",
+      "evidence_counts": {}
+    },
+    "coverage_gaps": [
+      {
+        "category": "数据维度名（如 startup_items）",
+        "title": "缺失/不足的数据类型",
+        "severity": "high/medium/low",
+        "description": "该缺失对分析的具体影响",
+        "suggestion": "补充该数据的建议"
+      }
+    ],
+    "miss_risk": {
+      "level": "high/medium/low",
+      "summary": "基于当前有限数据的漏检风险概述",
+      "likely_blind_spots": ["可能遗漏的威胁视角"]
+    },
+    "evidence_insufficiency": [
+      {
+        "field": "字段名",
+        "label": "中文标签",
+        "reason": "证据不足以支撑结论的原因"
+      }
+    ],
+"""
 MODULE_SYSTEM_PROMPTS: dict[str, str] = {
     "profile": """你是一个专业的网络安全应急响应分析专家。
 请针对【主机画像】数据进行专项分析。
@@ -835,7 +865,7 @@ class PromptBuilder:
 
     @staticmethod
     def _build_module_system_prompt(module_type: str) -> str:
-        """获取模块专属 system_prompt 模板.
+        """获取模块专属 system_prompt 模板（自动注入质量字段）.
 
         Args:
             module_type: 模块名.
@@ -850,6 +880,15 @@ class PromptBuilder:
                 module_type,
             )
             prompt = SYSTEM_PROMPT_TEMPLATE.strip()
+
+        # 在 risk_assessment 对象的 threat_type 之后注入质量字段
+        # 匹配： "threat_type": "xxx"}   → 插入 quality 字段后再加 }
+        prompt = re.sub(
+            r'("threat_type"\s*:\s*"[^"]*")(\s*\})',
+            r'\g<1>' + _MODULE_RISK_QUALITY_FIELDS + r'    \g<2>',
+            prompt,
+            count=1,
+        )
         return prompt.strip()
 
     @staticmethod
