@@ -1,0 +1,28 @@
+{
+  "hostname": "DESKTOP-TEST",
+  "os": "windows 10.0.19045",
+  "collected_at": "2026-07-10 10:30:00",
+  "processes": [
+    {"pid": 4, "name": "System", "path": "C:\\Windows\\System32\\ntoskrnl.exe", "command_line": ""},
+    {"pid": 2840, "name": "chrome.exe", "path": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", "command_line": "\"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\" --type=utility"}
+  ],
+  "network_connections": [
+    {"protocol": "TCP", "local_addr": "192.168.1.100", "local_port": 49152, "remote_addr": "203.0.113.50", "remote_port": 443, "state": "ESTABLISHED", "pid": 2840, "process_name": "chrome.exe", "collected_at": "2026-07-10 10:30:00"},
+    {"protocol": "TCP", "local_addr": "192.168.1.100", "local_port": 49153, "remote_addr": "185.220.101.1", "remote_port": 9001, "state": "ESTABLISHED", "pid": 6776, "process_name": "agent_windows.exe", "collected_at": "2026-07-10 10:30:00"},
+    {"protocol": "TCP", "local_addr": "0.0.0.0", "local_port": 3389, "remote_addr": "0.0.0.0", "remote_port": 0, "state": "LISTENING", "pid": 1232, "process_name": "svchost.exe", "collected_at": "2026-07-10 10:30:00"}
+  ],
+  "file_hashes": [
+    {"file_path": "E:\\agent_windows.exe", "file_name": "agent_windows.exe", "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "is_signed": 0, "signer": "", "file_size": 245760, "product_name": "", "product_version": "", "collected_at": "2026-07-10 10:30:00"},
+    {"file_path": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", "file_name": "chrome.exe", "sha256": "a1b2c3d4e5f6789012345678901234567890abcdef012345678901234567890", "is_signed": 1, "signer": "Google LLC", "file_size": 2048000, "product_name": "Google Chrome", "product_version": "120.0.6099.129", "collected_at": "2026-07-10 10:30:00"}
+  ],
+  "wmi_subscriptions": [
+    {"name": "SCM Event Log Consumer", "event_filter": {"Query": "SELECT * FROM __InstanceCreationEvent WITHIN 60 WHERE TargetInstance ISA 'Win32_NTLogEvent'", "QueryLanguage": "WQL"}, "event_consumer": {"Destination": "scm_event_handler.dll", "CommandLineTemplate": ""}, "binding_type": "__FilterToConsumerBinding", "risk_level": "medium", "collected_at": "2026-07-10 10:30:00"}
+  ],
+  "registry_keys": [
+    {"key_path": "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", "value_name": "BaiduYunGuanjia", "value_type": "REG_SZ", "value_data": "\"E:\\BaiduNetdisk.exe\" AutoRun", "last_write_time": "2026-07-03 19:25:00", "collected_at": "2026-07-10 10:30:00"},
+    {"key_path": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\MyService", "value_name": "ImagePath", "value_type": "REG_EXPAND_SZ", "value_data": "E:\\malware.exe", "last_write_time": "2026-07-05 12:34:00", "collected_at": "2026-07-10 10:30:00"}
+  ],
+  "events": [
+    {"timestamp": "2026-07-10 10:00:00", "type": "process_start", "pid": 2840, "process_name": "chrome.exe", "description": "Chrome browser started"}
+  ]
+}

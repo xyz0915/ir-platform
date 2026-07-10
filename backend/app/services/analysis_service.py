@@ -116,7 +116,29 @@ class AnalysisService:
         TimelineEvent.batch_create(host_id, timeline_events)
         logger.info("Built %d timeline events", len(timeline_events))
 
-        # 8. 风险评估
+        # 8. 数据采集增强 — 从 raw_data 提取新表字段并落库
+        # P0-1: 网络连接
+        net_data = raw_data.get("network_connections", [])
+        if isinstance(net_data, list) and net_data:
+            NetworkConnection.batch_create(host_id, net_data)
+            logger.info("Extracted %d network connections", len(net_data))
+        # P0-2: 文件哈希
+        fh_data = raw_data.get("file_hashes", [])
+        if isinstance(fh_data, list) and fh_data:
+            FileHash.batch_create(host_id, fh_data)
+            logger.info("Extracted %d file hashes", len(fh_data))
+        # P1-3: WMI 订阅
+        wmi_data = raw_data.get("wmi_subscriptions", [])
+        if isinstance(wmi_data, list) and wmi_data:
+            WmiSubscription.batch_create(host_id, wmi_data)
+            logger.info("Extracted %d WMI subscriptions", len(wmi_data))
+        # P2-5: 注册表键值
+        reg_data = raw_data.get("registry_keys", [])
+        if isinstance(reg_data, list) and reg_data:
+            RegistryKey.batch_create(host_id, reg_data)
+            logger.info("Extracted %d registry keys", len(reg_data))
+
+        # 9. 风险评估
         findings = {
             "abnormal_processes": abnormal_processes,
             "suspicious_connections": suspicious_connections,
@@ -127,7 +149,7 @@ class AnalysisService:
         }
         risk_result = RiskAssessor.assess(findings)
 
-        # 9. 保存分析结果
+        # 10. 保存分析结果
         result = AnalysisResult.create_or_replace(
             host_id=host_id,
             risk_level=risk_result["risk_level"],
