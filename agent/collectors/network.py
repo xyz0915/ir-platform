@@ -59,7 +59,7 @@ class NetworkCollector(BaseCollector):
         return result
 
     def _get_connections(self) -> list:
-        """获取网络连接列表."""
+        """获取网络连接列表（psutil 优先，失败回退 netstat）."""
         connections = []
         try:
             import psutil
@@ -84,8 +84,55 @@ class NetworkCollector(BaseCollector):
                     })
                 except Exception:
                     continue
+            if not connections:
+                connections = self._get_connections_netstat()
         except ImportError:
-            pass
+            connections = self._get_connections_netstat()
+        return connections
+
+    def _get_connections_netstat(self) -> list:
+        """使用 netstat -ano 作为 Windows 回退方案."""
+        from utils.platform import run_command
+        connections = []
+        if not is_windows():
+            return connections
+        output = run_command("netstat -ano", timeout=15)
+        if output:
+            for line in output.split("\n"):
+                parts = line.split()
+                if len(parts) < 5:
+                    continue
+                proto = parts[0].upper()
+                if proto not in ("TCP", "UDP"):
+                    continue
+                local = parts[1]
+                remote = parts[2]
+                state = parts[3] if proto == "TCP" else "LISTEN"
+                pid_str = parts[-1] if proto == "UDP" else (
+                    parts[4] if len(parts) >= 5 and parts[4].isdigit() else "0"
+                )
+                # 对于 TCP LISTENING → ESTABLISHED 多词状态
+                if proto == "TCP" and not pid_str.isdigit():
+                    # 找最后那个纯数字字段
+                    for p in reversed(parts):
+                        if p.isdigit():
+                            pid_str = p
+                            break
+                try:
+                    pid = int(pid_str)
+                except ValueError:
+                    pid = 0
+
+                la, lp = _split_addr(local)
+                ra, rp = _split_addr(remote)
+
+                connections.append({
+                    "protocol": proto,
+                    "local_address": la, "local_port": lp,
+                    "remote_address": ra, "remote_port": rp,
+                    "state": state,
+                    "pid": pid, "process_name": "",
+                })
         return connections
 
     def _get_interfaces(self) -> list:
@@ -230,3 +277,99 @@ class NetworkCollector(BaseCollector):
                             "metric": 0,
                         })
         return routes
+
+    def _get_interfaces_fallback(self) -> list:
+        """使用 ipconfig 作为 Windows 网卡回退方案."""
+        interfaces = []
+        if not is_windows():
+            return interfaces
+        output = run_command("ipconfig /all", timeout=15)
+        if output:
+            current: dict[str, Any] = {}
+            for line in output.split("\n"):
+                line = line.strip()
+                if not line:
+                    if current:
+                        interfaces.append(current)
+                        current = {}
+                    continue
+                # 检测新适配器段
+                if "adapter" in line.lower() and ":" in line:
+                    if current:
+                        interfaces.append(current)
+                    name = line.split(":")[-1].strip().rstrip(":")
+                    current = {"name": name or line, "ip": "", "mac": "", "netmask": "", "gateway": "", "isup": True, "speed": 0}
+                    continue
+                if not current:
+                    current = {"name": "", "ip": "", "mac": "", "netmask": "", "gateway": "", "isup": True, "speed": 0}
+                lower = line.lower()
+                parts = line.split(":", 1)
+                val = parts[1].strip() if len(parts) > 1 else ""
+                if "physical" in lower:
+                    current["mac"] = val
+                elif "ipv4" in lower and "address" in lower:
+                    current["ip"] = val.split("(")[0].strip()
+                elif "subnet" in lower:
+                    current["netmask"] = val
+                elif "default gateway" in lower:
+                    current["gateway"] = val
+            if current:
+                interfaces.append(current)
+        return [i for i in interfaces if i.get("name")]
+
+    def _get_interfaces(self) -> list:
+        """获取网卡接口信息（psutil 优先，失败回退 ipconfig）."""
+        interfaces = []
+        try:
+            import psutil
+            import socket as sock_module
+
+            stats = psutil.net_if_stats()
+            addrs = psutil.net_if_addrs()
+
+            for name, stat in stats.items():
+                iface: dict[str, Any] = {
+                    "name": name,
+                    "ip": "",
+                    "mac": "",
+                    "netmask": "",
+                    "gateway": "",
+                    "isup": stat.isup,
+                    "speed": stat.speed,
+                }
+                if name in addrs:
+                    for addr in addrs[name]:
+                        if addr.family == sock_module.AF_INET:
+                            iface["ip"] = addr.address
+                            iface["netmask"] = addr.netmask
+                        elif hasattr(sock_module, "AF_PACKET") and addr.family == sock_module.AF_PACKET:
+                            iface["mac"] = addr.address
+                        elif addr.family == getattr(psutil, "AF_LINK", -1):
+                            iface["mac"] = addr.address
+                interfaces.append(iface)
+
+            if not interfaces:
+                interfaces = self._get_interfaces_fallback()
+        except ImportError:
+            interfaces = self._get_interfaces_fallback()
+        return interfaces
+
+
+def _split_addr(addr: str) -> tuple:
+    """拆分 '192.168.1.1:80' 为 ('192.168.1.1', 80)."""
+    if ":" in addr:
+        # IPv4 或 [IPv6]:port
+        if addr.startswith("["):
+            host, rest = addr[1:].split("]", 1)
+            port_str = rest.lstrip(":")
+            try:
+                return host, int(port_str)
+            except ValueError:
+                return host, 0
+        else:
+            host, port_str = addr.rsplit(":", 1)
+            try:
+                return host, int(port_str)
+            except ValueError:
+                return addr, 0
+    return addr, 0
