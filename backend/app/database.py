@@ -635,6 +635,25 @@ def _alter_ai_analysis_reports_table(conn: sqlite3.Connection) -> None:
             logger.info("Added column '%s' to ai_analysis_reports table", col_name)
 
 
+def _alter_ai_tasks_table(conn: sqlite3.Connection) -> None:
+    """检测并添加 ai_tasks 表的新增列（mode, focus_area）."""
+    cursor = conn.execute("PRAGMA table_info(ai_tasks)")
+    existing_columns: set[str] = {row["name"] for row in cursor.fetchall()}
+
+    new_columns: list[tuple[str, str]] = [
+        ("mode", "TEXT DEFAULT 'standard'"),
+        ("focus_area", "TEXT"),
+        ("base_report_id", "INTEGER"),
+    ]
+
+    for col_name, col_type in new_columns:
+        if col_name not in existing_columns:
+            conn.execute(
+                f"ALTER TABLE ai_tasks ADD COLUMN {col_name} {col_type}"
+            )
+            logger.info("Added column '%s' to ai_tasks table", col_name)
+
+
 def _alter_ai_config_profiles_table(conn: sqlite3.Connection) -> None:
     """检测并添加 ai_config_profiles 表的新增列（owner_user_id, is_public）."""
     cursor = conn.execute("PRAGMA table_info(ai_config_profiles)")
@@ -809,6 +828,8 @@ def init_db() -> None:
         _migrate_old_ai_config(conn)
         # ALTER ai_analysis_reports 添加新列
         _alter_ai_analysis_reports_table(conn)
+        # ALTER ai_tasks 添加 mode/focus_area/base_report_id 列
+        _alter_ai_tasks_table(conn)
         # ALTER ai_config_profiles 添加权限隔离列
         _alter_ai_config_profiles_table(conn)
         conn.commit()

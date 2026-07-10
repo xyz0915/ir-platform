@@ -78,12 +78,12 @@ class AiTaskService:
             host_id=host_id,
             profile_id=profile_id,
             masked_mode=masked_int,
+            mode=mode,
+            focus_area=focus_area,
+            base_report_id=base_report_id,
         )
         task_id_str = str(task["id"])
-        task["mode"] = mode
-        task["focus_area"] = focus_area
-        task["base_report_id"] = base_report_id
-        logger.info("AI task %s created for host %d", task_id_str, host_id)
+        logger.info("AI task %s created for host %d (mode=%s, focus_area=%s)", task_id_str, host_id, mode, focus_area)
 
         # 创建流队列和取消标志
         cls._task_streams[task_id_str] = asyncio.Queue()

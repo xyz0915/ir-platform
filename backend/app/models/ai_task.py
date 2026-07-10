@@ -20,6 +20,9 @@ class AiTask:
         host_id: int,
         profile_id: Optional[int] = None,
         masked_mode: int = 0,
+        mode: str = "standard",
+        focus_area: Optional[str] = None,
+        base_report_id: Optional[int] = None,
     ) -> dict:
         """创建新的AI分析任务.
 
@@ -27,6 +30,9 @@ class AiTask:
             host_id: 主机ID.
             profile_id: 使用的AI配置Profile ID（None 则使用激活配置）.
             masked_mode: 是否启用脱敏（0=否, 1=是）.
+            mode: 分析模式（standard/full/module）.
+            focus_area: 模块分析时的目标模块类型.
+            base_report_id: 对比分析时的基准报告ID.
 
         Returns:
             创建的任务字典.
@@ -35,10 +41,12 @@ class AiTask:
             cursor = conn.execute(
                 """
                 INSERT INTO ai_tasks
-                (host_id, profile_id, status, progress, progress_message, masked_mode)
-                VALUES (?, ?, ?, 0, '任务已提交，等待执行...', ?)
+                (host_id, profile_id, status, progress, progress_message, masked_mode,
+                 mode, focus_area, base_report_id)
+                VALUES (?, ?, ?, 0, '任务已提交，等待执行...', ?, ?, ?, ?)
                 """,
-                (host_id, profile_id, TaskStatus.PENDING.value, masked_mode),
+                (host_id, profile_id, TaskStatus.PENDING.value, masked_mode,
+                 mode, focus_area, base_report_id),
             )
             task_id = cursor.lastrowid
         return AiTask.get_by_id(task_id)
