@@ -48,9 +48,10 @@ ir_platform/
 
 ### 后端启动
 
+> 后端统一入口是 `backend/run.py`（`python run.py`）。它会在启动时自动 `load_dotenv()` 读取 `backend/.env`，因此威胁情报 API Key（如 `THREATBOOK_KEY`）等敏感配置无需手动 export，即可被后端正确加载。**请勿直接裸 `uvicorn app.main:app` 启动**，否则会跳过 `.env` 加载，导致情报 Key 缺失。
+
 ```bash
 cd backend
-pip install -r requirements.txt
 python run.py
 ```
 
@@ -76,6 +77,33 @@ python agent.py --output result.json          # 采集全部
 python agent.py --collect system_info,processes  # 采集指定类别
 python build.py                                 # 打包为单文件
 ```
+
+> Agent 为按需手动运行的采集端，**不纳入一键启动**；在「主机详情」页点「下载 Agent / 导入 JSON」时使用。
+
+## 一键启动（推荐）
+
+仓库根目录提供了跨平台一键启动编排器 `start.py`（纯标准库，无第三方依赖），自动完成：创建后端 venv → 安装后端依赖 → 安装前端依赖 → 同时拉起前后端，并转发日志、支持 `Ctrl+C` 优雅退出。
+
+**前置依赖**：Python 3.11+ 、Node 18+（新机 clone 后直接跑即可，脚本会自行 bootstrap）。
+
+- **Windows**
+  ```bat
+  start.bat                 :: 或 python start.py
+  restart.bat               :: 等价于 python start.py --restart（先杀 8000/5173 再启动）
+  ```
+- **Linux / macOS**
+  ```bash
+  bash start.sh             :: 或 python3 start.py
+  python3 start.py --restart   :: 重启
+  ```
+
+常用参数：`--no-backend` / `--no-frontend`（只起一端）、`--host`（默认 0.0.0.0）、`--port`（默认 8000）、`--restart`（先清理端口再启动）。
+
+启动完成后：
+- 后端：http://localhost:8000/docs
+- 前端：http://localhost:5173
+
+**威胁情报 Key**：放到 `backend/.env`（如 `THREATBOOK_KEY=xxx`）。未配置时对应情报源会自动跳过，不影响平台运行。
 
 ## 核心功能
 

@@ -59,3 +59,6 @@ backend/verify_rag.py
 
 # Runtime data directory (databases, vector store) - not source
 backend/data/
+
+# 后端依赖安装标记（bootstrap 产物，非源码）
+.ir_deps_installed
