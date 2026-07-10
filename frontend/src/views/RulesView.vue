@@ -3,7 +3,22 @@
     <div class="card-box">
       <div class="flex-between mb-20">
         <h2 class="page-title">规则管理</h2>
-        <div>
+        <div class="toolbar">
+          <el-input
+            v-model="searchKeyword"
+            placeholder="搜索规则名称 / 中文名 / 描述"
+            clearable
+            style="width: 240px"
+            @keyup.enter="loadRules"
+            @clear="loadRules"
+          >
+            <template #prefix>
+              <el-icon><Search /></el-icon>
+            </template>
+          </el-input>
+          <el-button @click="loadRules">
+            <el-icon><Search /></el-icon> 搜索
+          </el-button>
           <el-select v-model="filterCategory" placeholder="按类别筛选" clearable style="width: 180px" @change="loadRules">
             <el-option label="进程" value="process" />
             <el-option label="执行" value="execution" />
@@ -20,13 +35,40 @@
             <el-option label="权限提升" value="privilege_escalation" />
             <el-option label="影响" value="impact" />
           </el-select>
+          <el-button v-if="isAdmin" type="warning" @click="handleReset">
+            <el-icon><RefreshLeft /></el-icon> 重置为默认
+          </el-button>
           <el-button type="primary" @click="showCreateDialog">
             <el-icon><Plus /></el-icon> 新增规则
           </el-button>
         </div>
       </div>
-      <el-table :data="rules" border stripe v-loading="loading">
-        <el-table-column prop="name" label="规则名称" min-width="180" />
+
+      <!-- 批量操作条 -->
+      <div v-if="selectedRows.length" class="bulk-bar">
+        <span>已选 {{ selectedRows.length }} 条</span>
+        <el-button size="small" type="success" @click="handleBulkEnable(true)">批量启用</el-button>
+        <el-button size="small" type="warning" @click="handleBulkEnable(false)">批量禁用</el-button>
+        <el-button size="small" @click="clearSelection">取消选择</el-button>
+      </div>
+
+      <el-table
+        :data="rules"
+        border
+        stripe
+        v-loading="loading"
+        @selection-change="handleSelectionChange"
+        ref="tableRef"
+      >
+        <el-table-column type="selection" width="45" />
+        <el-table-column label="规则名称" min-width="200">
+          <template #default="{ row }">
+            <div class="rule-name">
+              <span class="rule-label">{{ row.label || row.name }}</span>
+              <span v-if="row.label && row.label !== row.name" class="rule-key">{{ row.name }}</span>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column prop="category" label="类别" width="110">
           <template #default="{ row }">
             <el-tag size="small">{{ row.category }}</el-tag>
@@ -35,7 +77,7 @@
         <el-table-column prop="rule_type" label="类型" width="100" />
         <el-table-column prop="severity" label="严重程度" width="100">
           <template #default="{ row }">
-            <el-tag :type="severityType(row.severity)" size="small">{{ row.severity }}</el-tag>
+            <el-tag :type="severityType(row.severity)" size="small">{{ severityLabel(row.severity) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="MITRE ATT&amp;CK" width="130">
@@ -52,6 +94,12 @@
           </template>
         </el-table-column>
         <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
+        <el-table-column label="来源" width="100">
+          <template #default="{ row }">
+            <el-tag v-if="row.source === 'default'" type="info" size="small">内置默认</el-tag>
+            <el-tag v-else type="success" size="small">用户规则</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="启用" width="80">
           <template #default="{ row }">
             <el-switch
@@ -60,9 +108,17 @@
             />
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="100" fixed="right">
+        <el-table-column label="操作" width="120" fixed="right">
           <template #default="{ row }">
             <el-button size="small" @click="showDetail(row)">查看</el-button>
+            <el-popconfirm
+              title="仅用户规则可删除，确认删除？"
+              @confirm="handleDelete(row)"
+            >
+              <template #reference>
+                <el-button size="small" type="danger" link :disabled="row.source === 'default'">删除</el-button>
+              </template>
+            </el-popconfirm>
           </template>
         </el-table-column>
       </el-table>
@@ -71,13 +127,18 @@
     <!-- 规则详情对话框 -->
     <el-dialog v-model="detailDialogVisible" title="规则详情" width="640px">
       <el-descriptions :column="1" border v-if="currentRule">
-        <el-descriptions-item label="名称">{{ currentRule.name }}</el-descriptions-item>
+        <el-descriptions-item label="名称（英文键）">{{ currentRule.name }}</el-descriptions-item>
+        <el-descriptions-item v-if="currentRule.label" label="中文名称">{{ currentRule.label }}</el-descriptions-item>
         <el-descriptions-item label="描述">{{ currentRule.description }}</el-descriptions-item>
         <el-descriptions-item label="类别">{{ currentRule.category }}</el-descriptions-item>
         <el-descriptions-item label="类型">{{ currentRule.rule_type }}</el-descriptions-item>
-        <el-descriptions-item label="严重程度">{{ currentRule.severity }}</el-descriptions-item>
+        <el-descriptions-item label="严重程度">{{ severityLabel(currentRule.severity) }}</el-descriptions-item>
         <el-descriptions-item v-if="getMitreAttack(currentRule)" label="MITRE ATT&amp;CK">
           {{ getMitreAttack(currentRule) }}
+        </el-descriptions-item>
+        <el-descriptions-item label="来源">
+          <el-tag v-if="currentRule.source === 'default'" type="info" size="small">内置默认</el-tag>
+          <el-tag v-else type="success" size="small">用户规则</el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="条件">
           <pre class="condition-json">{{ JSON.stringify(currentRule.condition, null, 2) }}</pre>
@@ -89,7 +150,10 @@
     <el-dialog v-model="createDialogVisible" title="新增规则" width="640px">
       <el-form :model="createForm" label-width="100px">
         <el-form-item label="规则名称" required>
-          <el-input v-model="createForm.name" />
+          <el-input v-model="createForm.name" placeholder="英文技术键，唯一（如 suspicious_powershell）" />
+        </el-form-item>
+        <el-form-item label="中文名称">
+          <el-input v-model="createForm.label" placeholder="中文展示名（可选）" />
         </el-form-item>
         <el-form-item label="类别" required>
           <el-select v-model="createForm.category">
@@ -150,11 +214,19 @@
 <script setup>
 import { ref, reactive, onMounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Search, RefreshLeft } from '@element-plus/icons-vue'
 import request from '@/api/index'
+import { useAuthStore } from '@/stores/auth'
+
+const authStore = useAuthStore()
+const isAdmin = computed(() => authStore.user?.role === 'admin')
 
 const rules = ref([])
 const loading = ref(false)
 const filterCategory = ref('')
+const searchKeyword = ref('')
+const selectedRows = ref([])
+const tableRef = ref(null)
 
 const detailDialogVisible = ref(false)
 const currentRule = ref(null)
@@ -163,6 +235,7 @@ const createDialogVisible = ref(false)
 const creating = ref(false)
 const createForm = reactive({
   name: '',
+  label: '',
   category: 'process',
   rule_type: 'regex',
   severity: 'medium',
@@ -192,12 +265,44 @@ async function loadRules() {
   try {
     const params = {}
     if (filterCategory.value) params.category = filterCategory.value
+    if (searchKeyword.value.trim()) params.q = searchKeyword.value.trim()
     const res = await request.get('/rules', { params })
     rules.value = res.data
   } catch (error) {
-    // handled
+    // handled by interceptor
   } finally {
     loading.value = false
+  }
+}
+
+function handleSelectionChange(rows) {
+  selectedRows.value = rows
+}
+
+function clearSelection() {
+  tableRef.value?.clearSelection()
+  selectedRows.value = []
+}
+
+async function handleBulkEnable(enabled) {
+  const ids = selectedRows.value.map((r) => r.id)
+  if (!ids.length) return
+  try {
+    await request.put('/rules/bulk-enable', { ids, enabled })
+    ElMessage.success(`已${enabled ? '启用' : '禁用'} ${ids.length} 条规则`)
+    loadRules()
+  } catch (error) {
+    // handled by interceptor
+  }
+}
+
+async function handleReset() {
+  try {
+    await request.post('/rules/reset')
+    ElMessage.success('已重置为默认规则（用户规则保留）')
+    loadRules()
+  } catch (error) {
+    // handled by interceptor (403 非管理员等)
   }
 }
 
@@ -208,6 +313,7 @@ function showDetail(rule) {
 
 function showCreateDialog() {
   createForm.name = ''
+  createForm.label = ''
   createForm.category = 'process'
   createForm.rule_type = 'regex'
   createForm.severity = 'medium'
@@ -217,13 +323,13 @@ function showCreateDialog() {
 }
 
 /**
- * 从规则的 condition._meta.mitre_attack 中提取 MITRE ATT&CK 编号.
- * 支持两种存储位置：
- * 1. condition._meta.mitre_attack（新增规则）
- * 2. 直接存储在 condition.mitre_attack（兼容旧格式）
+ * 从规则中提取 MITRE ATT&CK 编号（T-P2-3 顶层字段优先，兼容 condition 内嵌）.
+ * 读取优先级：顶层 mitre_attack → condition._meta.mitre_attack → condition.mitre_attack
  */
 function getMitreAttack(rule) {
-  if (!rule || !rule.condition) return null
+  if (!rule) return null
+  if (rule.mitre_attack) return rule.mitre_attack
+  if (!rule.condition) return null
   const cond = typeof rule.condition === 'string'
     ? (() => { try { return JSON.parse(rule.condition) } catch { return {} } })()
     : rule.condition
@@ -252,6 +358,7 @@ async function handleCreate() {
   try {
     await request.post('/rules', {
       name: createForm.name,
+      label: createForm.label || undefined,
       category: createForm.category,
       rule_type: createForm.rule_type,
       condition,
@@ -262,7 +369,7 @@ async function handleCreate() {
     createDialogVisible.value = false
     loadRules()
   } catch (error) {
-    // handled
+    // handled by interceptor
   } finally {
     creating.value = false
   }
@@ -277,6 +384,20 @@ async function handleToggle(rule, enabled) {
   }
 }
 
+async function handleDelete(rule) {
+  if (rule.source === 'default') {
+    ElMessage.warning('默认规则不可删除，请使用「重置为默认」')
+    return
+  }
+  try {
+    await request.delete(`/rules/${rule.id}`)
+    ElMessage.success('规则已删除')
+    loadRules()
+  } catch (error) {
+    // handled by interceptor
+  }
+}
+
 function severityType(severity) {
   const map = {
     critical: 'danger',
@@ -286,9 +407,47 @@ function severityType(severity) {
   }
   return map[severity] || 'info'
 }
+
+function severityLabel(severity) {
+  const map = {
+    critical: '严重',
+    high: '高危',
+    medium: '中危',
+    low: '低危'
+  }
+  return map[severity] || severity
+}
 </script>
 
 <style scoped>
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background: #ecf5ff;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #409eff;
+}
+.rule-name {
+  display: flex;
+  flex-direction: column;
+}
+.rule-label {
+  font-weight: 600;
+}
+.rule-key {
+  font-size: 12px;
+  color: #909399;
+}
 .condition-json {
   background: #f5f7fa;
   padding: 10px;

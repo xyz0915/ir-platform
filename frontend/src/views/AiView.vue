@@ -1,257 +1,1347 @@
 <template>
   <div class="page-container">
-    <div class="card-box">
-      <h2 class="page-title mb-20">AI 分析配置</h2>
+    <h2 class="page-title mb-20">AI 分析配置</h2>
 
-      <!-- 安全警告 -->
-      <el-alert
-        v-if="config && config.enabled === 1"
-        type="warning"
-        :closable="false"
-        class="mb-20"
-      >
-        <strong>⚠️ AI 分析功能已开启</strong>
-        开启后，主机取证数据将发送至外部 AI 服务进行分析。请确保：
-        1) 您已获得授权合规使用该数据；2) AI 服务提供商可信；3) 敏感数据不会泄露。
-      </el-alert>
-
-      <el-alert
-        v-if="!config || config.enabled === 0"
-        type="info"
-        :closable="false"
-        class="mb-20"
-      >
-        AI 分析功能当前<strong>已关闭</strong>。需手动开启后才能使用一键 AI 分析功能。
-      </el-alert>
-
-      <!-- AI 功能开关 -->
-      <div class="flex-between mb-20">
-        <div>
-          <span class="switch-label">AI 分析功能</span>
-          <el-switch
-            :model-value="config?.enabled === 1"
-            @change="handleToggle"
-            active-color="#E6A23C"
-            inactive-color="#909399"
-            :loading="toggleLoading"
-          />
-          <el-tag v-if="config?.enabled === 1" type="warning" size="small" class="ml-10">已开启 - 数据将发送至外部AI服务</el-tag>
-          <el-tag v-else type="info" size="small" class="ml-10">已关闭</el-tag>
+    <el-tabs v-model="activeTab" class="ai-tabs">
+      <!-- ============================================================ -->
+      <!-- 配置 Tab -->
+      <!-- ============================================================ -->
+      <el-tab-pane label="配置" name="config">
+        <!-- Profile 切换区 -->
+        <div class="profile-bar card-box mb-20">
+          <div class="profile-bar-left">
+            <span class="profile-label">当前配置：</span>
+            <el-select
+              v-model="selectedProfileId"
+              placeholder="选择 AI 配置"
+              class="profile-select"
+              @change="onProfileSelect"
+              :loading="profileLoading"
+            >
+              <el-option
+                v-for="p in store.profiles"
+                :key="p.id"
+                :label="profileLabel(p)"
+                :value="p.id"
+              />
+            </el-select>
+            <el-tag v-if="store.activeProfileId === selectedProfileId" type="success" size="small" class="ml-10">
+              活跃中
+            </el-tag>
+          </div>
+          <div class="profile-bar-right">
+            <el-button type="primary" size="small" @click="openAddDialog">新增配置</el-button>
+            <el-button
+              size="small"
+              @click="openEditDialog"
+              :disabled="!selectedProfileId"
+            >编辑</el-button>
+            <el-button
+              size="small"
+              @click="handleSetActive"
+              :disabled="!selectedProfileId || store.activeProfileId === selectedProfileId"
+            >设为活跃</el-button>
+            <el-popconfirm
+              title="确认删除该配置？此操作不可撤销"
+              @confirm="handleDeleteProfile"
+              :disabled="store.profiles.length <= 1"
+            >
+              <template #reference>
+                <el-button
+                  type="danger"
+                  size="small"
+                  :disabled="!selectedProfileId || store.profiles.length <= 1"
+                >删除</el-button>
+              </template>
+            </el-popconfirm>
+          </div>
         </div>
-      </div>
 
-      <!-- 配置表单 -->
+        <!-- AI 功能开关 -->
+        <div class="switch-row card-box mb-20">
+          <div class="switch-left">
+            <span class="switch-label">AI 分析功能</span>
+            <el-switch
+              v-model="aiSwitchOn"
+              @change="handleToggleAi"
+              active-color="#13ce66"
+              inactive-color="#909399"
+              :loading="toggleLoading"
+              :disabled="!canToggleAi"
+            />
+            <el-tag v-if="aiSwitchOn" type="success" size="small" class="ml-10">已开启</el-tag>
+            <el-tag v-else type="info" size="small" class="ml-10">已关闭</el-tag>
+          </div>
+          <div class="switch-right">
+            <span class="switch-hint" v-if="!canToggleAi && !aiSwitchOn">
+              需要先创建配置并设置 API Base URL 和 API Key
+            </span>
+          </div>
+        </div>
+
+        <!-- 配置表单区 -->
+        <div v-if="currentProfileData" class="card-box mb-20" v-loading="formLoading">
+          <h3 class="section-title">配置详情</h3>
+          <el-form :model="configForm" label-width="140px" class="config-form">
+            <el-form-item label="配置名称">
+              <el-input v-model="configForm.profile_name" placeholder="例如：生产环境 GPT-4o" clearable />
+            </el-form-item>
+
+            <el-form-item label="AI 提供商">
+              <el-select v-model="configForm.provider" filterable allow-create placeholder="选择或输入提供商">
+                <el-option label="OpenAI" value="openai" />
+                <el-option label="DeepSeek" value="deepseek" />
+                <el-option label="通义千问" value="qwen" />
+                <el-option label="智谱 GLM" value="zhipu" />
+                <el-option label="Anthropic" value="anthropic" />
+                <el-option label="Ollama (本地)" value="ollama" />
+                <el-option label="自定义" value="custom" />
+              </el-select>
+              <!-- P2-05: Ollama 本地模型提示 -->
+              <div v-if="configForm.provider === 'ollama'" class="ollama-hint mt-10">
+                <el-alert type="info" :closable="false" show-icon>
+                  <template #title>
+                    使用本地模型
+                  </template>
+                  请确保已启动本地 Ollama 服务：<br/>
+                  <code>ollama pull llama3 &amp;&amp; ollama serve</code><br/>
+                  默认 API 地址: <code>http://localhost:11434/v1</code>
+                </el-alert>
+              </div>
+            </el-form-item>
+
+            <el-form-item label="API Base URL">
+              <el-input v-model="configForm.api_base_url" placeholder="例如: https://api.openai.com/v1" clearable />
+              <div class="form-tip">OpenAI 兼容格式的 API 地址，支持各种大模型服务</div>
+            </el-form-item>
+
+            <el-form-item label="API Key">
+              <el-input
+                v-model="configForm.api_key"
+                type="password"
+                placeholder="输入 API Key"
+                show-password
+                clearable
+              />
+              <div class="form-tip" v-if="currentProfileData.api_key_masked">
+                当前已保存的 Key: <code>{{ currentProfileData.api_key_masked }}</code>
+              </div>
+            </el-form-item>
+
+            <el-form-item label="模型名称">
+              <el-select v-model="configForm.model_name" filterable allow-create placeholder="选择或输入模型名称">
+                <el-option label="gpt-4o" value="gpt-4o" />
+                <el-option label="gpt-4o-mini" value="gpt-4o-mini" />
+                <el-option label="gpt-4-turbo" value="gpt-4-turbo" />
+                <el-option label="gpt-4" value="gpt-4" />
+                <el-option label="gpt-3.5-turbo" value="gpt-3.5-turbo" />
+                <el-option label="deepseek-chat" value="deepseek-chat" />
+                <el-option label="deepseek-reasoner" value="deepseek-reasoner" />
+                <el-option label="qwen-max" value="qwen-max" />
+                <el-option label="qwen-plus" value="qwen-plus" />
+                <el-option label="glm-4" value="glm-4" />
+                <el-option label="claude-3-5-sonnet" value="claude-3-5-sonnet" />
+                <el-option label="claude-3-opus" value="claude-3-opus" />
+              </el-select>
+            </el-form-item>
+
+            <el-form-item label="Max Tokens">
+              <el-slider v-model="configForm.max_tokens" :min="512" :max="16384" :step="256" show-input />
+            </el-form-item>
+
+            <el-form-item label="Temperature">
+              <el-slider v-model="configForm.temperature" :min="0" :max="1" :step="0.1" show-input />
+            </el-form-item>
+
+            <el-form-item label="系统提示词">
+              <div class="prompt-row">
+                <el-input
+                  v-model="configForm.system_prompt"
+                  type="textarea"
+                  :rows="6"
+                  placeholder="自定义 AI 分析的系统提示词（可选，留空使用默认提示词）"
+                  class="prompt-textarea"
+                />
+                <!-- P2-06: 提示词优化按钮 -->
+                <el-button
+                  class="prompt-optimize-btn"
+                  type="warning"
+                  size="small"
+                  :disabled="!selectedProfileId"
+                  @click="openPromptOptimize"
+                >
+                  ✨ 提示词优化
+                </el-button>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <el-button type="primary" @click="handleTestConnection" :loading="testLoading">
+                <el-icon v-if="!testLoading && testResult === 'success'" class="mr-5"><CircleCheck /></el-icon>
+                <el-icon v-if="!testLoading && testResult === 'fail'" class="mr-5"><CircleClose /></el-icon>
+                测试连接
+              </el-button>
+              <el-button type="success" @click="handleSaveConfig" :loading="saveLoading">保存配置</el-button>
+              <el-button @click="handleResetConfig">重置</el-button>
+
+              <!-- 测试结果 -->
+              <span v-if="testResult === 'success'" class="test-result test-success">
+                <el-icon><CircleCheck /></el-icon> 连接成功
+              </span>
+              <span v-if="testResult === 'fail'" class="test-result test-fail">
+                <el-icon><CircleClose /></el-icon> {{ testErrorMsg }}
+              </span>
+            </el-form-item>
+          </el-form>
+        </div>
+
+        <!-- 无 Profile 时的空状态 -->
+        <div v-if="store.profiles.length === 0 && !profileLoading" class="card-box mb-20 empty-state">
+          <el-empty description="尚未创建 AI 配置">
+            <el-button type="primary" @click="openAddDialog">创建第一个配置</el-button>
+          </el-empty>
+        </div>
+
+        <!-- 使用统计区 -->
+        <div class="card-box stats-section">
+          <h3 class="section-title">使用统计</h3>
+
+          <!-- 汇总卡片 -->
+          <el-row :gutter="20" class="stats-cards mb-20">
+            <el-col :span="6">
+              <div class="stat-card">
+                <div class="stat-card-icon" style="background: #ecf5ff;">
+                  <el-icon :size="28" color="#409eff"><Coin /></el-icon>
+                </div>
+                <div class="stat-card-info">
+                  <div class="stat-card-value">{{ formatNumber(stats.totalTokens) }}</div>
+                  <div class="stat-card-label">本月总 Token</div>
+                </div>
+              </div>
+            </el-col>
+            <el-col :span="6">
+              <div class="stat-card">
+                <div class="stat-card-icon" style="background: #f0f9eb;">
+                  <el-icon :size="28" color="#67c23a"><TrendCharts /></el-icon>
+                </div>
+                <div class="stat-card-info">
+                  <div class="stat-card-value">{{ formatNumber(stats.totalCalls) }}</div>
+                  <div class="stat-card-label">总调用次数</div>
+                </div>
+              </div>
+            </el-col>
+            <el-col :span="6">
+              <div class="stat-card">
+                <div class="stat-card-icon" style="background: #fdf6ec;">
+                  <el-icon :size="28" color="#e6a23c"><Timer /></el-icon>
+                </div>
+                <div class="stat-card-info">
+                  <div class="stat-card-value">{{ stats.avgLatency }}<small>ms</small></div>
+                  <div class="stat-card-label">平均延迟</div>
+                </div>
+              </div>
+            </el-col>
+            <el-col :span="6">
+              <div class="stat-card">
+                <div class="stat-card-icon" style="background: #fef0f0;">
+                  <el-icon :size="28" color="#f56c6c"><DataAnalysis /></el-icon>
+                </div>
+                <div class="stat-card-info">
+                  <div class="stat-card-value">{{ stats.successRate }}<small>%</small></div>
+                  <div class="stat-card-label">成功率</div>
+                </div>
+              </div>
+            </el-col>
+          </el-row>
+
+          <!-- 折线图控制 -->
+          <div class="chart-controls mb-10">
+            <span class="chart-label">Token 消耗趋势：</span>
+            <el-radio-group v-model="chartPeriod" @change="loadChartData" size="small">
+              <el-radio-button value="daily">日</el-radio-button>
+              <el-radio-button value="weekly">周</el-radio-button>
+              <el-radio-button value="monthly">月</el-radio-button>
+            </el-radio-group>
+          </div>
+
+          <!-- 折线图 -->
+          <div class="chart-container" v-loading="chartLoading">
+            <v-chart v-if="chartOption" :option="chartOption" autoresize class="token-chart" />
+            <el-empty v-else description="暂无统计数据" :image-size="80" />
+          </div>
+        </div>
+      </el-tab-pane>
+
+      <!-- ============================================================ -->
+      <!-- 审计日志 Tab -->
+      <!-- ============================================================ -->
+      <el-tab-pane label="审计日志" name="audit">
+        <div class="card-box">
+          <h3 class="section-title mb-20">AI 调用审计日志</h3>
+          <el-table
+            :data="auditLogs"
+            v-loading="auditLoading"
+            stripe
+            border
+            class="audit-table"
+            @sort-change="handleAuditSort"
+          >
+            <el-table-column prop="created_at" label="时间" width="170" sortable="custom">
+              <template #default="{ row }">
+                {{ formatTime(row.created_at) }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="host_name" label="主机名" min-width="140" show-overflow-tooltip />
+            <el-table-column prop="model_name" label="模型" width="150" show-overflow-tooltip />
+            <el-table-column prop="tokens_used" label="Token 数" width="100" align="right" sortable="custom">
+              <template #default="{ row }">
+                {{ formatNumber(row.tokens_used) }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="status" label="状态" width="90" align="center">
+              <template #default="{ row }">
+                <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="100" align="center" fixed="right">
+              <template #default="{ row }">
+                <el-button type="primary" link size="small" @click="openAuditDetail(row)">详情</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+
+          <!-- 分页 -->
+          <div class="flex-between mt-15">
+            <div class="text-gray">共 {{ auditPagination.total }} 条记录</div>
+            <el-pagination
+              v-model:current-page="auditPagination.page"
+              v-model:page-size="auditPagination.pageSize"
+              :total="auditPagination.total"
+              :page-sizes="[10, 20, 50, 100]"
+              layout="total, sizes, prev, pager, next"
+              @change="loadAuditLogs"
+              small
+            />
+          </div>
+        </div>
+      </el-tab-pane>
+    </el-tabs>
+
+    <!-- ============================================================ -->
+    <!-- Profile 新增/编辑 Dialog -->
+    <!-- ============================================================ -->
+    <el-dialog
+      v-model="profileDialogVisible"
+      :title="profileDialogMode === 'add' ? '新增 AI 配置' : '编辑 AI 配置'"
+      width="600px"
+      :close-on-click-modal="false"
+      destroy-on-close
+      @closed="resetProfileForm"
+    >
       <el-form
-        :model="form"
-        label-width="140px"
-        :disabled="config?.enabled === 0"
-        v-loading="formLoading"
+        ref="profileFormRef"
+        :model="profileForm"
+        :rules="profileFormRules"
+        label-width="120px"
+        @submit.prevent
       >
-        <el-form-item label="API Base URL">
-          <el-input
-            v-model="form.api_base_url"
-            placeholder="例如: https://api.openai.com/v1"
-            clearable
-          />
-          <div class="form-tip">OpenAI 兼容格式的 API 地址，支持各种大模型服务</div>
+        <el-form-item label="配置名称" prop="profile_name">
+          <el-input v-model="profileForm.profile_name" placeholder="例如：生产环境 GPT-4o" clearable />
         </el-form-item>
-
-        <el-form-item label="API Key">
+        <el-form-item label="AI 提供商" prop="provider">
+          <el-select v-model="profileForm.provider" filterable allow-create placeholder="选择提供商">
+            <el-option label="OpenAI" value="openai" />
+            <el-option label="DeepSeek" value="deepseek" />
+            <el-option label="通义千问" value="qwen" />
+            <el-option label="智谱 GLM" value="zhipu" />
+            <el-option label="Anthropic" value="anthropic" />
+            <el-option label="Ollama (本地)" value="ollama" />
+            <el-option label="自定义" value="custom" />
+          </el-select>
+          <!-- P2-05: Ollama 本地模型提示 -->
+          <div v-if="profileForm.provider === 'ollama'" class="ollama-hint mt-10">
+            <el-alert type="info" :closable="false" show-icon>
+              <template #title>
+                使用本地模型
+              </template>
+              请确保已启动本地 Ollama 服务：<br/>
+              <code>ollama pull llama3 &amp;&amp; ollama serve</code><br/>
+              默认 API 地址: <code>http://localhost:11434/v1</code>
+            </el-alert>
+          </div>
+        </el-form-item>
+        <el-form-item label="API Base URL" prop="api_base_url">
+          <el-input v-model="profileForm.api_base_url" placeholder="https://api.openai.com/v1" clearable />
+        </el-form-item>
+        <el-form-item label="API Key" prop="api_key">
           <el-input
-            v-model="form.api_key"
+            v-model="profileForm.api_key"
             type="password"
             placeholder="输入 API Key"
             show-password
             clearable
           />
-          <div class="form-tip" v-if="config?.api_key_masked">
-            当前已保存的 Key: <code>{{ config.api_key_masked }}</code>
-          </div>
         </el-form-item>
-
         <el-form-item label="模型名称">
-          <el-select v-model="form.model_name" filterable allow-create placeholder="选择或输入模型名称">
+          <el-select v-model="profileForm.model_name" filterable allow-create placeholder="选择或输入模型">
             <el-option label="gpt-4o" value="gpt-4o" />
             <el-option label="gpt-4o-mini" value="gpt-4o-mini" />
-            <el-option label="gpt-4" value="gpt-4" />
-            <el-option label="gpt-3.5-turbo" value="gpt-3.5-turbo" />
+            <el-option label="gpt-4-turbo" value="gpt-4-turbo" />
             <el-option label="deepseek-chat" value="deepseek-chat" />
             <el-option label="deepseek-reasoner" value="deepseek-reasoner" />
             <el-option label="qwen-max" value="qwen-max" />
             <el-option label="qwen-plus" value="qwen-plus" />
             <el-option label="glm-4" value="glm-4" />
-            <el-option label="claude-3-sonnet" value="claude-3-sonnet" />
+            <el-option label="claude-3-5-sonnet" value="claude-3-5-sonnet" />
           </el-select>
         </el-form-item>
-
         <el-form-item label="Max Tokens">
-          <el-slider v-model="form.max_tokens" :min="512" :max="16384" :step="256" show-input />
+          <el-slider v-model="profileForm.max_tokens" :min="512" :max="16384" :step="256" show-input />
         </el-form-item>
-
         <el-form-item label="Temperature">
-          <el-slider v-model="form.temperature" :min="0" :max="1" :step="0.1" show-input />
+          <el-slider v-model="profileForm.temperature" :min="0" :max="1" :step="0.1" show-input />
         </el-form-item>
-
         <el-form-item label="系统提示词">
-          <el-input
-            v-model="form.system_prompt"
-            type="textarea"
-            :rows="6"
-            placeholder="自定义 AI 分析的系统提示词（可选，留空使用默认提示词）"
-          />
+          <div class="prompt-row">
+            <el-input
+              v-model="profileForm.system_prompt"
+              type="textarea"
+              :rows="5"
+              placeholder="自定义系统提示词（可选）"
+              class="prompt-textarea"
+            />
+            <!-- P2-06: 提示词优化按钮 -->
+            <el-button
+              class="prompt-optimize-btn"
+              type="warning"
+              size="small"
+              :disabled="!selectedProfileId && profileDialogMode === 'edit'"
+              @click="openPromptOptimize"
+            >
+              ✨ 提示词优化
+            </el-button>
+          </div>
         </el-form-item>
-
-        <el-form-item>
-          <el-button type="primary" @click="handleSave" :loading="saveLoading">保存配置</el-button>
-          <el-button @click="handleReset">重置</el-button>
+        <!-- P2-08: 公开配置开关 -->
+        <el-form-item label="公开配置">
+          <el-switch
+            v-model="profileForm.is_public"
+            active-text="允许其他用户使用此配置"
+            inactive-text="仅自己可见"
+          />
+          <div class="form-tip">开启后，其他用户可以查看和使用此配置进行 AI 分析</div>
         </el-form-item>
       </el-form>
-    </div>
+      <template #footer>
+        <el-button @click="profileDialogVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          @click="submitProfile"
+          :loading="profileSubmitLoading"
+        >
+          {{ profileDialogMode === 'add' ? '创建' : '保存' }}
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ============================================================ -->
+    <!-- P2-06: 提示词优化 Dialog -->
+    <!-- ============================================================ -->
+    <el-dialog
+      v-model="promptOptimizeVisible"
+      title="✨ 提示词优化"
+      width="750px"
+      :close-on-click-modal="false"
+      destroy-on-close
+      @closed="resetPromptOptimize"
+    >
+      <!-- 步骤 1：输入反馈 -->
+      <div v-if="promptOptStep === 'input'" class="prompt-opt-input">
+        <el-alert type="info" :closable="false" class="mb-15" show-icon>
+          描述你希望 AI 如何改进提示词，系统将根据你的反馈自动优化
+        </el-alert>
+
+        <div class="mb-10">
+          <span class="opt-label">当前提示词：</span>
+        </div>
+        <div class="opt-current-prompt mb-15">
+          <pre>{{ currentPromptText || '(空)' }}</pre>
+        </div>
+
+        <div class="mb-10">
+          <span class="opt-label">优化反馈：</span>
+        </div>
+        <el-input
+          v-model="promptOptimizeFeedback"
+          type="textarea"
+          :rows="4"
+          placeholder="例如：让回答更简洁、增加中文输出、聚焦安全事件分析..."
+        />
+        <div class="flex-center mt-20">
+          <el-button @click="promptOptimizeVisible = false">取消</el-button>
+          <el-button
+            type="primary"
+            @click="handlePromptOptimize"
+            :loading="promptOptLoading"
+            :disabled="!promptOptimizeFeedback.trim()"
+          >
+            开始优化
+          </el-button>
+        </div>
+      </div>
+
+      <!-- 步骤 2：预览对比 -->
+      <div v-else-if="promptOptStep === 'preview'" class="prompt-opt-preview">
+        <el-alert type="success" :closable="false" class="mb-15" show-icon>
+          优化完成，请对比下方结果
+        </el-alert>
+
+        <div class="opt-compare-grid">
+          <div class="opt-compare-col">
+            <div class="opt-compare-header old">📝 原始提示词</div>
+            <div class="opt-compare-content">
+              <pre>{{ currentPromptText || '(空)' }}</pre>
+            </div>
+          </div>
+          <div class="opt-compare-col">
+            <div class="opt-compare-header new">✨ 优化后提示词</div>
+            <div class="opt-compare-content">
+              <pre>{{ optimizedPromptText }}</pre>
+            </div>
+          </div>
+        </div>
+
+        <!-- 历史版本下拉 -->
+        <div class="opt-history-bar mt-15" v-if="promptVersions.length > 0">
+          <span class="opt-label mr-10">历史版本：</span>
+          <el-select
+            v-model="selectedPromptVersion"
+            placeholder="查看历史版本"
+            size="small"
+            class="opt-history-select"
+            @change="onPromptVersionSelect"
+            :loading="promptVersionLoading"
+          >
+            <el-option
+              v-for="v in promptVersions"
+              :key="v.id"
+              :label="v.label || `版本 ${v.id}`"
+              :value="v.id"
+            />
+          </el-select>
+        </div>
+
+        <div class="flex-center mt-20">
+          <el-button @click="handleRevertOptimize">回退</el-button>
+          <el-button type="primary" @click="handleAcceptOptimize">采纳优化结果</el-button>
+        </div>
+      </div>
+
+      <template #footer v-if="false" />
+    </el-dialog>
+
+    <!-- ============================================================ -->
+    <!-- 审计日志详情 Dialog -->
+    <!-- ============================================================ -->
+    <el-dialog
+      v-model="auditDetailVisible"
+      title="审计日志详情"
+      width="800px"
+      :close-on-click-modal="false"
+      destroy-on-close
+    >
+      <div v-if="auditDetail" class="audit-detail">
+        <el-descriptions :column="2" border size="small" class="mb-20">
+          <el-descriptions-item label="时间">{{ formatTime(auditDetail.created_at) }}</el-descriptions-item>
+          <el-descriptions-item label="主机名">{{ auditDetail.host_name || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="模型">{{ auditDetail.model_name || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="Token 数">{{ formatNumber(auditDetail.tokens_used) }}</el-descriptions-item>
+          <el-descriptions-item label="状态">
+            <el-tag :type="statusTagType(auditDetail.status)" size="small">
+              {{ statusLabel(auditDetail.status) }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="耗时">{{ auditDetail.latency_ms ? auditDetail.latency_ms + 'ms' : '-' }}</el-descriptions-item>
+        </el-descriptions>
+
+        <div class="audit-section mb-15">
+          <h4>发送的 Prompt</h4>
+          <div class="audit-content" :class="{ collapsed: !promptExpanded }">
+            <pre>{{ auditDetail.prompt || '(无)' }}</pre>
+          </div>
+          <el-button
+            v-if="isTextLong(auditDetail.prompt)"
+            type="primary"
+            link
+            size="small"
+            @click="promptExpanded = !promptExpanded"
+            class="mt-5"
+          >
+            {{ promptExpanded ? '收起' : '展开全部' }}
+          </el-button>
+        </div>
+
+        <div class="audit-section">
+          <h4>AI 回复</h4>
+          <div class="audit-content" :class="{ collapsed: !responseExpanded }">
+            <pre>{{ auditDetail.response || '(无)' }}</pre>
+          </div>
+          <el-button
+            v-if="isTextLong(auditDetail.response)"
+            type="primary"
+            link
+            size="small"
+            @click="responseExpanded = !responseExpanded"
+            class="mt-5"
+          >
+            {{ responseExpanded ? '收起' : '展开全部' }}
+          </el-button>
+        </div>
+      </div>
+      <div v-else v-loading="auditDetailLoading" style="min-height:200px;" />
+      <template #footer>
+        <el-button @click="auditDetailVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, reactive } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { getAiConfig, saveAiConfig, toggleAi } from '@/api/ai'
+import { ref, reactive, computed, watch, onMounted, nextTick } from 'vue'
+import { ElMessage } from 'element-plus'
+import { CircleCheck, CircleClose, Coin, TrendCharts, Timer, DataAnalysis } from '@element-plus/icons-vue'
+import VChart from 'vue-echarts'
+import 'echarts'
+import dayjs from 'dayjs'
+import {
+  getAiTokenStats,
+  getAiTokenSummary,
+  getAiAuditLogs,
+  getAiAuditLogDetail,
+  testAiConnection,
+  optimizePrompt,
+  getPromptVersions,
+} from '@/api/ai'
+import { useAiStore } from '@/stores/ai'
 
-const config = ref(null)
+const store = useAiStore()
+
+// ============================================================
+// Tab & Profile 状态
+// ============================================================
+const activeTab = ref('config')
+const selectedProfileId = ref(null)
+const profileLoading = ref(false)
+
+// ============================================================
+// AI 开关
+// ============================================================
+const aiSwitchOn = ref(false)
 const toggleLoading = ref(false)
+
+const canToggleAi = computed(() => {
+  const p = currentProfileData.value
+  return !!(p && (p.api_base_url || configForm.api_base_url) && (p.api_key_masked || configForm.api_key))
+})
+
+// ============================================================
+// 配置表单
+// ============================================================
 const formLoading = ref(false)
 const saveLoading = ref(false)
+const testLoading = ref(false)
+const testResult = ref('')     // '' | 'success' | 'fail'
+const testErrorMsg = ref('')
 
-const form = reactive({
+const configForm = reactive({
+  profile_name: '',
+  provider: '',
   api_base_url: '',
   api_key: '',
   model_name: 'gpt-4o',
   max_tokens: 4096,
   temperature: 0.3,
-  system_prompt: ''
+  system_prompt: '',
 })
 
-onMounted(() => {
-  loadConfig()
+const currentProfileData = computed(() => {
+  return store.profiles.find((p) => p.id === selectedProfileId.value) || null
 })
 
-async function loadConfig() {
-  formLoading.value = true
+// ============================================================
+// 使用统计
+// ============================================================
+const chartPeriod = ref('daily')
+const chartLoading = ref(false)
+const chartOption = ref(null)
+
+const stats = reactive({
+  totalTokens: 0,
+  totalCalls: 0,
+  avgLatency: 0,
+  successRate: 0,
+})
+
+// ============================================================
+// 审计日志
+// ============================================================
+const auditLogs = ref([])
+const auditLoading = ref(false)
+const auditPagination = reactive({
+  page: 1,
+  pageSize: 20,
+  total: 0,
+})
+const auditSort = reactive({ field: '', order: '' })
+
+const auditDetailVisible = ref(false)
+const auditDetail = ref(null)
+const auditDetailLoading = ref(false)
+const promptExpanded = ref(false)
+const responseExpanded = ref(false)
+
+// ============================================================
+// Profile 编辑 Dialog
+// ============================================================
+const profileDialogVisible = ref(false)
+const profileDialogMode = ref('add')  // 'add' | 'edit'
+const profileSubmitLoading = ref(false)
+const profileFormRef = ref(null)
+
+const profileForm = reactive({
+  profile_name: '',
+  provider: 'openai',
+  api_base_url: '',
+  api_key: '',
+  model_name: 'gpt-4o',
+  max_tokens: 4096,
+  temperature: 0.3,
+  system_prompt: '',
+  is_public: true,
+})
+
+const profileFormRules = {
+  profile_name: [{ required: true, message: '请输入配置名称', trigger: 'blur' }],
+  api_base_url: [{ required: true, message: '请输入 API Base URL', trigger: 'blur' }],
+}
+
+// ============================================================
+// P2-06: 提示词优化状态
+// ============================================================
+const promptOptimizeVisible = ref(false)
+const promptOptStep = ref('input')        // 'input' | 'preview'
+const promptOptimizeFeedback = ref('')
+const optimizedPromptText = ref('')
+const promptOptLoading = ref(false)
+const promptVersions = ref([])
+const promptVersionLoading = ref(false)
+const selectedPromptVersion = ref('')
+
+const currentPromptText = computed(() => {
+  // 优先取当前编辑中的 system_prompt
+  return configForm.system_prompt || currentProfileData.value?.system_prompt || ''
+})
+
+// ============================================================
+// 初始化
+// ============================================================
+onMounted(async () => {
+  profileLoading.value = true
   try {
-    const res = await getAiConfig()
-    config.value = res.data
-    if (res.data) {
-      form.api_base_url = res.data.api_base_url || ''
-      form.model_name = res.data.model_name || 'gpt-4o'
-      form.max_tokens = res.data.max_tokens || 4096
-      form.temperature = res.data.temperature || 0.3
-      form.system_prompt = res.data.system_prompt || ''
-      form.api_key = '' // 不回显已保存的Key
+    await store.fetchProfiles()
+    if (store.profiles.length > 0) {
+      selectedProfileId.value = store.activeProfileId || store.profiles[0].id
+      aiSwitchOn.value = store.isAiEnabled
+      fillConfigForm()
     }
-  } catch (error) {
-    // handled
+    await loadStats()
   } finally {
-    formLoading.value = false
+    profileLoading.value = false
+  }
+})
+
+// ============================================================
+// Profile 选择 & 表单填充
+// ============================================================
+function onProfileSelect(id) {
+  fillConfigForm()
+  testResult.value = ''
+  testErrorMsg.value = ''
+}
+
+function fillConfigForm() {
+  const p = currentProfileData.value
+  if (!p) return
+  configForm.profile_name = p.profile_name || ''
+  configForm.provider = p.provider || ''
+  configForm.api_base_url = p.api_base_url || ''
+  configForm.api_key = ''
+  configForm.model_name = p.model_name || 'gpt-4o'
+  configForm.max_tokens = p.max_tokens || 4096
+  configForm.temperature = p.temperature ?? 0.3
+  configForm.system_prompt = p.system_prompt || ''
+}
+
+function handleResetConfig() {
+  fillConfigForm()
+  testResult.value = ''
+  testErrorMsg.value = ''
+}
+
+function profileLabel(p) {
+  let label = p.profile_name || `配置 #${p.id}`
+  if (p.provider) label += ` (${p.provider})`
+  return label
+}
+
+// ============================================================
+// AI 开关
+// ============================================================
+async function handleToggleAi(val) {
+  if (val) {
+    // 开启：检查配置完整性
+    if (!canToggleAi.value) {
+      ElMessage.warning('请先完善 API Base URL 和 API Key')
+      aiSwitchOn.value = false
+      return
+    }
+    if (!store.activeProfileId || store.activeProfileId !== selectedProfileId.value) {
+      toggleLoading.value = true
+      try {
+        await store.setActiveProfile(selectedProfileId.value)
+        ElMessage.success('AI 分析功能已开启')
+      } catch (e) {
+        ElMessage.error(e?.response?.data?.message || '开启失败')
+        aiSwitchOn.value = false
+      } finally {
+        toggleLoading.value = false
+      }
+    }
+  } else {
+    // 关闭：清除活跃状态（UI 层面）
+    ElMessage.info('AI 分析功能已关闭，可通过"设为活跃"重新开启')
   }
 }
 
-async function handleToggle(val) {
-  const enabled = val ? 1 : 0
-
-  if (enabled === 1) {
-    // 开启时弹确认框
-    try {
-      await ElMessageBox.confirm(
-        '开启 AI 分析功能后，主机取证数据（包括进程、网络、注册表、日志等敏感信息）将发送至您配置的外部 AI 大模型服务进行深度分析。\n\n请注意：\n1. 数据将通过互联网传输至第三方 AI 服务\n2. 请确保您已获得合规授权\n3. 请确保 AI 服务提供商的数据安全政策可信\n\n是否确认开启？',
-        '⚠️ 安全确认',
-        {
-          confirmButtonText: '确认开启',
-          cancelButtonText: '取消',
-          type: 'warning',
-          dangerouslyUseHTMLString: false,
-        }
-      )
-    } catch {
-      return // 用户取消
-    }
-  }
-
-  toggleLoading.value = true
+// ============================================================
+// 设为活跃
+// ============================================================
+async function handleSetActive() {
+  if (!selectedProfileId.value) return
   try {
-    const res = await toggleAi(enabled)
-    config.value = res.data
-    ElMessage.success(enabled === 1 ? 'AI 分析功能已开启' : 'AI 分析功能已关闭')
-  } catch (error) {
-    ElMessage.error(error.response?.data?.message || '操作失败')
-  } finally {
-    toggleLoading.value = false
+    await store.setActiveProfile(selectedProfileId.value)
+    aiSwitchOn.value = true
+    ElMessage.success('已设为活跃配置')
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '操作失败')
   }
 }
 
-async function handleSave() {
-  if (!form.api_base_url) {
-    ElMessage.warning('请输入 API Base URL')
+// ============================================================
+// 删除 Profile
+// ============================================================
+async function handleDeleteProfile() {
+  if (store.profiles.length <= 1) {
+    ElMessage.warning('不能删除最后一个配置')
     return
   }
-  if (!form.api_key && !(config.value && config.value.api_key_masked)) {
-    ElMessage.warning('请输入 API Key')
-    return
+  if (!selectedProfileId.value) return
+  try {
+    await store.deleteProfileById(selectedProfileId.value)
+    selectedProfileId.value = store.profiles.length > 0 ? store.profiles[0].id : null
+    fillConfigForm()
+    aiSwitchOn.value = store.isAiEnabled
+    ElMessage.success('配置已删除')
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '删除失败')
   }
+}
 
+// ============================================================
+// 测试连接
+// ============================================================
+async function handleTestConnection() {
+  if (!selectedProfileId.value) {
+    ElMessage.warning('请先选择或创建配置')
+    return
+  }
+  testLoading.value = true
+  testResult.value = ''
+  testErrorMsg.value = ''
+  try {
+    await testAiConnection(selectedProfileId.value)
+    testResult.value = 'success'
+    ElMessage.success('连接测试成功')
+  } catch (e) {
+    testResult.value = 'fail'
+    testErrorMsg.value = e?.response?.data?.message || e?.message || '连接失败'
+    ElMessage.error(testErrorMsg.value)
+  } finally {
+    testLoading.value = false
+  }
+}
+
+// ============================================================
+// 保存配置
+// ============================================================
+async function handleSaveConfig() {
+  if (!selectedProfileId.value) return
   saveLoading.value = true
   try {
     const data = {
-      api_base_url: form.api_base_url,
-      model_name: form.model_name,
-      max_tokens: form.max_tokens,
-      temperature: form.temperature,
-      system_prompt: form.system_prompt,
-      enabled: config.value?.enabled || 0
+      profile_name: configForm.profile_name,
+      provider: configForm.provider,
+      api_base_url: configForm.api_base_url,
+      model_name: configForm.model_name,
+      max_tokens: configForm.max_tokens,
+      temperature: configForm.temperature,
+      system_prompt: configForm.system_prompt,
     }
-    // 只在用户输入了新Key时才发送
-    if (form.api_key) {
-      data.api_key = form.api_key
-    } else if (!config.value?.api_key_masked) {
-      ElMessage.warning('请输入 API Key')
-      return
+    if (configForm.api_key) {
+      data.api_key = configForm.api_key
     }
-
-    const res = await saveAiConfig(data)
-    config.value = res.data
-    form.api_key = '' // 清空，不保留明文
-    ElMessage.success('AI 配置已保存')
-  } catch (error) {
-    ElMessage.error(error.response?.data?.message || '保存失败')
+    await store.updateProfile(selectedProfileId.value, data)
+    configForm.api_key = ''
+    aiSwitchOn.value = store.isAiEnabled
+    ElMessage.success('配置已保存')
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '保存失败')
   } finally {
     saveLoading.value = false
   }
 }
 
-function handleReset() {
-  if (config.value) {
-    form.api_base_url = config.value.api_base_url || ''
-    form.model_name = config.value.model_name || 'gpt-4o'
-    form.max_tokens = config.value.max_tokens || 4096
-    form.temperature = config.value.temperature || 0.3
-    form.system_prompt = config.value.system_prompt || ''
-    form.api_key = ''
-  } else {
-    form.api_base_url = ''
-    form.api_key = ''
-    form.model_name = 'gpt-4o'
-    form.max_tokens = 4096
-    form.temperature = 0.3
-    form.system_prompt = ''
+// ============================================================
+// Profile Dialog 操作
+// ============================================================
+function openAddDialog() {
+  profileDialogMode.value = 'add'
+  resetProfileForm()
+  profileDialogVisible.value = true
+}
+
+function openEditDialog() {
+  if (!selectedProfileId.value) return
+  profileDialogMode.value = 'edit'
+  const p = currentProfileData.value
+  if (p) {
+    profileForm.profile_name = p.profile_name || ''
+    profileForm.provider = p.provider || 'openai'
+    profileForm.api_base_url = p.api_base_url || ''
+    profileForm.api_key = ''
+    profileForm.model_name = p.model_name || 'gpt-4o'
+    profileForm.max_tokens = p.max_tokens || 4096
+    profileForm.temperature = p.temperature ?? 0.3
+    profileForm.system_prompt = p.system_prompt || ''
+    profileForm.is_public = p.is_public !== undefined ? !!p.is_public : true
+  }
+  profileDialogVisible.value = true
+}
+
+function resetProfileForm() {
+  profileForm.profile_name = ''
+  profileForm.provider = 'openai'
+  profileForm.api_base_url = ''
+  profileForm.api_key = ''
+  profileForm.model_name = 'gpt-4o'
+  profileForm.max_tokens = 4096
+  profileForm.temperature = 0.3
+  profileForm.system_prompt = ''
+  profileForm.is_public = true
+  profileFormRef.value?.resetFields()
+}
+
+async function submitProfile() {
+  const valid = await profileFormRef.value?.validate().catch(() => false)
+  if (!valid) return
+
+  profileSubmitLoading.value = true
+  try {
+    const data = {
+      profile_name: profileForm.profile_name,
+      provider: profileForm.provider,
+      api_base_url: profileForm.api_base_url,
+      model_name: profileForm.model_name,
+      max_tokens: profileForm.max_tokens,
+      temperature: profileForm.temperature,
+      system_prompt: profileForm.system_prompt,
+      is_public: profileForm.is_public ? 1 : 0,
+    }
+    if (profileForm.api_key) {
+      data.api_key = profileForm.api_key
+    }
+
+    if (profileDialogMode.value === 'add') {
+      const created = await store.createProfile(data)
+      selectedProfileId.value = created.id
+    } else {
+      await store.updateProfile(selectedProfileId.value, data)
+    }
+
+    profileDialogVisible.value = false
+    fillConfigForm()
+    aiSwitchOn.value = store.isAiEnabled
+    ElMessage.success(profileDialogMode.value === 'add' ? '配置已创建' : '配置已更新')
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '操作失败')
+  } finally {
+    profileSubmitLoading.value = false
   }
 }
+
+// ============================================================
+// 使用统计
+// ============================================================
+async function loadStats() {
+  try {
+    const res = await getAiTokenStats()
+    const d = res.data || {}
+    stats.totalTokens = d.total_tokens_this_month || d.total_tokens || 0
+    stats.totalCalls = d.total_calls_this_month || d.total_calls || 0
+    stats.avgLatency = d.avg_latency_ms || d.avg_latency || 0
+    stats.successRate = d.success_rate != null ? Number(d.success_rate).toFixed(1) : '0.0'
+  } catch {
+    // 静默失败
+  }
+
+  await loadChartData()
+}
+
+async function loadChartData() {
+  chartLoading.value = true
+  try {
+    const res = await getAiTokenSummary(chartPeriod.value)
+    const data = res.data || []
+    buildChartOption(data)
+  } catch {
+    chartOption.value = null
+  } finally {
+    chartLoading.value = false
+  }
+}
+
+function buildChartOption(data) {
+  // 数据格式: [{ period: '2024-01-01', tokens: 1000, calls: 5 }, ...]
+  if (!Array.isArray(data) || data.length === 0) {
+    chartOption.value = null
+    return
+  }
+
+  const xData = data.map((d) => d.period || d.date || '')
+  const tokenData = data.map((d) => d.tokens || d.total_tokens || 0)
+  const callData = data.map((d) => d.calls || d.total_calls || 0)
+
+  chartOption.value = {
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'cross' },
+    },
+    legend: {
+      data: ['Token 消耗', '调用次数'],
+      bottom: 0,
+    },
+    grid: {
+      left: '3%',
+      right: '4%',
+      bottom: '40px',
+      top: '10px',
+      containLabel: true,
+    },
+    xAxis: {
+      type: 'category',
+      data: xData,
+      boundaryGap: false,
+      axisLabel: {
+        rotate: xData.length > 10 ? 45 : 0,
+      },
+    },
+    yAxis: [
+      {
+        type: 'value',
+        name: 'Token',
+        axisLabel: {
+          formatter: (v) => formatLargeNumber(v),
+        },
+      },
+      {
+        type: 'value',
+        name: '次数',
+        axisLabel: {
+          formatter: '{value}',
+        },
+      },
+    ],
+    series: [
+      {
+        name: 'Token 消耗',
+        type: 'line',
+        data: tokenData,
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 6,
+        lineStyle: { color: '#409eff', width: 2 },
+        itemStyle: { color: '#409eff' },
+        areaStyle: {
+          color: {
+            type: 'linear',
+            x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [
+              { offset: 0, color: 'rgba(64,158,255,0.3)' },
+              { offset: 1, color: 'rgba(64,158,255,0.05)' },
+            ],
+          },
+        },
+      },
+      {
+        name: '调用次数',
+        type: 'line',
+        yAxisIndex: 1,
+        data: callData,
+        smooth: true,
+        symbol: 'diamond',
+        symbolSize: 6,
+        lineStyle: { color: '#67c23a', width: 2 },
+        itemStyle: { color: '#67c23a' },
+      },
+    ],
+  }
+}
+
+// ============================================================
+// 审计日志
+// ============================================================
+watch(activeTab, (tab) => {
+  if (tab === 'audit') {
+    loadAuditLogs()
+  }
+})
+
+async function loadAuditLogs() {
+  auditLoading.value = true
+  try {
+    const params = {
+      page: auditPagination.page,
+      page_size: auditPagination.pageSize,
+    }
+    if (auditSort.field) {
+      params.sort_by = auditSort.field
+      params.sort_order = auditSort.order === 'ascending' ? 'asc' : 'desc'
+    }
+    const res = await getAiAuditLogs(params)
+    auditLogs.value = res.data?.items || res.data?.list || res.data || []
+    auditPagination.total = res.data?.total || auditLogs.value.length
+  } catch {
+    auditLogs.value = []
+  } finally {
+    auditLoading.value = false
+  }
+}
+
+function handleAuditSort({ prop, order }) {
+  auditSort.field = prop
+  auditSort.order = order || ''
+  loadAuditLogs()
+}
+
+async function openAuditDetail(row) {
+  auditDetailVisible.value = true
+  auditDetail.value = null
+  promptExpanded.value = false
+  responseExpanded.value = false
+  auditDetailLoading.value = true
+  try {
+    const res = await getAiAuditLogDetail(row.id)
+    auditDetail.value = res.data
+  } catch {
+    auditDetail.value = null
+  } finally {
+    auditDetailLoading.value = false
+  }
+}
+
+// ============================================================
+// P2-06: 提示词优化
+// ============================================================
+function openPromptOptimize() {
+  promptOptimizeVisible.value = true
+  promptOptStep.value = 'input'
+  promptOptimizeFeedback.value = ''
+  optimizedPromptText.value = ''
+  // 预加载历史版本
+  loadPromptVersions()
+}
+
+function resetPromptOptimize() {
+  promptOptStep.value = 'input'
+  promptOptimizeFeedback.value = ''
+  optimizedPromptText.value = ''
+}
+
+async function loadPromptVersions() {
+  if (!selectedProfileId.value) return
+  promptVersionLoading.value = true
+  try {
+    const res = await getPromptVersions(selectedProfileId.value)
+    const data = res.data || []
+    promptVersions.value = (Array.isArray(data) ? data : data.items || []).map((v) => ({
+      ...v,
+      label: `${v.version || v.id} - ${v.created_at ? dayjs(v.created_at).format('MM-DD HH:mm') : ''}`,
+    }))
+  } catch {
+    promptVersions.value = []
+  } finally {
+    promptVersionLoading.value = false
+  }
+}
+
+async function handlePromptOptimize() {
+  if (!selectedProfileId.value) {
+    ElMessage.warning('请先选择一个配置')
+    return
+  }
+  if (!promptOptimizeFeedback.value.trim()) return
+
+  promptOptLoading.value = true
+  try {
+    const res = await optimizePrompt(selectedProfileId.value, {
+      feedback: promptOptimizeFeedback.value.trim(),
+      current_prompt: currentPromptText.value,
+    })
+    const data = res.data || res
+    optimizedPromptText.value = data.optimized_prompt || data.prompt || data.result || ''
+    promptOptStep.value = 'preview'
+    ElMessage.success('提示词优化完成')
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || e?.message || '优化失败')
+  } finally {
+    promptOptLoading.value = false
+  }
+}
+
+function handleAcceptOptimize() {
+  if (!optimizedPromptText.value) return
+  configForm.system_prompt = optimizedPromptText.value
+  promptOptimizeVisible.value = false
+  ElMessage.success('已采纳优化后的提示词，请记得保存配置')
+}
+
+function handleRevertOptimize() {
+  promptOptStep.value = 'input'
+  promptOptimizeFeedback.value = ''
+  optimizedPromptText.value = ''
+}
+
+function onPromptVersionSelect(versionId) {
+  const v = promptVersions.value.find((p) => p.id === versionId)
+  if (v && v.prompt) {
+    optimizedPromptText.value = v.prompt
+    promptOptStep.value = 'preview'
+  }
+}
+
+// ============================================================
+// 工具函数
+// ============================================================
+function formatNumber(n) {
+  if (n == null) return '0'
+  return Number(n).toLocaleString()
+}
+
+function formatLargeNumber(n) {
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K'
+  return String(n)
+}
+
+function formatTime(t) {
+  if (!t) return '-'
+  return dayjs(t).format('YYYY-MM-DD HH:mm:ss')
+}
+
+function statusTagType(status) {
+  const map = { success: 'success', completed: 'success', error: 'danger', failed: 'danger', cancelled: 'info', running: 'warning' }
+  return map[status] || 'info'
+}
+
+function statusLabel(status) {
+  const map = { success: '成功', completed: '成功', error: '失败', failed: '失败', cancelled: '已取消', running: '运行中' }
+  return map[status] || status || '-'
+}
+
+function isTextLong(text) {
+  return text && text.length > 300
+}
+
 </script>
 
 <style scoped>
-.switch-label {
+/* ============================================================
+   Profile Bar
+   ============================================================ */
+.profile-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.profile-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.profile-label {
   font-size: 14px;
-  color: #303133;
-  margin-right: 10px;
+  color: #606266;
+  white-space: nowrap;
+}
+.profile-select {
+  width: 260px;
+}
+.profile-bar-right {
+  display: flex;
+  gap: 8px;
 }
 .ml-10 {
   margin-left: 10px;
+}
+
+/* ============================================================
+   Switch Row
+   ============================================================ */
+.switch-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.switch-left, .switch-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.switch-label {
+  font-size: 15px;
+  font-weight: 500;
+  color: #303133;
+}
+.switch-hint {
+  font-size: 13px;
+  color: #909399;
+}
+
+/* ============================================================
+   Config Form
+   ============================================================ */
+.section-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #ebeef5;
+}
+.config-form {
+  max-width: 700px;
 }
 .form-tip {
   font-size: 12px;
@@ -259,9 +1349,282 @@ function handleReset() {
   margin-top: 4px;
 }
 .form-tip code {
-  color: #E6A23C;
+  color: #e6a23c;
   background: #fdf6ec;
   padding: 2px 6px;
   border-radius: 3px;
 }
+
+/* ============================================================
+   Test Result
+   ============================================================ */
+.test-result {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 14px;
+  margin-left: 12px;
+}
+.test-success {
+  color: #67c23a;
+}
+.test-fail {
+  color: #f56c6c;
+}
+
+/* ============================================================
+   Stats Cards
+   ============================================================ */
+.stats-section {
+  margin-top: 20px;
+}
+.stat-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  background: #fff;
+  border-radius: 8px;
+  border: 1px solid #ebeef5;
+  transition: box-shadow 0.2s;
+}
+.stat-card:hover {
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+}
+.stat-card-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.stat-card-info {
+  flex: 1;
+  min-width: 0;
+}
+.stat-card-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: #303133;
+  line-height: 1.2;
+}
+.stat-card-value small {
+  font-size: 13px;
+  font-weight: 400;
+  color: #909399;
+}
+.stat-card-label {
+  font-size: 13px;
+  color: #909399;
+  margin-top: 2px;
+}
+
+/* ============================================================
+   Chart
+   ============================================================ */
+.chart-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.chart-label {
+  font-size: 14px;
+  color: #606266;
+}
+.chart-container {
+  min-height: 300px;
+}
+.token-chart {
+  width: 100%;
+  height: 340px;
+}
+
+/* ============================================================
+   Audit Table
+   ============================================================ */
+.audit-table {
+  width: 100%;
+}
+
+/* ============================================================
+   Audit Detail
+   ============================================================ */
+.audit-detail {
+  max-height: 65vh;
+  overflow-y: auto;
+}
+.audit-section h4 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 8px;
+}
+.audit-content {
+  background: #f5f7fa;
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  padding: 12px;
+  max-height: 400px;
+  overflow-y: auto;
+  transition: max-height 0.3s;
+}
+.audit-content.collapsed {
+  max-height: 200px;
+  overflow: hidden;
+}
+.audit-content pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #303133;
+  font-family: Consolas, 'Courier New', monospace;
+}
+
+/* ============================================================
+   Empty State
+   ============================================================ */
+.empty-state {
+  text-align: center;
+  padding: 40px 0;
+}
+
+/* ============================================================
+   Utility
+   ============================================================ */
+.mb-5 { margin-bottom: 5px; }
+.mb-10 { margin-bottom: 10px; }
+.mb-15 { margin-bottom: 15px; }
+.mb-20 { margin-bottom: 20px; }
+.mt-5 { margin-top: 5px; }
+.mt-10 { margin-top: 10px; }
+.mt-15 { margin-top: 15px; }
+.mt-20 { margin-top: 20px; }
+.mr-5 { margin-right: 5px; }
+.flex-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.text-gray {
+  font-size: 13px;
+  color: #909399;
+}
+.page-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #303133;
+}
+
+/* ============================================================
+   P2-05: Ollama Hint
+   ============================================================ */
+.ollama-hint {
+  margin-top: 8px;
+}
+.ollama-hint code {
+  background: #f0f2f5;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  color: #303133;
+  font-family: Consolas, monospace;
+}
+
+/* ============================================================
+   P2-06: Prompt Optimize
+   ============================================================ */
+.prompt-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.prompt-textarea {
+  width: 100%;
+}
+.prompt-optimize-btn {
+  align-self: flex-end;
+}
+
+.opt-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #303133;
+}
+.opt-current-prompt {
+  background: #f5f7fa;
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  padding: 10px 12px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+.opt-current-prompt pre {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #606266;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: Consolas, 'Courier New', monospace;
+}
+
+.opt-compare-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.opt-compare-col {
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.opt-compare-header {
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.opt-compare-header.old {
+  background: #f5f7fa;
+  color: #606266;
+}
+.opt-compare-header.new {
+  background: #f0f9eb;
+  color: #67c23a;
+}
+.opt-compare-content {
+  padding: 10px 12px;
+  max-height: 250px;
+  overflow-y: auto;
+  background: #fff;
+}
+.opt-compare-content pre {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #303133;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: Consolas, 'Courier New', monospace;
+}
+
+.opt-history-bar {
+  display: flex;
+  align-items: center;
+}
+.opt-history-select {
+  width: 240px;
+}
+
+.flex-center {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+}
+.mr-10 { margin-right: 10px; }
 </style>

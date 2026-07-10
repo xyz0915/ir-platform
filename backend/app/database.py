@@ -12,7 +12,7 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# 13 张表的 DDL 建表语句
+# 13 张表的 DDL 建表语句（含新增的 3 张 AI 表 + 1 张旧 ai_config 保留兼容）
 DDL_STATEMENTS = [
     # users — 平台用户表
     """
@@ -212,7 +212,7 @@ DDL_STATEMENTS = [
         created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
     )
     """,
-    # ai_config — AI大模型配置表
+    # ai_config — AI大模型配置表（旧表，保留兼容）
     """
     CREATE TABLE IF NOT EXISTS ai_config (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -227,7 +227,63 @@ DDL_STATEMENTS = [
         updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
     )
     """,
-    # ai_analysis_reports — AI分析报告表
+    # ai_config_profiles — AI配置多Profile表（新）
+    """
+    CREATE TABLE IF NOT EXISTS ai_config_profiles (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        profile_name    TEXT    NOT NULL DEFAULT '默认配置',
+        provider        TEXT    NOT NULL DEFAULT 'openai',
+        api_base_url    TEXT    NOT NULL DEFAULT '',
+        api_key         TEXT    NOT NULL DEFAULT '',
+        model_name      TEXT    NOT NULL DEFAULT 'gpt-4o',
+        max_tokens      INTEGER DEFAULT 4096,
+        temperature     REAL    DEFAULT 0.3,
+        system_prompt   TEXT    DEFAULT '',
+        is_active       INTEGER DEFAULT 0,
+        created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    # ai_audit_log — AI调用审计日志表
+    """
+    CREATE TABLE IF NOT EXISTS ai_audit_log (
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        host_id             INTEGER,
+        host_name           TEXT,
+        profile_id          INTEGER,
+        profile_name        TEXT,
+        model_name          TEXT,
+        status              TEXT    NOT NULL DEFAULT 'success',
+        prompt_tokens       INTEGER DEFAULT 0,
+        completion_tokens   INTEGER DEFAULT 0,
+        total_tokens        INTEGER DEFAULT 0,
+        latency_ms          INTEGER DEFAULT 0,
+        masked_mode         INTEGER DEFAULT 0,
+        error_message       TEXT,
+        ip_address          TEXT,
+        user_id             INTEGER,
+        created_at          TEXT    NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    # ai_tasks — AI异步任务状态表
+    """
+    CREATE TABLE IF NOT EXISTS ai_tasks (
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        host_id             INTEGER NOT NULL,
+        profile_id          INTEGER,
+        status              TEXT    NOT NULL DEFAULT 'pending',
+        progress            INTEGER DEFAULT 0,
+        progress_message    TEXT,
+        report_id           INTEGER,
+        error_message       TEXT,
+        masked_mode         INTEGER DEFAULT 0,
+        created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+        started_at          TEXT,
+        completed_at        TEXT
+    )
+    """,
+    # ai_analysis_reports — AI分析报告表（原始建表，ALTER 在 init_db 中处理）
     """
     CREATE TABLE IF NOT EXISTS ai_analysis_reports (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -241,6 +297,74 @@ DDL_STATEMENTS = [
         model_used      TEXT,
         tokens_used     INTEGER,
         created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    # ai_prompt_versions — AI提示词优化历史版本表
+    """
+    CREATE TABLE IF NOT EXISTS ai_prompt_versions (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        profile_id      INTEGER NOT NULL,
+        version         INTEGER NOT NULL DEFAULT 1,
+        content         TEXT    NOT NULL DEFAULT '',
+        created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    # iocs — IOC 指标表（T-P1-4，仅管理入库，不参与引擎匹配）
+    """
+    CREATE TABLE IF NOT EXISTS iocs (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        ioc_type    TEXT    NOT NULL,
+        ioc_value   TEXT    NOT NULL,
+        source      TEXT    DEFAULT 'default',
+        description TEXT,
+        enabled     INTEGER DEFAULT 1,
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    # threat_intel — IOC 外联威胁情报查询结果表（Enrichment）
+    # 保留全历史（不去重）；threat_level 为派生冗余列，便于查询与回灌。
+    # ioc_id 可空（部分情报可能未关联 iocs 表主键），不强制约束但保留 FK 语义。
+    """
+    CREATE TABLE IF NOT EXISTS threat_intel (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        ioc_id          INTEGER REFERENCES iocs(id) ON DELETE SET NULL,
+        ioc_type        TEXT    NOT NULL,
+        ioc_value       TEXT    NOT NULL,
+        provider        TEXT    NOT NULL,
+        risk_score      INTEGER DEFAULT 0,
+        judgments       TEXT,
+        tags             TEXT,
+        confidence      INTEGER DEFAULT 0,
+        attck           TEXT,
+        company         TEXT,
+        threat_level    TEXT,
+        queried_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+        raw_summary     TEXT,
+        created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_threat_intel_ioc_id
+        ON threat_intel(ioc_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_threat_intel_value_provider
+        ON threat_intel(ioc_value, provider)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_threat_intel_provider_queried
+        ON threat_intel(provider, queried_at)
+    """,
+    # rule_audit_log — 规则变更审计表（T-P2-2）
+    """
+    CREATE TABLE IF NOT EXISTS rule_audit_log (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        rule_id     INTEGER NOT NULL,
+        action      TEXT    NOT NULL,
+        changed_by  TEXT,
+        old_val     TEXT,
+        new_val     TEXT,
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
     )
     """,
 ]
@@ -290,57 +414,145 @@ def _create_default_admin(conn: sqlite3.Connection) -> None:
         logger.info("Default admin user created (username=admin, password=admin123)")
 
 
-def _import_default_rules(conn: sqlite3.Connection) -> None:
-    """导入默认规则集（upsert by name — 新增的插入，已有的更新，用户自建的保留）."""
-    rules_path = Path(settings.BACKEND_DIR) / "app" / "rules" / "default_rules.json"
-    if not rules_path.exists():
-        logger.warning("Default rules file not found: %s", rules_path)
-        return
+def _alter_rules_table(conn: sqlite3.Connection) -> None:
+    """检测并添加 rules 表新增列：label / source / mitre_attack（F-1）.
 
-    with open(rules_path, "r", encoding="utf-8") as f:
-        rules_data = json.load(f)
+    使用 PRAGMA table_info 检测列是否已存在，不存在才 ALTER ADD COLUMN，
+    保证旧行不被破坏、可重复执行。
+    """
+    cursor = conn.execute("PRAGMA table_info(rules)")
+    existing_columns: set[str] = {row["name"] for row in cursor.fetchall()}
 
-    # 获取数据库中已有的规则名集合
-    cursor = conn.execute("SELECT name FROM rules")
-    existing_names: set[str] = {row["name"] for row in cursor.fetchall()}
+    new_columns: list[tuple[str, str]] = [
+        ("label", "TEXT"),
+        ("source", "TEXT DEFAULT 'default'"),
+        ("mitre_attack", "TEXT"),
+    ]
+
+    for col_name, col_type in new_columns:
+        if col_name not in existing_columns:
+            conn.execute(
+                f"ALTER TABLE rules ADD COLUMN {col_name} {col_type}"
+            )
+            logger.info("Added column '%s' to rules table", col_name)
+
+
+def _import_default_rules(conn: sqlite3.Connection) -> dict:
+    """导入默认规则集（source 隔离 upsert by name）.
+
+    - 仅对 source='default' 的行按 name 更新；source='user' 的行绝不覆盖。
+    - 写入 label 与顶层 mitre_attack 列（T-P2-3 归一化来源）。
+    - 通过 loader 聚合读取 rules/*.json 并逐条校验 schema。
+    """
+    from app.rules import loader
+
+    rules_data = loader.load_default_rules()
+    if not rules_data:
+        logger.warning("默认规则加载为空，跳过导入")
+        return {"updated": 0, "inserted": 0, "preserved": 0, "total": 0}
+
+    cursor = conn.execute("SELECT name, source FROM rules")
+    existing: dict[str, str] = {row["name"]: row["source"] for row in cursor.fetchall()}
 
     updated = 0
     inserted = 0
+    preserved = 0
 
     for rule in rules_data:
         name = rule.get("name", "")
         description = rule.get("description", "")
         category = rule.get("category", "")
         rule_type = rule.get("rule_type", "")
-        condition = json.dumps(rule.get("condition", {}), ensure_ascii=False)
+        raw_condition = rule.get("condition", {})
+        condition = raw_condition if isinstance(raw_condition, dict) else {}
+        condition_str = json.dumps(raw_condition, ensure_ascii=False)
         severity = rule.get("severity", "medium")
         enabled = 1 if rule.get("enabled", True) else 0
+        label = rule.get("label")
+        meta = condition.get("_meta", {}) if isinstance(condition, dict) else {}
+        mitre_attack = (
+            (meta.get("mitre_attack") if isinstance(meta, dict) else None)
+            or (condition.get("mitre_attack") if isinstance(condition, dict) else None)
+        )
 
-        if name in existing_names:
+        if name in existing:
+            if existing[name] == "user":
+                # 用户自定义规则，绝不覆盖
+                preserved += 1
+                continue
             conn.execute(
                 """
                 UPDATE rules
-                SET description = ?, category = ?, rule_type = ?, condition = ?, severity = ?, enabled = ?
+                SET description = ?, category = ?, rule_type = ?, condition = ?,
+                    severity = ?, enabled = ?, label = ?, source = 'default', mitre_attack = ?
                 WHERE name = ?
                 """,
-                (description, category, rule_type, condition, severity, enabled, name),
+                (description, category, rule_type, condition_str, severity, enabled,
+                 label, mitre_attack, name),
             )
             updated += 1
         else:
             conn.execute(
                 """
-                INSERT INTO rules (name, description, category, rule_type, condition, severity, enabled)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO rules
+                    (name, description, category, rule_type, condition, severity, enabled, label, source, mitre_attack)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'default', ?)
                 """,
-                (name, description, category, rule_type, condition, severity, enabled),
+                (name, description, category, rule_type, condition_str, severity, enabled,
+                 label, mitre_attack),
             )
             inserted += 1
 
-    preserved = len(existing_names) - updated
     logger.info(
         "Default rules import: updated=%d, inserted=%d, preserved(user)=%d, total_default=%d",
         updated, inserted, preserved, len(rules_data),
     )
+    return {"updated": updated, "inserted": inserted, "preserved": preserved, "total": len(rules_data)}
+
+
+def reset_default_rules() -> dict:
+    """重置默认规则（管理员功能，T-P1-6）.
+
+    仅对 source='default' 的行重新 upsert，保留 source='user' 的用户规则。
+    """
+    with get_connection() as conn:
+        stats = _import_default_rules(conn)
+    logger.info("Reset default rules: %s", stats)
+    return stats
+
+
+def _import_default_iocs(conn: sqlite3.Connection) -> None:
+    """种子默认 IOC 示例（source='default'），已存在则跳过（T-P1-4）.
+
+    复用传入的 conn，避免与 init_db 主连接产生跨连接写锁（database is locked）。
+    """
+    seed = [
+        {"ioc_type": "domain", "ioc_value": "malware-c2.example.com",
+         "description": "已知恶意 C2 域名（示例种子）", "source": "default"},
+        {"ioc_type": "domain", "ioc_value": "botnet-cc.example.net",
+         "description": "已知僵尸网络 C2 域名（示例种子）", "source": "default"},
+        {"ioc_type": "url", "ioc_value": "http://185.220.101.1/loader",
+         "description": "已知恶意下载 URL（示例种子）", "source": "default"},
+        {"ioc_type": "ip", "ioc_value": "185.220.101.1",
+         "description": "Tor 出口节点（示例种子）", "source": "default"},
+    ]
+    cursor = conn.execute("SELECT ioc_type, ioc_value FROM iocs")
+    seen: set = {(r["ioc_type"], r["ioc_value"]) for r in cursor.fetchall()}
+    inserted = 0
+    for it in seed:
+        key = (it["ioc_type"], it["ioc_value"])
+        if key in seen:
+            continue
+        conn.execute(
+            """
+            INSERT INTO iocs (ioc_type, ioc_value, source, description, enabled)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (it["ioc_type"], it["ioc_value"], it["source"], it["description"], 1),
+        )
+        seen.add(key)
+        inserted += 1
+    logger.info("Default iocs seeded: inserted=%d", inserted)
 
 
 def _alter_abnormal_processes_table(conn: sqlite3.Connection) -> None:
@@ -364,6 +576,96 @@ def _alter_abnormal_processes_table(conn: sqlite3.Connection) -> None:
                 f"ALTER TABLE abnormal_processes ADD COLUMN {col_name} {col_type}"
             )
             logger.info("Added column '%s' to abnormal_processes table", col_name)
+
+
+def _alter_ai_analysis_reports_table(conn: sqlite3.Connection) -> None:
+    """检测并添加 ai_analysis_reports 表的新增列."""
+    cursor = conn.execute("PRAGMA table_info(ai_analysis_reports)")
+    existing_columns: set[str] = {row["name"] for row in cursor.fetchall()}
+
+    new_columns: list[tuple[str, str]] = [
+        ("version", "INTEGER DEFAULT 1"),
+        ("profile_id", "INTEGER"),
+        ("is_latest", "INTEGER DEFAULT 1"),
+        ("masked_mode", "INTEGER DEFAULT 0"),
+        ("prompt_tokens", "INTEGER DEFAULT 0"),
+        ("completion_tokens", "INTEGER DEFAULT 0"),
+        ("data_hash", "TEXT"),
+        ("cached_at", "TEXT"),
+        ("conversation_id", "TEXT"),
+    ]
+
+    for col_name, col_type in new_columns:
+        if col_name not in existing_columns:
+            conn.execute(
+                f"ALTER TABLE ai_analysis_reports ADD COLUMN {col_name} {col_type}"
+            )
+            logger.info("Added column '%s' to ai_analysis_reports table", col_name)
+
+
+def _alter_ai_config_profiles_table(conn: sqlite3.Connection) -> None:
+    """检测并添加 ai_config_profiles 表的新增列（owner_user_id, is_public）."""
+    cursor = conn.execute("PRAGMA table_info(ai_config_profiles)")
+    existing_columns: set[str] = {row["name"] for row in cursor.fetchall()}
+
+    new_columns: list[tuple[str, str]] = [
+        ("owner_user_id", "INTEGER DEFAULT 1"),
+        ("is_public", "INTEGER DEFAULT 1"),
+    ]
+
+    for col_name, col_type in new_columns:
+        if col_name not in existing_columns:
+            conn.execute(
+                f"ALTER TABLE ai_config_profiles ADD COLUMN {col_name} {col_type}"
+            )
+            logger.info("Added column '%s' to ai_config_profiles table", col_name)
+
+
+def _migrate_old_ai_config(conn: sqlite3.Connection) -> None:
+    """将旧 ai_config 表数据迁移到 ai_config_profiles.
+
+    检查旧 ai_config 表是否有数据，若有则迁移到 ai_config_profiles 的首条记录。
+    迁移后设置 is_active=1（如果旧 enabled=1）.
+    """
+    # 检查 ai_config 表是否存在且有数据
+    cursor = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='ai_config'"
+    )
+    if cursor.fetchone() is None:
+        return
+
+    old_row = conn.execute("SELECT * FROM ai_config ORDER BY id DESC LIMIT 1").fetchone()
+    if old_row is None:
+        return
+
+    # 检查 ai_config_profiles 是否已有迁移记录
+    existing_profile = conn.execute(
+        "SELECT id FROM ai_config_profiles WHERE profile_name = '默认配置' LIMIT 1"
+    ).fetchone()
+    if existing_profile is not None:
+        return
+
+    old = dict(old_row)
+    is_active = old.get("enabled", 0)
+    conn.execute(
+        """
+        INSERT INTO ai_config_profiles
+        (profile_name, provider, api_base_url, api_key, model_name,
+         max_tokens, temperature, system_prompt, is_active)
+        VALUES (?, 'openai', ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "默认配置",
+            old.get("api_base_url", ""),
+            old.get("api_key", ""),
+            old.get("model_name", "gpt-4o"),
+            old.get("max_tokens", 4096),
+            old.get("temperature", 0.3),
+            old.get("system_prompt", ""),
+            is_active,
+        ),
+    )
+    logger.info("Migrated old ai_config data to ai_config_profiles")
 
 
 def _import_default_whitelist(conn: sqlite3.Connection) -> None:
@@ -458,7 +760,7 @@ def _import_default_whitelist(conn: sqlite3.Connection) -> None:
 
 
 def init_db() -> None:
-    """初始化数据库：创建目录、执行建表语句、创建默认用户、导入默认规则、ALTER 表、导入默认白名单."""
+    """初始化数据库：创建目录、执行建表语句、迁移旧数据、ALTER表、创建默认用户、导入默认规则、导入默认白名单."""
     # 确保数据目录存在
     Path(settings.DATA_DIR).mkdir(parents=True, exist_ok=True)
     Path(settings.UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
@@ -471,10 +773,19 @@ def init_db() -> None:
         for ddl in DDL_STATEMENTS:
             conn.execute(ddl)
         conn.commit()
+        # 迁移旧 ai_config 数据到 ai_config_profiles
+        _migrate_old_ai_config(conn)
+        # ALTER ai_analysis_reports 添加新列
+        _alter_ai_analysis_reports_table(conn)
+        # ALTER ai_config_profiles 添加权限隔离列
+        _alter_ai_config_profiles_table(conn)
+        conn.commit()
         _create_default_admin(conn)
+        _alter_rules_table(conn)
         _import_default_rules(conn)
         _alter_abnormal_processes_table(conn)
         _import_default_whitelist(conn)
+        _import_default_iocs(conn)
         conn.commit()
         logger.info("Database initialized successfully at %s", settings.DB_PATH)
     except Exception:

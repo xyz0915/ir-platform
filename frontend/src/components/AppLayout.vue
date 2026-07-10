@@ -26,6 +26,14 @@
           <el-icon><CircleCheck /></el-icon>
           <span>白名单配置</span>
         </el-menu-item>
+        <el-menu-item index="/iocs">
+          <el-icon><Warning /></el-icon>
+          <span>IOC 指标</span>
+        </el-menu-item>
+        <el-menu-item index="/threat-intel-config">
+          <el-icon><Connection /></el-icon>
+          <span>威胁情报外联</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
     <el-container>
@@ -59,7 +67,7 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { Cpu, Lock, CircleCheck } from '@element-plus/icons-vue'
+import { Cpu, Lock, CircleCheck, Warning, Connection } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -68,6 +76,7 @@ const authStore = useAuthStore()
 const activeMenu = computed(() => {
   if (route.path.startsWith('/cases') || route.path.startsWith('/hosts')) return '/'
   if (route.path === '/whitelist') return '/whitelist'
+  if (route.path === '/iocs') return '/iocs'
   return route.path
 })
 
@@ -78,7 +87,9 @@ const currentRouteName = computed(() => {
     'HostDetail': '主机详情',
     'Report': '分析报告',
     'Rules': '规则管理',
-    'Whitelist': '白名单配置'
+    'Whitelist': '白名单配置',
+    'Iocs': 'IOC 指标管理',
+    'ThreatIntelConfig': '威胁情报外联配置'
   }
   return names[route.name] || '应急响应平台'
 })

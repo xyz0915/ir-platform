@@ -1,0 +1,30 @@
+[
+  {
+    "name": "abuse-ch-csv",
+    "format": "csv",
+    "url": "https://feeds.example.com/iocs.csv",
+    "enabled": true,
+    "interval": 3600,
+    "type_map": {
+      "ip": "ip",
+      "domain": "domain",
+      "url": "url",
+      "sha256": "hash"
+    }
+  },
+  {
+    "name": "misp-intel",
+    "format": "misp",
+    "url": "https://misp.example.com/events/restSearch",
+    "api_key": "$MISP_KEY",
+    "enabled": true,
+    "interval": 7200
+  },
+  {
+    "name": "stix-bundle",
+    "format": "stix",
+    "url": "https://cti.example.com/bundle.json",
+    "enabled": false,
+    "interval": 86400
+  }
+]

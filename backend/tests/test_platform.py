@@ -797,6 +797,60 @@ class TestAPIRules(unittest.TestCase):
         self.assertFalse(data["data"]["enabled"])
         self.assertEqual(data["data"]["severity"], "high")
 
+    def test_05_bulk_enable_rules(self):
+        """回归测试：PUT /api/rules/bulk-enable 不应被 /{rule_id} 路由遮蔽.
+
+        修复前该端点返回 422（int_parsing: rule_id='bulk-enable'）；
+        修复后将静态路径路由注册在 /{rule_id} 之前，应返回 200 且正确批量翻转启用状态。
+        """
+        # 创建两条自定义规则
+        created_ids = []
+        for i in range(2):
+            resp = self.client.post(
+                "/api/rules",
+                json={
+                    "name": f"test_bulk_rule_{i}",
+                    "category": "process",
+                    "rule_type": "regex",
+                    "condition": {"field": "command_line", "pattern": f"bulk_test_{i}"},
+                    "severity": "low",
+                },
+                headers=self.auth_headers,
+            )
+            self.assertEqual(resp.status_code, 200)
+            created_ids.append(resp.json()["data"]["id"])
+
+        # 批量禁用
+        resp = self.client.put(
+            "/api/rules/bulk-enable",
+            json={"ids": created_ids, "enabled": False},
+            headers=self.auth_headers,
+        )
+        self.assertEqual(resp.status_code, 200, msg=resp.text)
+        body = resp.json()
+        self.assertEqual(body["code"], 0)
+        self.assertEqual(body["data"]["updated"], 2)
+
+        # 验证已被禁用
+        listing = self.client.get("/api/rules", headers=self.auth_headers).json()["data"]
+        for rid in created_ids:
+            rule = next((r for r in listing if r["id"] == rid), None)
+            self.assertIsNotNone(rule)
+            self.assertFalse(rule["enabled"])
+
+        # 批量重新启用
+        resp = self.client.put(
+            "/api/rules/bulk-enable",
+            json={"ids": created_ids, "enabled": True},
+            headers=self.auth_headers,
+        )
+        self.assertEqual(resp.status_code, 200, msg=resp.text)
+        listing = self.client.get("/api/rules", headers=self.auth_headers).json()["data"]
+        for rid in created_ids:
+            rule = next((r for r in listing if r["id"] == rid), None)
+            self.assertIsNotNone(rule)
+            self.assertTrue(rule["enabled"])
+
 
 class TestAnalysisEngine(unittest.TestCase):
     """测试分析引擎各模块."""

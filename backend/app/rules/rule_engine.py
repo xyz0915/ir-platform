@@ -5,9 +5,18 @@ import logging
 import re
 from typing import Any, Optional
 
+from app.config import settings
 from app.models.rule import Rule
 
 logger = logging.getLogger(__name__)
+
+# ── 严重级别排序（用于威胁情报回灌时取较高者）───────────────────────
+_SEVERITY_RANK: dict = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+
+
+def _max_severity(a: str, b: str) -> str:
+    """取两个严重级别中较高的一个."""
+    return a if _SEVERITY_RANK.get(a, 0) >= _SEVERITY_RANK.get(b, 0) else b
 
 # ── 已知的 C2 框架命令行特征 ──────────────────────────────────────────
 _C2_FRAMEWORK_SIGNATURES: list[str] = [
@@ -20,6 +29,77 @@ _C2_FRAMEWORK_SIGNATURES: list[str] = [
     "remcos", "njrat", "asyncrat", "warzone",
     "azorult", "vidar", "redline", "smokeloader",
 ]
+
+# ── 引擎支持的 20 种行为模式（白名单）────────────────────────────────
+# 导入/创建 behavior 规则时校验 condition.pattern ∈ 此集合，
+# 非法值会在写入前被拒绝，避免"拼错静默 False 永不命中"。
+BEHAVIOR_PATTERNS: set[str] = {
+    "orphan_process",
+    "suspicious_parent",
+    "unsigned_process",
+    "network_scan",
+    "credential_dump",
+    "uac_bypass",
+    "token_manipulation",
+    "antivirus_tamper",
+    "defense_evasion",
+    "lateral_movement",
+    "data_exfil",
+    "webshell_activity",
+    "ransomware_behavior",
+    "persistence_wmi",
+    "persistence_com_hijack",
+    "discovery_recon",
+    "dll_sideload",
+    "process_chain",
+    "time_cluster",
+    "short_lived",
+}
+
+# ── 正则编译缓存（T-P2-4 性能优化）────────────────────────────────────
+# 同一 pattern+flags 只编译一次，避免热路径重复 re.compile。
+_REGEX_CACHE: dict = {}
+
+# ── time_cluster 预排序缓存（T-P2-4 性能优化）─────────────────────────
+# key = id(all_items)，value = 按 start_time 排序后的 [(datetime, item), ...]
+_TC_SORTED_CACHE: dict = {}
+
+# ── field → ioc_type 映射（动态 IOC 引用）────────────────────────────
+# list 类规则 condition.field 若为下列网络/主机标识字段，则额外把 iocs 表中
+# 对应 ioc_type 且 enabled=1 的指标并入待匹配集合；映射不到的 field 仅匹配自身 values。
+# 说明：remote_address 既可能承载 IP 也可能承载域名（如 suspicious_c2_domain 规则），
+# 此处按"最贴近威胁语义"的口径映射为 ip（IP 类 IOC 命中更精确），域名类 IOC 由
+# domain/host/url 字段各自的规则覆盖，互不干扰。
+FIELD_TO_IOC_TYPE: dict = {
+    # IP 类
+    "remote_address": "ip",
+    "remote_ip": "ip",
+    "src_ip": "ip",
+    "dst_ip": "ip",
+    # 域名 / URL 类（按 field 名分别映射到 domain 或 url）
+    "domain": "domain",
+    "host": "domain",
+    "url": "url",
+    # 文件哈希类
+    "file_hash": "hash",
+    "sha256": "hash",
+    "hash": "hash",
+    # 证书类
+    "cert": "cert",
+    "certificate": "cert",
+}
+
+
+def validate_behavior_pattern(pattern: str) -> bool:
+    """校验行为模式是否属于引擎支持的 20 种白名单.
+
+    Args:
+        pattern: behavior 规则的 condition.pattern.
+
+    Returns:
+        合法返回 True，否则 False.
+    """
+    return pattern in BEHAVIOR_PATTERNS
 
 
 class RuleEngine:
@@ -43,6 +123,188 @@ class RuleEngine:
         return Rule.list_enabled()
 
     @staticmethod
+    def _compile_regex(pattern: str, flags: int) -> "re.Pattern":
+        """编译并缓存正则表达式（T-P2-4 性能优化）.
+
+        Args:
+            pattern: 正则字符串.
+            flags: re 标志位.
+
+        Returns:
+            已编译的 regex 对象.
+        """
+        cache_key = (pattern, flags)
+        compiled = _REGEX_CACHE.get(cache_key)
+        if compiled is None:
+            compiled = re.compile(pattern, flags)
+            _REGEX_CACHE[cache_key] = compiled
+        return compiled
+
+    @staticmethod
+    def _build_sorted_items(all_items: list) -> list:
+        """将 all_items 按 start_time 排序，供 time_cluster 二分计数（T-P2-4）.
+
+        Args:
+            all_items: 所有进程数据项列表.
+
+        Returns:
+            [(datetime, item), ...] 已排序列表；无法解析时间的项排在最前（datetime.min）.
+        """
+        from datetime import datetime
+
+        cache_key = id(all_items)
+        cached = _TC_SORTED_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+
+        time_formats = [
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%d %H:%M:%S.%f",
+            "%Y-%m-%dT%H:%M:%S.%f",
+            "%Y/%m/%d %H:%M:%S",
+        ]
+
+        def _parse(ts: str):
+            if not ts:
+                return None
+            s = str(ts).split("+")[0].split("Z")[0]
+            for fmt in time_formats:
+                try:
+                    return datetime.strptime(s, fmt)
+                except ValueError:
+                    continue
+            return None
+
+        parsed = []
+        for item in all_items:
+            if not isinstance(item, dict):
+                continue
+            parsed.append((_parse(item.get("start_time", "")), item))
+        parsed.sort(key=lambda x: (x[0] is None, x[0] or datetime.min))
+        _TC_SORTED_CACHE[cache_key] = parsed
+        return parsed
+
+    @staticmethod
+    def _load_iocs_by_type() -> dict:
+        """从 DB 一次性加载全部 enabled=1 的 IOC，按 ioc_type 分组为集合.
+
+        返回结构: {"ip": {"1.2.3.4", ...}, "domain": {...}, ...}
+
+        - 仅在 evaluate 入口调用一次，避免逐条数据查 DB（性能）。
+        - 不引入持久内存缓存，每次评估实时读取，保证 iocs 表变更立即可生效。
+        - 任何 DB/导入异常都被吞掉并返回空字典，保证引擎在缺表/缺库环境下仍可降级运行。
+
+        Returns:
+            按类型分组的 IOC 指标值集合字典；出错时返回空字典。
+        """
+        try:
+            from app.models.ioc import Ioc
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("跳过 IOC 动态加载（Ioc 模型不可用）: %s", exc)
+            return {}
+
+        try:
+            rows = Ioc.list()
+        except Exception as exc:  # noqa: BLE001
+            # DB 未初始化 / 缺表 / 连接异常等情况均降级为空集合
+            logger.debug("跳过 IOC 动态加载（读取 iocs 失败）: %s", exc)
+            return {}
+
+        by_type: dict = {}
+        for r in rows:
+            if not r.get("enabled"):
+                continue
+            ioc_type = r.get("ioc_type")
+            value = r.get("ioc_value")
+            if not ioc_type or value is None:
+                continue
+            by_type.setdefault(ioc_type, set()).add(value)
+        return by_type
+
+    @staticmethod
+    def _load_threat_level_by_value() -> dict:
+        """加载威胁情报平台回灌所需的 {value_lower: {level, provider}} 映射.
+
+        仅取每个 indicator 最新一条记录（按 queried_at 倒序去重保留首条），
+        且该记录的 judgments 必须包含 malicious/suspicious：
+          - malicious → level=high
+          - suspicious → level=medium
+
+        任何 DB/导入异常都被吞掉并返回空字典，保证引擎在缺表/缺库环境下仍可降级运行。
+
+        Returns:
+            按指标值（小写）分组的威胁等级字典；出错时返回空字典。
+        """
+        try:
+            from app.database import get_connection
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("跳过威胁情报回灌加载（database 不可用）: %s", exc)
+            return {}
+
+        try:
+            with get_connection() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT ioc_value, provider, judgments, queried_at
+                    FROM threat_intel
+                    ORDER BY ioc_value, queried_at DESC, id DESC
+                    """
+                ).fetchall()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("跳过威胁情报回灌加载（读取 threat_intel 失败）: %s", exc)
+            return {}
+
+        result: dict = {}
+        seen: set = set()
+        for row in rows:
+            key = (row["ioc_value"] or "").lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            raw_j = row["judgments"]
+            if isinstance(raw_j, str) and raw_j:
+                try:
+                    judgments = json.loads(raw_j)
+                except (json.JSONDecodeError, TypeError):
+                    judgments = []
+            else:
+                judgments = []
+            if not isinstance(judgments, list):
+                judgments = []
+            jset = {str(j).lower() for j in judgments}
+            level = None
+            if "malicious" in jset:
+                level = "high"
+            elif "suspicious" in jset:
+                level = "medium"
+            if level:
+                result[key] = {"level": level, "provider": row["provider"]}
+        return result
+
+    @staticmethod
+    def _record_ti_hit(global_context: Optional[dict], value_lower: str, item: dict) -> None:
+        """在 list 类规则命中时，记录该命中值与威胁情报等级的关联（供 evaluate 回灌）.
+
+        Args:
+            global_context: 全局上下文（含 threat_level_by_value）。
+            value_lower: 命中的指标值（已小写）。
+            item: 被检测的数据项（用于按 id 归集命中）。
+        """
+        if not global_context:
+            return
+        tl = global_context.get("threat_level_by_value") or {}
+        info = tl.get(value_lower)
+        if not info:
+            return
+        ti_hits = global_context.setdefault("_ti_hits", {})
+        ti_hits.setdefault(id(item), []).append({
+            "value": value_lower,
+            "level": info["level"],
+            "provider": info.get("provider"),
+        })
+
+    @staticmethod
     def evaluate(data_items: list, rules: list, global_context: Optional[dict] = None) -> list:
         """对数据项列表执行规则匹配.
 
@@ -51,22 +313,65 @@ class RuleEngine:
             rules: 规则列表.
             global_context: 全局上下文（可选），包含 process_map 和 all_items 等信息，
                             用于 behavior 模式中需要跨进程数据的检测（如 process_chain/time_cluster）.
+                            本方法会在入口一次性加载 enabled=1 的 IOC，按类型分组写入
+                            global_context["iocs_by_type"]，供 list 类规则动态引用。
 
         Returns:
             匹配结果列表 [{item, rule, reason}].
         """
+        # 归一并确保为可变字典（便于注入动态 IOC 上下文）
+        if global_context is None:
+            global_context = {}
+
+        # ── 动态 IOC 引用：入口一次性加载（非逐条数据）──────────────
+        # 不持久缓存，每次评估实时读取，保证增删/启用开关立即可生效。
+        global_context["iocs_by_type"] = RuleEngine._load_iocs_by_type()
+
+        # ── 威胁情报平台回灌（外部 Enrichment）：仅在总开关开启时加载 ──
+        # 关闭时不加载，保证零影响。结构: {value_lower: {level, provider}}
+        # 仅取该 indicator 最新一条且 judgments 含 malicious/suspicious。
+        if settings.ENABLE_THREAT_INTEL_ENRICHMENT:
+            global_context["threat_level_by_value"] = RuleEngine._load_threat_level_by_value()
+        else:
+            global_context["threat_level_by_value"] = {}
+        # 记录 list 类规则命中的威胁情报（供下方构造 match 时回灌升级）
+        global_context["_ti_hits"] = {}
+
+        # T-P2-4: 预排序 all_items 供 time_cluster 二分计数，降 O(n²) 为 O(n log n)
+        if global_context and isinstance(global_context.get("all_items"), list):
+            from datetime import datetime
+
+            sorted_items = RuleEngine._build_sorted_items(global_context["all_items"])
+            global_context["_tc_sorted"] = sorted_items
+            # 并行的时间戳列表（None → datetime.min），供 bisect 二分计数
+            global_context["_tc_dts"] = [
+                d if d is not None else datetime.min for d, _ in sorted_items
+            ]
+
         matches = []
         for item in data_items:
             if not isinstance(item, dict):
                 continue
             for rule in rules:
                 if RuleEngine.match_rule(item, rule, global_context=global_context):
+                    severity = rule.get("severity", "medium")
+                    reason = RuleEngine._build_reason(item, rule)
+                    # ── 威胁情报平台回灌：仅作用于 list 类规则命中 ──
+                    # malicious → severity 升到 high 且 reason 加【威胁情报平台判黑】
+                    # suspicious → reason 加【威胁情报平台可疑】，severity 不变
+                    ti_hits = global_context.get("_ti_hits", {}).get(id(item), [])
+                    for hit in ti_hits:
+                        if hit.get("level") == "high":
+                            severity = _max_severity(severity, "high")
+                            reason += "【威胁情报平台判黑】"
+                        elif hit.get("level") == "medium":
+                            reason += "【威胁情报平台可疑】"
                     matches.append({
                         "item": item,
                         "rule": rule,
                         "rule_name": rule.get("name", ""),
-                        "severity": rule.get("severity", "medium"),
-                        "reason": RuleEngine._build_reason(item, rule),
+                        "severity": severity,
+                        "reason": reason,
                     })
         return matches
 
@@ -93,13 +398,13 @@ class RuleEngine:
         if rule_type == "regex":
             return RuleEngine._match_regex(data_item, condition)
         elif rule_type == "list":
-            return RuleEngine._match_list(data_item, condition)
+            return RuleEngine._match_list(data_item, condition, global_context=global_context)
         elif rule_type == "threshold":
             return RuleEngine._match_threshold(data_item, condition)
         elif rule_type == "behavior":
             return RuleEngine._match_behavior(data_item, condition, global_context=global_context)
         elif rule_type == "composite":
-            return RuleEngine._match_composite(data_item, condition)
+            return RuleEngine._match_composite(data_item, condition, global_context=global_context)
         elif rule_type == "exists":
             return RuleEngine._match_exists(data_item, condition)
         return False
@@ -127,37 +432,58 @@ class RuleEngine:
             flags |= re.MULTILINE
 
         try:
-            return bool(re.search(pattern, value, flags))
+            return bool(RuleEngine._compile_regex(pattern, flags).search(value))
         except re.error:
             return False
 
     # ── 列表匹配 ────────────────────────────────────────────────────────
 
     @staticmethod
-    def _match_list(data_item: dict, condition: dict) -> bool:
+    def _match_list(data_item: dict, condition: dict, global_context: Optional[dict] = None) -> bool:
         """黑名单匹配.
 
         Condition 格式: {"field": "remote_address", "values": ["1.2.3.4", "5.6.7.8"], "match_mode": "exact"}
+
+        动态 IOC 引用：若 condition.field 命中 FIELD_TO_IOC_TYPE 映射，则额外把
+        global_context["iocs_by_type"][对应类型] 中 enabled=1 的指标并入待匹配集合
+        （与 rule.condition.values 取并集）。iocs 表为空或该类型无数据时仅匹配 values，
+        完全向后兼容。不修改原始 condition.values。
         """
         field = condition.get("field", "")
-        values = condition.get("values", [])
+        base_values = condition.get("values") or []
+        if not isinstance(base_values, list):
+            base_values = [base_values]
         match_mode = condition.get("match_mode", "exact")
 
+        # ── 合并 iocs 表动态指标（与 values 取并集）─────────────────
+        merged_values: list = list(base_values)
+        if global_context:
+            iocs_by_type = global_context.get("iocs_by_type") or {}
+            if iocs_by_type:
+                ioc_type = FIELD_TO_IOC_TYPE.get(field)
+                if ioc_type and ioc_type in iocs_by_type:
+                    dyn = iocs_by_type[ioc_type]
+                    if dyn:
+                        merged_values = merged_values + list(dyn)
+
         value = data_item.get(field, "")
-        if not value or not values:
+        if not value or not merged_values:
             return False
 
         value_str = str(value).lower()
-        for v in values:
+        for v in merged_values:
             v_str = str(v).lower()
             if match_mode == "exact":
                 if value_str == v_str:
+                    RuleEngine._record_ti_hit(global_context, v_str, data_item)
                     return True
             elif match_mode == "contains":
                 if v_str in value_str:
+                    RuleEngine._record_ti_hit(global_context, v_str, data_item)
                     return True
             elif match_mode == "startswith":
                 if value_str.startswith(v_str):
+                    RuleEngine._record_ti_hit(global_context, v_str, data_item)
                     return True
         return False
 
@@ -223,7 +549,7 @@ class RuleEngine:
     # ── 组合条件匹配 ──────────────────────────────────────────────────────
 
     @staticmethod
-    def _match_composite(data_item: dict, condition: dict) -> bool:
+    def _match_composite(data_item: dict, condition: dict, global_context: Optional[dict] = None) -> bool:
         """组合条件匹配 — 支持 AND/OR 逻辑递归求值.
 
         Condition 格式::
@@ -259,13 +585,13 @@ class RuleEngine:
                 if sub_type == "regex":
                     results.append(RuleEngine._match_regex(data_item, sub))
                 elif sub_type == "list":
-                    results.append(RuleEngine._match_list(data_item, sub))
+                    results.append(RuleEngine._match_list(data_item, sub, global_context=global_context))
                 elif sub_type == "threshold":
                     results.append(RuleEngine._match_threshold(data_item, sub))
                 elif sub_type == "behavior":
-                    results.append(RuleEngine._match_behavior(data_item, sub))
+                    results.append(RuleEngine._match_behavior(data_item, sub, global_context=global_context))
                 elif sub_type == "composite":
-                    results.append(RuleEngine._match_composite(data_item, sub))
+                    results.append(RuleEngine._match_composite(data_item, sub, global_context=global_context))
                 elif sub_type == "exists":
                     results.append(RuleEngine._match_exists(data_item, sub))
                 else:
@@ -837,7 +1163,16 @@ class RuleEngine:
             window_start = current_time - timedelta(minutes=window_minutes)
             window_end = current_time + timedelta(minutes=window_minutes)
 
-            # 计算时间窗口内的进程启动数量
+            # T-P2-4: 优先使用预排序列表 + 二分计数，将 O(n²) 降至 O(n log n)
+            dts = global_context.get("_tc_dts")
+            if dts:
+                import bisect
+
+                lo = bisect.bisect_left(dts, window_start)
+                hi = bisect.bisect_right(dts, window_end)
+                return (hi - lo) >= min_count
+
+            # 回退：未预排序时线性扫描（保持旧逻辑兼容）
             count_in_window = 0
             for item in all_items:
                 if not isinstance(item, dict):

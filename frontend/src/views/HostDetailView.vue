@@ -283,7 +283,7 @@ async function handleAnalyze() {
 async function loadAiStatus() {
   try {
     const res = await getAiConfig()
-    aiEnabled.value = res.data?.enabled === 1
+    aiEnabled.value = res.data?.config?.enabled === 1
   } catch (error) {
     aiEnabled.value = null
   }

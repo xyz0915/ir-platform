@@ -31,12 +31,16 @@ sys.path.insert(0, str(BACKEND_DIR))
 # 测试用临时数据库路径
 TEST_DB_PATH = str(BACKEND_DIR / "data" / "test_rules_import.db")
 
+# 默认规则文件路径（用于动态推导预期规则数，避免硬编码 94/97 与实际 JSON 不一致，T-P0-1）
+DEFAULT_RULES_PATH = BACKEND_DIR / "app" / "rules" / "default_rules.json"
+
 
 class TestRulesImportFix(unittest.TestCase):
     """测试 _import_default_rules() upsert-by-name 修复."""
 
     # ── 预期常量 ──────────────────────────────────────────────
-    EXPECTED_RULE_COUNT = 94
+    # 动态推导：以 default_rules.json 实际条数为准（含新增覆盖规则），避免与硬编码值漂移
+    EXPECTED_RULE_COUNT = len(json.load(open(DEFAULT_RULES_PATH, "r", encoding="utf-8")))
     EXPECTED_CATEGORIES = {
         "process", "network", "startup", "persistence", "ioc",
         "behavior", "execution", "credential", "defense_evasion",
@@ -413,6 +417,49 @@ class TestRulesImportFix(unittest.TestCase):
         self.assertEqual(
             len(unexpected), 0,
             f"以下规则在 DB 中被禁用但 JSON 中为启用: {unexpected}"
+        )
+
+    # ── 测试 11: severity 枚举约束（T-P1-2）─────────────────────
+
+    def test_11_severity_in_enum(self):
+        """所有规则的 severity 必须属于 critical/high/medium/low 枚举."""
+        rules = self._get_rules_from_db()
+        valid = {"critical", "high", "medium", "low"}
+        bad = [r["name"] for r in rules if r.get("severity") not in valid]
+        self.assertEqual(
+            len(bad), 0,
+            f"以下规则 severity 非法（不在枚举内）: {bad}"
+        )
+
+    # ── 测试 12: 本地化字段完整性（F-1/F-2）─────────────────────
+
+    def test_12_localization_fields_present(self):
+        """所有规则应含 label（中文名），且顶层或 condition._meta 含 mitre_attack."""
+        rules = self._get_rules_from_db()
+        # 排除 test_06 注入的原始 SQL 自定义规则（无 label/mitre，属测试产物）
+        rules = [r for r in rules if r["name"] != "qa_test_custom_rule"]
+        no_label = [r["name"] for r in rules if not r.get("label")]
+        self.assertEqual(
+            len(no_label), 0,
+            f"以下规则缺少 label 中文本地化字段: {no_label}"
+        )
+        no_mitre = []
+        for r in rules:
+            cond = r.get("condition")
+            if isinstance(cond, str):
+                try:
+                    cond = json.loads(cond)
+                except (json.JSONDecodeError, TypeError):
+                    cond = {}
+            meta = cond.get("_meta", {}) if isinstance(cond, dict) else {}
+            mitre = (r.get("mitre_attack")
+                     or (meta.get("mitre_attack") if isinstance(meta, dict) else None)
+                     or (cond.get("mitre_attack") if isinstance(cond, dict) else None))
+            if not mitre:
+                no_mitre.append(r["name"])
+        self.assertEqual(
+            len(no_mitre), 0,
+            f"以下规则缺少 mitre_attack 映射: {no_mitre}"
         )
 
 

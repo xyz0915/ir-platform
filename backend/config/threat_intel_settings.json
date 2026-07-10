@@ -1,0 +1,8 @@
+{
+  "enable_enrichment_feedback": true,
+  "auto_enrichment": false,
+  "daily_quota": 1000,
+  "recheck_days": 30,
+  "scheduler_interval": 3600,
+  "rate_limit_qps": 2
+}

@@ -1,0 +1,14 @@
+[
+  {
+    "name": "threatbook",
+    "type": "threatbook",
+    "base_url": "https://api.threatbook.cn",
+    "api_key_ref": "$THREATBOOK_KEY",
+    "enabled": true,
+    "rate_limit_qps": 2,
+    "endpoints": {
+      "ip": "/v3/scene/ip",
+      "domain": "/v3/domain/adv"
+    }
+  }
+]

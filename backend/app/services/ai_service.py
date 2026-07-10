@@ -1,24 +1,33 @@
-"""AI分析服务 — 大模型API调用与报告生成."""
+"""AI分析服务 — 大模型API调用与报告生成.
 
+提供 API Key 加解密、LLM 调用（同步+流式）、AI 配置管理、
+JSON 响应解析等功能。旧版 analyze_with_ai 保留向后兼容。
+"""
+
+import hashlib
 import json
 import logging
-import base64
-from typing import Any, Optional
+import uuid
+import warnings
+from datetime import datetime, timedelta, timezone
+from typing import Any, AsyncGenerator, Optional
 
 import httpx
 
 from app.config import settings
-from app.models.ai_config import AiConfig
+from app.models.ai_config import AiConfig, AiConfigProfile
+from app.shared.ai_error_mapping import map_http_error
 from app.models.ai_analysis import AiAnalysisReport
 from app.models.host import Host
-from app.models.analysis import (
-    AnalysisResult, HostProfile, AbnormalProcess,
-    SuspiciousConnection, PersistenceItem, TimelineEvent, IocHit,
-)
+from app.models.analysis import AnalysisResult
+from app.services.explainability_service import ExplainabilityService
+from app.services.input_quality_service import InputQualityService
+from app.services.knowledge_retriever import KnowledgeRetriever
+from app.services.prompt_builder import PromptBuilder
 
 logger = logging.getLogger(__name__)
 
-# 默认系统提示词
+# 默认系统提示词（旧版兼容，新版由 PromptBuilder 生成）
 DEFAULT_SYSTEM_PROMPT = """你是一个专业的网络安全应急响应分析专家。基于提供的主机取证数据和分析结果，你需要：
 1. 评估主机的安全风险等级和可能的威胁类型
 2. 分析攻击者的可能入侵路径和手法
@@ -42,10 +51,15 @@ DEFAULT_SYSTEM_PROMPT = """你是一个专业的网络安全应急响应分析�
 class AiService:
     """AI分析服务."""
 
+    # ================================================================
+    # API Key 加解密（不变）
+    # ================================================================
+
     @staticmethod
     def encrypt_api_key(key: str) -> str:
         """加密API Key（使用Fernet对称加密）."""
         from cryptography.fernet import Fernet
+
         fernet_key = settings.AI_ENCRYPTION_KEY
         f = Fernet(fernet_key)
         return f.encrypt(key.encode()).decode()
@@ -54,6 +68,7 @@ class AiService:
     def decrypt_api_key(encrypted: str) -> str:
         """解密API Key."""
         from cryptography.fernet import Fernet
+
         fernet_key = settings.AI_ENCRYPTION_KEY
         f = Fernet(fernet_key)
         return f.decrypt(encrypted.encode()).decode()
@@ -65,159 +80,135 @@ class AiService:
             return "****"
         return "****" + key[-4:]
 
+    # ================================================================
+    # 配置管理（委托给 AiConfigProfile）
+    # ================================================================
+
     @staticmethod
     def get_config() -> Optional[dict]:
-        """获取AI配置（API Key脱敏）."""
+        """获取AI配置（API Key脱敏）.
+
+        优先从 AiConfigProfile.get_active() 获取，回退到旧 AiConfig.
+        """
+        profile = AiConfigProfile.get_active()
+        if profile:
+            masked_key = AiService.mask_api_key(profile.get("api_key", ""))
+            result = dict(profile)
+            result["api_key_masked"] = masked_key
+            result["enabled"] = 1  # 激活的Profile即表示enabled
+            del result["api_key"]
+            return result
+
+        # 回退：旧 AiConfig
         config = AiConfig.get()
         if not config:
             return None
-        # 脱敏API Key
         masked_key = AiService.mask_api_key(config.get("api_key", ""))
         result = dict(config)
         result["api_key_masked"] = masked_key
-        # 不返回原始api_key
         del result["api_key"]
         return result
 
     @staticmethod
     def save_config(data: dict) -> dict:
-        """保存AI配置（加密API Key后存储）."""
+        """保存AI配置（加密API Key后存储）.
+
+        委托给 AiConfigProfile 或旧 AiConfig.
+        """
         api_key_plain = data.get("api_key", "")
         encrypted_key = AiService.encrypt_api_key(api_key_plain) if api_key_plain else ""
-        config = AiConfig.save(
-            api_base_url=data.get("api_base_url", ""),
-            api_key_encrypted=encrypted_key,
-            model_name=data.get("model_name", "gpt-4o"),
-            enabled=data.get("enabled", 0),
-            max_tokens=data.get("max_tokens", 4096),
-            temperature=data.get("temperature", 0.3),
-            system_prompt=data.get("system_prompt", ""),
-        )
+
+        # 优先使用新 Profile 模型
+        active = AiConfigProfile.get_active()
+        if active:
+            update_kwargs: dict = {}
+            if data.get("api_base_url"):
+                update_kwargs["api_base_url"] = data["api_base_url"]
+            if encrypted_key:
+                update_kwargs["api_key"] = encrypted_key
+            if data.get("model_name"):
+                update_kwargs["model_name"] = data["model_name"]
+            if "max_tokens" in data:
+                update_kwargs["max_tokens"] = data["max_tokens"]
+            if "temperature" in data:
+                update_kwargs["temperature"] = data["temperature"]
+            if "system_prompt" in data:
+                update_kwargs["system_prompt"] = data.get("system_prompt", "")
+            if update_kwargs:
+                AiConfigProfile.update(active["id"], **update_kwargs)
+            if data.get("enabled") == 1:
+                AiConfigProfile.set_active(active["id"])
+        else:
+            # 回退：旧 AiConfig
+            config = AiConfig.save(
+                api_base_url=data.get("api_base_url", ""),
+                api_key_encrypted=encrypted_key,
+                model_name=data.get("model_name", "gpt-4o"),
+                enabled=data.get("enabled", 0),
+                max_tokens=data.get("max_tokens", 4096),
+                temperature=data.get("temperature", 0.3),
+                system_prompt=data.get("system_prompt", ""),
+            )
+
         return AiService.get_config()
 
     @staticmethod
     def toggle_enabled(enabled: int) -> dict:
-        """开启/关闭AI功能."""
+        """开启/关闭AI功能.
+
+        检查激活的 Profile 配置是否完整（api_base_url 和 api_key 不为空）.
+        """
         if enabled == 1:
-            # 开启前检查配置是否完整
-            config = AiConfig.get()
-            if not config:
-                raise ValueError("请先配置AI参数（API地址和密钥）")
-            if not config.get("api_base_url") or not config.get("api_key"):
-                raise ValueError("API地址和密钥不能为空")
+            profile = AiConfigProfile.get_active()
+            if not profile:
+                # 回退旧 config
+                config = AiConfig.get()
+                if not config:
+                    raise ValueError("请先配置AI参数（API地址和密钥）")
+                if not config.get("api_base_url") or not config.get("api_key"):
+                    raise ValueError("API地址和密钥不能为空")
+            else:
+                if not profile.get("api_base_url") or not profile.get("api_key"):
+                    raise ValueError("当前激活的配置缺少API地址或密钥")
         result = AiConfig.update_enabled(enabled)
         return AiService.get_config()
 
-    @staticmethod
-    def _build_analysis_prompt(host_id: int) -> str:
-        """构建发送给AI的分析数据prompt."""
-        host = Host.get_by_id(host_id)
-        if not host:
-            raise ValueError("主机不存在")
-
-        # 组装分析数据
-        analysis_data = {
-            "host_basic": {
-                "hostname": host.get("hostname", ""),
-                "ip_address": host.get("ip_address", ""),
-                "os_type": host.get("os_type", ""),
-                "os_version": host.get("os_version", ""),
-            },
-        }
-
-        # 画像
-        profile = HostProfile.get_by_host(host_id)
-        if profile:
-            analysis_data["profile"] = {
-                "system_summary": profile.get("system_summary", ""),
-                "cpu_info": profile.get("cpu_info", ""),
-                "memory_info": profile.get("memory_info", ""),
-                "security_products": profile.get("security_products", ""),
-            }
-
-        # 分析结果
-        analysis = AnalysisResult.get_by_host(host_id)
-        if analysis:
-            analysis_data["analysis_result"] = {
-                "risk_level": analysis.get("risk_level", ""),
-                "risk_score": analysis.get("risk_score", 0),
-                "total_findings": analysis.get("total_findings", 0),
-                "summary": analysis.get("summary", ""),
-            }
-
-        # 异常进程
-        processes = AbnormalProcess.list_by_host(host_id)
-        if processes:
-            analysis_data["abnormal_processes"] = [
-                {"name": p.get("process_name"), "path": p.get("process_path"),
-                 "cmd": p.get("command_line"), "reason": p.get("reason"),
-                 "severity": p.get("severity")}
-                for p in processes[:20]  # 限制数量避免prompt过长
-            ]
-
-        # 可疑外连
-        connections = SuspiciousConnection.list_by_host(host_id)
-        if connections:
-            analysis_data["suspicious_connections"] = [
-                {"remote": f"{p.get('remote_address')}:{p.get('remote_port')}",
-                 "process": p.get("process_name"), "reason": p.get("reason"),
-                 "severity": p.get("severity")}
-                for p in connections[:20]
-            ]
-
-        # 持久化痕迹
-        persistence = PersistenceItem.list_by_host(host_id)
-        if persistence:
-            analysis_data["persistence_items"] = [
-                {"type": p.get("type"), "name": p.get("name"),
-                 "command": p.get("command"), "suspicious": p.get("is_suspicious"),
-                 "reason": p.get("reason")}
-                for p in persistence[:20]
-            ]
-
-        # IOC命中
-        ioc_hits = IocHit.list_by_host(host_id)
-        if ioc_hits:
-            analysis_data["ioc_hits"] = [
-                {"type": p.get("ioc_type"), "value": p.get("ioc_value"),
-                 "context": p.get("context"), "severity": p.get("severity")}
-                for p in ioc_hits[:20]
-            ]
-
-        # 时间线
-        timeline = TimelineEvent.list_by_host(host_id)
-        if timeline:
-            analysis_data["timeline"] = [
-                {"time": p.get("timestamp"), "type": p.get("event_type"),
-                 "desc": p.get("description"), "severity": p.get("severity")}
-                for p in timeline[:30]
-            ]
-
-        prompt = f"""请基于以下主机取证数据和分析结果进行专业安全分析：
-
-主机基础信息：
-- 主机名: {host.get('hostname', 'N/A')}
-- IP: {host.get('ip_address', 'N/A')}
-- 操作系统: {host.get('os_type', 'N/A')} {host.get('os_version', 'N/A')}
-- 本地风险评级: {analysis.get('risk_level', 'N/A')} (分数: {analysis.get('risk_score', 0)}/100)
-- 本地分析摘要: {analysis.get('summary', '无')}
-
-详细分析数据（JSON格式）：
-{json.dumps(analysis_data, ensure_ascii=False, indent=2)}
-
-请对以上数据进行全面的安全应急响应分析。"""
-
-        return prompt
+    # ================================================================
+    # LLM 调用（同步 + 流式）
+    # ================================================================
 
     @staticmethod
-    async def call_llm(api_base_url: str, api_key: str, model: str,
-                       system_prompt: str, user_prompt: str,
-                       max_tokens: int, temperature: float) -> dict:
-        """调用 OpenAI-compatible 格式的 LLM API.
+    async def call_llm(
+        api_base_url: str,
+        api_key: str,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        max_tokens: int,
+        temperature: float,
+    ) -> dict:
+        """调用 OpenAI-compatible 格式的 LLM API（非流式）.
 
         兼容部分新模型/代理网关对 token 参数名的差异：
         - 传统 chat completions: max_tokens
         - 新接口/部分网关: max_output_tokens
+
+        Args:
+            api_base_url: API 基础 URL.
+            api_key: API Key（已解密）.
+            model: 模型名称.
+            system_prompt: 系统提示词.
+            user_prompt: 用户提示词.
+            max_tokens: 最大生成 token 数.
+            temperature: 生成温度.
+
+        Returns:
+            LLM API 原始响应 JSON.
+
+        Raises:
+            httpx.HTTPStatusError: API 返回非 200.
+            httpx.TimeoutException: 请求超时.
+            httpx.ConnectError: 连接失败.
         """
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -243,7 +234,9 @@ class AiService:
                     retry_payload = dict(payload)
                     retry_payload.pop("max_tokens", None)
                     retry_payload["max_output_tokens"] = max_tokens
-                    logger.warning("LLM gateway rejected max_output_tokens expectation mismatch; retrying with max_output_tokens")
+                    logger.warning(
+                        "LLM gateway rejected max_output_tokens expectation mismatch; retrying with max_output_tokens"
+                    )
                     resp = await client.post(url, headers=headers, json=retry_payload)
                 elif "Unsupported parameter: max_tokens" in body_text:
                     retry_payload = dict(payload)
@@ -255,8 +248,91 @@ class AiService:
             return resp.json()
 
     @staticmethod
+    async def call_llm_stream(
+        api_base_url: str,
+        api_key: str,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        max_tokens: int,
+        temperature: float,
+    ) -> AsyncGenerator[dict, None]:
+        """流式调用 OpenAI-compatible 格式的 LLM API.
+
+        使用 httpx.AsyncClient.stream() 处理 SSE 事件流。
+        每个 yield 的 dict 包含：
+        - content: str — 本次 chunk 的文本内容
+        - usage: dict | None — token 使用统计（仅在最后一个 chunk）
+
+        Args:
+            api_base_url: API 基础 URL.
+            api_key: API Key（已解密）.
+            model: 模型名称.
+            system_prompt: 系统提示词.
+            user_prompt: 用户提示词.
+            max_tokens: 最大生成 token 数.
+            temperature: 生成温度.
+
+        Yields:
+            包含 content 和 usage 的字典.
+        """
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        payload: dict = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": True,
+        }
+        url = api_base_url.rstrip("/") + "/chat/completions"
+        logger.info("Calling LLM API (stream): %s, model: %s", url, model)
+
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            async with client.stream("POST", url, headers=headers, json=payload) as resp:
+                resp.raise_for_status()
+
+                async for line in resp.aiter_lines():
+                    if not line or not line.startswith("data: "):
+                        continue
+
+                    data_str = line[6:]  # Remove "data: " prefix
+                    if data_str.strip() == "[DONE]":
+                        break
+
+                    try:
+                        data = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        logger.warning("Failed to parse SSE line: %s", data_str[:100])
+                        continue
+
+                    choices = data.get("choices", [])
+                    usage = data.get("usage")
+
+                    content = ""
+                    if choices:
+                        delta = choices[0].get("delta", {})
+                        content = delta.get("content", "")
+
+                    yield {
+                        "content": content,
+                        "usage": usage,
+                    }
+
+    # ================================================================
+    # 新旧分析入口
+    # ================================================================
+
+    @staticmethod
     async def analyze_with_ai(host_id: int) -> dict:
-        """一键AI分析 — 组装数据、调用LLM、保存报告.
+        """【已弃用】一键AI分析 — 组装数据、调用LLM、保存报告.
+
+        保留此方法用于向后兼容。新代码请使用 analyze_with_ai_json() 和 AiTaskService.
 
         Args:
             host_id: 主机ID.
@@ -267,6 +343,12 @@ class AiService:
         Raises:
             ValueError: AI功能未开启或配置不完整.
         """
+        warnings.warn(
+            "analyze_with_ai() is deprecated, use analyze_with_ai_json() or AiTaskService.submit()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
         # 1. 检查AI是否开启
         config = AiConfig.get()
         if not config or config.get("enabled") != 1:
@@ -274,7 +356,7 @@ class AiService:
         if not config.get("api_base_url") or not config.get("api_key"):
             raise ValueError("API配置不完整")
 
-        # 2. 检查主机是否已完成本地分析
+        # 2. 检查主机状态
         host = Host.get_by_id(host_id)
         if not host:
             raise ValueError("主机不存在")
@@ -289,7 +371,7 @@ class AiService:
         temperature = config.get("temperature", 0.3)
         system_prompt = config.get("system_prompt") or DEFAULT_SYSTEM_PROMPT
 
-        # 4. 构建prompt
+        # 4. 构建prompt（旧方式）
         user_prompt = AiService._build_analysis_prompt(host_id)
 
         # 5. 调用LLM
@@ -306,7 +388,7 @@ class AiService:
             )
         except httpx.HTTPStatusError as e:
             logger.error("LLM API error: %s %s", e.response.status_code, e.response.text)
-            raise ValueError(f"AI服务调用失败 (HTTP {e.response.status_code}): {e.response.text[:200]}")
+            raise ValueError(map_http_error(e))
         except httpx.TimeoutException:
             raise ValueError("AI服务调用超时（120秒），请检查API地址是否正确")
         except httpx.ConnectError:
@@ -320,16 +402,14 @@ class AiService:
         ai_content = choices[0].get("message", {}).get("content", "")
         tokens_used = llm_response.get("usage", {}).get("total_tokens", 0)
 
-        # 7. 尝试按结构化格式提取各部分
+        # 7. 按结构化格式提取各部分
         risk_assessment = AiService._extract_section(ai_content, "风险评估")
         threat_analysis = AiService._extract_section(ai_content, "威胁分析")
         timeline_analysis = AiService._extract_section(ai_content, "时间线解读")
         recommendations = AiService._extract_section(ai_content, "处置建议")
 
-        # 8. 获取主机关联的案件ID
+        # 8. 保存报告
         case_id = host.get("case_id", 0)
-
-        # 9. 保存AI报告
         report = AiAnalysisReport.create(
             host_id=host_id,
             case_id=case_id,
@@ -342,15 +422,556 @@ class AiService:
             tokens_used=tokens_used,
         )
 
-        logger.info("AI analysis completed for host %d: model=%s, tokens=%d",
-                     host_id, model_name, tokens_used)
+        logger.info(
+            "AI analysis completed for host %d: model=%s, tokens=%d",
+            host_id, model_name, tokens_used,
+        )
         return report
 
     @staticmethod
+    async def analyze_with_ai_json(host_id: int) -> dict:
+        """AI分析 — 使用 PromptBuilder + JSON 格式输出.
+
+        推荐的分析入口，使用分层 Prompt 构建器，强制 AI 返回 JSON 格式。
+        如果 AI 配置开启了自定义 system_prompt，优先使用自定义的。
+        支持分析缓存：相同数据 hash + 24h 内直接返回缓存结果。
+
+        Args:
+            host_id: 主机 ID.
+
+        Returns:
+            AI 分析报告字典.
+
+        Raises:
+            ValueError: AI 功能未开启或配置不完整.
+        """
+        # 1. 检查配置
+        config = AiConfig.get()
+        if not config or config.get("enabled") != 1:
+            # 也检查新的 Profile
+            profile = AiConfigProfile.get_active()
+            if not profile:
+                raise ValueError("AI分析功能未开启，请在AI设置中手动开启")
+            config = AiConfig.get()
+            if not config:
+                raise ValueError("AI分析功能未开启，请在AI设置中手动开启")
+
+        if not config.get("api_base_url") or not config.get("api_key"):
+            raise ValueError("API配置不完整")
+
+        # 2. 检查主机
+        host = Host.get_by_id(host_id)
+        if not host:
+            raise ValueError("主机不存在")
+
+        # 3. 使用 PromptBuilder 构建结构化 prompt
+        prompts = PromptBuilder.build(host_id=host_id, masked=False)
+        system_prompt = prompts["system_prompt"]
+        user_prompt = prompts["user_prompt"]
+
+        # P2-09: 缓存检查 — 计算 data_hash，查24h内缓存
+        data_hash = AiService._compute_data_hash(host_id)
+        cached_report = AiAnalysisReport.get_cached_report(host_id, data_hash)
+        if cached_report:
+            logger.info(
+                "Cache hit for host %d (hash=%s...), returning cached report",
+                host_id, data_hash[:12],
+            )
+            return cached_report
+
+        # 如果用户配置了自定义 system_prompt，使用自定义的
+        custom_sp = config.get("system_prompt", "")
+        if custom_sp:
+            system_prompt = custom_sp
+            logger.info("Using custom system_prompt for host %d", host_id)
+
+        # 4. 解密 API Key
+        api_key = AiService.decrypt_api_key(config["api_key"])
+        api_base_url = config["api_base_url"]
+        model_name = config["model_name"]
+        max_tokens = config.get("max_tokens", 4096)
+        temperature = config.get("temperature", 0.3)
+
+        # 5. 调用 LLM（非流式，使用 response_format: json_object）
+        logger.info("Starting AI JSON analysis for host %d with model %s", host_id, model_name)
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        payload: dict = {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "response_format": {"type": "json_object"},
+        }
+        url = api_base_url.rstrip("/") + "/chat/completions"
+
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(url, headers=headers, json=payload)
+                resp.raise_for_status()
+                llm_response = resp.json()
+        except httpx.HTTPStatusError as e:
+            logger.error("LLM API error: %s %s", e.response.status_code, e.response.text)
+            raise ValueError(map_http_error(e))
+        except httpx.TimeoutException:
+            raise ValueError("AI服务调用超时（120秒），请检查API地址是否正确")
+        except httpx.ConnectError:
+            raise ValueError("无法连接AI服务，请检查API地址是否正确")
+
+        # 6. 解析 JSON 回复
+        choices = llm_response.get("choices", [])
+        if not choices:
+            raise ValueError("AI服务返回空结果")
+
+        ai_content = choices[0].get("message", {}).get("content", "")
+        usage = llm_response.get("usage", {})
+        total_tokens = usage.get("total_tokens", 0)
+
+        # 解析四部分并做本地增强兜底
+        parsed = AiService.parse_json_response(ai_content)
+        prompts_without_knowledge = PromptBuilder._fetch_tiered_data(host_id)
+        quality_context = InputQualityService.evaluate(prompts_without_knowledge)
+        structured_knowledge = KnowledgeRetriever.retrieve(
+            prompts_without_knowledge,
+            limit=5,
+            structured=True,
+        )
+        explainability = ExplainabilityService.build_evidence_trace(
+            parsed_sections=parsed,
+            knowledge_items=structured_knowledge,
+            tiered_data=prompts_without_knowledge,
+        )
+
+        risk_assessment = ExplainabilityService.normalize_section(parsed.get("risk_assessment", {}))
+        threat_analysis = ExplainabilityService.normalize_section(parsed.get("threat_analysis", {}))
+        timeline_analysis = ExplainabilityService.ensure_structured_timeline(
+            ExplainabilityService.normalize_section(parsed.get("timeline_analysis", {})),
+            prompts_without_knowledge,
+        )
+        recommendations = ExplainabilityService.normalize_section(parsed.get("recommendations", {}))
+
+        risk_assessment.setdefault("risk_level", prompts_without_knowledge.get("analysis_result", {}).get("risk_level", "待确认"))
+        risk_assessment.setdefault("risk_score", prompts_without_knowledge.get("analysis_result", {}).get("risk_score", 0))
+        risk_assessment["input_quality"] = quality_context["input_quality"]
+        risk_assessment["coverage_gaps"] = quality_context["coverage_gaps"]
+        risk_assessment["miss_risk"] = quality_context["miss_risk"]
+        risk_assessment["evidence_insufficiency"] = quality_context["evidence_insufficiency"]
+
+        threat_analysis["evidence_trace"] = explainability["evidence_trace"]
+        recommendations["input_suggestions"] = quality_context["input_suggestions"]
+        recommendations["recommended_questions"] = explainability["recommended_questions"]
+
+        # 7. 保存报告（含缓存字段）
+        case_id = host.get("case_id", 0)
+        cached_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        report = AiAnalysisReport.create(
+            host_id=host_id,
+            case_id=case_id,
+            risk_assessment=json.dumps(risk_assessment, ensure_ascii=False),
+            threat_analysis=json.dumps(threat_analysis, ensure_ascii=False),
+            timeline_analysis=json.dumps(timeline_analysis, ensure_ascii=False),
+            recommendations=json.dumps(recommendations, ensure_ascii=False),
+            raw_response=ai_content,
+            model_used=model_name,
+            tokens_used=total_tokens,
+            prompt_tokens=usage.get("prompt_tokens", 0),
+            completion_tokens=usage.get("completion_tokens", 0),
+            data_hash=data_hash,
+            cached_at=cached_at,
+        )
+
+        logger.info(
+            "AI JSON analysis completed for host %d: model=%s, tokens=%d, hash=%s",
+            host_id, model_name, total_tokens, data_hash[:12],
+        )
+        return report
+
+    @staticmethod
+    def parse_json_response(content: str) -> dict:
+        """从 JSON 格式 AI 回复中提取四部分分析内容.
+
+        尝试多种策略：
+        1. 直接 JSON.parse 整个响应
+        2. 提取 ```json ``` 代码块
+        3. 回退 Markdown 节提取
+
+        Args:
+            content: AI 原始回复文本.
+
+        Returns:
+            包含 risk_assessment, threat_analysis, timeline_analysis, recommendations 的字典.
+        """
+        default_result: dict = {
+            "risk_assessment": {},
+            "threat_analysis": {},
+            "timeline_analysis": {},
+            "recommendations": {},
+        }
+
+        if not content:
+            return default_result
+
+        # 策略1：整个文本作为 JSON 解析
+        json_str: Optional[str] = None
+        brace_start = content.find("{")
+        brace_end = content.rfind("}")
+        if brace_start >= 0 and brace_end > brace_start:
+            json_str = content[brace_start:brace_end + 1]
+
+        # 策略2：提取 ```json 代码块
+        if not json_str and "```json" in content:
+            start = content.find("```json") + 7
+            end = content.find("```", start)
+            if end > start:
+                json_str = content[start:end].strip()
+        elif not json_str and "```" in content:
+            start = content.find("```") + 3
+            end = content.find("```", start)
+            if end > start:
+                json_str = content[start:end].strip()
+
+        # 尝试 JSON 解析
+        if json_str:
+            try:
+                parsed = json.loads(json_str)
+                if isinstance(parsed, dict):
+                    return {
+                        "risk_assessment": parsed.get("risk_assessment", {}),
+                        "threat_analysis": parsed.get("threat_analysis", {}),
+                        "timeline_analysis": parsed.get("timeline_analysis", {}),
+                        "recommendations": parsed.get("recommendations", {}),
+                    }
+            except json.JSONDecodeError:
+                logger.warning("Failed to parse AI JSON response, falling back to Markdown extraction")
+
+        # 策略3：回退 Markdown 节提取（旧方式）
+        return {
+            "risk_assessment": {"raw_analysis": AiService._extract_section(content, "风险评估") or content[:500]},
+            "threat_analysis": {"raw_analysis": AiService._extract_section(content, "威胁分析") or ""},
+            "timeline_analysis": {"raw_analysis": AiService._extract_section(content, "时间线解读") or ""},
+            "recommendations": {"raw_analysis": AiService._extract_section(content, "处置建议") or ""},
+        }
+
+    # ================================================================
+    # P2-01: 多轮对话
+    # ================================================================
+
+    @staticmethod
+    async def chat_with_ai(
+        host_id: int,
+        message: str,
+        conversation_history: Optional[list[dict]] = None,
+        mode: str = "follow_up",
+        focus_area: Optional[str] = None,
+        base_report_id: Optional[int] = None,
+    ) -> dict:
+        """多轮对话聊天 — 带上下文历史的 AI 对话.
+
+        构建 messages 数组 = system + history（限5轮） + 新问题，
+        调用 LLM 获取回复。
+
+        Args:
+            host_id: 主机ID（用于 system prompt 中的主机上下文）.
+            message: 用户消息内容.
+            conversation_history: 历史对话列表 [{"role":"user","content":"..."}, ...].
+
+        Returns:
+            {"reply": str, "conversation_id": str, "model_used": str, "tokens_used": int}
+
+        Raises:
+            ValueError: AI 配置不完整或调用失败.
+        """
+        # 1. 获取配置
+        profile = AiConfigProfile.get_active()
+        if not profile:
+            config = AiConfig.get()
+            if not config:
+                raise ValueError("AI分析功能未开启")
+            api_base_url = config["api_base_url"]
+            api_key = AiService.decrypt_api_key(config["api_key"])
+            model_name = config["model_name"]
+            max_tokens = config.get("max_tokens", 4096)
+            temperature = config.get("temperature", 0.3)
+            system_prompt = config.get("system_prompt") or DEFAULT_SYSTEM_PROMPT
+        else:
+            api_base_url = profile["api_base_url"]
+            api_key = AiService.decrypt_api_key(profile["api_key"])
+            model_name = profile.get("model_name", "gpt-4o")
+            max_tokens = profile.get("max_tokens", 4096)
+            temperature = profile.get("temperature", 0.3)
+            system_prompt = profile.get("system_prompt") or DEFAULT_SYSTEM_PROMPT
+
+        deep_context = AiService._build_deep_dive_context(
+            host_id=host_id,
+            mode=mode,
+            focus_area=focus_area,
+            base_report_id=base_report_id,
+        )
+        if deep_context:
+            system_prompt = f"{system_prompt}\n\n{deep_context}"
+
+        if not api_base_url or not api_key:
+            raise ValueError("API配置不完整")
+
+        # 2. 构建 messages
+        messages: list[dict] = [
+            {"role": "system", "content": system_prompt},
+        ]
+
+        # 历史对话 — 最近5轮（每轮 user+assistant = 2条，共10条）
+        if conversation_history:
+            recent = conversation_history[-10:]
+            for msg in recent:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if role in ("user", "assistant") and content:
+                    messages.append({"role": role, "content": content})
+
+        # 当前用户问题
+        messages.append({"role": "user", "content": message})
+
+        # 3. 调用 LLM
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        payload: dict = {
+            "model": model_name,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        url = api_base_url.rstrip("/") + "/chat/completions"
+
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(url, headers=headers, json=payload)
+                resp.raise_for_status()
+                llm_response = resp.json()
+        except httpx.HTTPStatusError as e:
+            raise ValueError(map_http_error(e))
+        except httpx.TimeoutException:
+            raise ValueError("AI服务调用超时")
+        except httpx.ConnectError:
+            raise ValueError("无法连接AI服务")
+
+        # 4. 解析回复
+        choices = llm_response.get("choices", [])
+        if not choices:
+            raise ValueError("AI服务返回空结果")
+
+        reply = choices[0].get("message", {}).get("content", "")
+        tokens_used = llm_response.get("usage", {}).get("total_tokens", 0)
+
+        conv_id = str(uuid.uuid4())[:8]
+
+        logger.info("Chat completed: host=%d, model=%s, tokens=%d", host_id, model_name, tokens_used)
+        return {
+            "reply": reply,
+            "conversation_id": conv_id,
+            "model_used": model_name,
+            "tokens_used": tokens_used,
+            "mode": mode,
+            "focus_area": focus_area,
+        }
+
+    @staticmethod
+    def _build_deep_dive_context(
+        host_id: int,
+        mode: str,
+        focus_area: Optional[str],
+        base_report_id: Optional[int],
+    ) -> str:
+        """构建深挖模式的附加上下文."""
+        if mode != "deep_dive":
+            return ""
+
+        context_lines = [
+            "当前任务为 deep_dive 深挖模式，请基于已有分析继续收敛重点问题。",
+        ]
+        if focus_area:
+            context_lines.append(f"本次深挖重点领域：{focus_area}。")
+        report = None
+        if base_report_id:
+            report = AiAnalysisReport.get_by_id(base_report_id)
+        if report is None:
+            report = AiAnalysisReport.get_by_host(host_id)
+        if report:
+            context_lines.append("以下为已有分析基线，请避免重复描述，重点补充新的论证和细节：")
+            context_lines.append(f"- 风险评估：{str(report.get('risk_assessment', ''))[:500]}")
+            context_lines.append(f"- 威胁分析：{str(report.get('threat_analysis', ''))[:500]}")
+            context_lines.append(f"- 时间线：{str(report.get('timeline_analysis', ''))[:500]}")
+        context_lines.append("请输出更细粒度证据解释、剩余疑点和下一步排查建议。")
+        return "\n".join(context_lines)
+
+    # ================================================================
+    # P2-09: 分析缓存
+    # ================================================================
+
+    @staticmethod
+    def _compute_data_hash(host_id: int) -> str:
+        """计算主机分析数据的 MD5 指纹 — 用于缓存.
+
+        将 PromptBuilder 构建的数据序列化后计算 MD5，
+        相同数据返回相同 hash，用于判断是否可以复用缓存.
+
+        Args:
+            host_id: 主机 ID.
+
+        Returns:
+            MD5 十六进制字符串.
+        """
+        from app.services.prompt_builder import PromptBuilder
+
+        try:
+            prompts = PromptBuilder.build(host_id=host_id, masked=False, include_knowledge=False)
+            data_text = prompts.get("user_prompt", "")
+        except Exception:
+            data_text = ""
+
+        if not data_text:
+            host = Host.get_by_id(host_id)
+            data_text = json.dumps({
+                "hostname": host.get("hostname", "") if host else "",
+                "ip": host.get("ip_address", "") if host else "",
+            })
+
+        return hashlib.md5(data_text.encode("utf-8")).hexdigest()
+
+    # ================================================================
+    # 旧版辅助方法（保留向后兼容）
+    # ================================================================
+
+    @staticmethod
+    def _build_analysis_prompt(host_id: int) -> str:
+        """【已弃用】构建发送给AI的分析数据prompt.
+
+        新代码请使用 PromptBuilder.build().
+        """
+        from app.models.analysis import (
+            HostProfile, AbnormalProcess, SuspiciousConnection,
+            PersistenceItem, TimelineEvent, IocHit,
+        )
+
+        warnings.warn(
+            "_build_analysis_prompt() is deprecated, use PromptBuilder.build()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+        host = Host.get_by_id(host_id)
+        if not host:
+            raise ValueError("主机不存在")
+
+        analysis_data: dict = {
+            "host_basic": {
+                "hostname": host.get("hostname", ""),
+                "ip_address": host.get("ip_address", ""),
+                "os_type": host.get("os_type", ""),
+                "os_version": host.get("os_version", ""),
+            },
+        }
+
+        profile = HostProfile.get_by_host(host_id)
+        if profile:
+            analysis_data["profile"] = {
+                "system_summary": profile.get("system_summary", ""),
+                "cpu_info": profile.get("cpu_info", ""),
+                "memory_info": profile.get("memory_info", ""),
+                "security_products": profile.get("security_products", ""),
+            }
+
+        analysis = AnalysisResult.get_by_host(host_id)
+        if analysis:
+            analysis_data["analysis_result"] = {
+                "risk_level": analysis.get("risk_level", ""),
+                "risk_score": analysis.get("risk_score", 0),
+                "total_findings": analysis.get("total_findings", 0),
+                "summary": analysis.get("summary", ""),
+            }
+
+        processes = AbnormalProcess.list_by_host(host_id)
+        if processes:
+            analysis_data["abnormal_processes"] = [
+                {
+                    "name": p.get("process_name"), "path": p.get("process_path"),
+                    "cmd": p.get("command_line"), "reason": p.get("reason"),
+                    "severity": p.get("severity"),
+                }
+                for p in processes[:20]
+            ]
+
+        connections = SuspiciousConnection.list_by_host(host_id)
+        if connections:
+            analysis_data["suspicious_connections"] = [
+                {
+                    "remote": f"{p.get('remote_address')}:{p.get('remote_port')}",
+                    "process": p.get("process_name"), "reason": p.get("reason"),
+                    "severity": p.get("severity"),
+                }
+                for p in connections[:20]
+            ]
+
+        persistence = PersistenceItem.list_by_host(host_id)
+        if persistence:
+            analysis_data["persistence_items"] = [
+                {
+                    "type": p.get("type"), "name": p.get("name"),
+                    "command": p.get("command"), "suspicious": p.get("is_suspicious"),
+                    "reason": p.get("reason"),
+                }
+                for p in persistence[:20]
+            ]
+
+        ioc_hits = IocHit.list_by_host(host_id)
+        if ioc_hits:
+            analysis_data["ioc_hits"] = [
+                {
+                    "type": p.get("ioc_type"), "value": p.get("ioc_value"),
+                    "context": p.get("context"), "severity": p.get("severity"),
+                }
+                for p in ioc_hits[:20]
+            ]
+
+        timeline = TimelineEvent.list_by_host(host_id)
+        if timeline:
+            analysis_data["timeline"] = [
+                {
+                    "time": p.get("timestamp"), "type": p.get("event_type"),
+                    "desc": p.get("description"), "severity": p.get("severity"),
+                }
+                for p in timeline[:30]
+            ]
+
+        prompt = f"""请基于以下主机取证数据和分析结果进行专业安全分析：
+
+主机基础信息：
+- 主机名: {host.get('hostname', 'N/A')}
+- IP: {host.get('ip_address', 'N/A')}
+- 操作系统: {host.get('os_type', 'N/A')} {host.get('os_version', 'N/A')}
+- 本地风险评级: {analysis.get('risk_level', 'N/A')} (分数: {analysis.get('risk_score', 0)}/100)
+- 本地分析摘要: {analysis.get('summary', '无')}
+
+详细分析数据（JSON格式）：
+{json.dumps(analysis_data, ensure_ascii=False, indent=2)}
+
+请对以上数据进行全面的安全应急响应分析。"""
+
+        return prompt
+
+    @staticmethod
     def _extract_section(text: str, section_name: str) -> str:
-        """从AI回复中提取指定章节内容."""
-        # 支持多种标题格式: ## 风险评估, ### 风险评估, **风险评估**
+        """【已弃用】从AI回复中提取指定章节内容.
+
+        新代码请使用 parse_json_response().
+        """
         import re
+
         patterns = [
             rf"##\s*{section_name}\s*\n(.*?)(?=\n##|\n###|\Z)",
             rf"###\s*{section_name}\s*\n(.*?)(?=\n##|\n###|\Z)",
@@ -361,6 +982,10 @@ class AiService:
             if match:
                 return match.group(1).strip()
         return ""
+
+    # ================================================================
+    # 报告查询
+    # ================================================================
 
     @staticmethod
     def get_report(host_id: int) -> Optional[dict]:

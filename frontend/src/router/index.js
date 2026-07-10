@@ -44,9 +44,19 @@ const routes = [
         component: () => import('@/views/WhitelistView.vue')
       },
       {
+        path: 'iocs',
+        name: 'Iocs',
+        component: () => import('@/views/IocsView.vue')
+      },
+      {
         path: 'ai',
         name: 'AiConfig',
         component: () => import('@/views/AiView.vue')
+      },
+      {
+        path: 'threat-intel-config',
+        name: 'ThreatIntelConfig',
+        component: () => import('@/views/ThreatIntelConfigView.vue')
       }
     ]
   }

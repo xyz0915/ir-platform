@@ -1,36 +1,23 @@
-# AI 分析执行 BugFix 概览
+# 本次处理概览
 
-## 本次完成
-- 修复了 AI 分析执行时报错的问题。
-- 完成了真实主机数据的 AI 分析调用测试，确认能够成功生成 AI 报告。
-- 调整了前端开发代理，使页面请求连到已修复的后端实例。
-
-## 根因
-- 当前接入的 AI 网关/模型在 `chat/completions` 调用中，不接受代码原先发送的 token 参数格式，返回：`Unsupported parameter: max_output_tokens`。
-- 这说明不同 OpenAI-compatible 网关在 token 限制字段上存在兼容性差异，原实现只支持单一参数写法，导致 AI 分析请求被 400 拒绝。
+## 完成内容
+- 修复 AI 分析卡在 0% 不动的问题：后端 RAG 向量模型加载改为仅使用本地缓存，不再因首次联网下载 Hugging Face 模型而阻塞整个分析链路。
+- 修复取消分析后界面恢复异常的问题：前端取消后会真正重置状态并回到确认阶段，可直接重新发起分析。
+- 保持关键词回退链路可用：本地无向量模型缓存时，自动快速降级为关键词检索，而不是长时间卡死。
 
 ## 关键改动
-- `backend/app/services/ai_service.py`
-  - 为 LLM 调用增加参数兼容重试逻辑：
-    - 默认先按 `max_tokens` 请求
-    - 若网关返回 `Unsupported parameter: max_tokens` 或 `Unsupported parameter: max_output_tokens`，则自动切换为 `max_output_tokens` 重试
-- `frontend/vite.config.js`
-  - 将开发代理目标切换到本次验证用的后端实例端口 `8012`
+- `backend/app/services/knowledge_retriever.py`
+  - `_get_embedding_model()` 改为 `local_files_only=True`
+  - 本地无模型缓存时记录 warning，并禁用 embedding，快速回退关键词检索
+- `frontend/src/components/AiAnalysisDialog.vue`
+  - `handleCancelAnalysis()` 改为取消后 `resetState()` 并回到 `confirm`
+- 之前已兼容 `content` SSE 文本事件，保证黑色终端区能显示流式输出
 
 ## 验证结果
-- 真实主机 `host_id=1`，状态 `analyzed`：AI 分析成功
-- `POST /api/ai/analyze/1` 返回 `code: 0`
-- 返回内容包含：
-  - `risk_assessment`
-  - `threat_analysis`
-  - `timeline_analysis`
-  - `recommendations`
-  - `raw_response`
-  - `model_used`
-  - `tokens_used`
-- 本次实测模型：`gpt-5.4`
-- 本次实测 token 消耗：`12266`
+- 后端语法校验通过：`knowledge_retriever.py`
+- 前端构建通过：`npm --prefix frontend run build`
+- 后端 AI API 定向回归通过：`backend/tests/test_ai_api.py` -> 25/25 通过
 
-## 备注
-- 当前工作区里存在多个后端实例并行运行；本次修复验证使用的是 `8012` 端口实例。
-- 若浏览器页面仍报旧错，通常不是代码没修，而是前端还连着旧后端实例。
+## 说明
+- 用户日志中的真正阻塞点是 `sentence-transformers/all-MiniLM-L6-v2` 首次联网访问 Hugging Face 超时重试，导致任务长时间停在早期阶段。
+- 修复后，在离线或网络受限环境下，AI 分析不会再因为模型下载卡住；若本地没有向量模型缓存，将直接走关键词回退。
