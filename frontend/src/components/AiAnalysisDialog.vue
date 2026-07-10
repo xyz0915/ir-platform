@@ -155,6 +155,19 @@
           {{ store.taskStatus === 'completed' ? 'AI 分析完成' : errorMessage }}
         </el-alert>
 
+        <!-- v1.3.1 P2: 数据增强模式全局横幅 -->
+        <el-alert
+          v-if="store.taskStatus === 'completed' && analysisMode === 'data_enhancement'"
+          type="warning"
+          :closable="false"
+          show-icon
+          class="mb-20"
+        >
+          <template #title>
+            {{ dataEnhancementBanner || '⚠ 输入质量不足，以下结论基于不完整数据，建议补采后重算' }}
+          </template>
+        </el-alert>
+
         <!-- 报告展示（成功时） -->
         <div v-if="store.taskStatus === 'completed' && currentReport" class="ai-report">
           <!-- 报告元信息 -->
@@ -227,6 +240,8 @@
             <RiskConclusionCard
               :risk-assessment="parsedRiskAssessment"
               :escalation-conditions="parsedEscalation"
+              :analysis-mode="analysisMode"
+              :data-enhancement-banner="dataEnhancementBanner"
               @toggle-escalation="onToggleEscalation"
             />
             <RareSignalCard v-if="parsedRareSignals.length" :rare-signals="parsedRareSignals" />
@@ -617,6 +632,9 @@ const parsedDataGaps = computed(() => {
   return parsedRiskAssessment.value?.data_gaps || []
 })
 const parsedEscalation = computed(() => parsedRiskAssessment.value?.escalation_conditions || [])
+// v1.3.1 P2: 数据增强模式
+const analysisMode = computed(() => parsedRiskAssessment.value?.analysis_mode || 'full')
+const dataEnhancementBanner = computed(() => parsedRiskAssessment.value?.data_enhancement_banner || '')
 const parsedMitreAttack = computed(() => parseMaybeJson(currentReport.value?.mitre_attack) || [])
 const parsedRareSignals = computed(() => parseMaybeJson(currentReport.value?.rare_high_signals) || [])
 const parsedAttackChainHits = computed(() => parseMaybeJson(currentReport.value?.attack_chain_hits) || [])

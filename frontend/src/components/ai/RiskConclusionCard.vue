@@ -1,5 +1,14 @@
 <template>
   <div class="risk-conclusion-card">
+    <!-- v1.3.1 P2: 数据增强模式横幅 -->
+    <div v-if="analysisMode === 'data_enhancement'" class="rc-enhancement-banner">
+      <el-alert type="warning" :closable="false" show-icon>
+        <template #title>
+          {{ dataEnhancementBanner || '⚠ 输入质量不足，以下结论基于不完整数据，建议补采后重算' }}
+        </template>
+      </el-alert>
+    </div>
+
     <div class="rc-header">
       <span class="rc-title">风险结论</span>
       <el-tag :type="levelType" effect="dark" size="small">{{ riskLevel || '待确认' }}</el-tag>
@@ -58,6 +67,8 @@ import { InfoFilled } from '@element-plus/icons-vue'
 const props = defineProps({
   riskAssessment: { type: Object, default: () => ({}) },
   escalationConditions: { type: Array, default: () => [] },
+  analysisMode: { type: String, default: 'full' },
+  dataEnhancementBanner: { type: String, default: '' },
 })
 
 const emit = defineEmits(['toggle-escalation'])
@@ -92,6 +103,7 @@ function onToggle(ec) {
 
 <style scoped>
 .risk-conclusion-card { border: 1px solid var(--el-border-color); border-radius: 8px; padding: 12px 14px; background: var(--el-bg-color); }
+.rc-enhancement-banner { margin-bottom: 10px; }
 .rc-header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .rc-title { font-weight: 600; font-size: 15px; }
 .rc-score { color: #c0392b; font-weight: 600; }

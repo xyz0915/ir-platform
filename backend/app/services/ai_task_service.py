@@ -16,7 +16,7 @@ from app.models.ai_analysis import AiAnalysisReport
 from app.models.ai_config import AiConfigProfile, AiConfig
 from app.models.host import Host
 from app.models.agent_baseline import AgentBaseline
-from app.shared.ai_constants import TaskStatus, AUDIENCE_DEFAULT
+from app.shared.ai_constants import TaskStatus, AUDIENCE_DEFAULT, INPUT_QUALITY_THRESHOLD
 from app.shared.ai_error_mapping import map_http_error
 from app.services.prompt_builder import PromptBuilder
 from app.services.audit_service import AuditService
@@ -430,9 +430,56 @@ class AiTaskService:
                         "Knowledge retrieval for task %d: returned empty results",
                         task_id,
                     )
+                # v1.3.1 P0: 知识库 IOC 证据交叉校验
+                structured_knowledge = cls._cross_validate_knowledge(
+                    structured_knowledge, tiered_data,
+                )
+                confirmed_knowledge = [
+                    k for k in structured_knowledge
+                    if k.get("evidence_level") != "none"
+                ]
+                unconfirmed_knowledge = [
+                    k for k in structured_knowledge
+                    if k.get("evidence_level") == "none"
+                ]
+                # 所有知识库命中都无行为证据时的记录
+                if not confirmed_knowledge and structured_knowledge:
+                    quality_context["input_quality"]["knowledge_note"] = (
+                        f"知识库命中 {len(structured_knowledge)} 条但无行为证据"
+                    )
+                # 无证据命中自动转为 data_gap 推荐采集
+                knowledge_data_gaps: list[dict] = []
+                for item in unconfirmed_knowledge:
+                    title = item.get("title", item.get("rule_name", "知识库命中"))
+                    iocs_desc_list = item.get("recommended_collection", [])
+                    iocs_desc = (
+                        "; ".join(iocs_desc_list)
+                        if iocs_desc_list
+                        else "需补采验证"
+                    )
+                    knowledge_data_gaps.append({
+                        "category": "knowledge_unconfirmed",
+                        "title": f"知识库命中无行为证据: {title}",
+                        "severity": "medium",
+                        "description": (
+                            f"知识库命中「{title}」，但主机采集数据中未发现"
+                            f"对应 IOC 的实际行为证据。{iocs_desc}"
+                        ),
+                        "suggestion": "补充相关维度的主机采集数据后重新分析",
+                        "recommended_actions": [{
+                            "action_type": "net_capture",
+                            "target": title,
+                            "command_or_api": "",
+                            "priority": "P1",
+                            "rationale": (
+                                f"知识库命中「{title}」无行为证据，需补采验证"
+                            ),
+                            "auto_runnable": False,
+                        }],
+                    })
                 explainability = ExplainabilityService.build_evidence_trace(
                     parsed_sections=parsed,
-                    knowledge_items=structured_knowledge,
+                    knowledge_items=confirmed_knowledge,
                     tiered_data=tiered_data,
                 )
 
@@ -450,6 +497,26 @@ class AiTaskService:
                 risk_assessment["coverage_gaps"] = quality_context["coverage_gaps"]
                 risk_assessment["miss_risk"] = quality_context["miss_risk"]
                 risk_assessment["evidence_insufficiency"] = quality_context["evidence_insufficiency"]
+
+                # v1.3.1 P2: 输入质量阈值 → 数据增强模式
+                quality_score = quality_context.get("input_quality", {}).get("score", 100)
+                if quality_score < INPUT_QUALITY_THRESHOLD:
+                    risk_assessment["analysis_mode"] = "data_enhancement"
+                    risk_assessment["data_enhancement_banner"] = (
+                        f"⚠ 输入质量不足({quality_score}分)，"
+                        f"以下结论基于不完整数据，建议补采后重算"
+                    )
+                else:
+                    risk_assessment["analysis_mode"] = "full"
+                # v1.3.1 P0: 注入知识库交叉验证生成的 data_gaps
+                if knowledge_data_gaps:
+                    existing_gaps = risk_assessment.get("data_gaps", [])
+                    if isinstance(existing_gaps, list):
+                        risk_assessment["data_gaps"] = (
+                            existing_gaps + knowledge_data_gaps
+                        )
+                    else:
+                        risk_assessment["data_gaps"] = knowledge_data_gaps
 
                 threat_analysis["evidence_trace"] = explainability["evidence_trace"]
                 recommendations["input_suggestions"] = quality_context["input_suggestions"]
@@ -745,6 +812,221 @@ class AiTaskService:
         cls._task_streams.pop(task_id_str, None)
         cls._cancel_flags.pop(task_id_str, None)
         cls._audience_map.pop(task_id_str, None)
+
+    @staticmethod
+    def _cross_validate_knowledge(
+        knowledge_items: list[dict],
+        tiered_data: dict,
+    ) -> list[dict]:
+        """v1.3.1 P0: 知识库 IOC 证据交叉校验.
+
+        对每条 knowledge_item，提取其中提到的 IOC（IP、域名、文件hash、
+        进程名等），在 tiered_data 中反查是否有实际行为证据：
+        - 有证据 → evidence_level: "confirmed"
+        - 无证据 → evidence_level: "none"，附带 recommended_collection 建议
+
+        Args:
+            knowledge_items: 知识库检索结果（structured=True）.
+            tiered_data: 主机分层采集数据.
+
+        Returns:
+            校验后的 knowledge_items 列表（每项含 evidence_level）.
+        """
+        import re
+
+        if not knowledge_items:
+            return knowledge_items
+
+        # ── 从 tiered_data 收集实际证据 ──
+        all_ips: set[str] = set()
+        all_domains: set[str] = set()
+        all_hashes: set[str] = set()
+        all_process_names: set[str] = set()
+        all_file_paths: set[str] = set()
+
+        for severity_key in (
+            "suspicious_connections_high",
+            "suspicious_connections_medium",
+            "suspicious_connections_low",
+        ):
+            for conn in tiered_data.get(severity_key, []) or []:
+                if not isinstance(conn, dict):
+                    continue
+                remote = str(conn.get("remote", ""))
+                if ":" in remote:
+                    ip_part = remote.split(":")[0]
+                    all_ips.add(ip_part)
+                    all_domains.add(ip_part)
+                elif remote:
+                    all_ips.add(remote)
+                    all_domains.add(remote)
+                proc = str(conn.get("process", "")).lower()
+                if proc:
+                    all_process_names.add(proc)
+
+        for severity_key in (
+            "abnormal_processes_high",
+            "abnormal_processes_medium",
+            "abnormal_processes_low",
+        ):
+            for proc in tiered_data.get(severity_key, []) or []:
+                if not isinstance(proc, dict):
+                    continue
+                name = str(
+                    proc.get("name", "") or proc.get("process_name", "")
+                ).lower()
+                path = str(
+                    proc.get("path", "") or proc.get("process_path", "")
+                ).lower()
+                cmd = str(
+                    proc.get("cmd", "") or proc.get("command_line", "")
+                ).lower()
+                if name:
+                    all_process_names.add(name)
+                if path:
+                    all_file_paths.add(path)
+                if cmd:
+                    all_file_paths.add(cmd)
+
+        for pers in tiered_data.get("persistence_suspicious", []) or []:
+            if not isinstance(pers, dict):
+                continue
+            name = str(pers.get("name", "")).lower()
+            loc = str(pers.get("location", "")).lower()
+            cmd = str(pers.get("command", "")).lower()
+            if name:
+                all_process_names.add(name)
+            if loc:
+                all_file_paths.add(loc)
+            if cmd:
+                all_file_paths.add(cmd)
+
+        for severity_key in (
+            "ioc_hits_high", "ioc_hits_medium", "ioc_hits_low",
+        ):
+            for ioc in tiered_data.get(severity_key, []) or []:
+                if not isinstance(ioc, dict):
+                    continue
+                value = str(ioc.get("value", ""))
+                ioc_type = str(ioc.get("type", "")).lower()
+                if not value:
+                    continue
+                if ioc_type in ("ip", "ipv4", "ipv6") or re.match(
+                    r"^\d+\.\d+\.\d+\.\d+$", value,
+                ):
+                    all_ips.add(value)
+                elif ioc_type in ("domain", "url"):
+                    all_domains.add(value)
+                elif ioc_type in ("hash", "md5", "sha1", "sha256"):
+                    all_hashes.add(value)
+                all_file_paths.add(value.lower())
+
+        # ── 逐条校验 ──
+        validated: list[dict] = []
+        for item in knowledge_items:
+            if not isinstance(item, dict):
+                validated.append(item)
+                continue
+
+            item = dict(item)  # 浅拷贝，不污染原数据
+            text_to_search = ""
+            for key in (
+                "formatted_text", "evidence_text", "summary",
+                "description", "title", "rule_name",
+            ):
+                val = item.get(key)
+                if isinstance(val, str):
+                    text_to_search += " " + val
+
+            text_lower = text_to_search.lower()
+
+            # 提取 IOC
+            ip_pattern = re.compile(
+                r"\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b",
+            )
+            found_ips: set[str] = set(ip_pattern.findall(text_to_search))
+
+            domain_pattern = re.compile(
+                r"\b([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}\b",
+            )
+            found_domains: set[str] = (
+                set(domain_pattern.findall(text_to_search)) - found_ips
+            )
+
+            hash_pattern = re.compile(r"\b([a-fA-F0-9]{32,64})\b")
+            found_hashes: set[str] = set(hash_pattern.findall(text_to_search))
+
+            # 交叉验证
+            has_evidence = False
+            evidence_sources: list[str] = []
+
+            for ip in found_ips:
+                if ip in all_ips:
+                    has_evidence = True
+                    evidence_sources.append(
+                        f"IP {ip} 在主机网络连接证据中确认",
+                    )
+
+            for domain in found_domains:
+                if domain.lower() in all_domains:
+                    has_evidence = True
+                    evidence_sources.append(
+                        f"域名 {domain} 在主机网络连接证据中确认",
+                    )
+
+            for h in found_hashes:
+                if h in all_hashes:
+                    has_evidence = True
+                    evidence_sources.append(
+                        f"哈希 {h[:8]}... 在 IOC 命中中确认",
+                    )
+
+            if not has_evidence:
+                for proc_name in all_process_names:
+                    if len(proc_name) >= 4 and proc_name in text_lower:
+                        has_evidence = True
+                        evidence_sources.append(
+                            f"进程 {proc_name} 在主机进程证据中确认",
+                        )
+                        break
+
+            if not has_evidence:
+                for file_path in all_file_paths:
+                    if len(file_path) >= 5 and file_path in text_lower:
+                        has_evidence = True
+                        evidence_sources.append(
+                            f"路径 {file_path} 在主机证据中确认",
+                        )
+                        break
+
+            # 标记证据级别
+            if has_evidence:
+                item["evidence_level"] = "confirmed"
+                item["evidence_sources"] = evidence_sources
+            else:
+                item["evidence_level"] = "none"
+                iocs_found: list[str] = []
+                for ip in found_ips:
+                    iocs_found.append(f"IP {ip}")
+                for domain in found_domains:
+                    iocs_found.append(f"域名 {domain}")
+                for h in found_hashes:
+                    iocs_found.append(f"哈希 {h[:16]}...")
+                if iocs_found:
+                    item["recommended_collection"] = [
+                        f"派发 Agent 补采网络连接日志以验证 IOC "
+                        f"{', '.join(iocs_found[:3])}",
+                    ]
+
+            validated.append(item)
+
+        logger.info(
+            "_cross_validate_knowledge: total=%d confirmed=%d none=%d",
+            len(validated),
+            sum(1 for v in validated if isinstance(v, dict) and v.get("evidence_level") == "confirmed"),
+            sum(1 for v in validated if isinstance(v, dict) and v.get("evidence_level") == "none"),
+        )
+        return validated
 
     @staticmethod
     def _parse_json_response(content: str) -> dict:
