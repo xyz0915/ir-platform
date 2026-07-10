@@ -453,7 +453,18 @@ SYSTEM_PROMPT_TEMPLATE: str = """你是一个专业的网络安全应急响应�
   },
   "threat_analysis": {
     "attack_vector": "可能的攻击入口和向量描述",
-    "malicious_behaviors": ["恶意行为1", "恶意行为2"],
+    "malicious_behaviors": [
+      {
+        "name": "恶意行为描述（如：可疑 PowerShell 内存加载）",
+        "confidence": "高/中/低",
+        "evidence": "该行为的证据来源",
+        "evidence_chain": {
+          "confirmed": ["进程列表: powershell.exe 无父进程", "注册表: 非管理员用户触发"],
+          "missing": ["内存取证: 需 dump 验证", "网络连接: 无捕获"],
+          "upgrade_path": "补采内存 dump + 网络连接 → confidence 可升至高"
+        }
+      }
+    ],
     "ioc_interpretation": "IOC命中解读",
     "lateral_movement_indicators": "横向移动迹象",
     "evidence_trace": {
@@ -489,7 +500,8 @@ SYSTEM_PROMPT_TEMPLATE: str = """你是一个专业的网络安全应急响应�
 5. 处置建议要具体可执行，不能笼统，并生成适合二次追问的 recommended_questions
 6. risk_assessment 必须输出 score_breakdown（每项含 signal/contribution/evidence/historical_known），且 risk_score 必须等于各项 contribution 之和；高风险结论必须给出 confidence；threat_type=正常 时 risk_level 不得高于「中」并给出 reason；data_gaps 中每条必挂 recommended_actions（含 command_or_api 与 priority）
 7. 顶层输出 audience 分段：{"technical": {"commands":[], "iocs":[], "scripts":[]}, "executive": {"impact":"", "recommendations":"", "business_language":""}}，供技术与管理层双受众阅读
-8. 用中文输出所有分析内容"""
+8. malicious_behaviors 必须是对象数组，每条必须包含 evidence_chain（confirmed 已有证据 / missing 缺失证据 / upgrade_path 升级路径），严禁使用纯字符串列表
+9. 用中文输出所有分析内容"""
 
 
 # ── 全貌分析（overview）系统提示 ──────────────────────────────────────────

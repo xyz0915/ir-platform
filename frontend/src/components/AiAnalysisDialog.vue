@@ -239,6 +239,7 @@
           <div class="ops-grid mb-15">
             <RiskConclusionCard
               :risk-assessment="parsedRiskAssessment"
+              :threat-analysis="parsedThreatAnalysis"
               :escalation-conditions="parsedEscalation"
               :analysis-mode="analysisMode"
               :data-enhancement-banner="dataEnhancementBanner"

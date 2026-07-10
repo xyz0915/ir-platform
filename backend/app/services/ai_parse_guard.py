@@ -173,6 +173,93 @@ def _ensure_confidence(risk: dict, threat: dict, corrections: list[dict]) -> Non
                 beh["evidence"] = ""
 
 
+def _ensure_evidence_chains(threat: dict, risk: dict, corrections: list[dict]) -> None:
+    """为 threat_analysis 的每条 malicious_behavior / 关键发现增加 evidence_chain 字段.
+
+    evidence_chain 结构: {"confirmed": [...], "missing": [...], "upgrade_path": "..."}
+
+    优先级:
+    1. AI 已输出 evidence_chain 的 → 原样保留
+    2. AI 未输出 → 从 behavior 自身证据 + coverage_gaps/data_gaps 推导默认值
+    3. 全局提示 "RAG/规则证据较少" 保留作为概述，不替代逐结论证据链
+
+    Args:
+        threat: threat_analysis 分段字典。
+        risk: risk_assessment 分段字典。
+        corrections: 一致性纠正痕迹列表。
+    """
+    malicious = threat.get("malicious_behaviors")
+    if not isinstance(malicious, list) or not malicious:
+        return
+
+    # 收集全局缺失维度信息
+    data_gaps = risk.get("data_gaps", [])
+    coverage_gaps = risk.get("coverage_gaps", [])
+
+    gap_titles: list[str] = []
+    for gap_list in (data_gaps, coverage_gaps):
+        for gap in _as_list(gap_list):
+            if isinstance(gap, dict):
+                title = gap.get("title") or gap.get("category", "")
+                if title:
+                    gap_titles.append(title)
+
+    ensured_count = 0
+    for beh in malicious:
+        if not isinstance(beh, dict):
+            continue
+
+        # AI 已提供完整 evidence_chain → 跳过
+        if "evidence_chain" in beh and isinstance(beh.get("evidence_chain"), dict):
+            ec = beh["evidence_chain"]
+            if ec.get("confirmed") and ec.get("missing") and ec.get("upgrade_path"):
+                continue
+
+        # 构建 confirmed
+        confirmed: list[str] = []
+        if beh.get("evidence"):
+            confirmed.append(str(beh.get("evidence")))
+        if beh.get("name"):
+            confirmed.append(f"发现: {beh.get('name')}")
+        # 从 behavior 的字符串字段提取信息
+        for key in ("name", "description", "evidence"):
+            val = beh.get(key)
+            if isinstance(val, str) and val and val not in confirmed and not val.startswith("发现:"):
+                confirmed.append(val)
+
+        # 构建 missing
+        missing: list[str] = []
+        for title in gap_titles[:5]:
+            if title not in missing:
+                missing.append(title)
+        if not missing:
+            missing.append("需补充更多维度数据验证")
+
+        # 构建 upgrade_path
+        if gap_titles:
+            upgrade_path = f"补采 {'、'.join(gap_titles[:3])} 后可提升置信度"
+        else:
+            upgrade_path = "补充缺失证据后可提升置信度"
+
+        if not confirmed:
+            confirmed.append("基于模型推断")
+
+        beh["evidence_chain"] = {
+            "confirmed": confirmed,
+            "missing": missing,
+            "upgrade_path": upgrade_path,
+        }
+        ensured_count += 1
+
+    if ensured_count > 0:
+        corrections.append({
+            "rule": "R-EVIDENCE",
+            "field": "threat_analysis.malicious_behaviors[*].evidence_chain",
+            "action": "ensure",
+            "detail": f"为 {ensured_count} 条恶意行为补全 evidence_chain 字段",
+        })
+
+
 def _cap_normal_threat(risk: dict, threat: dict, corrections: list[dict]) -> None:
     """R1-1：threat_type=='正常' 且恶意行为为空时，risk_level 不得高于「中」并强制 reason。"""
     threat_type = str(risk.get("threat_type", "")).strip()
@@ -427,6 +514,7 @@ def normalize_and_guard(
     _ensure_confidence(risk, threat, corrections)
     _cap_normal_threat(risk, threat, corrections)
     _apply_baseline_penalty(risk, baseline, corrections)
+    _ensure_evidence_chains(threat, risk, corrections)
 
     # ── 缺口即动作 ──
     data_gaps = _merge_data_gaps(risk)
