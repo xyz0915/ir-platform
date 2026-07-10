@@ -1,111 +1,95 @@
 classDiagram
-    direction LR
-
-    class Ioc {
-        <<existing, 不改签名>>
-        +int id
-        +str ioc_type
-        +str ioc_value
-        +bool enabled
-        +create() dict
-        +get_by_id(id) dict
-        +list(ioc_type) list
-        +update(id, ...) dict
-        +delete(id) bool
-        +batch_create(items) int
+    class PromptBuilder {
+        &lt;&lt;static&gt;&gt;
+        +build(host_id, masked, include_knowledge) dict
+        +build_module(host_id, module_type, masked) dict
+        -_fetch_tiered_data(host_id) dict
+        -_fetch_module_data(host_id, module_type) dict
+        -_build_user_prompt(host, tiered_data, budget, masked) str
+        -_build_module_user_prompt(host, module_data, budget, masked) str
+        -_build_module_system_prompt(module_type) str
+        -_build_knowledge_section(host_id, host, tiered_data) str
+        -_build_actual_matches(tiered_data) str
+        -_build_case_context(host_id, tiered_data) str
+        -_count_tokens(text) int
     }
 
-    class ThreatIntel {
-        +int id
-        +int ioc_id
-        +str ioc_type
-        +str ioc_value
-        +str provider
-        +int risk_score
-        +list judgments
-        +list tags
-        +int confidence
-        +list attck
-        +str company
-        +str threat_level
-        +str queried_at
-        +str raw_summary
-        +str created_at
-        +create(ioc, intel) dict
-        +get_by_ioc(ioc_id) list
-        +list_by_ioc(ioc_id) list
-        +get_latest_threat_level() dict
+    class AiTaskService {
+        &lt;&lt;static&gt;&gt;
+        +submit(host_id, profile_id, masked_mode, mode, focus_area, base_report_id) dict
+        -_execute_task(task_id) None
+        +get_status(task_id) dict
+        +stream_events(task_id) AsyncGenerator
+        +cancel(task_id) dict
+        +cleanup_task(task_id) None
+        -_fail_task(task_id, error_message, status) None
+        -_push_event(task_id_str, event_type, data) None
+        -_parse_json_response(content) dict
+        -_map_http_error(e) str
+        _task_streams dict
+        _cancel_flags dict
     }
 
-    class ThreatIntelProviderConfig {
-        +str name
-        +str type
-        +str api_key_ref
-        +str api_url
-        +bool enabled
-        +float rate_limit_qps
-        +load_all() list
-        +get(name) dict
-        +save(cfg) dict
+    class AiAnalysisReport {
+        &lt;&lt;static&gt;&gt;
+        +create(host_id, case_id, risk_assessment, threat_analysis, timeline_analysis, recommendations, raw_response, model_used, tokens_used, profile_id, masked_mode, prompt_tokens, completion_tokens, conversation_id, data_hash, cached_at, input_quality, coverage_gaps, explainability, deep_dive, analysis_type, module_type) dict
+        +get_by_id(report_id) dict
+        +get_by_host(host_id) dict
+        +list_versions(host_id) list
+        +get_by_version(host_id, version) dict
+        +delete_by_host(host_id) None
+        +export_for_pdf(report_id) dict
+        +get_cached_report(host_id, data_hash) dict
+        +get_completed_by_case(case_id, exclude_host_id, limit) list
+        +get_by_risk_level(risk_level, exclude_host_id, limit) list
     }
 
-    class EnrichSettings {
-        +bool enable_enrichment
-        +bool auto_enrich
-        +int daily_quota
-        +int recheck_days
-        +int scheduler_interval
-        +load() EnrichSettings
-        +save() dict
+    class MODULE_DATA_MAP {
+        &lt;&lt;constant dict&gt;&gt;
+        profile: [host_basic, analysis_result, profile]
+        process_list: [process_list]
+        abnormal_processes: [abnormal_processes_all]
+        connections: [suspicious_connections_all]
+        persistence: [persistence_all]
+        startup: [startup_items]
+        ioc: [ioc_hits_all]
+        timeline: [timeline_all]
+        users: [users]
+        services: [services]
+        usb: [usb_devices]
+        remote_control: [remote_tools]
     }
 
-    class NormalizedIntel {
-        +str provider
-        +str ioc_type
-        +str ioc_value
-        +int risk_score
-        +list judgments
-        +list tags
-        +int confidence
-        +list attck
-        +str company
-        +str raw_summary
+    class TOKEN_BUDGET_MAP {
+        &lt;&lt;constant dict&gt;&gt;
+        process_list: 4000 (重型)
+        abnormal_processes: 4000 (重型)
+        timeline: 4000 (重型)
+        connections: 2000 (中型)
+        persistence: 2000 (中型)
+        ioc: 2000 (中型)
+        startup: 2000 (中型)
+        profile: 2000 (中型)
+        users: 1500 (轻型)
+        services: 1500 (轻型)
+        usb: 1500 (轻型)
+        remote_control: 1500 (轻型)
     }
 
-    class BaseThreatIntelProvider {
-        <<abstract>>
-        +str name
-        +set supported_types
-        +query(ioc_type, ioc_value)* NormalizedIntel
-        +normalize(raw) NormalizedIntel
+    class MODULE_SYSTEM_PROMPTS {
+        &lt;&lt;constant dict&gt;&gt;
+        12个模块专属 system_prompt 模板
     }
 
-    class ThreatBookProvider {
-        +query(ioc_type, ioc_value) NormalizedIntel
-        +normalize(raw) NormalizedIntel
+    class ai_analysis_reports_Table {
+        &lt;&lt;SQLite Table&gt;&gt;
+        +analysis_type TEXT DEFAULT 'full'
+        +module_type TEXT
     }
 
-    class EnrichmentService {
-        +enrich_ioc(ioc) ThreatIntel
-        +enrich_batch(iocs) dict
-        +scan_pending_iocs() dict
-        -_select_provider(ioc_type) BaseThreatIntelProvider
-        -_dedup(ioc, provider) bool
-        -_enforce_quota() bool
-    }
-
-    class RuleEngine {
-        <<existing, 最小改动>>
-        +evaluate(items, rules, ctx) list
-        +_match_list(item, cond, ctx) bool
-    }
-
-    Ioc "1" --> "0..*" ThreatIntel : ioc_id
-    ThreatIntelProviderConfig ..> BaseThreatIntelProvider : 配置驱动实例化
-    BaseThreatIntelProvider <|-- ThreatBookProvider
-    ThreatBookProvider ..> NormalizedIntel : 返回
-    EnrichmentService ..> BaseThreatIntelProvider : 使用
-    EnrichmentService ..> ThreatIntel : 落库
-    EnrichmentService ..> EnrichSettings : 读开关/配额
-    RuleEngine ..> ThreatIntel : 读最新威胁等级
-    EnrichSettings ..> ThreatIntelProviderConfig : 并列配置(分离文件)
+    PromptBuilder ..> MODULE_DATA_MAP : 数据过滤依据
+    PromptBuilder ..> TOKEN_BUDGET_MAP : Token 预算控制
+    PromptBuilder ..> MODULE_SYSTEM_PROMPTS : 专属提示词模板
+    AiTaskService --> PromptBuilder : 调用 build() / build_module()
+    AiTaskService --> AiAnalysisReport : 创建报告
+    AiAnalysisReport ..> ai_analysis_reports_Table : 写入 analysis_type / module_type

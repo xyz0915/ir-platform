@@ -623,6 +623,8 @@ def _alter_ai_analysis_reports_table(conn: sqlite3.Connection) -> None:
         ("data_hash", "TEXT"),
         ("cached_at", "TEXT"),
         ("conversation_id", "TEXT"),
+        ("analysis_type", "TEXT DEFAULT 'full'"),
+        ("module_type", "TEXT"),
     ]
 
     for col_name, col_type in new_columns:

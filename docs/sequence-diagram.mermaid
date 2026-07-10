@@ -1,81 +1,51 @@
-%% ① 手动单条 enrich
 sequenceDiagram
-    participant FE as 前端 IocsView
-    participant API as iocs.py (POST /iocs/{id}/enrich)
-    participant SVC as EnrichmentService
-    participant PROV as ThreatBookProvider
+    actor U as 用户
+    participant HDV as HostDetailView.vue
+    participant Store as ai.js Store
+    participant API as ai.js API
+    participant Route as ai.py Router
+    participant ATS as AiTaskService
+    participant PB as PromptBuilder
     participant DB as SQLite
+    participant LLM as AI 模型
+    participant SSE as SSE Stream
+    participant AD as AiAnalysisDialog.vue
 
-    FE->>API: 点击"立即威胁情报查询"
-    API->>DB: Ioc.get_by_id(id)
-    DB-->>API: ioc {ioc_type, ioc_value}
-    alt ioc_type 非 ip/domain
-        API-->>FE: {code:400, message:"仅支持 ip/domain"}
-    else 支持类型
-        API->>SVC: enrich_ioc(ioc)
-        SVC->>SVC: _select_provider(ioc_type)
-        SVC->>SVC: _dedup(ioc, provider) 短期TTL
-        SVC->>PROV: query(ioc_type, ioc_value)
-        PROV->>PROV: expand_env(api_key_ref) + httpx GET
-        PROV-->>SVC: NormalizedIntel
-        SVC->>DB: ThreatIntel.create(...)
-        DB-->>SVC: record
-        SVC-->>API: ThreatIntel
-        API-->>FE: {code:0, data: ThreatIntelResponse}
+    U->>HDV: 点击 tab"可疑外连"内的 [AI 分析] 按钮
+    HDV->>HDV: handleModuleAiAnalyze('connections')
+    HDV->>Store: startAnalysis(hostId, maskedMode, {mode:'module', focusArea:'connections'})
+    Store->>API: aiAnalyze(hostId, {mode:'module', focusArea:'connections', maskedMode})
+    API->>Route: POST /api/ai/analyze/{host_id}?mode=module&focus_area=connections
+    Route->>Route: 解析 query params: mode='module', focus_area='connections'
+    Route->>ATS: submit(host_id, ..., mode='module', focus_area='connections')
+    ATS->>DB: AiTask.create() 创建任务记录
+    ATS->>ATS: asyncio.create_task(_execute_task())
+    ATS-->>Route: 返回 task_id
+
+    Note over ATS,LLM: === 后台异步执行 ===
+
+    ATS->>ATS: _execute_task() 开始
+    ATS->>ATS: 阶段1: progress=10 数据组装
+    alt mode == 'module' && focus_area 非空
+        ATS->>PB: build_module(host_id, 'connections', masked)
+        PB->>PB: _fetch_module_data(host_id, 'connections')
+        Note over PB: 只拉 MODULE_DATA_MAP['connections'] = [suspicious_connections_all]
+        PB->>DB: SuspiciousConnection.list_by_host(host_id)
+        DB-->>PB: 返回可疑外连数据
+        PB->>PB: _build_module_system_prompt('connections')
+        Note over PB: 加载"可疑外连"专属 system_prompt 模板
+        PB->>PB: _build_module_user_prompt(data, budget=2000)
+        PB-->>ATS: {system_prompt, user_prompt}
     end
 
-%% ② 自动调度 enrich
-sequenceDiagram
-    participant SCH as enrichment_scheduler
-    participant SVC as EnrichmentService
-    participant DB as SQLite
-    participant PROV as ThreatBookProvider
+    ATS->>ATS: 阶段2: progress=40 LLM 调用
+    ATS->>LLM: 流式调用（system_prompt + user_prompt）
+    LLM-->>ATS: 流式返回 chunks
+    ATS->>SSE: 推送 content chunks
+    SSE-->>AD: 打字机效果展示
 
-    SCH->>DB: 扫描 enabled=1 & ioc_type in {ip,domain}
-    DB-->>SCH: candidate iocs
-    loop 每个 candidate
-        SCH->>SVC: scan_pending_iocs() / enrich_ioc(ioc)
-        SVC->>DB: ThreatIntel 是否存在 (ioc_id,provider) 且 queried_at 在 recheck_days 内
-        alt 已查且在 TTL 内
-            SVC-->>SCH: skip(去重)
-        else 需查询且配额充足
-            SVC->>SVC: _enforce_quota() 检查当日计数
-            SVC->>PROV: query(...)
-            PROV-->>SVC: NormalizedIntel
-            SVC->>DB: ThreatIntel.create
-            SVC-->>SCH: ok
-        else 配额超限
-            SVC-->>SCH: 停止本轮
-        end
-    end
-    Note over SCH: --loop 模式 sleep(scheduler_interval) 后重复；--once 单次退出
-
-%% ③ 引擎回灌
-sequenceDiagram
-    participant CALLER as 调用方
-    participant RE as RuleEngine.evaluate
-    participant DB as SQLite
-    participant ML as _match_list
-
-    CALLER->>RE: evaluate(items, rules, global_context)
-    alt ENABLE_THREAT_INTEL_ENRICHMENT == True
-        RE->>DB: ThreatIntel.get_latest_threat_level() (malicious/suspicious)
-        DB-->>RE: rows
-        RE->>RE: 构建 threat_level_by_value{value_lower:{level,provider}}
-    else False
-        RE->>RE: 不加载，跳过
-    end
-    loop 每个 item / rule
-        RE->>ML: _match_list(item, cond, global_context)
-        ML->>ML: 合并 iocs_by_type + values 匹配
-        alt 命中 且 value_lower in threat_level_by_value
-            ML->>RE: 记录 _ti_hits[id(item)]={level,provider}; return True
-        else 仅命中 / 未命中
-            ML-->>RE: True / False
-        end
-        alt match_rule True 且 _ti_hits 命中
-            RE->>RE: malicious -> severity=max(high); reason+="【威胁情报平台判黑】"
-            RE->>RE: suspicious -> reason+="【威胁情报平台可疑】"
-        end
-    end
-    RE-->>CALLER: matches[]
+    ATS->>ATS: 阶段3: progress=70 解析 JSON
+    ATS->>ATS: 阶段4: progress=80 保存报告
+    ATS->>DB: AiAnalysisReport.create(analysis_type='module', module_type='connections', ...)
+    ATS->>SSE: 推送 complete 事件（含 report）
+    SSE-->>AD: 展示完成报告 + 追问区域

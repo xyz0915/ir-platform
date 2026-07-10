@@ -40,6 +40,8 @@ class AiAnalysisReport:
         coverage_gaps: Optional[dict[str, Any]] = None,
         explainability: Optional[dict[str, Any]] = None,
         deep_dive: Optional[dict[str, Any]] = None,
+        analysis_type: str = "full",
+        module_type: Optional[str] = None,
     ) -> dict:
         """创建AI分析报告（新版本）.
 
@@ -71,10 +73,10 @@ class AiAnalysisReport:
             ).fetchone()
             new_version = max_ver_row["max_ver"] + 1
 
-            # 将同 host 的所有旧报告标记为非最新
+            # 将同 host 同 analysis_type 的所有旧报告标记为非最新
             conn.execute(
-                "UPDATE ai_analysis_reports SET is_latest = 0 WHERE host_id = ?",
-                (host_id,),
+                "UPDATE ai_analysis_reports SET is_latest = 0 WHERE host_id = ? AND analysis_type = ?",
+                (host_id, analysis_type),
             )
 
             # 插入新报告
@@ -85,8 +87,9 @@ class AiAnalysisReport:
                  timeline_analysis, recommendations, raw_response,
                  model_used, tokens_used, version, profile_id,
                  is_latest, masked_mode, prompt_tokens, completion_tokens,
-                 conversation_id, data_hash, cached_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+                 conversation_id, data_hash, cached_at,
+                 analysis_type, module_type)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     host_id, case_id, risk_assessment, threat_analysis,
@@ -94,6 +97,7 @@ class AiAnalysisReport:
                     model_used, tokens_used, new_version, profile_id,
                     masked_mode, prompt_tokens, completion_tokens,
                     conversation_id, data_hash, cached_at,
+                    analysis_type, module_type,
                 ),
             )
             report_id = cursor.lastrowid

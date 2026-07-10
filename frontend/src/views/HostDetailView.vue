@@ -53,9 +53,29 @@
     <div class="card-box">
       <el-tabs v-model="activeTab" @tab-change="handleTabChange">
         <el-tab-pane label="主机画像" name="profile">
+          <div class="tab-toolbar">
+            <span class="tab-hint">主机画像概览</span>
+            <el-button
+              type="warning"
+              :disabled="!aiEnabled || host?.status === 'pending'"
+              @click="handleModuleAiAnalyze('profile')"
+            >
+              🤖 AI 分析
+            </el-button>
+          </div>
           <ProfileCard :profile="profile" />
         </el-tab-pane>
         <el-tab-pane label="进程树" name="tree">
+          <div class="tab-toolbar">
+            <span class="tab-hint">进程树视图</span>
+            <el-button
+              type="warning"
+              :disabled="!aiEnabled || host?.status === 'pending'"
+              @click="handleModuleAiAnalyze('process_list')"
+            >
+              🤖 AI 分析
+            </el-button>
+          </div>
           <ProcessTreeChart
             :tree-data="processTree"
             :abnormal-pids="abnormalPidsForTree"
@@ -63,6 +83,16 @@
           />
         </el-tab-pane>
         <el-tab-pane label="异常进程" name="processes">
+          <div class="tab-toolbar">
+            <span class="tab-hint">共 {{ abnormalProcesses.length }} 条异常进程</span>
+            <el-button
+              type="warning"
+              :disabled="!aiEnabled || host?.status === 'pending'"
+              @click="handleModuleAiAnalyze('abnormal_processes')"
+            >
+              🤖 AI 分析
+            </el-button>
+          </div>
           <ProcessStatsCards :data="abnormalProcesses" />
           <AbnormalProcessTable
             :data="abnormalProcesses"
@@ -73,38 +103,127 @@
         <el-tab-pane label="可疑外连" name="connections">
           <div class="flex-between mb-10">
             <span class="tab-hint">共 {{ suspiciousConnections.length }} 条可疑外连</span>
-            <el-button
-              type="primary"
-              :loading="enriching"
-              @click="handleEnrichConns"
-            >
-              一键威胁情报检测
-            </el-button>
+            <div class="flex-center" style="gap: 8px">
+              <el-button
+                type="warning"
+                :disabled="!aiEnabled || host?.status === 'pending'"
+                @click="handleModuleAiAnalyze('connections')"
+              >
+                🤖 AI 分析
+              </el-button>
+              <el-button
+                type="primary"
+                :loading="enriching"
+                @click="handleEnrichConns"
+              >
+                一键威胁情报检测
+              </el-button>
+            </div>
           </div>
           <SuspiciousConnTable :data="suspiciousConnections" />
         </el-tab-pane>
         <el-tab-pane label="持久化痕迹" name="persistence">
+          <div class="tab-toolbar">
+            <span class="tab-hint">共 {{ persistenceItems.length }} 条持久化痕迹</span>
+            <el-button
+              type="warning"
+              :disabled="!aiEnabled || host?.status === 'pending'"
+              @click="handleModuleAiAnalyze('persistence')"
+            >
+              🤖 AI 分析
+            </el-button>
+          </div>
           <PersistenceTable :data="persistenceItems" />
         </el-tab-pane>
         <el-tab-pane label="可疑启动项" name="startup">
+          <div class="tab-toolbar">
+            <span class="tab-hint">共 {{ startupItems.length }} 条可疑启动项</span>
+            <el-button
+              type="warning"
+              :disabled="!aiEnabled || host?.status === 'pending'"
+              @click="handleModuleAiAnalyze('startup')"
+            >
+              🤖 AI 分析
+            </el-button>
+          </div>
           <SuspiciousStartupTable :data="startupItems" />
         </el-tab-pane>
         <el-tab-pane label="IOC 命中" name="ioc">
+          <div class="tab-toolbar">
+            <span class="tab-hint">共 {{ iocHits.length }} 条IOC命中</span>
+            <el-button
+              type="warning"
+              :disabled="!aiEnabled || host?.status === 'pending'"
+              @click="handleModuleAiAnalyze('ioc')"
+            >
+              🤖 AI 分析
+            </el-button>
+          </div>
           <IocTable :data="iocHits" />
         </el-tab-pane>
         <el-tab-pane label="时间线" name="timeline">
+          <div class="tab-toolbar">
+            <span class="tab-hint">共 {{ timelineEvents.length }} 条时间线事件</span>
+            <el-button
+              type="warning"
+              :disabled="!aiEnabled || host?.status === 'pending'"
+              @click="handleModuleAiAnalyze('timeline')"
+            >
+              🤖 AI 分析
+            </el-button>
+          </div>
           <TimelineChart :events="timelineEvents" />
         </el-tab-pane>
         <el-tab-pane label="用户账户" name="users">
+          <div class="tab-toolbar">
+            <span class="tab-hint">共 {{ users.length }} 个用户账户</span>
+            <el-button
+              type="warning"
+              :disabled="!aiEnabled || host?.status === 'pending'"
+              @click="handleModuleAiAnalyze('users')"
+            >
+              🤖 AI 分析
+            </el-button>
+          </div>
           <UsersTable :data="users" />
         </el-tab-pane>
         <el-tab-pane label="系统服务" name="services">
+          <div class="tab-toolbar">
+            <span class="tab-hint">共 {{ services.length }} 个系统服务</span>
+            <el-button
+              type="warning"
+              :disabled="!aiEnabled || host?.status === 'pending'"
+              @click="handleModuleAiAnalyze('services')"
+            >
+              🤖 AI 分析
+            </el-button>
+          </div>
           <ServicesTable :data="services" />
         </el-tab-pane>
         <el-tab-pane label="USB 记录" name="usb">
+          <div class="tab-toolbar">
+            <span class="tab-hint">共 {{ usb.length }} 条USB记录</span>
+            <el-button
+              type="warning"
+              :disabled="!aiEnabled || host?.status === 'pending'"
+              @click="handleModuleAiAnalyze('usb')"
+            >
+              🤖 AI 分析
+            </el-button>
+          </div>
           <UsbTable :data="usb" />
         </el-tab-pane>
         <el-tab-pane label="远程工具" name="remote_control">
+          <div class="tab-toolbar">
+            <span class="tab-hint">共 {{ remoteControl.length }} 条远程工具记录</span>
+            <el-button
+              type="warning"
+              :disabled="!aiEnabled || host?.status === 'pending'"
+              @click="handleModuleAiAnalyze('remote_control')"
+            >
+              🤖 AI 分析
+            </el-button>
+          </div>
           <RemoteControlTable :data="remoteControl" />
         </el-tab-pane>
       </el-tabs>
@@ -181,6 +300,37 @@ const importDialogRef = ref(null)
 const agentDialogRef = ref(null)
 const aiDialogRef = ref(null)
 const aiEnabled = ref(null) // null=未加载, true=开启, false=关闭
+
+// ── 模块 AI 分析映射 ──
+const MODULE_TAB_MAP = {
+  profile: 'profile',
+  tree: 'process_list',
+  processes: 'abnormal_processes',
+  connections: 'connections',
+  persistence: 'persistence',
+  startup: 'startup',
+  ioc: 'ioc',
+  timeline: 'timeline',
+  users: 'users',
+  services: 'services',
+  usb: 'usb',
+  remote_control: 'remote_control',
+}
+
+const TAB_DATA_LABEL = {
+  profile: '',
+  tree: '',
+  processes: '条异常进程',
+  connections: '条可疑外连',
+  persistence: '条持久化痕迹',
+  startup: '条可疑启动项',
+  ioc: '条IOC命中',
+  timeline: '条时间线事件',
+  users: '个用户账户',
+  services: '个系统服务',
+  usb: '条USB记录',
+  remote_control: '条远程工具记录',
+}
 
 const alertType = computed(() => {
   const map = {
@@ -344,6 +494,38 @@ function handleAiAnalyze() {
   aiDialogRef.value?.show(Number(hostId))
 }
 
+/** 获取 tab 的数据计数 */
+function getTabDataCount(tabName) {
+  const map = {
+    profile: null,
+    tree: null,
+    processes: abnormalProcesses.value?.length,
+    connections: suspiciousConnections.value?.length,
+    persistence: persistenceItems.value?.length,
+    startup: startupItems.value?.length,
+    ioc: iocHits.value?.length,
+    timeline: timelineEvents.value?.length,
+    users: users.value?.length,
+    services: services.value?.length,
+    usb: usb.value?.length,
+    remote_control: remoteControl.value?.length,
+  }
+  return map[tabName] ?? null
+}
+
+/** 模块 AI 分析 */
+function handleModuleAiAnalyze(moduleType) {
+  if (aiEnabled.value === null || aiEnabled.value === false) {
+    ElMessage.warning('AI 分析功能未开启，请先在配置页面开启')
+    return
+  }
+  if (host.value?.status === 'pending') {
+    ElMessage.warning('请先导入采集数据')
+    return
+  }
+  aiDialogRef.value?.show(Number(hostId), host.value?.hostname || '', 'module', moduleType)
+}
+
 function onImportSuccess() {
   loadHost()
 }
@@ -381,3 +563,30 @@ function statusLabel(status) {
   return map[status] || status
 }
 </script>
+
+<style scoped>
+/* ── Tab 工具栏 ── */
+.tab-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background: #f5f7fa;
+  border-radius: 6px;
+  border: 1px solid #ebeef5;
+}
+.tab-hint {
+  font-size: 13px;
+  color: #606266;
+}
+.flex-center {
+  display: flex;
+  align-items: center;
+}
+.flex-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+</style>

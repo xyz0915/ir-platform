@@ -68,6 +68,299 @@ OUTPUT_JSON_SCHEMA: dict = {
     "description": "AI 分析结果 JSON",
 }
 
+# ── 模块化 AI 分析常量 ──────────────────────────────────────────────
+
+# 模块名 → 在 _fetch_module_data() 中需要拉取的数据键
+MODULE_DATA_MAP: dict[str, list[str]] = {
+    "profile":            ["host_basic", "analysis_result", "profile"],
+    "process_list":       ["process_list"],
+    "abnormal_processes": ["abnormal_processes_all"],
+    "connections":        ["suspicious_connections_all"],
+    "persistence":        ["persistence_all"],
+    "startup":            ["startup_items"],
+    "ioc":                ["ioc_hits_all"],
+    "timeline":           ["timeline_all"],
+    "users":              ["users"],
+    "services":           ["services"],
+    "usb":                ["usb_devices"],
+    "remote_control":     ["remote_tools"],
+}
+
+# Token 预算分档（模块化分析专用）
+TOKEN_BUDGET_MAP: dict[str, int] = {
+    # 重型（4000 tokens）— 数据量大、需要深层次分析
+    "process_list":       4000,
+    "abnormal_processes": 4000,
+    "timeline":           4000,
+    # 中型（2000 tokens）— 数据量中等
+    "connections":  2000,
+    "persistence":  2000,
+    "ioc":          2000,
+    "startup":      2000,
+    "profile":      2000,
+    # 轻型（1500 tokens）— 数据量小
+    "users":         1500,
+    "services":      1500,
+    "usb":           1500,
+    "remote_control":1500,
+}
+
+# 12 个模块专属 system_prompt 骨架模板
+MODULE_SYSTEM_PROMPTS: dict[str, str] = {
+    "profile": """你是一个专业的网络安全应急响应分析专家。
+请针对【主机画像】数据进行专项分析。
+
+## 分析要求
+1. 评估主机的系统环境是否正常，识别异常配置
+2. 检查安装软件中是否存在高风险/恶意软件
+3. 分析用户账户是否有异常（权限、新增账户）
+4. 检查安全产品部署情况
+5. 评估整体系统基线风险
+
+## 输出格式
+严格按以下 JSON 格式输出：
+```json
+{
+  "risk_assessment": {"risk_level": "高危/中危/低危/安全", "risk_score": 0-100, "risk_summary": "汇总", "threat_type": "正常/异常"},
+  "threat_analysis": {"attack_vector": "", "malicious_behaviors": [], "evidence_trace": {"knowledge_evidence": [], "local_evidence": [], "evidence_count": 0, "explainability_labels": []}},
+  "recommendations": {"immediate_actions": [], "eradication_steps": [], "hardening_suggestions": [], "remediation_priority": "高/中/低", "input_suggestions": [], "recommended_questions": []}
+}
+```
+用中文输出所有分析内容。""",
+
+    "process_list": """你是一个专业的网络安全应急响应分析专家。
+请针对【进程树】数据进行专项分析。
+
+## 分析要求
+1. 检查是否存在可疑进程（异常路径、隐藏进程、注入行为）
+2. 分析进程父子关系是否异常
+3. 识别潜在的恶意软件进程
+4. 检查进程命令行参数是否包含可疑特征
+5. 评估整体进程环境的威胁程度
+
+## 输出格式
+严格按以下 JSON 格式输出：
+```json
+{
+  "risk_assessment": {"risk_level": "高危/中危/低危/安全", "risk_score": 0-100, "risk_summary": "汇总", "threat_type": "正常/异常"},
+  "threat_analysis": {"attack_vector": "", "malicious_behaviors": [], "evidence_trace": {"knowledge_evidence": [], "local_evidence": [], "evidence_count": 0, "explainability_labels": []}},
+  "recommendations": {"immediate_actions": [], "eradication_steps": [], "hardening_suggestions": [], "remediation_priority": "高/中/低", "input_suggestions": [], "recommended_questions": []}
+}
+```
+用中文输出所有分析内容。""",
+
+    "abnormal_processes": """你是一个专业的网络安全应急响应分析专家。
+请针对【异常进程】数据进行专项分析。
+
+## 分析要求
+1. 分析每个异常进程的可疑程度和风险
+2. 识别进程间的关联关系
+3. 判断是否为已知恶意软件家族
+4. 评估异常进程对系统的影响
+5. 给出进程处置优先级建议
+
+## 输出格式
+严格按以下 JSON 格式输出：
+```json
+{
+  "risk_assessment": {"risk_level": "高危/中危/低危/安全", "risk_score": 0-100, "risk_summary": "汇总", "threat_type": "挖矿/勒索/后门/APT/僵尸网络/正常"},
+  "threat_analysis": {"attack_vector": "", "malicious_behaviors": [], "ioc_interpretation": "", "evidence_trace": {"knowledge_evidence": [], "local_evidence": [], "evidence_count": 0, "explainability_labels": []}},
+  "recommendations": {"immediate_actions": [], "eradication_steps": [], "hardening_suggestions": [], "remediation_priority": "高/中/低", "input_suggestions": [], "recommended_questions": []}
+}
+```
+用中文输出所有分析内容。""",
+
+    "connections": """你是一个专业的网络安全应急响应分析专家。
+请针对【可疑外连】数据进行专项分析。
+
+## 分析要求
+1. 分析每个外连的目标地址是否可疑（C2、矿池、恶意域名）
+2. 检查外连协议和端口是否异常
+3. 分析关联进程与外连的关系
+4. 识别潜在的 C2 通信和数据渗出行为
+5. 评估外连的整体威胁程度
+
+## 输出格式
+严格按以下 JSON 格式输出：
+```json
+{
+  "risk_assessment": {"risk_level": "高危/中危/低危/安全", "risk_score": 0-100, "risk_summary": "汇总", "threat_type": "挖矿/勒索/后门/APT/僵尸网络/正常"},
+  "threat_analysis": {"attack_vector": "", "malicious_behaviors": [], "ioc_interpretation": "", "lateral_movement_indicators": "", "evidence_trace": {"knowledge_evidence": [], "local_evidence": [], "evidence_count": 0, "explainability_labels": []}},
+  "recommendations": {"immediate_actions": [], "eradication_steps": [], "hardening_suggestions": [], "remediation_priority": "高/中/低", "input_suggestions": [], "recommended_questions": []}
+}
+```
+用中文输出所有分析内容。""",
+
+    "persistence": """你是一个专业的网络安全应急响应分析专家。
+请针对【持久化痕迹】数据进行专项分析。
+
+## 分析要求
+1. 检查注册表 Run 键、启动文件夹、计划任务等持久化项
+2. 识别可疑的持久化机制
+3. 判断持久化项是否与恶意软件相关
+4. 分析持久化项之间的关联
+5. 给出清理建议
+
+## 输出格式
+严格按以下 JSON 格式输出：
+```json
+{
+  "risk_assessment": {"risk_level": "高危/中危/低危/安全", "risk_score": 0-100, "risk_summary": "汇总", "threat_type": "挖矿/勒索/后门/APT/正常"},
+  "threat_analysis": {"attack_vector": "", "malicious_behaviors": [], "evidence_trace": {"knowledge_evidence": [], "local_evidence": [], "evidence_count": 0, "explainability_labels": []}},
+  "recommendations": {"immediate_actions": [], "eradication_steps": [], "hardening_suggestions": [], "remediation_priority": "高/中/低", "input_suggestions": [], "recommended_questions": []}
+}
+```
+用中文输出所有分析内容。""",
+
+    "startup": """你是一个专业的网络安全应急响应分析专家。
+请针对【可疑启动项】数据进行专项分析。
+
+## 分析要求
+1. 分析每个启动项的可疑程度
+2. 检查启动项路径和命令行是否异常
+3. 识别伪装系统进程的启动项
+4. 判断启动项是否为恶意软件
+5. 给出启动项处置建议
+
+## 输出格式
+严格按以下 JSON 格式输出：
+```json
+{
+  "risk_assessment": {"risk_level": "高危/中危/低危/安全", "risk_score": 0-100, "risk_summary": "汇总", "threat_type": "正常/异常"},
+  "threat_analysis": {"attack_vector": "", "malicious_behaviors": [], "evidence_trace": {"knowledge_evidence": [], "local_evidence": [], "evidence_count": 0, "explainability_labels": []}},
+  "recommendations": {"immediate_actions": [], "eradication_steps": [], "hardening_suggestions": [], "remediation_priority": "高/中/低", "input_suggestions": [], "recommended_questions": []}
+}
+```
+用中文输出所有分析内容。""",
+
+    "ioc": """你是一个专业的网络安全应急响应分析专家。
+请针对【IOC 命中】数据进行专项分析。
+
+## 分析要求
+1. 分析每个 IOC 命中的含义和威胁级别
+2. 判断 IOC 命中的可信度
+3. 关联多个 IOC 命中看是否指向同一威胁
+4. 评估 IOC 命中对主机的实际影响
+5. 给出基于 IOC 的处置建议
+
+## 输出格式
+严格按以下 JSON 格式输出：
+```json
+{
+  "risk_assessment": {"risk_level": "高危/中危/低危/安全", "risk_score": 0-100, "risk_summary": "汇总", "threat_type": "挖矿/勒索/后门/APT/僵尸网络/正常"},
+  "threat_analysis": {"attack_vector": "", "malicious_behaviors": [], "ioc_interpretation": "", "evidence_trace": {"knowledge_evidence": [], "local_evidence": [], "evidence_count": 0, "explainability_labels": []}},
+  "recommendations": {"immediate_actions": [], "eradication_steps": [], "hardening_suggestions": [], "remediation_priority": "高/中/低", "input_suggestions": [], "recommended_questions": []}
+}
+```
+用中文输出所有分析内容。""",
+
+    "timeline": """你是一个专业的网络安全应急响应分析专家。
+请针对【时间线】数据进行专项分析。
+
+## 分析要求
+1. 按时间顺序串联安全事件
+2. 识别攻击阶段的关键时间节点
+3. 判断攻击者活动的时间窗口
+4. 分析事件之间的因果关系
+5. 构建攻击链时间线
+
+## 输出格式
+严格按以下 JSON 格式输出：
+```json
+{
+  "risk_assessment": {"risk_level": "高危/中危/低危/安全", "risk_score": 0-100, "risk_summary": "汇总", "threat_type": "挖矿/勒索/后门/APT/正常"},
+  "threat_analysis": {"attack_vector": "", "malicious_behaviors": [], "lateral_movement_indicators": "", "evidence_trace": {"knowledge_evidence": [], "local_evidence": [], "evidence_count": 0, "explainability_labels": []}},
+  "timeline_analysis": {"attack_stage": "初始访问/执行/持久化/提权/防御规避/横向移动/数据渗出", "key_events": [], "attack_chain": "", "phase_mapping": [], "timeline_summary": ""},
+  "recommendations": {"immediate_actions": [], "eradication_steps": [], "hardening_suggestions": [], "remediation_priority": "高/中/低", "input_suggestions": [], "recommended_questions": []}
+}
+```
+用中文输出所有分析内容。""",
+
+    "users": """你是一个专业的网络安全应急响应分析专家。
+请针对【用户账户】数据进行专项分析。
+
+## 分析要求
+1. 检查是否存在可疑的新增用户
+2. 分析用户权限是否异常（管理员权限授予）
+3. 识别隐藏用户或克隆账户
+4. 检查用户组成员是否异常
+5. 评估账户安全风险
+
+## 输出格式
+严格按以下 JSON 格式输出：
+```json
+{
+  "risk_assessment": {"risk_level": "高危/中危/低危/安全", "risk_score": 0-100, "risk_summary": "汇总", "threat_type": "正常/异常"},
+  "threat_analysis": {"attack_vector": "", "malicious_behaviors": [], "evidence_trace": {"knowledge_evidence": [], "local_evidence": [], "evidence_count": 0, "explainability_labels": []}},
+  "recommendations": {"immediate_actions": [], "eradication_steps": [], "hardening_suggestions": [], "remediation_priority": "高/中/低", "input_suggestions": [], "recommended_questions": []}
+}
+```
+用中文输出所有分析内容。""",
+
+    "services": """你是一个专业的网络安全应急响应分析专家。
+请针对【系统服务】数据进行专项分析。
+
+## 分析要求
+1. 检查是否存在可疑的系统服务
+2. 分析服务二进制路径是否异常
+3. 识别伪装成系统服务的恶意程序
+4. 检查服务启动类型和权限
+5. 评估服务的整体安全风险
+
+## 输出格式
+严格按以下 JSON 格式输出：
+```json
+{
+  "risk_assessment": {"risk_level": "高危/中危/低危/安全", "risk_score": 0-100, "risk_summary": "汇总", "threat_type": "正常/异常"},
+  "threat_analysis": {"attack_vector": "", "malicious_behaviors": [], "evidence_trace": {"knowledge_evidence": [], "local_evidence": [], "evidence_count": 0, "explainability_labels": []}},
+  "recommendations": {"immediate_actions": [], "eradication_steps": [], "hardening_suggestions": [], "remediation_priority": "高/中/低", "input_suggestions": [], "recommended_questions": []}
+}
+```
+用中文输出所有分析内容。""",
+
+    "usb": """你是一个专业的网络安全应急响应分析专家。
+请针对【USB 记录】数据进行专项分析。
+
+## 分析要求
+1. 检查是否存在可疑的 USB 设备接入
+2. 分析 USB 设备接入时间是否异常
+3. 识别可能用于数据窃取的 USB 设备
+4. 检查 USB 设备序列号是否在威胁情报中
+5. 评估 USB 相关安全风险
+
+## 输出格式
+严格按以下 JSON 格式输出：
+```json
+{
+  "risk_assessment": {"risk_level": "高危/中危/低危/安全", "risk_score": 0-100, "risk_summary": "汇总", "threat_type": "正常/异常"},
+  "threat_analysis": {"attack_vector": "", "malicious_behaviors": [], "evidence_trace": {"knowledge_evidence": [], "local_evidence": [], "evidence_count": 0, "explainability_labels": []}},
+  "recommendations": {"immediate_actions": [], "eradication_steps": [], "hardening_suggestions": [], "remediation_priority": "高/中/低", "input_suggestions": [], "recommended_questions": []}
+}
+```
+用中文输出所有分析内容。""",
+
+    "remote_control": """你是一个专业的网络安全应急响应分析专家。
+请针对【远程工具】数据进行专项分析。
+
+## 分析要求
+1. 检查是否存在可疑的远程控制工具
+2. 分析远程工具的合法性和必要性
+3. 识别攻击者使用的远程管理工具
+4. 检查远程工具的执行时间和频率
+5. 评估远程访问的安全风险
+
+## 输出格式
+严格按以下 JSON 格式输出：
+```json
+{
+  "risk_assessment": {"risk_level": "高危/中危/低危/安全", "risk_score": 0-100, "risk_summary": "汇总", "threat_type": "正常/异常"},
+  "threat_analysis": {"attack_vector": "", "malicious_behaviors": [], "evidence_trace": {"knowledge_evidence": [], "local_evidence": [], "evidence_count": 0, "explainability_labels": []}},
+  "recommendations": {"immediate_actions": [], "eradication_steps": [], "hardening_suggestions": [], "remediation_priority": "高/中/低", "input_suggestions": [], "recommended_questions": []}
+}
+```
+用中文输出所有分析内容。""",
+}
+
 SYSTEM_PROMPT_TEMPLATE: str = """你是一个专业的网络安全应急响应分析专家。基于提供的主机取证数据和分析结果，你需要进行全面深入的安全分析。
 
 请严格按照以下 JSON 格式输出，不要添加任何额外的解释说明：
@@ -242,6 +535,393 @@ class PromptBuilder:
                     )
 
         return {"system_prompt": system_prompt, "user_prompt": user_prompt}
+
+    @staticmethod
+    def build_module(host_id: int, module_type: str, masked: bool = False) -> dict:
+        """构建模块专属 AI 分析 prompt.
+
+        与 build() 的区别：
+        - 只拉取 MODULE_DATA_MAP[module_type] 对应的数据子集
+        - 使用模块专属精简 system_prompt 模板
+        - 按 TOKEN_BUDGET_MAP[module_type] 预算组装 user_prompt
+        - 不注入知识库（include_knowledge=False）
+
+        Args:
+            host_id: 主机 ID.
+            module_type: 模块名（如 'connections'、'process_list'）.
+            masked: 是否启用脱敏.
+
+        Returns:
+            {"system_prompt": str, "user_prompt": str}
+
+        Raises:
+            ValueError: 主机不存在或 module_type 无效.
+        """
+        if module_type not in MODULE_DATA_MAP:
+            valid_types = ", ".join(sorted(MODULE_DATA_MAP.keys()))
+            raise ValueError(
+                f"无效的模块类型 '{module_type}'，有效值：{valid_types}"
+            )
+
+        host = Host.get_by_id(host_id)
+        if not host:
+            raise ValueError(f"主机 {host_id} 不存在")
+
+        # 1. 只拉取该模块需要的专属数据
+        module_data = PromptBuilder._fetch_module_data(host_id, module_type)
+
+        # 2. 构建模块专属 system_prompt
+        system_prompt = PromptBuilder._build_module_system_prompt(module_type)
+
+        # 3. Token 预算
+        system_tokens = PromptBuilder._count_tokens(system_prompt)
+        module_budget = TOKEN_BUDGET_MAP.get(module_type, 2000)
+        remaining = module_budget - system_tokens - 100  # 预留 100 tokens 缓冲
+
+        if remaining < 0:
+            logger.warning(
+                "Module system_prompt exceeds token budget (%d > %d), using full budget",
+                system_tokens, module_budget,
+            )
+            remaining = module_budget - system_tokens
+
+        logger.info(
+            "Module prompt building: module=%s, system_tokens=%d, budget=%d, remaining=%d",
+            module_type, system_tokens, module_budget, remaining,
+        )
+
+        # 4. 组装 user_prompt
+        user_prompt = PromptBuilder._build_module_user_prompt(
+            host=host,
+            module_data=module_data,
+            budget=remaining,
+            masked=masked,
+        )
+
+        return {"system_prompt": system_prompt, "user_prompt": user_prompt}
+
+    @staticmethod
+    def _fetch_module_data(host_id: int, module_type: str) -> dict:
+        """按 MODULE_DATA_MAP 只拉取指定模块需要的数据.
+
+        对 6 个需新增数据源的模块（process_list, startup, users, services,
+        usb, remote_control），尽力从现有 DB 表或模型拉取；无法确认数据源
+        则返回空数据 + logger.warning，不阻塞流程。
+
+        Args:
+            host_id: 主机 ID.
+            module_type: 模块名.
+
+        Returns:
+            模块数据字典.
+        """
+        data: dict = {}
+
+        if module_type not in MODULE_DATA_MAP:
+            return data
+
+        data_keys = MODULE_DATA_MAP[module_type]
+
+        # ── 主机基础信息 ──
+        if "host_basic" in data_keys:
+            host = Host.get_by_id(host_id)
+            if host:
+                data["host_basic"] = {
+                    "hostname": host.get("hostname", ""),
+                    "ip_address": host.get("ip_address", ""),
+                    "os_type": host.get("os_type", ""),
+                    "os_version": host.get("os_version", ""),
+                    "status": host.get("status", ""),
+                    "collection_time": host.get("collection_time", ""),
+                }
+
+        # ── 分析结果 ──
+        if "analysis_result" in data_keys:
+            analysis = AnalysisResult.get_by_host(host_id)
+            if analysis:
+                data["analysis_result"] = {
+                    "risk_level": analysis.get("risk_level", ""),
+                    "risk_score": analysis.get("risk_score", 0),
+                    "total_findings": analysis.get("total_findings", 0),
+                    "summary": analysis.get("summary", ""),
+                }
+
+        # ── 主机画像 ──
+        if "profile" in data_keys:
+            profile = HostProfile.get_by_host(host_id)
+            if profile:
+                data["profile"] = {
+                    "system_summary": profile.get("system_summary", ""),
+                    "cpu_info": profile.get("cpu_info", ""),
+                    "memory_info": profile.get("memory_info", ""),
+                    "security_products": profile.get("security_products", ""),
+                    "user_accounts": profile.get("user_accounts", ""),
+                    "installed_software": profile.get("installed_software", ""),
+                }
+
+        # ── 异常进程（全量） ──
+        if "abnormal_processes_all" in data_keys:
+            processes = AbnormalProcess.list_by_host(host_id)
+            data["abnormal_processes_all"] = [
+                {
+                    "name": p.get("process_name", ""),
+                    "pid": p.get("pid"),
+                    "path": p.get("process_path", ""),
+                    "cmd": p.get("command_line", ""),
+                    "parent_name": p.get("parent_name", ""),
+                    "reason": p.get("reason", ""),
+                    "severity": p.get("severity", ""),
+                    "risk_score": p.get("risk_score", 0),
+                }
+                for p in processes
+            ]
+
+        # ── 可疑外连（全量） ──
+        if "suspicious_connections_all" in data_keys:
+            connections = SuspiciousConnection.list_by_host(host_id)
+            data["suspicious_connections_all"] = [
+                {
+                    "remote": f"{c.get('remote_address', '')}:{c.get('remote_port', '')}",
+                    "protocol": c.get("protocol", ""),
+                    "process": c.get("process_name", ""),
+                    "reason": c.get("reason", ""),
+                    "severity": c.get("severity", ""),
+                }
+                for c in connections
+            ]
+
+        # ── 持久化痕迹（全量） ──
+        if "persistence_all" in data_keys:
+            persistence = PersistenceItem.list_by_host(host_id)
+            data["persistence_all"] = [
+                {
+                    "type": p.get("type", ""),
+                    "name": p.get("name", ""),
+                    "command": p.get("command", ""),
+                    "location": p.get("location", ""),
+                    "suspicious": bool(p.get("is_suspicious")),
+                    "reason": p.get("reason", ""),
+                }
+                for p in persistence
+            ]
+
+        # ── IOC 命中（全量） ──
+        if "ioc_hits_all" in data_keys:
+            ioc_hits = IocHit.list_by_host(host_id)
+            data["ioc_hits_all"] = [
+                {
+                    "type": i.get("ioc_type", ""),
+                    "value": i.get("ioc_value", ""),
+                    "matched_in": i.get("matched_in", ""),
+                    "context": i.get("context", ""),
+                    "severity": i.get("severity", ""),
+                }
+                for i in ioc_hits
+            ]
+
+        # ── 时间线（全量） ──
+        if "timeline_all" in data_keys:
+            timeline = TimelineEvent.list_by_host(host_id)
+            data["timeline_all"] = [
+                {
+                    "time": t.get("timestamp", ""),
+                    "type": t.get("event_type", ""),
+                    "desc": t.get("description", ""),
+                    "severity": t.get("severity", ""),
+                }
+                for t in timeline
+            ]
+
+        # ── 进程树（process_list 模块） ──
+        if "process_list" in data_keys:
+            try:
+                # 尝试通过 Host 模型拉取进程树（raw_json_path 中包含进程信息）
+                processes = AbnormalProcess.list_by_host(host_id)
+                # 同时拉取主机 raw json 中的完整进程列表
+                data["process_list"] = [
+                    {
+                        "name": p.get("process_name", ""),
+                        "pid": p.get("pid"),
+                        "path": p.get("process_path", ""),
+                        "cmd": p.get("command_line", ""),
+                        "parent_pid": p.get("parent_pid"),
+                        "parent_name": p.get("parent_name", ""),
+                        "reason": p.get("reason", ""),
+                        "severity": p.get("severity", ""),
+                    }
+                    for p in processes
+                ]
+                if not data["process_list"]:
+                    logger.warning(
+                        "No process data available for host %d (process_list module)",
+                        host_id,
+                    )
+            except Exception as e:
+                logger.warning(
+                    "Failed to fetch process_list data for host %d: %s", host_id, e,
+                )
+                data["process_list"] = []
+
+        # ── 启动项（startup 模块） ──
+        if "startup_items" in data_keys:
+            try:
+                from app.models.analysis import SuspiciousStartupItem
+
+                startup_items = SuspiciousStartupItem.list_by_host(host_id)
+                data["startup_items"] = [
+                    {
+                        "name": s.get("name", ""),
+                        "command": s.get("command", ""),
+                        "location": s.get("location", ""),
+                        "type": s.get("type", ""),
+                        "user": s.get("user", ""),
+                        "reason": s.get("reason", ""),
+                        "severity": s.get("severity", ""),
+                    }
+                    for s in startup_items
+                ]
+            except Exception as e:
+                logger.warning(
+                    "Failed to fetch startup_items data for host %d: %s", host_id, e,
+                )
+                data["startup_items"] = []
+
+        # ── 用户账户（users 模块） ──
+        if "users" in data_keys:
+            try:
+                profile = HostProfile.get_by_host(host_id)
+                if profile and profile.get("user_accounts"):
+                    data["users"] = {"user_accounts": profile["user_accounts"]}
+                else:
+                    data["users"] = {}
+                    logger.warning(
+                        "No user account data available for host %d (users module)",
+                        host_id,
+                    )
+            except Exception as e:
+                logger.warning(
+                    "Failed to fetch users data for host %d: %s", host_id, e,
+                )
+                data["users"] = {}
+
+        # ── 系统服务（services 模块） ──
+        if "services" in data_keys:
+            # 当前数据库没有独立的 services 表；返回空数据
+            logger.warning(
+                "Services data not available for host %d — no dedicated table exists",
+                host_id,
+            )
+            data["services"] = {}
+
+        # ── USB 记录（usb 模块） ──
+        if "usb_devices" in data_keys:
+            # 当前数据库没有独立的 usb 表；返回空数据
+            logger.warning(
+                "USB device data not available for host %d — no dedicated table exists",
+                host_id,
+            )
+            data["usb_devices"] = {}
+
+        # ── 远程工具（remote_control 模块） ──
+        if "remote_tools" in data_keys:
+            # 当前数据库没有独立的 remote_tools 表；返回空数据
+            logger.warning(
+                "Remote control tool data not available for host %d — no dedicated table exists",
+                host_id,
+            )
+            data["remote_tools"] = {}
+
+        return data
+
+    @staticmethod
+    def _build_module_system_prompt(module_type: str) -> str:
+        """获取模块专属 system_prompt 模板.
+
+        Args:
+            module_type: 模块名.
+
+        Returns:
+            system_prompt 字符串.
+        """
+        prompt = MODULE_SYSTEM_PROMPTS.get(module_type, "")
+        if not prompt:
+            logger.warning(
+                "No system prompt defined for module '%s', using default",
+                module_type,
+            )
+            prompt = SYSTEM_PROMPT_TEMPLATE.strip()
+        return prompt.strip()
+
+    @staticmethod
+    def _build_module_user_prompt(
+        host: dict,
+        module_data: dict,
+        budget: int,
+        masked: bool,
+    ) -> str:
+        """按 Token 预算组装模块专属 user prompt.
+
+        与 _build_user_prompt() 的区别：
+        - 使用模块专属 budget（而非全局 AI_INPUT_BUDGET）
+        - 数据量小，直接全部序列化，超出则截断
+
+        Args:
+            host: 主机信息.
+            module_data: 模块数据字典.
+            budget: Token 预算.
+            masked: 是否脱敏.
+
+        Returns:
+            组装好的 user_prompt 字符串.
+        """
+        if masked:
+            from app.services.data_masking import apply as mask_apply
+
+            module_data = mask_apply(dict(module_data))
+
+        hostname = host.get("hostname", "N/A")
+        ip = host.get("ip_address", "N/A")
+        os_type = host.get("os_type", "N/A")
+        os_version = host.get("os_version", "N/A")
+
+        intro = (
+            f"请基于以下主机数据进行专业分析：\n\n"
+            f"主机: {hostname}\n"
+            f"IP: {ip}\n"
+            f"OS: {os_type} {os_version}\n"
+        )
+
+        # 将模块数据序列化为 JSON
+        data_json = json.dumps(module_data, ensure_ascii=False, indent=2)
+
+        # 先在预算内组装，超了做截断
+        candidate = intro + "\n## 模块数据\n" + data_json
+        candidate_tokens = PromptBuilder._count_tokens(candidate)
+
+        if candidate_tokens <= budget:
+            final = candidate
+        else:
+            # 截断策略：保留 intro + 截断数据 JSON
+            intro_tokens = PromptBuilder._count_tokens(intro)
+            header = "\n## 模块数据\n"
+            header_tokens = PromptBuilder._count_tokens(header)
+            available = budget - intro_tokens - header_tokens
+            if available <= 0:
+                final = intro
+            else:
+                # 逐字符缩短 data_json 直到符合预算
+                truncated = data_json
+                while PromptBuilder._count_tokens(truncated) > available and len(truncated) > 0:
+                    truncated = truncated[:int(len(truncated) * 0.9)]
+                truncated += "\n... [数据因 token 预算限制已截断]"
+                final = intro + header + truncated
+
+        total_tokens = PromptBuilder._count_tokens(final)
+        logger.info(
+            "Module user prompt built: tokens=%d/%d",
+            total_tokens, budget,
+        )
+        return final
 
     @staticmethod
     def _fetch_tiered_data(host_id: int) -> dict:

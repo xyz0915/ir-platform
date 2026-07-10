@@ -169,8 +169,14 @@ export const useAiStore = defineStore('ai', () => {
    * @param {number} maskedMode - 脱敏模式 1=开启 0=关闭
    * @returns {Promise<string>} taskId
    */
-  async function startAnalysis(hostId, maskedMode) {
-    const res = await aiAnalyze(hostId, { maskedMode, profileId: activeProfileId.value })
+  async function startAnalysis(hostId, maskedMode, options = {}) {
+    const { mode, focusArea } = options
+    const res = await aiAnalyze(hostId, {
+      maskedMode,
+      profileId: activeProfileId.value,
+      mode: mode || 'standard',
+      focusArea: focusArea || null,
+    })
     const taskId = res.data?.task_id
     if (!taskId) {
       throw new Error('未获取到任务 ID')

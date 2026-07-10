@@ -29,7 +29,10 @@
           </div>
 
           <h4 class="mt-15 mb-10">将发送以下数据进行分析：</h4>
-          <ul>
+          <ul v-if="currentMode === 'module' && currentFocusArea">
+            <li>{{ MODULE_DATA_DESC[currentFocusArea] || '模块相关数据' }}</li>
+          </ul>
+          <ul v-else>
             <li>主机基础信息（主机名、IP、系统版本）</li>
             <li>本地分析引擎的发现（异常进程、可疑外连、持久化痕迹）</li>
             <li>IOC 命中记录</li>
@@ -357,6 +360,8 @@ const props = defineProps({
   hostId: { type: [Number, String], default: null },
   visible: { type: Boolean, default: false },
   hostName: { type: String, default: '' },
+  mode: { type: String, default: 'standard' },
+  focusArea: { type: String, default: null },
 })
 
 const emit = defineEmits(['close', 'update:visible'])
@@ -364,6 +369,40 @@ const emit = defineEmits(['close', 'update:visible'])
 const dialogVisible = ref(false)
 const currentHostId = ref(null)
 const currentHostName = ref('')
+const currentMode = ref('standard')
+const currentFocusArea = ref(null)
+
+// ── 模块中文名映射 ──
+const MODULE_NAME_MAP = {
+  profile: '主机画像',
+  process_list: '进程树',
+  abnormal_processes: '异常进程',
+  connections: '可疑外连',
+  persistence: '持久化痕迹',
+  startup: '可疑启动项',
+  ioc: 'IOC 命中',
+  timeline: '时间线',
+  users: '用户账户',
+  services: '系统服务',
+  usb: 'USB 记录',
+  remote_control: '远程工具',
+}
+
+// ── 模块发送数据描述 ──
+const MODULE_DATA_DESC = {
+  profile: '主机基础信息、分析结果摘要、系统画像',
+  process_list: '进程列表（含进程名、PID、路径、命令行、父子关系）',
+  abnormal_processes: '异常进程详情（含进程名、路径、命令行、可疑原因、严重度）',
+  connections: '可疑外连记录（含远程地址、端口、协议、关联进程）',
+  persistence: '持久化痕迹（含类型、名称、命令、位置、可疑标记）',
+  startup: '可疑启动项（含名称、命令、位置、类型、可疑原因）',
+  ioc: 'IOC 命中记录（含类型、值、匹配位置、上下文、严重度）',
+  timeline: '安全事件时间线（含时间戳、事件类型、描述、严重度）',
+  users: '用户账户信息（含用户名、权限、组成员关系）',
+  services: '系统服务列表（含服务名、状态、二进制路径）',
+  usb: 'USB 设备接入记录（含设备名、序列号、接入时间）',
+  remote_control: '远程控制工具痕迹（含工具名、执行时间、网络连接）',
+}
 
 // ============================================================
 // Stage 状态
@@ -452,6 +491,18 @@ const chatRoundCount = computed(() => {
 // Computed
 // ============================================================
 const dialogTitle = computed(() => {
+  if (currentMode.value === 'module' && currentFocusArea.value) {
+    const moduleName = MODULE_NAME_MAP[currentFocusArea.value] || currentFocusArea.value
+    switch (stage.value) {
+      case 'confirm': return `AI 分析 — ${moduleName}`
+      case 'analyzing': return `AI 正在分析 — ${moduleName}`
+      case 'done':
+        return store.taskStatus === 'completed'
+          ? `AI 分析完成 — ${moduleName}`
+          : `AI 分析失败 — ${moduleName}`
+      default: return `AI 分析 — ${moduleName}`
+    }
+  }
   switch (stage.value) {
     case 'confirm': return 'AI 一键分析'
     case 'analyzing': return 'AI 正在分析中...'
@@ -560,6 +611,8 @@ function resetState() {
   followUpText.value = ''
   chatMessages.value = []
   conversationId.value = null
+  currentMode.value = 'standard'
+  currentFocusArea.value = null
   store.resetStream()
 }
 
@@ -577,9 +630,11 @@ onBeforeUnmount(() => {
   cleanup()
 })
 
-function show(hostId, hostName = '') {
+function show(hostId, hostName = '', mode = 'standard', focusArea = null) {
   currentHostId.value = hostId
   currentHostName.value = hostName || ''
+  currentMode.value = mode || 'standard'
+  currentFocusArea.value = focusArea || null
   dialogVisible.value = true
   stage.value = 'confirm'
 }
@@ -592,7 +647,10 @@ defineExpose({ show })
 async function handleStartAnalysis() {
   confirmLoading.value = true
   try {
-    const taskId = await store.startAnalysis(currentHostId.value, maskedMode.value ? 1 : 0)
+    const taskId = await store.startAnalysis(currentHostId.value, maskedMode.value ? 1 : 0, {
+      mode: currentMode.value,
+      focusArea: currentFocusArea.value,
+    })
     stage.value = 'analyzing'
     displayedContent.value = ''
     displayedLength = 0

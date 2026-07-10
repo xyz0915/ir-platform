@@ -208,7 +208,20 @@ class AiTaskService:
             mode = task.get("mode", "standard") if isinstance(task, dict) else "standard"
             focus_area = task.get("focus_area") if isinstance(task, dict) else None
             base_report_id = task.get("base_report_id") if isinstance(task, dict) else None
-            prompts = PromptBuilder.build(host_id=host_id, masked=masked_mode)
+
+            if mode == "module" and focus_area:
+                # 模块化分析：只发送该模块专属数据
+                logger.info(
+                    "Building module prompt for host=%d, module=%s",
+                    host_id, focus_area,
+                )
+                prompts = PromptBuilder.build_module(
+                    host_id=host_id,
+                    module_type=focus_area,
+                    masked=masked_mode,
+                )
+            else:
+                prompts = PromptBuilder.build(host_id=host_id, masked=masked_mode)
             system_prompt = prompts["system_prompt"]
             user_prompt = prompts["user_prompt"]
 
@@ -381,6 +394,8 @@ class AiTaskService:
                 masked_mode=1 if masked_mode else 0,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
+                analysis_type="module" if (mode == "module" and focus_area) else "full",
+                module_type=focus_area if (mode == "module" and focus_area) else None,
             )
 
             # --- 阶段4: 审计日志 (90%) ---
