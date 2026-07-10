@@ -193,7 +193,7 @@ def main() -> None:
 
     # 构建元数据
     metadata = {
-        "agent_version": "1.0.0",
+        "agent_version": "1.1.0",
         "collection_time": get_timestamp(),
         "platform": "windows" if is_windows() else ("linux" if is_linux() else "unknown"),
         "hostname": raw_results.get("system_info", {}).get("hostname", "unknown")

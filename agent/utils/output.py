@@ -7,7 +7,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Agent 输出 JSON 的固定顶层 key（17个）
+# Agent 输出 JSON 的固定顶层 key（21个）
 OUTPUT_KEYS = [
     "metadata",
     "system_info",
@@ -26,6 +26,10 @@ OUTPUT_KEYS = [
     "persistence",
     "ioc",
     "timeline",
+    "network_connections",
+    "file_hashes",
+    "wmi_subscriptions",
+    "registry_keys",
 ]
 
 
@@ -41,8 +45,9 @@ def build_output(metadata: dict, raw_results: dict) -> dict:
     """
     output = {"metadata": metadata}
 
-    # 映射采集器结果到输出 key
-    for key in OUTPUT_KEYS[1:]:  # 跳过 metadata
+    # 映射采集器结果到输出 key（原有 16 个采集器 key + 4 个新增顶层 key）
+    original_keys = OUTPUT_KEYS[1:17]  # system_info ~ timeline (16 keys)
+    for key in original_keys:
         result = raw_results.get(key)
         if result is None:
             # 设置默认值
@@ -62,7 +67,21 @@ def build_output(metadata: dict, raw_results: dict) -> dict:
             else:
                 output[key] = []
         else:
+            # 对于 network/files/registry/persistence 采集器，提取其内部的 4 个新顶层 key
             output[key] = result
+            # 从采集器内部提取平台所需顶层字段
+            if isinstance(result, dict):
+                for new_key in ["network_connections", "file_hashes",
+                                "wmi_subscriptions", "registry_keys"]:
+                    if new_key in result:
+                        if new_key not in output:
+                            output[new_key] = result[new_key]
+
+    # 确保 4 个新顶层 key 始终存在
+    for new_key in ["network_connections", "file_hashes",
+                    "wmi_subscriptions", "registry_keys"]:
+        if new_key not in output:
+            output[new_key] = []
 
     return output
 

@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 class AgentMetadata(BaseModel):
     """Agent 元数据."""
-    agent_version: str = "1.0.0"
+    agent_version: str = "1.1.0"
     collection_time: str = ""
     platform: str = "unknown"
     hostname: str = "unknown"
@@ -154,6 +154,10 @@ class AgentData(BaseModel):
     persistence: Any = Field(default_factory=dict)
     ioc: Any = Field(default_factory=dict)
     timeline: list[Any] = Field(default_factory=list)
+    network_connections: list[Any] = Field(default_factory=list)
+    file_hashes: list[Any] = Field(default_factory=list)
+    wmi_subscriptions: list[Any] = Field(default_factory=list)
+    registry_keys: list[Any] = Field(default_factory=list)
 
     class Config:
         extra = "allow"

@@ -5,7 +5,7 @@ import socket
 from typing import Any
 
 from collectors.base_collector import BaseCollector
-from utils.platform import is_windows, is_linux, run_command, read_file_safe
+from utils.platform import is_windows, is_linux, run_command, read_file_safe, get_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +13,8 @@ logger = logging.getLogger(__name__)
 class NetworkCollector(BaseCollector):
     """网络信息采集器.
 
-    采集网络连接、网卡接口、DNS 缓存、hosts 文件、路由表.
+    采集网络连接、网卡接口、DNS 缓存、hosts 文件、路由表、
+    以及平台所需的扁平化 network_connections 列表.
     """
 
     name = "network"
@@ -21,13 +22,40 @@ class NetworkCollector(BaseCollector):
 
     def collect(self) -> dict:
         """执行网络信息采集."""
+        raw_connections = self._get_connections()
         result: dict[str, Any] = {
-            "connections": self._get_connections(),
+            "connections": raw_connections,
             "interfaces": self._get_interfaces(),
             "dns_cache": self._get_dns_cache(),
             "hosts_file": self._get_hosts_file(),
             "routing_table": self._get_routing_table(),
+            "network_connections": self._build_network_connections(raw_connections),
         }
+        return result
+
+    def _build_network_connections(self, connections: list) -> list:
+        """将内部连接列表映射为平台 network_connections 表所需格式.
+
+        字段映射:
+            local_address → local_addr
+            remote_address → remote_addr
+            status → state
+        补充 protocol / pid / process_name / collected_at.
+        """
+        now = get_timestamp()
+        result = []
+        for conn in connections:
+            result.append({
+                "protocol": conn.get("protocol", ""),
+                "local_addr": conn.get("local_address", ""),
+                "local_port": conn.get("local_port", 0),
+                "remote_addr": conn.get("remote_address", ""),
+                "remote_port": conn.get("remote_port", 0),
+                "state": conn.get("state", ""),
+                "pid": conn.get("pid", 0),
+                "process_name": conn.get("process_name", ""),
+                "collected_at": now,
+            })
         return result
 
     def _get_connections(self) -> list:

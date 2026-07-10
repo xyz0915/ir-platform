@@ -1,10 +1,11 @@
 """14. 持久化痕迹采集器."""
 
 import logging
+import re
 from typing import Any
 
 from collectors.base_collector import BaseCollector
-from utils.platform import is_windows, is_linux, run_command
+from utils.platform import is_windows, is_linux, run_command, get_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +14,7 @@ class PersistenceCollector(BaseCollector):
     """持久化痕迹采集器.
 
     综合采集持久化痕迹：Run 键、计划任务、服务、启动文件夹、WMI、cron、systemd.
+    同时输出平台所需的顶层 wmi_subscriptions 列表.
     """
 
     name = "persistence"
@@ -21,10 +23,18 @@ class PersistenceCollector(BaseCollector):
     def collect(self) -> dict:
         """执行持久化痕迹采集."""
         if is_windows():
-            return self._collect_windows()
+            result = self._collect_windows()
+            # 顶层 wmi_subscriptions — 使用增强后的 _get_wmi_subscriptions 结果
+            # 注意 _collect_windows() 内部也写入了 wmi_subscriptions，此处复用其结果
+            result["wmi_subscriptions"] = self._get_wmi_subscriptions()
+            return result
         elif is_linux():
-            return self._collect_linux()
-        return self._empty_result()
+            result = self._collect_linux()
+            result["wmi_subscriptions"] = []
+            return result
+        result = self._empty_result()
+        result["wmi_subscriptions"] = []
+        return result
 
     def _empty_result(self) -> dict:
         return {
@@ -40,7 +50,7 @@ class PersistenceCollector(BaseCollector):
         result["scheduled_tasks"] = self._get_scheduled_tasks()
         result["services"] = self._get_services()
         result["startup_folder"] = self._get_startup_folder()
-        result["wmi_subscriptions"] = self._get_wmi_subscriptions()
+        result["wmi_subscriptions"] = self._get_wmi_subscriptions_legacy()
         return result
 
     def _get_run_keys(self) -> list:
@@ -159,8 +169,8 @@ class PersistenceCollector(BaseCollector):
                     continue
         return items
 
-    def _get_wmi_subscriptions(self) -> list:
-        """获取 WMI 事件订阅持久化."""
+    def _get_wmi_subscriptions_legacy(self) -> list:
+        """获取 WMI 事件订阅持久化（旧格式，保持向后兼容）."""
         items = []
         output = run_command(
             'powershell -Command "Get-WmiObject -Namespace root\\Subscription -Class __EventConsumer | Select-Object __CLASS, Name | Format-List" 2>nul',
@@ -178,6 +188,154 @@ class PersistenceCollector(BaseCollector):
                         current = {"name": value.strip(), "type": "wmi_subscription"}
             if current:
                 items.append(current)
+        return items
+
+    def _get_wmi_subscriptions(self) -> list:
+        """获取 WMI 事件订阅持久化（平台增强格式）.
+
+        两步 PowerShell:
+          1. __EventFilter — 获取 Name, Query, QueryLanguage
+          2. __EventConsumer — 获取 Name, CommandLineTemplate
+          3. __FilterToConsumerBinding — 获取 Filter ↔ Consumer 映射
+
+        返回平台所需的 wmi_subscriptions 列表，每项包含:
+          name, event_filter, event_consumer, binding_type, risk_level, collected_at.
+        """
+        items: list[dict[str, Any]] = []
+        now = get_timestamp()
+
+        # Step 1: 查询 __EventFilter
+        filter_output = run_command(
+            'powershell -NoProfile -Command '
+            '"Get-WmiObject -Namespace root\\Subscription -Class __EventFilter '
+            '| Select-Object Name, Query, QueryLanguage | Format-List"',
+            timeout=15,
+        )
+
+        # Step 2: 查询 __EventConsumer
+        consumer_output = run_command(
+            'powershell -NoProfile -Command '
+            '"Get-WmiObject -Namespace root\\Subscription -Class __EventConsumer '
+            '| Select-Object Name, CommandLineTemplate | Format-List"',
+            timeout=15,
+        )
+
+        # Step 3: 查询 __FilterToConsumerBinding
+        binding_output = run_command(
+            'powershell -NoProfile -Command '
+            '"Get-WmiObject -Namespace root\\Subscription -Class __FilterToConsumerBinding '
+            '| Select-Object Filter, Consumer | Format-List"',
+            timeout=15,
+        )
+
+        # 解析 __EventFilter
+        filters: dict[str, dict] = {}
+        if filter_output:
+            current_name: str = ""
+            for line in filter_output.split("\n"):
+                stripped = line.strip()
+                if ":" in stripped:
+                    key, _, value = stripped.partition(":")
+                    key = key.strip()
+                    value = value.strip()
+                    if key == "Name":
+                        current_name = value
+                        if current_name not in filters:
+                            filters[current_name] = {
+                                "query": "",
+                                "query_language": "",
+                            }
+                    elif key == "Query" and current_name:
+                        filters[current_name]["query"] = value
+                    elif key == "QueryLanguage" and current_name:
+                        filters[current_name]["query_language"] = value
+
+        # 解析 __EventConsumer
+        consumers: dict[str, dict] = {}
+        if consumer_output:
+            current_name = ""
+            for line in consumer_output.split("\n"):
+                stripped = line.strip()
+                if ":" in stripped:
+                    key, _, value = stripped.partition(":")
+                    key = key.strip()
+                    value = value.strip()
+                    if key == "Name":
+                        current_name = value
+                        if current_name not in consumers:
+                            consumers[current_name] = {
+                                "command_line_template": "",
+                            }
+                    elif key == "CommandLineTemplate" and current_name:
+                        consumers[current_name]["command_line_template"] = value
+
+        # 解析 __FilterToConsumerBinding 获取 Filter↔Consumer 映射
+        binding_pairs: list[tuple[str, str]] = []
+        if binding_output:
+            current_filter: str = ""
+            current_consumer: str = ""
+            for line in binding_output.split("\n"):
+                stripped = line.strip()
+                if ":" in stripped:
+                    key, _, value = stripped.partition(":")
+                    key = key.strip()
+                    value = value.strip()
+                    if key == "Filter":
+                        # 提取 Filter Name: Name="xxx"
+                        match = re.search(r'Name="([^"]+)"', value)
+                        if match:
+                            current_filter = match.group(1)
+                    elif key == "Consumer":
+                        match = re.search(r'Name="([^"]+)"', value)
+                        if match:
+                            current_consumer = match.group(1)
+                elif stripped == "":
+                    # 空行表示记录结束
+                    if current_filter or current_consumer:
+                        binding_pairs.append((current_filter, current_consumer))
+                    current_filter = ""
+                    current_consumer = ""
+
+        # 构建 enriched wmi_subscriptions
+        # 优先使用 binding 映射配对
+        if binding_pairs:
+            for filter_name, consumer_name in binding_pairs:
+                entry: dict[str, Any] = {
+                    "name": filter_name,
+                    "event_filter": filters.get(filter_name, {}),
+                    "event_consumer": consumers.get(consumer_name, {}),
+                    "binding_type": "Permanent",
+                    "risk_level": "medium",
+                    "collected_at": now,
+                }
+                items.append(entry)
+                # 标记已使用
+                filters.pop(filter_name, None)
+                consumers.pop(consumer_name, None)
+
+        # 未配对的 filters（没有对应 consumer）
+        for fname, fdata in filters.items():
+            items.append({
+                "name": fname,
+                "event_filter": fdata,
+                "event_consumer": {},
+                "binding_type": "Unknown",
+                "risk_level": "medium",
+                "collected_at": now,
+            })
+
+        # 未配对的 consumers（没有对应 filter）
+        for cname, cdata in consumers.items():
+            items.append({
+                "name": cname,
+                "event_filter": {},
+                "event_consumer": cdata,
+                "binding_type": "Unknown",
+                "risk_level": "medium",
+                "collected_at": now,
+            })
+
+        logger.info("Collected %d WMI subscription(s) (enhanced format)", len(items))
         return items
 
     def _collect_linux(self) -> dict:

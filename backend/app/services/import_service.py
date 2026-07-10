@@ -78,6 +78,11 @@ class ImportService:
             summary["persistence_items"] = sum(
                 len(v) for v in persistence.values() if isinstance(v, list)
             )
+        # 新增 4 个顶层字段计数（数据采集增强）
+        for new_key in ["network_connections", "file_hashes",
+                        "wmi_subscriptions", "registry_keys"]:
+            val = data.get(new_key, [])
+            summary[new_key] = len(val) if isinstance(val, list) else 0
         return json.dumps(summary, ensure_ascii=False)
 
     @staticmethod
