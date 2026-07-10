@@ -324,6 +324,14 @@ async def submit_analysis(
     except (ValueError, TypeError):
         pass
 
+    # 校验 mode 合法性（含新增 overview / remediation）
+    from app.shared.ai_constants import AIMode
+    if mode not in AIMode.values():
+        raise HTTPException(
+            status_code=400,
+            detail=f"非法 mode: {mode!r}，合法值：{AIMode.values()}",
+        )
+
     try:
         task = await AiTaskService.submit(
             host_id=host_id,
@@ -501,6 +509,14 @@ def _enrich_report(report: Optional[dict], host_id: int) -> Optional[dict]:
             "total_findings": analysis.get("total_findings", 0),
             "summary": analysis.get("summary", ""),
         }
+
+    # 解析 overview / remediation 的 ai_payload（任务②）
+    ai_payload_raw = report.get("ai_payload")
+    if ai_payload_raw:
+        try:
+            result["ai_payload"] = json.loads(ai_payload_raw)
+        except (json.JSONDecodeError, TypeError):
+            result["ai_payload"] = None
     return result
 
 

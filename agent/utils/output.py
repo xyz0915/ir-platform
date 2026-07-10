@@ -3,7 +3,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -33,17 +33,22 @@ OUTPUT_KEYS = [
 ]
 
 
-def build_output(metadata: dict, raw_results: dict) -> dict:
+def build_output(metadata: dict, raw_results: dict, collection_health: Optional[dict] = None) -> dict:
     """组装符合 Schema 的 Agent JSON 输出.
 
     Args:
         metadata: 元数据字典.
         raw_results: 各采集器结果字典 {collector_name: result}.
+        collection_health: 可选采集健康状态（任务③），作为顶层字段注入.
 
     Returns:
         完整的 Agent JSON 数据字典.
     """
     output = {"metadata": metadata}
+
+    # 注入采集健康状态（任务③）
+    if collection_health is not None:
+        output["collection_health"] = collection_health
 
     # 映射采集器结果到输出 key（原有 16 个采集器 key + 4 个新增顶层 key）
     original_keys = OUTPUT_KEYS[1:17]  # system_info ~ timeline (16 keys)

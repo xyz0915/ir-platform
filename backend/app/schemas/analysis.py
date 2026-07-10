@@ -8,7 +8,7 @@ from app.rules.rule_engine import BEHAVIOR_PATTERNS, validate_behavior_pattern
 
 # ── 枚举约束 ────────────────────────────────────────────────────────
 SEVERITY_ENUM: List[str] = ["critical", "high", "medium", "low"]
-RULE_TYPE_ENUM: List[str] = ["regex", "list", "threshold", "behavior", "composite", "exists"]
+RULE_TYPE_ENUM: List[str] = ["regex", "list", "threshold", "behavior", "composite", "exists", "attack_chain"]
 IOC_TYPE_ENUM: List[str] = ["ip", "domain", "url", "hash", "cert"]
 
 SeverityType = Literal["critical", "high", "medium", "low"]
@@ -201,6 +201,13 @@ class ConditionModel(BaseModel):
     description: Optional[str] = None
     mitre_attack: Optional[str] = None
     _meta: Optional[dict] = None
+    # ── attack_chain 规则条件字段（任务①）──────────────────────────
+    # ordered_steps: 有序步骤列表，每步含 dimension（跨维度）+ match（复用既有类型）
+    # window_minutes: 攻击链首末步骤最大时间跨度（默认 60，上限 1440）
+    # host_scope: "single"（默认，单主机下钻）— 预留集群级扩展
+    window_minutes: Optional[int] = None
+    host_scope: Optional[str] = None
+    ordered_steps: Optional[List[dict]] = None
 
     class Config:
         extra = "allow"
@@ -258,6 +265,34 @@ def validate_condition(rule_type: str, condition: dict) -> None:
     elif rule_type == "exists":
         if not condition.get("field"):
             raise ValueError("exists 规则必须包含 field")
+    elif rule_type == "attack_chain":
+        # 跨维度顺序关联：ordered_steps 非空，每步含 dimension + match
+        steps = condition.get("ordered_steps")
+        if not isinstance(steps, list) or len(steps) == 0:
+            raise ValueError("attack_chain 规则必须包含非空的 ordered_steps")
+        valid_dims = {"process", "connection", "registry", "persistence", "timeline", "ioc"}
+        for idx, step in enumerate(steps):
+            if not isinstance(step, dict):
+                raise ValueError(f"attack_chain 第 {idx + 1} 步必须是对象")
+            dim = step.get("dimension")
+            if dim not in valid_dims:
+                raise ValueError(
+                    f"attack_chain 第 {idx + 1} 步 dimension 非法: {dim!r}，"
+                    f"应为 {sorted(valid_dims)}"
+                )
+            match = step.get("match")
+            if not isinstance(match, dict) or not match.get("type"):
+                raise ValueError(f"attack_chain 第 {idx + 1} 步必须包含 match.type")
+            mtype = match.get("type")
+            if mtype not in RULE_TYPE_ENUM:
+                raise ValueError(
+                    f"attack_chain 第 {idx + 1} 步 match.type 非法: {mtype!r}"
+                )
+        # window_minutes 可选，缺省 60；若提供须为 1..1440 的整数
+        wm = condition.get("window_minutes")
+        if wm is not None:
+            if not isinstance(wm, int) or isinstance(wm, bool) or wm < 1 or wm > 1440:
+                raise ValueError("attack_chain window_minutes 须为 1..1440 的整数")
     else:
         raise ValueError(f"未知 rule_type: {rule_type}")
 

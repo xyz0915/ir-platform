@@ -21,6 +21,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -91,6 +92,9 @@ class NormalizedIntel:
     threat_level: Optional[str] = None
     raw_summary: str = ""
     queried_at: str = field(default_factory=lambda: "")
+    # 任务④ 多源聚合：参与本次判定的 provider 列表与共识判定
+    providers: List[str] = field(default_factory=list)
+    consensus: str = ""  # "" / "single_source" / "multi_source"
 
     @staticmethod
     def _level_from_judgments(judgments: List[str], risk_score: int) -> Optional[str]:
@@ -130,6 +134,8 @@ class NormalizedIntel:
             "company": list(self.company or []),
             "threat_level": self.threat_level,
             "raw_summary": self.raw_summary,
+            "providers": list(self.providers or []),
+            "consensus": self.consensus or "",
         }
 
     def to_dict(self) -> Dict[str, Any]:
@@ -146,6 +152,8 @@ class NormalizedIntel:
             "attck": list(self.attck or []),
             "threat_level": self.threat_level,
             "raw_summary": self.raw_summary,
+            "providers": list(self.providers or []),
+            "consensus": self.consensus or "",
         }
 
 
@@ -559,6 +567,78 @@ def _max_severity(a: str, b: str) -> str:
     return a if _SEVERITY_RANK.get(a, 0) >= _SEVERITY_RANK.get(b, 0) else b
 
 
+# ── 任务④ 多源聚合与分级缓存辅助 ────────────────────────────────
+_THREAT_LEVEL_RANK = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+
+
+def _aggregate_normalized(
+    ioc_type: str,
+    ioc_value: str,
+    per_source: List[NormalizedIntel],
+    provider_names: List[str],
+) -> NormalizedIntel:
+    """将多源 NormalizedIntel 聚合为单条结果（任务④ 共识判定）.
+
+    - 共识：≥2 源判黑（judgments 含 malicious）→ ``multi_source``；否则 ``single_source``。
+    - confidence：取各源最大值（决策⑥）。
+    - risk_score / threat_level：取各源最高值。
+
+    Args:
+        ioc_type / ioc_value: IOC 标识。
+        per_source: 各源返回的归一化结果（非空）。
+        provider_names: 参与聚合的 provider 名称列表（用于 provider 聚合 key）。
+
+    Returns:
+        聚合后的 NormalizedIntel（provider 为排序后的聚合 key）。
+    """
+    malicious_count = sum(
+        1 for p in per_source if "malicious" in {str(j).lower() for j in (p.judgments or [])}
+    )
+    consensus = "multi_source" if malicious_count >= 2 else "single_source"
+
+    risk_score = max((int(p.risk_score or 0) for p in per_source), default=0)
+    confidence = max((int(p.confidence or 0) for p in per_source), default=0)
+    threat_level = None
+    for p in per_source:
+        if p.threat_level:
+            threat_level = _max_severity(threat_level or "low", p.threat_level)
+
+    # judgments / tags 取并集（去重，保序）
+    judgments: List[str] = []
+    tags: List[str] = []
+    for p in per_source:
+        for j in (p.judgments or []):
+            if j not in judgments:
+                judgments.append(j)
+        for t in (p.tags or []):
+            if t not in tags:
+                tags.append(t)
+    if not judgments:
+        judgments = ["unknown"]
+
+    provider_key = "+".join(sorted(provider_names))
+    raw_summary = (
+        f"consensus={consensus}; sources={len(per_source)}; "
+        f"malicious_sources={malicious_count}; "
+        f"risk_score={risk_score}; confidence={confidence}"
+    )
+    return NormalizedIntel(
+        ioc_type=ioc_type,
+        ioc_value=ioc_value,
+        provider=provider_key,
+        risk_score=risk_score,
+        judgments=judgments,
+        tags=tags,
+        confidence=confidence,
+        company=[],
+        attck=[],
+        threat_level=threat_level,
+        raw_summary=raw_summary,
+        providers=list(provider_names),
+        consensus=consensus,
+    )
+
+
 class EnrichmentService:
     """外联威胁情报查询服务（单例共享当日配额）."""
 
@@ -666,22 +746,43 @@ class EnrichmentService:
     def _dedup_key(self, ioc_value: str, provider: str, ioc_type: str) -> tuple:
         return (str(ioc_value).lower(), provider, ioc_type)
 
-    def get_cached(self, ioc_value: str, provider: str, ioc_type: str) -> Optional[NormalizedIntel]:
-        """获取内存去重缓存；若命中 TTL 内则返回，否则 None."""
+    def get_cached(
+        self, ioc_value: str, provider: str, ioc_type: str, ttl: Optional[int] = None
+    ) -> Optional[NormalizedIntel]:
+        """获取内存去重缓存；若命中 TTL 内则返回，否则 None.
+
+        Args:
+            ttl: 缓存有效期（秒）；缺省使用 ``_dedup_ttl``。多源聚合场景按分级传入。
+        """
         key = self._dedup_key(ioc_value, provider, ioc_type)
+        if ttl is None:
+            ttl = self._dedup_ttl
         with self._dedup_lock:
             entry = self._dedup.get(key)
             if entry is None:
                 return None
             ts, intel = entry
-            if time.time() - ts > self._dedup_ttl:
+            if time.time() - ts > ttl:
                 self._dedup.pop(key, None)
                 return None
             return intel
 
-    def set_cached(self, ioc_value: str, provider: str, ioc_type: str, intel: NormalizedIntel) -> None:
-        """写入内存去重缓存."""
+    def set_cached(
+        self,
+        ioc_value: str,
+        provider: str,
+        ioc_type: str,
+        intel: NormalizedIntel,
+        ttl: Optional[int] = None,
+    ) -> None:
+        """写入内存去重缓存.
+
+        Args:
+            ttl: 缓存有效期（秒）；缺省使用 ``_dedup_ttl``。多源聚合场景按分级传入。
+        """
         key = self._dedup_key(ioc_value, provider, ioc_type)
+        if ttl is None:
+            ttl = self._dedup_ttl
         with self._dedup_lock:
             self._dedup[key] = (time.time(), intel)
 
@@ -690,6 +791,86 @@ class EnrichmentService:
         with self._dedup_lock:
             self._dedup.clear()
 
+    # ── 分级缓存 TTL（任务④ 决策⑦）───────────────────────────────
+    def _graded_recheck_days(
+        self, threat_level: Optional[str], judgments: List[str], recheck_days: int
+    ) -> int:
+        """按判定分级决定有效重新检查间隔（天）.
+
+        - 恶意（high）→ ``cache_ttl_malicious_hours`` 换算为天（优先）。
+        - 干净（low / 仅 clean）→ ``cache_ttl_clean_days``。
+        - 未知 / 可疑 → 回退 ``recheck_days``。
+        """
+        if threat_level == "high":
+            return max(1, settings.DEFAULT_CACHE_TTL_MALICIOUS_HOURS // 24)
+        jset = {str(j).lower() for j in (judgments or [])}
+        if threat_level in (None, "low") and ("malicious" not in jset):
+            return int(self._settings.get(
+                "cache_ttl_clean_days", settings.DEFAULT_CACHE_TTL_CLEAN_DAYS
+            ))
+        # 可疑 / 未知 → recheck_days 兜底（决策⑦）
+        return int(recheck_days)
+
+    def _graded_ttl_seconds(self, intel: NormalizedIntel) -> int:
+        """按判定分级返回内存缓存有效期（秒）."""
+        if intel.threat_level == "high":
+            return settings.DEFAULT_CACHE_TTL_MALICIOUS_HOURS * 3600
+        if intel.threat_level in (None, "low"):
+            return settings.DEFAULT_CACHE_TTL_CLEAN_DAYS * 86400
+        return settings.DEFAULT_CACHE_TTL_UNKNOWN_DAYS * 86400
+
+    @staticmethod
+    def _record_age_days(record: Dict[str, Any]) -> float:
+        """返回记录距离当前的天数（解析失败视为极旧）."""
+        queried = record.get("queried_at")
+        if not queried:
+            return 9999.0
+        try:
+            dt = datetime.strptime(queried, "%Y-%m-%d %H:%M:%S")
+        except (ValueError, TypeError):
+            return 9999.0
+        return (datetime.now() - dt).total_seconds() / 86400.0
+
+    def _is_stale(self, record: Dict[str, Any], multi: bool) -> bool:
+        """判断某历史记录是否已超出有效缓存期（需重查）.
+
+        - 单源（legacy）：保持「查过即缓存」语义，永不视为过期。
+        - 多源：按分级 TTL 判定。
+        """
+        if not multi:
+            return False
+        recheck_days = int(self._settings.get("recheck_days", settings.DEFAULT_RECHECK_DAYS))
+        graded = self._graded_recheck_days(
+            record.get("threat_level"), record.get("judgments") or [], recheck_days
+        )
+        return self._record_age_days(record) > graded
+
+    def _get_pending_iocs_graded(
+        self, recheck_days: int, limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """多源场景：按分级 TTL 逐条判定待查 ioc（任务④ 决策⑦）.
+
+        与单源 ``get_pending_iocs`` 不同，多源按「各源聚合后的判定分级」决定缓存期，
+        优先于统一的 recheck_days。
+        """
+        candidates = ThreatIntel.get_all_enrichable_iocs(limit=None)
+        result: List[Dict[str, Any]] = []
+        for ioc in candidates:
+            latest = ThreatIntel.get_latest_by_ioc_id(ioc["id"])
+            if latest is None:
+                result.append(ioc)
+                continue
+            graded = self._graded_recheck_days(
+                latest.get("threat_level"),
+                latest.get("judgments") or [],
+                recheck_days,
+            )
+            if self._record_age_days(latest) > graded:
+                result.append(ioc)
+        if limit:
+            result = result[: int(limit)]
+        return result
+
     # ── 核心：单条 enrich ───────────────────────────────────────────
     def enrich_ioc(
         self,
@@ -697,22 +878,29 @@ class EnrichmentService:
         ioc_type: str,
         ioc_value: str,
         provider_name: Optional[str] = None,
+        force_refresh: bool = False,
     ) -> dict:
-        """查询并落库单条 IOC 的威胁情报.
+        """查询并落库单条 IOC 的威胁情报（任务④ 支持多源聚合）.
+
+        行为:
+          - ``provider_name`` 指定 → 仅查该 provider（单源 legacy 语义）。
+          - 未指定且存在 ≥2 个已启用 provider → 逐源串行查询并聚合（共识判定）。
+          - 未指定且仅 0~1 个已启用 provider → 单源语义（兼容既有测试与配置）。
 
         Args:
             ioc_id: 关联的 iocs 主键（可为 None）。
             ioc_type: IOC 类型（仅支持 ip/domain）。
             ioc_value: 指标值。
             provider_name: 指定 provider 名称（可选）。
+            force_refresh: 跳过内存去重与分级缓存，强制重新查询（决策⑦）。
 
         Returns:
-            落库的 ``threat_intel`` 记录 dict（或命中内存去重时返回最新已存记录）。
+            落库的 ``threat_intel`` 记录 dict（或命中缓存时返回最新已存记录）。
 
         Raises:
             UnsupportedIocTypeError: 非 ip/domain。
             QuotaExceededError: 当日配额耗尽。
-            ThreatIntelQueryError: 无可用 provider / 查询失败。
+            ThreatIntelQueryError: 无可用 provider / 所有源查询失败。
         """
         # 1) 类型校验
         if ioc_type not in settings.ENRICH_SUPPORTED_TYPES:
@@ -720,39 +908,93 @@ class EnrichmentService:
                 f"不支持的 IOC 类型: '{ioc_type}'，仅支持 {settings.ENRICH_SUPPORTED_TYPES}"
             )
 
-        # 2) 选择 provider
-        provider = self.get_provider(provider_name)
-        if provider is None:
-            raise ThreatIntelQueryError("无可用（已启用）的威胁情报 provider")
-        pname = provider.name
+        # 2) 解析目标 provider（多源 / 单源）
+        #    约定：单源路径复用 get_provider（兼容既有测试对 get_provider 的 patch）；
+        #          仅当存在 ≥2 个已启用 provider 且未指定 provider_name 时才走多源聚合。
+        enabled_configs = [
+            c for c in ThreatIntelProviderConfig.load() if c.get("enabled", True)
+        ]
+        if provider_name:
+            # 指定 provider：沿用 get_provider 语义（可被测试 patch）
+            provider = self.get_provider(provider_name)
+            if provider is None:
+                raise ThreatIntelQueryError(
+                    f"未找到已启用的 provider: {provider_name}"
+                )
+            providers = [provider]
+            provider_names = [provider.name]
+            multi = False
+            provider_key = provider.name
+        elif len(enabled_configs) >= 2:
+            # 多源：逐源实例化（不依赖 get_provider，避免单源 patch 干扰）
+            providers = [create_provider(c) for c in enabled_configs]
+            provider_names = [p.name for p in providers]
+            multi = True
+            provider_key = "+".join(sorted(provider_names))
+        else:
+            # 单源：复用 get_provider（兼容既有行为 / 测试 patch）
+            provider = self.get_provider(None)
+            if provider is None:
+                raise ThreatIntelQueryError("无可用（已启用）的威胁情报 provider")
+            providers = [provider]
+            provider_names = [provider.name]
+            multi = False
+            provider_key = provider.name
 
-        # 3) 内存去重（命中则不重复打 API、不重复落库）
-        cached = self.get_cached(ioc_value, pname, ioc_type)
-        if cached is not None:
-            logger.debug("命中内存去重，跳过 API: %s/%s", ioc_value, pname)
-            existing = ThreatIntel.get_latest_by_value(ioc_value, pname)
-            if existing:
+        # 4) 缓存（内存去重 + 分级 DB 缓存）；force_refresh 跳过
+        if not force_refresh:
+            cached = self.get_cached(ioc_value, provider_key, ioc_type)
+            if cached is not None:
+                logger.debug("命中内存去重，跳过 API: %s/%s", ioc_value, provider_key)
+                existing = ThreatIntel.get_latest_by_value(ioc_value, provider_key)
+                if existing and not self._is_stale(existing, multi):
+                    return existing
+                return cached.to_dict()
+            existing = ThreatIntel.get_latest_by_value(ioc_value, provider_key)
+            if existing and not self._is_stale(existing, multi):
                 return existing
-            return cached.to_dict()
 
-        # 4) 配额
+        # 5) 逐源串行查询 + 限流 + 每源配额（多源 fallback）
+        #    首个源前先占配额：配额耗尽直接抛 QuotaExceededError（与历史行为一致）；
+        #    多源后续源再逐次占配额，中途耗尽则停止其余源（已查源仍聚合）。
         if not self.try_acquire_quota():
             logger.warning("当日配额已耗尽（%d），拒绝查询 %s", self._daily_quota, ioc_value)
             raise QuotaExceededError(
                 f"当日查询配额已耗尽（{self._daily_quota}），请明日再试或在设置中调大 daily_quota"
             )
+        per_source: List[NormalizedIntel] = []
+        for idx, p in enumerate(providers):
+            if idx > 0:
+                if not self.try_acquire_quota():
+                    logger.warning("当日配额已耗尽，停止多源查询 %s", ioc_value)
+                    break
+            self._throttle(p.name)
+            try:
+                intel = p.query(ioc_type, ioc_value)
+                per_source.append(intel)
+            except Exception as exc:  # noqa: BLE001 — 单源失败不阻断其它源
+                logger.warning("provider %s 查询 %s 失败: %s", p.name, ioc_value, exc)
+                continue
 
-        # 5) 单 provider 串行 + 限流
-        self._throttle(pname)
+        if not per_source:
+            raise ThreatIntelQueryError(f"所有 provider 查询 {ioc_value} 均失败")
 
-        # 6) 查询
-        intel = provider.query(ioc_type, ioc_value)
+        # 6) 聚合（多源 → 共识；单源 → 直出）
+        if multi and len(per_source) >= 1:
+            intel = _aggregate_normalized(ioc_type, ioc_value, per_source, provider_names)
+        else:
+            intel = per_source[0]
+            intel.provider = provider_names[0]  # 单源使用真实 provider 名
+            intel.consensus = "single_source"  # 单源共识（决策⑥）
 
         # 7) 落库（保留全历史不去重）
-        record = ThreatIntel.create(**intel.to_threat_intel_kwargs(ioc_id=ioc_id))
+        record = ThreatIntel.create(
+            **intel.to_threat_intel_kwargs(ioc_id=ioc_id)
+        )
 
-        # 8) 写入内存去重
-        self.set_cached(ioc_value, pname, ioc_type, intel)
+        # 8) 写入内存去重（分级 TTL）
+        ttl = self._graded_ttl_seconds(intel) if multi else self._dedup_ttl
+        self.set_cached(ioc_value, provider_key, ioc_type, intel, ttl=ttl)
         return record
 
     # ── 批量 enrich ─────────────────────────────────────────────────
@@ -826,9 +1068,12 @@ class EnrichmentService:
     ) -> Dict[str, Any]:
         """扫描并 enrich 所有到期/从未查询的 ioc.
 
+        多源场景（≥2 已启用 provider 且未指定 provider_name）按「分级 TTL」判定待查；
+        单源场景沿用既有 ``get_pending_iocs`` 的精确 (ioc_id, provider) 维度。
+
         Args:
             recheck_days: 重新检查间隔（天）；缺省取运行策略。
-            provider_name: 指定 provider；缺省选首个 enabled。
+            provider_name: 指定 provider；缺省自动判断是否多源。
             limit: 本轮最多处理条数。
 
         Returns:
@@ -837,21 +1082,44 @@ class EnrichmentService:
         if recheck_days is None:
             recheck_days = int(self._settings.get("recheck_days", settings.DEFAULT_RECHECK_DAYS))
 
-        provider = self.get_provider(provider_name)
-        if provider is None:
-            raise ThreatIntelQueryError("无可用（已启用）的威胁情报 provider")
-        pname = provider.name
-
-        pending = ThreatIntel.get_pending_iocs(recheck_days, pname, limit)
-        items = [
-            {"ioc_id": i["id"], "ioc_type": i["ioc_type"], "ioc_value": i["ioc_value"]}
-            for i in pending
+        enabled_configs = [
+            c for c in ThreatIntelProviderConfig.load() if c.get("enabled", True)
         ]
-        logger.info("扫描到 %d 条待外联查询的 IOC（provider=%s）", len(items), pname)
-        return self.enrich_batch(items, provider_name=pname)
+        multi = provider_name is None and len(enabled_configs) >= 2
+
+        if multi:
+            pending = self._get_pending_iocs_graded(recheck_days, limit)
+            items = [
+                {"ioc_id": i["id"], "ioc_type": i["ioc_type"], "ioc_value": i["ioc_value"]}
+                for i in pending
+            ]
+            logger.info("扫描到 %d 条待外联查询的 IOC（多源聚合模式）", len(items))
+            # 不传 provider_name → enrich_ioc 自动走多源聚合
+            return self.enrich_batch(items)
+        else:
+            provider = self.get_provider(provider_name)
+            if provider is None:
+                raise ThreatIntelQueryError("无可用（已启用）的威胁情报 provider")
+            pname = provider.name
+            pending = ThreatIntel.get_pending_iocs(recheck_days, pname, limit)
+            items = [
+                {"ioc_id": i["id"], "ioc_type": i["ioc_type"], "ioc_value": i["ioc_value"]}
+                for i in pending
+            ]
+            logger.info("扫描到 %d 条待外联查询的 IOC（provider=%s）", len(items), pname)
+            return self.enrich_batch(items, provider_name=pname)
 
 
 # 对外便捷函数：获取共享单例
 def get_enrichment_service() -> EnrichmentService:
     """返回共享的 EnrichmentService 单例（API 与 scheduler 共用当日配额）."""
     return EnrichmentService.instance()
+
+
+# ── 注册多源 provider 子类（任务④）──────────────────────────────
+# 在模块加载末尾导入 providers 包，触发 register_providers 将
+# VirusTotal / AbuseIPDB / AlienVaultOTX 注册进 _PROVIDER_REGISTRY。
+try:
+    import app.services.providers  # noqa: F401  — 导入即注册
+except Exception as _reg_err:  # noqa: BLE001
+    logger.warning("注册多源 threat intel provider 失败: %s", _reg_err)

@@ -1,0 +1,104 @@
+"""AbuseIPDB 威胁情报 provider 实现（任务④ 多源聚合）.
+
+端点:
+  - IP:  GET https://api.abuseipdb.com/api/v2/check?ipAddress={ip}&maxAgeInDays=90
+         （域名查询 AbuseIPDB 不支持，仅 ip）
+鉴权: Header ``Key: <api_key>`` + ``Accept: application/json``。
+归一化: 取 data.abuseScore（0-100）与 totalReports 推导判定与风险。
+"""
+
+import json
+
+import httpx
+
+from app.services.enrichment_service import (
+    BaseThreatIntelProvider,
+    ThreatIntelQueryError,
+    UnsupportedIocTypeError,
+)
+
+
+class AbuseIPDBProvider(BaseThreatIntelProvider):
+    """AbuseIPDB 威胁情报 provider（仅支持 ip）."""
+
+    BASE_URL = "https://api.abuseipdb.com/api/v2"
+
+    def query(self, ioc_type: str, ioc_value: str) -> "object":
+        """查询 AbuseIPDB 情报.
+
+        Raises:
+            UnsupportedIocTypeError: 非 ip 类型（域名不支持）。
+            ThreatIntelQueryError: 鉴权缺失或网络/业务错误。
+        """
+        if ioc_type != "ip":
+            raise UnsupportedIocTypeError(
+                f"provider '{self.name}' 仅支持 ioc_type='ip'，收到 '{ioc_type}'"
+            )
+
+        api_key = self.expand_api_key()
+        if not api_key:
+            raise ThreatIntelQueryError(
+                f"provider '{self.name}' 的 api_key 未配置或环境变量未设置"
+            )
+
+        url = f"{self.BASE_URL}/check"
+        try:
+            with httpx.Client(timeout=httpx.Timeout(30.0), follow_redirects=True) as client:
+                resp = client.get(
+                    url,
+                    params={"ipAddress": ioc_value, "maxAgeInDays": 90},
+                    headers={"Key": api_key, "Accept": "application/json"},
+                )
+                resp.raise_for_status()
+                payload = resp.json()
+        except httpx.HTTPError as exc:
+            raise ThreatIntelQueryError(
+                f"provider '{self.name}' 查询 {ioc_value} 网络异常: {exc}"
+            ) from exc
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise ThreatIntelQueryError(
+                f"provider '{self.name}' 返回非 JSON: {exc}"
+            ) from exc
+
+        data = (payload or {}).get("data") or {}
+        if not isinstance(data, dict):
+            raise ThreatIntelQueryError(
+                f"provider '{self.name}' 返回结构异常（缺 data）"
+            )
+
+        abuse_score = int(data.get("abuseScore", 0) or 0)
+        total_reports = int(data.get("totalReports", 0) or 0)
+        is_whitelisted = bool(data.get("isWhitelisted"))
+
+        if is_whitelisted:
+            judgments = ["clean"]
+            threat_level = None
+            risk_score = 5
+        elif abuse_score >= 80:
+            judgments = ["malicious"]
+            threat_level = "high"
+            risk_score = 90
+        elif abuse_score >= 50:
+            judgments = ["suspicious"]
+            threat_level = "medium"
+            risk_score = 70
+        else:
+            judgments = ["clean"]
+            threat_level = "low"
+            risk_score = 20
+
+        return self.build_normalized(
+            ioc_type,
+            ioc_value,
+            self.name,
+            {
+                "judgments": judgments,
+                "risk_score": risk_score,
+                "tags": [f"abuseScore:{abuse_score}", f"reports:{total_reports}"],
+                "confidence": abuse_score,
+            },
+            raw_summary=(
+                f"abuseScore={abuse_score}; totalReports={total_reports}; "
+                f"whitelisted={is_whitelisted}"
+            ),
+        )

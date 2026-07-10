@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>安全态势概要报告（管理层版）</title>
+    <style>{{ css }}</style>
+</head>
+<body>
+<div class="report-container">
+
+    <!-- 封面 / 页眉（来自模板配置） -->
+    <div class="report-cover">
+        {% if data.template.logo_path %}
+        <img class="logo" src="{{ data.template.logo_path }}" alt="logo" />
+        {% endif %}
+        <h1>{{ data.template.header_text or '安全态势概要报告' }}</h1>
+        <p class="subtitle">Executive Summary — 已脱敏</p>
+        <div class="meta-info">
+            {% if data.case %}
+            <p>案件名称: {{ data.case.name }}</p>
+            {% endif %}
+            <p>主机: {{ data.host.hostname }}</p>
+            <p>报告生成时间: {{ data.report_time }}</p>
+        </div>
+    </div>
+
+    <!-- 风险概要 -->
+    <div class="section">
+        <h2 class="section-title">风险概要</h2>
+        {% if data.analysis %}
+        <div class="info-card">
+            <p>
+                <span class="label">风险等级:</span>
+                <span class="risk-badge risk-{{ data.analysis.risk_level }}">
+                    {{ {'critical': '严重', 'high': '高危', 'medium': '中危', 'low': '低危', 'info': '信息'}.get(data.analysis.risk_level, data.analysis.risk_level) }}
+                </span>
+            </p>
+            <p><span class="label">风险分数:</span> {{ data.analysis.risk_score }} / 100</p>
+            <p><span class="label">发现问题数:</span> {{ data.analysis.total_findings }}</p>
+        </div>
+        {% else %}
+        <p>暂无分析结果。</p>
+        {% endif %}
+    </div>
+
+    <!-- 态势图表（后端内联 SVG，决策⑧） -->
+    <div class="section">
+        <h2 class="section-title">安全态势分布</h2>
+        <div class="chart-block">
+            {{ data.chart_svg | safe }}
+        </div>
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value">{{ data.stats.abnormal_process_count }}</div>
+                <div class="stat-label">异常进程</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ data.stats.suspicious_connection_count }}</div>
+                <div class="stat-label">可疑外连</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ data.stats.suspicious_persistence_count }}</div>
+                <div class="stat-label">可疑持久化</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ data.stats.ioc_hit_count }}</div>
+                <div class="stat-label">IOC 命中</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 管理层结论（脱敏摘要） -->
+    <div class="section page-break">
+        <h2 class="section-title">结论与建议</h2>
+        <div class="recommendations">
+            <ul>
+                {% for rec in data.recommendations %}
+                <li>{{ rec }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        <p class="ai-note">
+            本报告已按管理层视图脱敏处理：不包含具体 IP、文件路径、命令行与用户名等敏感指标。
+        </p>
+    </div>
+
+    <!-- 页脚 -->
+    <div class="report-footer">
+        <p>{{ data.template.footer_text or 'CONFIDENTIAL' }} — {{ data.report_time }}</p>
+    </div>
+
+</div>
+</body>
+</html>

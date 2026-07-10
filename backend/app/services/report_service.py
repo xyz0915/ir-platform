@@ -16,6 +16,9 @@ from app.models.analysis import (
 from app.models.host import Host
 from app.models.case import Case
 from app.models.ai_analysis import AiAnalysisReport
+from app.models.remediation_checklist import RemediationChecklist
+from app.services.report_template_service import ReportTemplateService
+from app.services.data_masking import apply as mask_data
 from app.utils.pdf_converter import html_to_pdf
 
 logger = logging.getLogger(__name__)
@@ -25,18 +28,30 @@ class ReportService:
     """报告生成服务."""
 
     @staticmethod
-    def generate_html(host_id: int) -> str:
-        """生成 HTML 报告.
+    def generate_html(
+        host_id: int,
+        report_level: str = "technical",
+        template_config: Optional[dict] = None,
+    ) -> str:
+        """生成 HTML 报告（任务⑤ 支持 executive / technical 双版本）.
 
         Args:
-            host_id: 主机 ID.
+            host_id: 主机 ID。
+            report_level: ``executive``（管理层/脱敏/图表）或 ``technical``（含处置清单）。
+            template_config: 可选报告模板配置；缺省从 ReportTemplateService 读取。
 
         Returns:
-            HTML 报告字符串.
+            HTML 报告字符串。
 
         Raises:
             ValueError: 主机不存在或未分析.
         """
+        report_level = (report_level or "technical").lower()
+        if report_level not in ("executive", "technical"):
+            report_level = "technical"
+
+        template_cfg = template_config or ReportTemplateService.get_template()
+
         # 获取数据
         host = Host.get_by_id(host_id)
         if not host:
@@ -89,7 +104,6 @@ class ReportService:
             loader=FileSystemLoader(str(templates_dir)),
             autoescape=select_autoescape(["html"]),
         )
-        template = env.get_template("report.html")
 
         # 读取内联样式
         css_path = templates_dir / "report_style.css"
@@ -98,23 +112,86 @@ class ReportService:
             with open(css_path, "r", encoding="utf-8") as f:
                 css_content = f.read()
 
+        if report_level == "executive":
+            # 管理层视图：完全脱敏 + 内联 SVG 图表（决策⑧）
+            masked_data = mask_data(report_data)
+            masked_data["chart_svg"] = ReportService._build_summary_svg(report_data["stats"])
+            masked_data["template"] = template_cfg
+            template = env.get_template("report_executive.html")
+            html = template.render(data=masked_data, css=css_content)
+            return html
+
+        # 技术视图：末尾嵌入处置清单复选框（决策⑨）
+        checklist_cfg = (template_cfg.get("technical") or {})
+        if checklist_cfg.get("include_checklist", True):
+            checklist = RemediationChecklist.get_by_host(host_id)
+            report_data["checklist"] = checklist["items"] if checklist else []
+        else:
+            report_data["checklist"] = []
+
+        template = env.get_template("report.html")
         html = template.render(data=report_data, css=css_content)
         return html
 
     @staticmethod
-    def generate_pdf(host_id: int) -> bytes:
+    def _build_summary_svg(stats: dict) -> str:
+        """根据统计概览生成内联 SVG 概要柱状图（决策⑧ 后端内联）.
+
+        仅使用计数类指标，不包含任何敏感值。
+        """
+        items = [
+            ("异常进程", stats.get("abnormal_process_count", 0)),
+            ("可疑外连", stats.get("suspicious_connection_count", 0)),
+            ("可疑持久化", stats.get("suspicious_persistence_count", 0)),
+            ("IOC 命中", stats.get("ioc_hit_count", 0)),
+        ]
+        max_val = max((v for _, v in items), default=1) or 1
+        width = 460
+        row_h = 34
+        height = row_h * len(items) + 20
+        bar_max_w = 320
+        svg_parts = [
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+            f'viewBox="0 0 {width} {height}" role="img" aria-label="安全态势分布">'
+        ]
+        for idx, (label, val) in enumerate(items):
+            y = 10 + idx * row_h
+            bar_w = int(bar_max_w * (val / max_val)) if max_val else 0
+            bar_w = max(bar_w, 2 if val else 0)
+            svg_parts.append(
+                f'<text x="0" y="{y + 16}" font-size="13" fill="#333">{label}</text>'
+            )
+            svg_parts.append(
+                f'<rect x="110" y="{y + 4}" width="{bar_w}" height="18" rx="3" fill="#c0392b"/>'
+            )
+            svg_parts.append(
+                f'<text x="{110 + bar_w + 6}" y="{y + 18}" font-size="13" fill="#333">{val}</text>'
+            )
+        svg_parts.append("</svg>")
+        return "".join(svg_parts)
+
+    @staticmethod
+    def generate_pdf(
+        host_id: int,
+        report_level: str = "technical",
+        template_config: Optional[dict] = None,
+    ) -> bytes:
         """生成 PDF 报告.
 
         Args:
-            host_id: 主机 ID.
+            host_id: 主机 ID。
+            report_level: ``executive`` 或 ``technical``。
+            template_config: 可选报告模板配置。
 
         Returns:
-            PDF 文件字节内容.
+            PDF 文件字节内容。
 
         Raises:
             ValueError: 报告生成失败.
         """
-        html = ReportService.generate_html(host_id)
+        html = ReportService.generate_html(
+            host_id, report_level=report_level, template_config=template_config
+        )
         pdf_bytes = html_to_pdf(html)
         if pdf_bytes is None:
             raise ValueError("PDF 生成失败，WeasyPrint 可能未正确安装")

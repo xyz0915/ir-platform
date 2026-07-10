@@ -33,14 +33,20 @@ TEST_DB_PATH = str(BACKEND_DIR / "data" / "test_rules_import.db")
 
 # 默认规则文件路径（用于动态推导预期规则数，避免硬编码 94/97 与实际 JSON 不一致，T-P0-1）
 DEFAULT_RULES_PATH = BACKEND_DIR / "app" / "rules" / "default_rules.json"
+# 攻击链默认规则文件（v1.2.0 新增，load_default_rules() 会一并注入）
+DEFAULT_ATTACK_CHAIN_PATH = BACKEND_DIR / "app" / "rules" / "default_attack_chain.json"
 
 
 class TestRulesImportFix(unittest.TestCase):
     """测试 _import_default_rules() upsert-by-name 修复."""
 
     # ── 预期常量 ──────────────────────────────────────────────
-    # 动态推导：以 default_rules.json 实际条数为准（含新增覆盖规则），避免与硬编码值漂移
-    EXPECTED_RULE_COUNT = len(json.load(open(DEFAULT_RULES_PATH, "r", encoding="utf-8")))
+    # 动态推导：default_rules.json + default_attack_chain.json 实际条数之和
+    # （load_default_rules() 会一并注入攻击链默认规则），避免与硬编码值漂移
+    EXPECTED_RULE_COUNT = (
+        len(json.load(open(DEFAULT_RULES_PATH, "r", encoding="utf-8")))
+        + len(json.load(open(DEFAULT_ATTACK_CHAIN_PATH, "r", encoding="utf-8")))
+    )
     EXPECTED_CATEGORIES = {
         "process", "network", "startup", "persistence", "ioc",
         "behavior", "execution", "credential", "defense_evasion",

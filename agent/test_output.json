@@ -1,10 +1,23 @@
 {
   "metadata": {
-    "agent_version": "1.0.0",
-    "collection_time": "2026-07-06T22:27:25.665050+08:00",
+    "agent_version": "1.1.0",
+    "collection_time": "2026-07-11T02:22:11.734858+08:00",
     "platform": "windows",
     "hostname": "DESKTOP-NCR4EED",
-    "operator": "agent"
+    "operator": "agent",
+    "log_days": 7
+  },
+  "collection_health": {
+    "collected_at": "2026-07-11T02:22:11.734858+08:00",
+    "collectors": {
+      "system_info": {
+        "status": "ok",
+        "count": 2,
+        "warnings": []
+      }
+    },
+    "warnings": [],
+    "summary": "1 ok"
   },
   "system_info": {
     "hostname": "DESKTOP-NCR4EED",
@@ -12,7 +25,7 @@
     "os_version": "10.0.19045",
     "architecture": "AMD64",
     "install_date": "2026-06-30",
-    "uptime_seconds": 270099,
+    "uptime_seconds": 629785,
     "timezone": "中国标准时间",
     "cpu": {
       "model": "Intel64 Family 6 Model 158 Stepping 10, GenuineIntel",
@@ -21,20 +34,20 @@
     },
     "memory": {
       "total_gb": 15.88,
-      "available_gb": 6.76
+      "available_gb": 6.56
     },
     "disks": [
       {
         "device": "C:\\",
         "total_gb": 119.24,
-        "free_gb": 56.52,
+        "free_gb": 54.62,
         "fs_type": "NTFS",
         "mountpoint": "C:\\"
       },
       {
         "device": "E:\\",
         "total_gb": 930.35,
-        "free_gb": 901.72,
+        "free_gb": 896.66,
         "fs_type": "NTFS",
         "mountpoint": "E:\\"
       }
@@ -54,5 +67,9 @@
   "remote_control": {},
   "persistence": {},
   "ioc": {},
-  "timeline": []
+  "timeline": [],
+  "network_connections": [],
+  "file_hashes": [],
+  "wmi_subscriptions": [],
+  "registry_keys": []
 }

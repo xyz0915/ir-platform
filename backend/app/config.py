@@ -84,10 +84,17 @@ class Settings:
     # 配置文件路径
     THREAT_INTEL_PROVIDERS_PATH: Path = BACKEND_DIR / "scripts" / "threat_intel_providers.json"
     THREAT_INTEL_SETTINGS_PATH: Path = BACKEND_DIR / "config" / "threat_intel_settings.json"
+    # 报告模板配置路径（任务⑤ 分级报告）
+    REPORT_TEMPLATE_PATH: Path = BACKEND_DIR / "config" / "report_template.json"
     # 内存去重 TTL（秒），防止运行时短时间重复打 API
     THREAT_INTEL_DEDUP_TTL: int = 600
     # 支持外联查询的 IOC 类型
     ENRICH_SUPPORTED_TYPES: list = ["ip", "domain"]
+    # 分级缓存 TTL（任务④ 决策⑦）：按判定分级决定外联情报缓存有效期，优先于 recheck_days
+    # 恶意情报缓存 24 小时、干净情报缓存 7 天、未知/可疑情报缓存 3 天（recheck_days 兜底）
+    DEFAULT_CACHE_TTL_MALICIOUS_HOURS: int = 24
+    DEFAULT_CACHE_TTL_CLEAN_DAYS: int = 7
+    DEFAULT_CACHE_TTL_UNKNOWN_DAYS: int = 3
 
 
 settings = Settings()

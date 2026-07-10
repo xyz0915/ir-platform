@@ -11,10 +11,13 @@ Usage:
 """
 
 import argparse
+import json
 import logging
 import sys
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 # 将当前目录加入 sys.path，确保 collectors 可导入
 AGENT_DIR = Path(__file__).resolve().parent
@@ -23,8 +26,37 @@ sys.path.insert(0, str(AGENT_DIR))
 from collectors.base_collector import BaseCollector
 from utils.platform import get_timestamp, is_windows, is_linux
 from utils.output import build_output, write_output, print_summary
+from utils._health import CollectorHealth
+from utils.diff import compute_diff, load_baseline, save_baseline
 
 logger = logging.getLogger(__name__)
+
+# 每个采集器的最大执行时间（秒）—超时即降级（任务③）
+COLLECTOR_TIMEOUT = 30
+
+# 列表型采集器（其余默认按字典型处理）
+_LIST_COLLECTORS = {
+    "users", "processes", "services", "startup_items", "timeline",
+    "network_connections", "file_hashes", "wmi_subscriptions", "registry_keys",
+}
+
+
+def _empty_result(name: str):
+    """返回某采集器失败/跳过后用于降级的空结构."""
+    return [] if name in _LIST_COLLECTORS else {}
+
+
+def _count_items(name: str, result) -> int:
+    """统计采集到的结果条目数（用于 collection_health.count）."""
+    if isinstance(result, list):
+        return len(result)
+    if isinstance(result, dict):
+        total = 0
+        for v in result.values():
+            if isinstance(v, list):
+                total += len(v)
+        return total if total else len(result)
+    return 0
 
 # 采集器映射表
 COLLECTOR_MAP = {
@@ -67,12 +99,34 @@ def load_collector(name: str, log_days: int = 7) -> BaseCollector:
     return cls(log_days=log_days)
 
 
-def run_collectors(collect_names: list, log_days: int = 7) -> dict:
-    """依次执行指定采集器.
+def _run_one(name: str, log_days: int):
+    """在子线程中执行单个采集器（带平台支持检查）.
+
+    Returns:
+        (result, err) — err 为 None 表示成功；"not supported" 表示平台不支持。
+    """
+    collector = load_collector(name, log_days=log_days)
+    if not collector.is_supported():
+        return None, "not supported"
+    return collector.collect(), None
+
+
+def run_collectors(
+    collect_names: list,
+    log_days: int = 7,
+    health: Optional[CollectorHealth] = None,
+) -> dict:
+    """依次执行指定采集器（任务③：每采集器超时+重试+降级 + 健康记录）.
+
+    - 每个采集器在独立线程中执行，超时 COLLECTOR_TIMEOUT(30s) 即降级；
+    - 首次失败/超时后降级重试 1 次；
+    - 仍失败则返回空结构（不中断整体），并在 collection_health 中标记；
+    - 进程采集为空时记录「进程列表为空」告警并降级为 degraded。
 
     Args:
         collect_names: 要执行的采集器名称列表.
-        log_days: 采集最近 N 天的数据，传递给各采集器.
+        log_days: 采集最近 N 天的数据.
+        health: 可选 CollectorHealth 累加器，记录每采集器健康状态.
 
     Returns:
         各采集器结果的字典 {collector_name: result}.
@@ -83,18 +137,70 @@ def run_collectors(collect_names: list, log_days: int = 7) -> dict:
             logger.warning("Unknown collector: %s, skipping", name)
             continue
         logger.info("Running collector: %s", name)
+        status = "ok"
+        warnings: list[str] = []
+        result = None
+        err: Optional[str] = None
+
+        # 首次执行（带超时）
         try:
-            collector = load_collector(name, log_days=log_days)
-            if not collector.is_supported():
-                logger.warning("Collector %s not supported on this platform", name)
-                results[name] = {"error": "not supported", "collector": name}
-                continue
-            result = collector.collect()
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(_run_one, name, log_days)
+                try:
+                    result, err = future.result(timeout=COLLECTOR_TIMEOUT)
+                except FuturesTimeout:
+                    err = f"采集超时（>{COLLECTOR_TIMEOUT}s）"
+        except Exception as exc:  # noqa: BLE001
+            err = str(exc)
+
+        # 失败/超时 → 降级重试 1 次
+        if err is not None and err != "not supported":
+            logger.warning("Collector %s 首次执行失败: %s，尝试降级重试", name, err)
+            try:
+                with ThreadPoolExecutor(max_workers=1) as ex:
+                    future = ex.submit(_run_one, name, log_days)
+                    try:
+                        result, err = future.result(timeout=COLLECTOR_TIMEOUT)
+                    except FuturesTimeout:
+                        err = f"重试仍超时（>{COLLECTOR_TIMEOUT}s）"
+            except Exception as exc:  # noqa: BLE001
+                err = str(exc)
+            if err is not None:
+                warnings.append(f"{name} 采集失败：{err}，已降级返回空结果")
+                status = "failed"
+                result = _empty_result(name)
+            else:
+                warnings.append(f"{name} 首次失败（{err}）但重试成功")
+                status = "degraded"
+
+        if err == "not supported":
+            logger.warning("Collector %s not supported on this platform", name)
+            results[name] = {"error": "not supported", "collector": name}
+            if health:
+                health.record(name, "skipped", 0, [f"{name} 当前平台不支持"])
+            continue
+
+        # 统计数量 + 进程空告警
+        if result is not None and not (isinstance(result, dict) and "error" in result):
+            count = _count_items(name, result)
+            if name == "processes" and count == 0:
+                warnings.append("进程列表为空，可能影响关联分析")
+                if status == "ok":
+                    status = "degraded"
             results[name] = result
-            logger.info("Collector %s completed", name)
-        except Exception as exc:
-            logger.exception("Collector %s failed: %s", name, exc)
-            results[name] = {"error": str(exc), "collector": name}
+        else:
+            # 异常分支（极少触发，保险）
+            if status == "ok":
+                status = "failed"
+            if not warnings:
+                warnings.append(f"{name} 采集异常，已降级返回空结果")
+            result = _empty_result(name)
+            results[name] = result
+
+        if health:
+            health.record(name, status, _count_items(name, result), warnings)
+        logger.info("Collector %s done (status=%s, count=%d)", name, status,
+                    _count_items(name, result))
     return results
 
 
@@ -136,6 +242,16 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=7,
         help="采集最近N天的系统日志（默认7天）",
+    )
+    parser.add_argument(
+        "--save-baseline",
+        default=None,
+        help="将当前采集结果保存为 baseline JSON（差分比对基线）",
+    )
+    parser.add_argument(
+        "--diff",
+        default=None,
+        help="与指定 baseline JSON 比对，仅输出新增/变更部分",
     )
     return parser.parse_args()
 
@@ -188,8 +304,14 @@ def main() -> None:
 
     logger.info("Collectors to run: %s", ", ".join(collect_names))
 
-    # 执行采集（传递 log_days 参数）
-    raw_results = run_collectors(collect_names, log_days=args.log_days)
+    # 执行采集（传递 log_days 参数，并记录采集健康状态）
+    health = CollectorHealth()
+    raw_results = run_collectors(collect_names, log_days=args.log_days, health=health)
+
+    # --save-baseline：落盘当前 raw_results 作为基线
+    if args.save_baseline:
+        save_baseline(raw_results, args.save_baseline)
+        logger.info("Baseline written: %s", args.save_baseline)
 
     # 构建元数据
     metadata = {
@@ -203,8 +325,29 @@ def main() -> None:
         "log_days": args.log_days,
     }
 
-    # 组装输出
-    output_data = build_output(metadata, raw_results)
+    # 生成采集健康状态
+    collection_health = health.build(metadata["collection_time"])
+    if collection_health["warnings"]:
+        for w in collection_health["warnings"]:
+            logger.warning("采集健康告警: %s", w)
+    logger.info("采集健康摘要: %s", collection_health["summary"])
+
+    # --diff：与 baseline 比对，仅输出新增/变更
+    if args.diff:
+        baseline = load_baseline(args.diff)
+        if baseline is None:
+            logger.warning("--diff 指定的 baseline 不可用，回退输出全量结果")
+            output_data = build_output(metadata, raw_results, collection_health)
+        else:
+            diff_result = compute_diff(baseline, raw_results)
+            output_data = {
+                "metadata": {**metadata, "diff_mode": True, "baseline": args.diff},
+                "diff": diff_result,
+                "collection_health": collection_health,
+            }
+    else:
+        # 组装输出（注入 collection_health）
+        output_data = build_output(metadata, raw_results, collection_health)
 
     # 确定输出路径
     if args.output:

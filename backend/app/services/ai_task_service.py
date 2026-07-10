@@ -220,6 +220,10 @@ class AiTaskService:
                     module_type=focus_area,
                     masked=masked_mode,
                 )
+            elif mode == "overview":
+                prompts = PromptBuilder.build_overview(host_id=host_id, masked=masked_mode)
+            elif mode == "remediation":
+                prompts = PromptBuilder.build_remediation(host_id=host_id, masked=masked_mode)
             else:
                 prompts = PromptBuilder.build(host_id=host_id, masked=masked_mode)
             system_prompt = prompts["system_prompt"]
@@ -330,73 +334,104 @@ class AiTaskService:
             host_obj = Host.get_by_id(host_id)
             case_id = host_obj.get("case_id", 0) if host_obj else 0
 
-            tiered_data = PromptBuilder._fetch_tiered_data(host_id)
-            quality_context = InputQualityService.evaluate(tiered_data)
-            structured_knowledge = KnowledgeRetriever.retrieve(
-                tiered_data,
-                limit=5,
-                structured=True,
-            )
-            # 记录检索模式：区分向量检索命中与关键词降级
-            if structured_knowledge:
-                sources = set(item.get("source", "unknown") for item in structured_knowledge)
-                logger.info(
-                    "Knowledge retrieval for task %d: %d items, sources=%s",
-                    task_id, len(structured_knowledge), sources,
-                )
-            else:
-                logger.warning(
-                    "Knowledge retrieval for task %d: returned empty results",
-                    task_id,
-                )
-            explainability = ExplainabilityService.build_evidence_trace(
-                parsed_sections=parsed,
-                knowledge_items=structured_knowledge,
-                tiered_data=tiered_data,
-            )
-
-            risk_assessment = ExplainabilityService.normalize_section(parsed.get("risk_assessment", {}))
-            threat_analysis = ExplainabilityService.normalize_section(parsed.get("threat_analysis", {}))
-            timeline_analysis = ExplainabilityService.ensure_structured_timeline(
-                ExplainabilityService.normalize_section(parsed.get("timeline_analysis", {})),
-                tiered_data,
-            )
-            recommendations = ExplainabilityService.normalize_section(parsed.get("recommendations", {}))
-
-            risk_assessment.setdefault("risk_level", tiered_data.get("analysis_result", {}).get("risk_level", "待确认"))
-            risk_assessment.setdefault("risk_score", tiered_data.get("analysis_result", {}).get("risk_score", 0))
-            risk_assessment["input_quality"] = quality_context["input_quality"]
-            risk_assessment["coverage_gaps"] = quality_context["coverage_gaps"]
-            risk_assessment["miss_risk"] = quality_context["miss_risk"]
-            risk_assessment["evidence_insufficiency"] = quality_context["evidence_insufficiency"]
-
-            threat_analysis["evidence_trace"] = explainability["evidence_trace"]
-            recommendations["input_suggestions"] = quality_context["input_suggestions"]
-            recommendations["recommended_questions"] = explainability["recommended_questions"]
-
             # Token 统计
             prompt_tokens = usage_info.get("prompt_tokens", 0)
             completion_tokens = usage_info.get("completion_tokens", 0)
             total_tokens = usage_info.get("total_tokens", 0)
 
-            # 保存 AiAnalysisReport
-            report = AiAnalysisReport.create(
-                host_id=host_id,
-                case_id=case_id,
-                risk_assessment=json.dumps(risk_assessment, ensure_ascii=False),
-                threat_analysis=json.dumps(threat_analysis, ensure_ascii=False),
-                timeline_analysis=json.dumps(timeline_analysis, ensure_ascii=False),
-                recommendations=json.dumps(recommendations, ensure_ascii=False),
-                raw_response=full_content,
-                model_used=model_name,
-                tokens_used=total_tokens,
-                profile_id=profile_id_val,
-                masked_mode=1 if masked_mode else 0,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                analysis_type="module" if (mode == "module" and focus_area) else "full",
-                module_type=focus_area if (mode == "module" and focus_area) else None,
-            )
+            # ── overview / remediation 专属报告（任务②）──────────────
+            if mode in ("overview", "remediation"):
+                ai_payload: dict = {"mode": mode, "payload": parsed}
+                if mode == "overview":
+                    ai_payload["story_line"] = parsed.get("story_line", "")
+                    ai_payload["key_events"] = parsed.get("key_events", [])
+                else:
+                    ai_payload["remediation_scripts"] = parsed.get("remediation_scripts", [])
+                report = AiAnalysisReport.create(
+                    host_id=host_id,
+                    case_id=case_id,
+                    risk_assessment=json.dumps({}),
+                    threat_analysis=json.dumps({}),
+                    timeline_analysis=json.dumps({}),
+                    recommendations=json.dumps({}),
+                    raw_response=full_content,
+                    model_used=model_name,
+                    tokens_used=total_tokens,
+                    profile_id=profile_id_val,
+                    masked_mode=1 if masked_mode else 0,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    analysis_type=mode,
+                    module_type=None,
+                    ai_payload=json.dumps(ai_payload, ensure_ascii=False),
+                )
+                logger.info(
+                    "AI task %d 生成 %s 报告: report_id=%s", task_id, mode, report.get("id"),
+                )
+            else:
+                # ── 标准 / 深挖 / 模块报告（既有逻辑）────────────────
+                tiered_data = PromptBuilder._fetch_tiered_data(host_id)
+                quality_context = InputQualityService.evaluate(tiered_data)
+                structured_knowledge = KnowledgeRetriever.retrieve(
+                    tiered_data,
+                    limit=5,
+                    structured=True,
+                )
+                # 记录检索模式：区分向量检索命中与关键词降级
+                if structured_knowledge:
+                    sources = set(item.get("source", "unknown") for item in structured_knowledge)
+                    logger.info(
+                        "Knowledge retrieval for task %d: %d items, sources=%s",
+                        task_id, len(structured_knowledge), sources,
+                    )
+                else:
+                    logger.warning(
+                        "Knowledge retrieval for task %d: returned empty results",
+                        task_id,
+                    )
+                explainability = ExplainabilityService.build_evidence_trace(
+                    parsed_sections=parsed,
+                    knowledge_items=structured_knowledge,
+                    tiered_data=tiered_data,
+                )
+
+                risk_assessment = ExplainabilityService.normalize_section(parsed.get("risk_assessment", {}))
+                threat_analysis = ExplainabilityService.normalize_section(parsed.get("threat_analysis", {}))
+                timeline_analysis = ExplainabilityService.ensure_structured_timeline(
+                    ExplainabilityService.normalize_section(parsed.get("timeline_analysis", {})),
+                    tiered_data,
+                )
+                recommendations = ExplainabilityService.normalize_section(parsed.get("recommendations", {}))
+
+                risk_assessment.setdefault("risk_level", tiered_data.get("analysis_result", {}).get("risk_level", "待确认"))
+                risk_assessment.setdefault("risk_score", tiered_data.get("analysis_result", {}).get("risk_score", 0))
+                risk_assessment["input_quality"] = quality_context["input_quality"]
+                risk_assessment["coverage_gaps"] = quality_context["coverage_gaps"]
+                risk_assessment["miss_risk"] = quality_context["miss_risk"]
+                risk_assessment["evidence_insufficiency"] = quality_context["evidence_insufficiency"]
+
+                threat_analysis["evidence_trace"] = explainability["evidence_trace"]
+                recommendations["input_suggestions"] = quality_context["input_suggestions"]
+                recommendations["recommended_questions"] = explainability["recommended_questions"]
+
+                # 保存 AiAnalysisReport
+                report = AiAnalysisReport.create(
+                    host_id=host_id,
+                    case_id=case_id,
+                    risk_assessment=json.dumps(risk_assessment, ensure_ascii=False),
+                    threat_analysis=json.dumps(threat_analysis, ensure_ascii=False),
+                    timeline_analysis=json.dumps(timeline_analysis, ensure_ascii=False),
+                    recommendations=json.dumps(recommendations, ensure_ascii=False),
+                    raw_response=full_content,
+                    model_used=model_name,
+                    tokens_used=total_tokens,
+                    profile_id=profile_id_val,
+                    masked_mode=1 if masked_mode else 0,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    analysis_type="module" if (mode == "module" and focus_area) else "full",
+                    module_type=focus_area if (mode == "module" and focus_area) else None,
+                )
 
             # --- 阶段4: 审计日志 (90%) ---
             latency_ms = int((time.time() - start_time) * 1000)
@@ -703,6 +738,12 @@ class AiTaskService:
                         "timeline_analysis": parsed.get("timeline_analysis", {}),
                         "recommendations": parsed.get("recommendations", {}),
                     }
+                    # 保留 LLM 实际返回的顶层叙事/处置字段（任务② overview/remediation）。
+                    # 作为独立顶层字段原样保留，不并入上述四段标准字段，
+                    # 供调用方（ai_payload）原样透传 story_line / key_events / remediation_scripts。
+                    for _extra_key in ("story_line", "key_events", "remediation_scripts"):
+                        if _extra_key in parsed:
+                            result[_extra_key] = parsed[_extra_key]
                     return result
             except json.JSONDecodeError:
                 logger.warning("Failed to parse AI JSON response, using fallback")

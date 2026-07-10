@@ -340,6 +340,8 @@ DDL_STATEMENTS = [
         threat_level    TEXT,
         queried_at      TEXT    NOT NULL DEFAULT (datetime('now')),
         raw_summary     TEXT,
+        providers       TEXT,
+        consensus       TEXT,
         created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
     )
     """,
@@ -423,6 +425,17 @@ DDL_STATEMENTS = [
         value_data      TEXT,
         last_write_time TEXT,
         collected_at    TEXT
+    )
+    """,
+    # remediation_checklist — 处置清单（任务⑤ 处置闭环）
+    """
+    CREATE TABLE IF NOT EXISTS remediation_checklist (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        host_id     INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+        case_id     INTEGER,
+        items       TEXT,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
     )
     """,
 ]
@@ -699,6 +712,7 @@ def _alter_ai_analysis_reports_table(conn: sqlite3.Connection) -> None:
         ("conversation_id", "TEXT"),
         ("analysis_type", "TEXT DEFAULT 'full'"),
         ("module_type", "TEXT"),
+        ("ai_payload", "TEXT"),
     ]
 
     for col_name, col_type in new_columns:
@@ -707,6 +721,24 @@ def _alter_ai_analysis_reports_table(conn: sqlite3.Connection) -> None:
                 f"ALTER TABLE ai_analysis_reports ADD COLUMN {col_name} {col_type}"
             )
             logger.info("Added column '%s' to ai_analysis_reports table", col_name)
+
+
+def _alter_threat_intel_table(conn: sqlite3.Connection) -> None:
+    """检测并添加 threat_intel 表的多源聚合新列（任务④）."""
+    cursor = conn.execute("PRAGMA table_info(threat_intel)")
+    existing_columns: set[str] = {row["name"] for row in cursor.fetchall()}
+
+    new_columns: list[tuple[str, str]] = [
+        ("providers", "TEXT"),
+        ("consensus", "TEXT"),
+    ]
+
+    for col_name, col_type in new_columns:
+        if col_name not in existing_columns:
+            conn.execute(
+                f"ALTER TABLE threat_intel ADD COLUMN {col_name} {col_type}"
+            )
+            logger.info("Added column '%s' to threat_intel table", col_name)
 
 
 def _alter_ai_tasks_table(conn: sqlite3.Connection) -> None:
@@ -906,6 +938,8 @@ def init_db() -> None:
         _alter_ai_tasks_table(conn)
         # ALTER ai_config_profiles 添加权限隔离列
         _alter_ai_config_profiles_table(conn)
+        # ALTER threat_intel 添加多源聚合列（任务④）
+        _alter_threat_intel_table(conn)
         conn.commit()
         _create_default_admin(conn)
         _alter_rules_table(conn)

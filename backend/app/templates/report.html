@@ -333,6 +333,23 @@
     </div>
     {% endif %}
 
+    <!-- 处置清单（任务⑤ 处置闭环；技术报告默认嵌入复选框） -->
+    {% if data.checklist is defined and data.checklist %}
+    <div class="section page-break">
+        <h2 class="section-title">处置清单 (Remediation Checklist)</h2>
+        <p class="ai-note">勾选状态由前端直接持久化（决策⑨ 无需二次复核）。</p>
+        <ul class="checklist">
+            {% for item in data.checklist %}
+            <li class="checklist-item">
+                <input type="checkbox" disabled {{ 'checked' if item.checked else '' }} />
+                <span class="checklist-text">{{ item.text }}</span>
+                <span class="checklist-source">[{{ item.source }}]</span>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
     <!-- 页脚 -->
     <div class="report-footer">
         <p>本报告由个人应急响应平台自动生成 — {{ data.report_time }}</p>

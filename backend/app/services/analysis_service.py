@@ -138,6 +138,17 @@ class AnalysisService:
             RegistryKey.batch_create(host_id, reg_data)
             logger.info("Extracted %d registry keys", len(reg_data))
 
+        # 8.5 攻击链关联检测（任务①）：主机级跨维度顺序匹配
+        # 此时各维度取证数据已落库，_build_host_events 可按 host_id 下钻聚合。
+        # 命中强制 severity=critical，reason 含攻击链步骤明细（见 rule_engine._match_attack_chain）。
+        attack_chain_rules = [r for r in rules if r.get("rule_type") == "attack_chain"]
+        attack_chain_matches = []
+        if attack_chain_rules:
+            attack_chain_matches = RuleEngine.evaluate(
+                [], attack_chain_rules, global_context={"host_id": host_id}
+            )
+            logger.info("Detected %d attack chain matches", len(attack_chain_matches))
+
         # 9. 风险评估
         findings = {
             "abnormal_processes": abnormal_processes,
@@ -146,8 +157,20 @@ class AnalysisService:
             "persistence_items": assessed_persistence,
             "ioc_hits": ioc_hits,
             "timeline_events": timeline_events,
+            "attack_chains": attack_chain_matches,
         }
         risk_result = RiskAssessor.assess(findings)
+        # 攻击链关联单独记录到详情（不影响既有风险分数/等级，避免影响历史评估口径）
+        if attack_chain_matches:
+            risk_result.setdefault("details", {})["attack_chains"] = [
+                {
+                    "rule_name": m.get("rule_name", ""),
+                    "severity": m.get("severity"),
+                    "reason": m.get("reason", ""),
+                    "steps": m.get("item", {}).get("attack_chain_steps", []),
+                }
+                for m in attack_chain_matches
+            ]
 
         # 10. 保存分析结果
         result = AnalysisResult.create_or_replace(

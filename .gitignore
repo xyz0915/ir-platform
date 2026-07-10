@@ -52,3 +52,10 @@ test_rules_qa.py
 
 # Deliverables (internal docs)
 deliverables/
+
+# Stray helper scripts (not source)
+restart - *.bat
+backend/verify_rag.py
+
+# Runtime data directory (databases, vector store) - not source
+backend/data/

@@ -20,7 +20,7 @@ from app.database import get_connection
 logger = logging.getLogger(__name__)
 
 # 结构化字段（以 JSON 文本存储于 SQLite）
-_JSON_FIELDS = ("judgments", "tags", "attck", "company")
+_JSON_FIELDS = ("judgments", "tags", "attck", "company", "providers")
 
 
 class ThreatIntel:
@@ -57,6 +57,8 @@ class ThreatIntel:
         threat_level: Optional[str] = None,
         raw_summary: Optional[str] = None,
         queried_at: Optional[str] = None,
+        providers: Optional[List[str]] = None,
+        consensus: Optional[str] = None,
     ) -> dict:
         """创建一条威胁情报查询结果（保留全历史，不去重）.
 
@@ -64,7 +66,7 @@ class ThreatIntel:
             ioc_id: 关联的 iocs 表主键（可为 None）。
             ioc_type: IOC 类型（ip/domain）。
             ioc_value: 指标值。
-            provider: provider 名称（如 threatbook）。
+            provider: provider 名称（如 threatbook；多源时为聚合 key）。
             risk_score: 风险评分 0-100。
             judgments: 判定数组（malicious/suspicious/clean/unknown）。
             tags: 标签数组。
@@ -74,6 +76,8 @@ class ThreatIntel:
             threat_level: 派生冗余列（high/medium/low/None）。
             raw_summary: 原始摘要文本。
             queried_at: 查询时间（默认 datetime('now')）。
+            providers: 参与本次判定的 provider 名称列表（任务④ 多源聚合）。
+            consensus: 共识判定（single_source / multi_source / 空）。
 
         Returns:
             插入后的记录 dict。
@@ -82,6 +86,7 @@ class ThreatIntel:
         tags = tags or []
         attck = attck or []
         company = company or []
+        providers = providers or []
 
         with get_connection() as conn:
             cursor = conn.execute(
@@ -89,8 +94,8 @@ class ThreatIntel:
                 INSERT INTO threat_intel
                     (ioc_id, ioc_type, ioc_value, provider, risk_score,
                      judgments, tags, confidence, attck, company,
-                     threat_level, queried_at, raw_summary)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), ?)
+                     threat_level, queried_at, raw_summary, providers, consensus)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), ?, ?, ?)
                 """,
                 (
                     ioc_id,
@@ -106,6 +111,8 @@ class ThreatIntel:
                     threat_level,
                     queried_at,
                     raw_summary,
+                    json.dumps(providers, ensure_ascii=False),
+                    consensus or "",
                 ),
             )
             ti_id = cursor.lastrowid
@@ -168,6 +175,38 @@ class ThreatIntel:
         return results[0] if results else None
 
     @staticmethod
+    def get_all_enrichable_iocs(limit: Optional[int] = None) -> List[dict]:
+        """获取全部可进行外联查询的 ioc（enabled + ip/domain），不做时间窗过滤.
+
+        用于多源聚合场景下按「分级 TTL」逐条判定待查（任务④ 决策⑦）。
+
+        Args:
+            limit: 可选返回条数上限。
+
+        Returns:
+            可外联的 ioc dict 列表。
+        """
+        query = """
+            SELECT i.* FROM iocs i
+            WHERE i.enabled = 1
+              AND i.ioc_type IN ('ip', 'domain')
+            ORDER BY i.id ASC
+        """
+        params: List[Any] = []
+        if limit:
+            query += " LIMIT ?"
+            params.append(int(limit))
+
+        with get_connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+            results = []
+            for row in rows:
+                item = dict(row)
+                item["enabled"] = bool(item.get("enabled"))
+                results.append(item)
+            return results
+
+    @staticmethod
     def get_pending_iocs(recheck_days: int, provider: str, limit: Optional[int] = None) -> List[dict]:
         """获取需要进行外联查询的 ioc 列表.
 
@@ -176,28 +215,40 @@ class ThreatIntel:
           - ioc_type ∈ ('ip', 'domain')
           - 不存在该 (ioc_id, provider) 在 ``recheck_days`` 天内查询过的记录
             （即：从未查询 或 上次查询已超过 recheck_days 天）
+          - 当 ``provider`` 为 None 时不按 provider 维度过滤（任意近期记录即视为已查）。
 
         Args:
             recheck_days: 重新检查间隔（天）。
-            provider: provider 名称，按 (ioc_id, provider) 维度去重判断。
+            provider: provider 名称，按 (ioc_id, provider) 维度去重判断；None 表示不限定。
             limit: 可选返回条数上限。
 
         Returns:
             待查询的 ioc dict 列表。
         """
-        query = """
+        if provider is not None:
+            exists_clause = (
+                "AND t.provider = ? "
+                "AND julianday('now') - julianday(t.queried_at) <= ?"
+            )
+            base_params: List[Any] = [provider, int(recheck_days)]
+        else:
+            exists_clause = (
+                "AND julianday('now') - julianday(t.queried_at) <= ?"
+            )
+            base_params = [int(recheck_days)]
+
+        query = f"""
             SELECT i.* FROM iocs i
             WHERE i.enabled = 1
               AND i.ioc_type IN ('ip', 'domain')
               AND NOT EXISTS (
                   SELECT 1 FROM threat_intel t
                   WHERE t.ioc_id = i.id
-                    AND t.provider = ?
-                    AND julianday('now') - julianday(t.queried_at) <= ?
+                    {exists_clause}
               )
             ORDER BY i.id ASC
         """
-        params: List[Any] = [provider, int(recheck_days)]
+        params: List[Any] = list(base_params)
         if limit:
             query += " LIMIT ?"
             params.append(int(limit))
@@ -333,6 +384,10 @@ class EnrichSettings:
         "recheck_days": settings.DEFAULT_RECHECK_DAYS,
         "scheduler_interval": settings.DEFAULT_SCHEDULER_INTERVAL,
         "rate_limit_qps": settings.DEFAULT_RATE_LIMIT_QPS,
+        # 任务④ 分级缓存 TTL（决策⑦）
+        "cache_ttl_malicious_hours": settings.DEFAULT_CACHE_TTL_MALICIOUS_HOURS,
+        "cache_ttl_clean_days": settings.DEFAULT_CACHE_TTL_CLEAN_DAYS,
+        "cache_ttl_unknown_days": settings.DEFAULT_CACHE_TTL_UNKNOWN_DAYS,
     }
 
     # 允许通过接口更新的字段白名单
@@ -343,6 +398,10 @@ class EnrichSettings:
         "recheck_days",
         "scheduler_interval",
         "rate_limit_qps",
+        # 任务④ 分级缓存 TTL（决策⑦）
+        "cache_ttl_malicious_hours",
+        "cache_ttl_clean_days",
+        "cache_ttl_unknown_days",
     )
 
     @staticmethod
@@ -407,6 +466,24 @@ class EnrichSettings:
             merged["rate_limit_qps"] = int(merged.get("rate_limit_qps", settings.DEFAULT_RATE_LIMIT_QPS))
         except (ValueError, TypeError):
             merged["rate_limit_qps"] = settings.DEFAULT_RATE_LIMIT_QPS
+        try:
+            merged["cache_ttl_malicious_hours"] = int(
+                merged.get("cache_ttl_malicious_hours", settings.DEFAULT_CACHE_TTL_MALICIOUS_HOURS)
+            )
+        except (ValueError, TypeError):
+            merged["cache_ttl_malicious_hours"] = settings.DEFAULT_CACHE_TTL_MALICIOUS_HOURS
+        try:
+            merged["cache_ttl_clean_days"] = int(
+                merged.get("cache_ttl_clean_days", settings.DEFAULT_CACHE_TTL_CLEAN_DAYS)
+            )
+        except (ValueError, TypeError):
+            merged["cache_ttl_clean_days"] = settings.DEFAULT_CACHE_TTL_CLEAN_DAYS
+        try:
+            merged["cache_ttl_unknown_days"] = int(
+                merged.get("cache_ttl_unknown_days", settings.DEFAULT_CACHE_TTL_UNKNOWN_DAYS)
+            )
+        except (ValueError, TypeError):
+            merged["cache_ttl_unknown_days"] = settings.DEFAULT_CACHE_TTL_UNKNOWN_DAYS
         merged["enable_enrichment_feedback"] = bool(merged.get("enable_enrichment_feedback", True))
         merged["auto_enrichment"] = bool(merged.get("auto_enrichment", False))
 

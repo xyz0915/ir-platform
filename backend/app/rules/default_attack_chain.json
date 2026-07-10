@@ -1,0 +1,50 @@
+[
+  {
+    "name": "attack_chain_default_c2_persistence",
+    "label": "默认攻击链：钓鱼投递→内存加载→C2外连→注册表持久化",
+    "description": "关联检测 初始访问(可疑下载) → 执行(powershell -enc 内存加载) → 外连(C2 域名) → 持久化(注册表 Run 键) 的攻击链行为，覆盖 MITRE ATT&CK TA0001/TA0002/TA0011。",
+    "category": "attack_chain",
+    "rule_type": "attack_chain",
+    "severity": "critical",
+    "enabled": true,
+    "source": "default",
+    "mitre_attack": "TA0001/TA0002/TA0011",
+    "condition": {
+      "_meta": {
+        "mitre_attack": "TA0001/TA0002/TA0011"
+      },
+      "window_minutes": 60,
+      "host_scope": "single",
+      "ordered_steps": [
+        {
+          "step": 1,
+          "dimension": "process",
+          "match": {
+            "type": "regex",
+            "field": "command_line",
+            "pattern": "powershell.*-enc"
+          }
+        },
+        {
+          "step": 2,
+          "dimension": "connection",
+          "match": {
+            "type": "list",
+            "field": "remote_address",
+            "values": ["evil.example.com", "c2.attacker.net", "185.174.137.11"],
+            "match_mode": "exact"
+          }
+        },
+        {
+          "step": 3,
+          "dimension": "registry",
+          "match": {
+            "type": "regex",
+            "field": "key_path",
+            "pattern": "(?i).*\\\\Run"
+          }
+        }
+      ]
+    }
+  }
+]

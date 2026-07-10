@@ -30,6 +30,28 @@ class AuditLogStatus(str, Enum):
     CANCELLED = "cancelled"      # 用户取消
 
 
+class AIMode(str, Enum):
+    """AI 分析模式枚举（统一在 ai_constants 定义，供任务分派/前端复用）.
+
+    - STANDARD   标准全量分析
+    - DEEP_DIVE  深挖模式（聚焦单一维度/线索）
+    - MODULE     模块级分析（按 focus_area 指定模块）
+    - OVERVIEW   全貌分析：还原攻击故事线（story_line）
+    - REMEDIATION 处置建议：生成可审核但绝不自动执行的处置脚本
+    """
+
+    STANDARD = "standard"
+    DEEP_DIVE = "deep_dive"
+    MODULE = "module"
+    OVERVIEW = "overview"
+    REMEDIATION = "remediation"
+
+    @classmethod
+    def values(cls) -> list[str]:
+        """返回所有合法模式字符串列表."""
+        return [m.value for m in cls]
+
+
 # Token 预算策略 (默认 128K 上下文)
 AI_CONTEXT_WINDOW: int = 128000
 AI_INPUT_BUDGET: int = 80000

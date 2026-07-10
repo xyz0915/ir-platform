@@ -469,6 +469,61 @@ SYSTEM_PROMPT_TEMPLATE: str = """你是一个专业的网络安全应急响应�
 6. 用中文输出所有分析内容"""
 
 
+# ── 全貌分析（overview）系统提示 ──────────────────────────────────────────
+OVERVIEW_SYSTEM_PROMPT: str = """你是一个专业的网络安全应急响应分析专家。基于提供的主机取证数据，你需要还原本次安全事件的「全貌故事线」。
+
+请严格按照以下 JSON 格式输出，不要添加任何额外的解释说明：
+
+```json
+{
+  "story_line": "以叙事方式还原的完整攻击故事线（时间顺序，300-800字，中文），串联初始访问→执行→持久化→横向移动→渗出等关键阶段",
+  "key_events": [
+    {"time": "2026-07-11 10:05", "dimension": "process", "summary": "powershell -enc 内存加载可疑载荷"},
+    {"time": "2026-07-11 10:12", "dimension": "connection", "summary": "外连 C2 域名 evil.example.com"}
+  ]
+}
+```
+
+输出要求：
+1. story_line 必须基于真实证据，按时间顺序串联各维度线索，形成可读的攻击叙事。
+2. key_events 提炼 3-10 个最关键事件，标注 time / dimension（process/connection/registry/persistence/timeline/ioc）/ summary。
+3. 缺失证据处明确说明「证据不足，无法还原」，不得编造。
+4. 用中文输出所有内容。"""
+
+
+# ── 处置建议（remediation）系统提示 ──────────────────────────────────────
+REMEDIATION_SYSTEM_PROMPT: str = """你是一个专业的网络安全应急响应处置专家。基于提供的主机取证数据，你需要生成「可审核的处置脚本」。
+
+重要约束：
+- 你生成的脚本仅供安全人员人工审核后执行，系统绝不自动执行任何脚本。
+- 每条脚本必须标注 risk（high/medium/low）、reversible（布尔，是否可逆）、requires_approval（布尔，是否需审批）。
+
+请严格按照以下 JSON 格式输出，不要添加任何额外的解释说明：
+
+```json
+{
+  "remediation_scripts": [
+    {
+      "id": "step-1-kill-process",
+      "description": "终止可疑 powershell 进程",
+      "language": "powershell",
+      "script": "Stop-Process -Name powershell -IncludeUserName attacker",
+      "risk": "medium",
+      "reversible": true,
+      "requires_approval": true
+    }
+  ]
+}
+```
+
+输出要求：
+1. remediation_scripts 为 1-8 条处置脚本，覆盖「止血-隔离-清除-恢复」闭环。
+2. 每条必须含 id / description / language / script / risk / reversible / requires_approval。
+3. 高风险操作（如删除文件、断开网络、隔离主机）risk 必须为 high 且 requires_approval 为 true。
+4. script 必须是可直接复制执行的合法命令，避免含糊描述。
+5. 用中文填写 description，script 保持原语言。"""
+
+
 class PromptBuilder:
     """分层 Prompt 构建器.
 
@@ -862,6 +917,130 @@ class PromptBuilder:
             data["remote_tools"] = {}
 
         return data
+
+    @staticmethod
+    def build_overview(host_id: int, masked: bool = False) -> dict:
+        """构建「全貌分析」模式的 system/user prompt（任务② overview）.
+
+        复用 _fetch_tiered_data 聚合主机证据，system prompt 要求模型以 JSON 返回
+        story_line（攻击故事线）+ key_events（关键事件）。masked=True 时对证据脱敏。
+
+        Args:
+            host_id: 主机 ID.
+            masked: 是否对证据脱敏.
+
+        Returns:
+            {"system_prompt": str, "user_prompt": str}
+        """
+        host = Host.get_by_id(host_id)
+        if not host:
+            raise ValueError(f"主机 {host_id} 不存在")
+        tiered_data = PromptBuilder._fetch_tiered_data(host_id)
+        if masked:
+            try:
+                from app.services.data_masking import apply as mask_apply
+                tiered_data = mask_apply(tiered_data)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("overview 脱敏失败，跳过: %s", exc)
+        user_prompt = PromptBuilder._build_overview_user_prompt(tiered_data)
+        return {
+            "system_prompt": OVERVIEW_SYSTEM_PROMPT.strip(),
+            "user_prompt": user_prompt,
+        }
+
+    @staticmethod
+    def build_remediation(host_id: int, masked: bool = False) -> dict:
+        """构建「处置建议」模式的 system/user prompt（任务② remediation）.
+
+        复用 _fetch_tiered_data 聚合主机证据，system prompt 要求模型以 JSON 返回
+        remediation_scripts（带 risk/reversible/requires_approval 的可审核脚本）。
+        生成的脚本仅供人工审核，系统绝不自动执行。
+
+        Args:
+            host_id: 主机 ID.
+            masked: 是否对证据脱敏.
+
+        Returns:
+            {"system_prompt": str, "user_prompt": str}
+        """
+        host = Host.get_by_id(host_id)
+        if not host:
+            raise ValueError(f"主机 {host_id} 不存在")
+        tiered_data = PromptBuilder._fetch_tiered_data(host_id)
+        if masked:
+            try:
+                from app.services.data_masking import apply as mask_apply
+                tiered_data = mask_apply(tiered_data)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("remediation 脱敏失败，跳过: %s", exc)
+        user_prompt = PromptBuilder._build_remediation_user_prompt(tiered_data)
+        return {
+            "system_prompt": REMEDIATION_SYSTEM_PROMPT.strip(),
+            "user_prompt": user_prompt,
+        }
+
+    @staticmethod
+    def _build_overview_user_prompt(tiered_data: dict) -> str:
+        """将分层证据拼装为 overview 用户提示文本."""
+        import json
+
+        lines: list[str] = []
+        hb = tiered_data.get("host_basic", {}) or {}
+        lines.append(
+            "## 主机信息\n"
+            f"主机名: {hb.get('hostname', '')}  IP: {hb.get('ip_address', '')}  "
+            f"OS: {hb.get('os_type', '')} {hb.get('os_version', '')}  "
+            f"采集时间: {hb.get('collection_time', '')}"
+        )
+        ar = tiered_data.get("analysis_result", {}) or {}
+        lines.append(
+            "## 已有分析结论\n"
+            f"风险等级: {ar.get('risk_level', '')}  分数: {ar.get('risk_score', 0)}  "
+            f"发现数: {ar.get('total_findings', 0)}\n摘要: {ar.get('summary', '')}"
+        )
+        high_keys = [
+            "abnormal_processes_high", "suspicious_connections_high",
+            "ioc_hits_high", "timeline_high", "persistence_suspicious",
+        ]
+        for key in high_keys:
+            items = tiered_data.get(key, []) or []
+            if items:
+                lines.append(f"## {key}\n{json.dumps(items, ensure_ascii=False)}")
+        lines.append(
+            "\n请基于以上证据还原攻击全貌故事线（story_line）并提炼关键事件（key_events）。"
+        )
+        return "\n".join(lines)
+
+    @staticmethod
+    def _build_remediation_user_prompt(tiered_data: dict) -> str:
+        """将分层证据拼装为 remediation 用户提示文本."""
+        import json
+
+        lines: list[str] = []
+        hb = tiered_data.get("host_basic", {}) or {}
+        lines.append(
+            "## 主机信息\n"
+            f"主机名: {hb.get('hostname', '')}  IP: {hb.get('ip_address', '')}  "
+            f"OS: {hb.get('os_type', '')} {hb.get('os_version', '')}"
+        )
+        ar = tiered_data.get("analysis_result", {}) or {}
+        lines.append(
+            "## 已有分析结论\n"
+            f"风险等级: {ar.get('risk_level', '')}  分数: {ar.get('risk_score', 0)}"
+        )
+        high_keys = [
+            "abnormal_processes_high", "suspicious_connections_high",
+            "ioc_hits_high", "persistence_suspicious",
+        ]
+        for key in high_keys:
+            items = tiered_data.get(key, []) or []
+            if items:
+                lines.append(f"## {key}\n{json.dumps(items, ensure_ascii=False)}")
+        lines.append(
+            "\n请基于以上证据生成可审核的处置脚本（remediation_scripts），"
+            "严禁编造，高风险操作必须标注 requires_approval=true。"
+        )
+        return "\n".join(lines)
 
     @staticmethod
     def _build_module_system_prompt(module_type: str) -> str:

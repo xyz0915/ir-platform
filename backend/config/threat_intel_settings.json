@@ -4,5 +4,8 @@
   "daily_quota": 1000,
   "recheck_days": 30,
   "scheduler_interval": 3600,
-  "rate_limit_qps": 2
+  "rate_limit_qps": 2,
+  "cache_ttl_malicious_hours": 24,
+  "cache_ttl_clean_days": 7,
+  "cache_ttl_unknown_days": 3
 }

@@ -42,6 +42,7 @@ class AiAnalysisReport:
         deep_dive: Optional[dict[str, Any]] = None,
         analysis_type: str = "full",
         module_type: Optional[str] = None,
+        ai_payload: Optional[str] = None,
     ) -> dict:
         """创建AI分析报告（新版本）.
 
@@ -88,8 +89,8 @@ class AiAnalysisReport:
                  model_used, tokens_used, version, profile_id,
                  is_latest, masked_mode, prompt_tokens, completion_tokens,
                  conversation_id, data_hash, cached_at,
-                 analysis_type, module_type)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+                 analysis_type, module_type, ai_payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     host_id, case_id, risk_assessment, threat_analysis,
@@ -97,7 +98,7 @@ class AiAnalysisReport:
                     model_used, tokens_used, new_version, profile_id,
                     masked_mode, prompt_tokens, completion_tokens,
                     conversation_id, data_hash, cached_at,
-                    analysis_type, module_type,
+                    analysis_type, module_type, ai_payload,
                 ),
             )
             report_id = cursor.lastrowid
@@ -147,6 +148,18 @@ class AiAnalysisReport:
                 """SELECT * FROM ai_analysis_reports
                    WHERE host_id = ? AND version = ?""",
                 (host_id, version),
+            ).fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    def get_latest_by_type(host_id: int, analysis_type: str) -> Optional[dict]:
+        """获取主机指定 analysis_type 的最新报告（任务②/⑤ overview/remediation）."""
+        with get_connection() as conn:
+            row = conn.execute(
+                """SELECT * FROM ai_analysis_reports
+                   WHERE host_id = ? AND analysis_type = ?
+                   ORDER BY version DESC, created_at DESC LIMIT 1""",
+                (host_id, analysis_type),
             ).fetchone()
             return dict(row) if row else None
 

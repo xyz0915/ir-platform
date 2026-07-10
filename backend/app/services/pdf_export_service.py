@@ -284,6 +284,74 @@ class PdfExportService:
         return pdf_bytes
 
     @staticmethod
+    def export_by_type(analysis_type: str, host_id: int) -> Optional[bytes]:
+        """按 analysis_type 导出 overview / remediation 报告为 PDF（任务②/⑤ 复用）.
+
+        Args:
+            analysis_type: ``overview`` 或 ``remediation``。
+            host_id: 主机 ID。
+
+        Returns:
+            PDF 文件字节内容，失败返回 None。
+
+        Raises:
+            ValueError: 主机不存在或对应类型报告不存在。
+        """
+        host = Host.get_by_id(host_id)
+        if not host:
+            raise ValueError(f"主机 {host_id} 不存在")
+
+        report = AiAnalysisReport.get_latest_by_type(host_id, analysis_type)
+        if not report:
+            raise ValueError(f"主机 {host_id} 没有 {analysis_type} 类型报告")
+
+        ai_payload = {}
+        raw = report.get("ai_payload") or "{}"
+        try:
+            ai_payload = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        except (json.JSONDecodeError, TypeError):
+            ai_payload = {}
+
+        title = "全貌分析报告" if analysis_type == "overview" else "处置建议报告"
+        body_parts = []
+        if analysis_type == "overview":
+            story_line = ai_payload.get("story_line", "")
+            if story_line:
+                body_parts.append(f"<h3>攻击故事线</h3><p>{story_line}</p>")
+            for ev in ai_payload.get("key_events", []) or []:
+                body_parts.append(
+                    f"<li>[{ev.get('time', '')}] {ev.get('dimension', '')}: "
+                    f"{ev.get('summary', '')}</li>"
+                )
+        else:
+            for script in ai_payload.get("remediation_scripts", []) or []:
+                risk = script.get("risk", "")
+                reversible = "可回滚" if script.get("reversible") else "不可回滚"
+                body_parts.append(
+                    f"<div class='script'><p><b>{script.get('description', '')}</b></p>"
+                    f"<pre>{script.get('script', '')}</pre>"
+                    f"<p class='meta'>风险: {risk} | {reversible} | "
+                    f"需审批: {script.get('requires_approval')}</p></div>"
+                )
+
+        html_str = f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
+<title>{title}</title><style>
+body{{font-family:"Microsoft YaHei",sans-serif;font-size:11pt;padding:2cm;}}
+h1{{color:#c0392b;}} h3{{margin-top:1em;}} pre{{background:#f5f5f5;padding:8px;border-radius:4px;white-space:pre-wrap;}}
+.script{{border:1px solid #ddd;padding:8px;margin:8px 0;border-radius:4px;}}
+.meta{{color:#666;font-size:9pt;}}
+</style></head><body>
+<h1>{title} — {host.get('hostname', '')}</h1>
+<p class="meta">生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | 模型: {report.get('model_used', 'Unknown')}</p>
+{''.join(body_parts) or '<p>暂无内容</p>'}
+</body></html>"""
+
+        pdf_bytes = PdfExportService._html_to_pdf(html_str)
+        if pdf_bytes is None:
+            raise ValueError("PDF 生成失败，请确认 WeasyPrint 已正确安装")
+        return pdf_bytes
+
+    @staticmethod
     def _content_to_html(content: str) -> str:
         """将 AI 分析内容转为 HTML.
 

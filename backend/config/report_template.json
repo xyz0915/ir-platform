@@ -1,0 +1,22 @@
+{
+  "logo_path": "",
+  "header_text": "个人应急响应平台 安全分析报告",
+  "footer_text": "CONFIDENTIAL — 仅限内部使用",
+  "sections": [
+    "summary",
+    "risk",
+    "timeline",
+    "findings",
+    "checklist"
+  ],
+  "executive": {
+    "masked": true,
+    "chart_only": true,
+    "include_checklist": false
+  },
+  "technical": {
+    "masked": false,
+    "chart_only": false,
+    "include_checklist": true
+  }
+}

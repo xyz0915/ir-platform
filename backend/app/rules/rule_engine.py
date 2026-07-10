@@ -349,10 +349,14 @@ class RuleEngine:
             ]
 
         matches = []
+        # 攻击链是主机级关联规则，需在 evaluate 末尾按 host_id 下钻统一评估，
+        # 不进入「逐条数据项」匹配循环。
+        per_item_rules = [r for r in rules if r.get("rule_type") != "attack_chain"]
+        attack_chain_rules = [r for r in rules if r.get("rule_type") == "attack_chain"]
         for item in data_items:
             if not isinstance(item, dict):
                 continue
-            for rule in rules:
+            for rule in per_item_rules:
                 if RuleEngine.match_rule(item, rule, global_context=global_context):
                     severity = rule.get("severity", "medium")
                     reason = RuleEngine._build_reason(item, rule)
@@ -373,6 +377,31 @@ class RuleEngine:
                         "severity": severity,
                         "reason": reason,
                     })
+
+        # ── 攻击链关联检测（主机级）──────────────────────────────────
+        # 跨 dimension 顺序匹配，命中时强制 severity=critical，reason 含步骤明细。
+        if attack_chain_rules:
+            host_id = global_context.get("host_id") if global_context else None
+            if host_id is not None:
+                host_events = RuleEngine._build_host_events(global_context)
+                for ac_rule in attack_chain_rules:
+                    result = RuleEngine._match_attack_chain(ac_rule, global_context, host_events)
+                    if result:
+                        matches.append({
+                            "item": {
+                                "host_id": host_id,
+                                "_attack_chain": True,
+                                "attack_chain_steps": result["steps"],
+                            },
+                            "rule": ac_rule,
+                            "rule_name": ac_rule.get("name", ""),
+                            "severity": "critical",
+                            "reason": result["reason"],
+                        })
+            else:
+                logger.debug(
+                    "存在 attack_chain 规则但 global_context 缺少 host_id，跳过攻击链评估"
+                )
         return matches
 
     @staticmethod
@@ -407,6 +436,10 @@ class RuleEngine:
             return RuleEngine._match_composite(data_item, condition, global_context=global_context)
         elif rule_type == "exists":
             return RuleEngine._match_exists(data_item, condition)
+        elif rule_type == "attack_chain":
+            # 攻击链是「主机级」关联规则，不针对单条数据项匹配；
+            # 真正的匹配在 evaluate() 末尾统一按 host_id 下钻执行。
+            return False
         return False
 
     # ── 正则匹配 ────────────────────────────────────────────────────────
@@ -1252,6 +1285,244 @@ class RuleEngine:
                 pass
 
         return False
+
+    # ── 攻击链关联检测（主机级）─────────────────────────────────────────
+
+    @staticmethod
+    def _build_host_events(global_context: Optional[dict]) -> list:
+        """按 host_id 聚合各维度取证数据为统一时间线事件列表.
+
+        每个事件结构::
+
+            {"dimension": "process"|"connection"|"registry"|"persistence"|"timeline"|"ioc",
+             "timestamp": Optional[datetime],   # 无可信时间戳的维度为 None（退化为「仅顺序」）
+             "data": dict}                       # 原始记录字段，供 step.match 直接命中
+
+        时间戳来源（最高优先级优先）：
+          - timeline    → timestamp
+          - registry    → last_write_time（退化到 collected_at）
+          - process/connection/persistence/ioc → 无可靠时间戳，置 None（仅顺序匹配）
+
+        返回前按 timestamp 升序排序；无时间戳事件统一置于末尾，保证跨维度顺序贪心可用。
+
+        Args:
+            global_context: 全局上下文，须含 host_id。
+
+        Returns:
+            统一事件列表（已排序）。任何 DB 异常均降级为空列表。
+        """
+        if not global_context:
+            return []
+        host_id = global_context.get("host_id")
+        if host_id is None:
+            return []
+
+        from datetime import datetime  # 供 _sort_key 兜底排序（datetime.min）使用
+
+        def _parse_ts(value) -> Optional["__import__('datetime').datetime"]:
+            from datetime import datetime
+            if not value:
+                return None
+            s = str(value).split("+")[0].split("Z")[0]
+            for fmt in (
+                "%Y-%m-%d %H:%M:%S",
+                "%Y-%m-%dT%H:%M:%S",
+                "%Y-%m-%d %H:%M:%S.%f",
+                "%Y-%m-%dT%H:%M:%S.%f",
+                "%Y/%m/%d %H:%M:%S",
+            ):
+                try:
+                    return datetime.strptime(s, fmt)
+                except ValueError:
+                    continue
+            return None
+
+        events: list = []
+        try:
+            from app.models.analysis import (
+                AbnormalProcess, SuspiciousConnection, PersistenceItem,
+                TimelineEvent, IocHit, RegistryKey,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("跳过攻击链事件聚合（analysis 模型不可用）: %s", exc)
+            return []
+
+        try:
+            # 进程（无可靠时间戳）
+            for r in AbnormalProcess.list_by_host(host_id):
+                events.append({"dimension": "process", "timestamp": None, "data": dict(r)})
+            # 可疑外连（无可靠时间戳；兼容 network_connections 的 remote_addr 别名）
+            for r in SuspiciousConnection.list_by_host(host_id):
+                d = dict(r)
+                if "remote_address" not in d and d.get("remote_addr") is not None:
+                    d["remote_address"] = d["remote_addr"]
+                events.append({"dimension": "connection", "timestamp": None, "data": d})
+            # 持久化痕迹（无可靠时间戳）
+            for r in PersistenceItem.list_by_host(host_id):
+                events.append({"dimension": "persistence", "timestamp": None, "data": dict(r)})
+            # IOC 命中（无可靠时间戳）
+            for r in IocHit.list_by_host(host_id):
+                events.append({"dimension": "ioc", "timestamp": None, "data": dict(r)})
+            # 注册表（last_write_time 退化到 collected_at）
+            for r in RegistryKey.list_by_host(host_id):
+                d = dict(r)
+                ts = _parse_ts(d.get("last_write_time")) or _parse_ts(d.get("collected_at"))
+                events.append({"dimension": "registry", "timestamp": ts, "data": d})
+            # 时间线（timestamp 可信）
+            for r in TimelineEvent.list_by_host(host_id):
+                events.append({
+                    "dimension": "timeline",
+                    "timestamp": _parse_ts(r.get("timestamp")),
+                    "data": dict(r),
+                })
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("攻击链事件聚合部分失败，降级为空: %s", exc)
+            return []
+
+        # 排序：有时间戳在前（升序），无时间戳（None）置于末尾
+        def _sort_key(e):
+            ts = e.get("timestamp")
+            return (ts is None, ts if ts is not None else datetime.min)
+
+        events.sort(key=_sort_key)
+        return events
+
+    @staticmethod
+    def _match_attack_chain_step(step: dict, event_data: dict,
+                                 global_context: Optional[dict] = None) -> bool:
+        """对单条统一事件应用攻击链某步的 match 条件.
+
+        step.match.type ∈ {regex, list, threshold, behavior, exists, composite}，
+        直接复用引擎既有 _match_* 实现，保证语义一致。
+
+        Args:
+            step: ordered_steps 中的单步（含 dimension + match）。
+            event_data: 统一事件的 data 字典。
+            global_context: 全局上下文（透传给 composite/behavior/threshold）。
+
+        Returns:
+            该步是否命中此事件。
+        """
+        match = step.get("match", {})
+        if not isinstance(match, dict):
+            return False
+        mtype = match.get("type", "")
+        if mtype == "regex":
+            return RuleEngine._match_regex(event_data, match)
+        elif mtype == "list":
+            return RuleEngine._match_list(event_data, match, global_context=global_context)
+        elif mtype == "threshold":
+            return RuleEngine._match_threshold(event_data, match)
+        elif mtype == "exists":
+            return RuleEngine._match_exists(event_data, match)
+        elif mtype == "composite":
+            return RuleEngine._match_composite(event_data, match, global_context=global_context)
+        elif mtype == "behavior":
+            return RuleEngine._match_behavior(event_data, match, global_context=global_context)
+        logger.warning("Unknown attack_chain step match.type: %s", mtype)
+        return False
+
+    @staticmethod
+    def _match_attack_chain(rule: dict, global_context: Optional[dict] = None,
+                            host_events: Optional[list] = None) -> Optional[dict]:
+        """主机级攻击链贪心顺序匹配 + 时间窗判定.
+
+        算法：
+          1. 按 ordered_steps 顺序，在「按时间升序」的统一事件列表中贪心选取：
+             每步须找到 dimension 匹配且 _match_attack_chain_step 命中、且位于上一步
+             索引之后（保证顺序）的首个事件。
+          2. 所有步骤命中后，对「具有时间戳的步骤事件」计算首末跨度 span；
+             若 span > window_minutes，则视为超窗不命中（无时间戳步骤不参与时间约束）。
+
+        Args:
+            rule: attack_chain 规则字典（condition 含 ordered_steps / window_minutes）。
+            global_context: 全局上下文（用于下钻构建事件、透传 IOC 等）。
+            host_events: 可选预构建事件列表（单元测试可直接注入，跳过 DB 下钻）。
+
+        Returns:
+            命中返回 {"steps": [...明细...], "reason": str}；否则返回 None。
+        """
+        if not global_context:
+            global_context = {}
+        condition = rule.get("condition", {})
+        if isinstance(condition, str):
+            try:
+                condition = json.loads(condition)
+            except json.JSONDecodeError:
+                return None
+        steps = condition.get("ordered_steps") or []
+        if not steps:
+            return None
+        window_minutes = int(condition.get("window_minutes", 60) or 60)
+        # 防御：window_minutes 上限 1440（与设计校验一致）
+        window_minutes = max(1, min(window_minutes, 1440))
+
+        if host_events is None:
+            host_events = RuleEngine._build_host_events(global_context)
+        if not host_events:
+            return None
+
+        matched_times: list = []
+        matched_steps: list = []
+        pointer = 0
+        for idx, step in enumerate(steps):
+            dim = step.get("dimension")
+            found = False
+            for j in range(pointer, len(host_events)):
+                ev = host_events[j]
+                if ev.get("dimension") != dim:
+                    continue
+                if not RuleEngine._match_attack_chain_step(step, ev.get("data", {}), global_context):
+                    continue
+                # 命中：记录
+                ts = ev.get("timestamp")
+                if ts is not None:
+                    matched_times.append(ts)
+                matched_steps.append({
+                    "step": idx + 1,
+                    "dimension": dim,
+                    "match": step.get("match"),
+                    "summary": RuleEngine._summarize_event(ev),
+                })
+                pointer = j + 1
+                found = True
+                break
+            if not found:
+                return None
+
+        # 时间窗判定：仅在「有 ≥1 个带时间戳步骤」时生效
+        if len(matched_times) >= 2:
+            from datetime import timedelta
+            span = (max(matched_times) - min(matched_times)).total_seconds() / 60.0
+            if span > window_minutes:
+                return None
+
+        reason = (
+            f"规则 '{rule.get('name', '')}' 命中攻击链关联："
+            + " → ".join(
+                f"[步骤{s['step']}:{s['dimension']}] {s['summary']}" for s in matched_steps
+            )
+        )
+        return {"steps": matched_steps, "reason": reason}
+
+    @staticmethod
+    def _summarize_event(ev: dict) -> str:
+        """为攻击链命中步骤生成简短摘要（用于 reason 展示）."""
+        dim = ev.get("dimension")
+        data = ev.get("data", {}) or {}
+        if dim == "process":
+            return f"进程 {data.get('process_name', '?')} cmd={str(data.get('command_line', ''))[:60]}"
+        if dim == "connection":
+            return f"外连 {data.get('remote_address', '?')}:{data.get('remote_port', '?')}"
+        if dim == "registry":
+            return f"注册表 {data.get('key_path', '?')}"
+        if dim == "persistence":
+            return f"持久化 {data.get('type', '?')}/{data.get('name', '?')}"
+        if dim == "ioc":
+            return f"IOC {data.get('ioc_type', '?')}={data.get('ioc_value', '?')}"
+        if dim == "timeline":
+            return f"时间线 {data.get('event_type', '?')}:{str(data.get('description', ''))[:60]}"
+        return dim or "?"
 
     # ── 原因构建 ────────────────────────────────────────────────────────
 
