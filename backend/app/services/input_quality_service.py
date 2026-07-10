@@ -82,9 +82,19 @@ class InputQualityService:
         else:
             level = "low"
 
+        # 生成 summary：优先用 issues，无 issues 则给正面总结
+        if issues:
+            summary = "数据覆盖度存在以下不足：" + "；".join(issues[:3])
+        elif score >= 80:
+            summary = "输入数据覆盖度较高，各维度证据较完整，可供 AI 充分研判。"
+        elif score >= 55:
+            summary = "输入数据覆盖度中等，部分维度证据偏少，AI 结论可能需结合人工复核。"
+        else:
+            summary = "输入数据覆盖度偏低，关键维度证据缺失，AI 结论置信度有限，建议补充采集。"
         input_quality = {
             "score": max(0, min(100, score)),
             "level": level,
+            "summary": summary,
             "issues": issues,
             "suggestions": suggestions,
         }

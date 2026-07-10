@@ -567,9 +567,15 @@ class AiService:
         recommendations["input_suggestions"] = quality_context["input_suggestions"]
         recommendations["recommended_questions"] = explainability["recommended_questions"]
 
-        # 7. 保存报告（含缓存字段）
+        # 7. 保存报告（含缓存字段 + v1.3.0 作战化新列）
         case_id = host.get("case_id", 0)
         cached_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        # v1.3.0 BugFix: 从 parsed (已 _guard_parsed 增强) 提取作战化新字段
+        guarded_audience = parsed.get("audience", "both")
+        guarded_mitre = parsed.get("mitre_attack", [])
+        guarded_rare = parsed.get("rare_high_signals", [])
+        guarded_escalation = parsed.get("escalation_conditions", [])
+        guarded_ach = parsed.get("attack_chain_hits", [])
         report = AiAnalysisReport.create(
             host_id=host_id,
             case_id=case_id,
@@ -584,6 +590,10 @@ class AiService:
             completion_tokens=usage.get("completion_tokens", 0),
             data_hash=data_hash,
             cached_at=cached_at,
+            audience=json.dumps(guarded_audience, ensure_ascii=False) if not isinstance(guarded_audience, str) else guarded_audience,
+            mitre_attack=json.dumps(guarded_mitre, ensure_ascii=False),
+            attack_chain_hits=json.dumps(guarded_ach, ensure_ascii=False),
+            rare_high_signals=json.dumps(guarded_rare, ensure_ascii=False),
         )
 
         logger.info(
@@ -641,13 +651,16 @@ class AiService:
             try:
                 parsed = json.loads(json_str)
                 if isinstance(parsed, dict):
-                    parsed = {
+                    parsed_sections = {
                         "risk_assessment": parsed.get("risk_assessment", {}),
                         "threat_analysis": parsed.get("threat_analysis", {}),
                         "timeline_analysis": parsed.get("timeline_analysis", {}),
                         "recommendations": parsed.get("recommendations", {}),
+                        # v1.3.0 BugFix: 提取 AI 返回的顶层新字段
+                        "audience": parsed.get("audience"),
+                        "mitre_attack": parsed.get("mitre_attack"),
                     }
-                    return AiService._guard_parsed(parsed)
+                    return AiService._guard_parsed(parsed_sections)
             except json.JSONDecodeError:
                 logger.warning("Failed to parse AI JSON response, falling back to Markdown extraction")
 
@@ -673,6 +686,9 @@ class AiService:
                 "risk_assessment": parsed.get("risk_assessment", {}),
                 "threat_analysis": parsed.get("threat_analysis", {}),
                 "recommendations": parsed.get("recommendations", {}),
+                # v1.3.0 BugFix: 透传 AI 返回的顶层新字段给 normalize_and_guard
+                "audience": parsed.get("audience"),
+                "mitre_attack": parsed.get("mitre_attack"),
             })
             merged = dict(parsed)
             merged["risk_assessment"] = guarded["risk_assessment"]

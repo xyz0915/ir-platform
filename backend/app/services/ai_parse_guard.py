@@ -434,10 +434,9 @@ def normalize_and_guard(
     for gap in data_gaps:
         gap["recommended_actions"] = _normalize_recommended_actions(gap)
         merged_actions.extend(gap["recommended_actions"])
-    # 清掉已被合并的旧字段，避免双重渲染
-    risk.pop("coverage_gaps", None)
-    risk.pop("miss_risk", None)
-    risk.pop("evidence_insufficiency", None)
+    # v1.3.0 BugFix: 保留旧字段 coverage_gaps / miss_risk / evidence_insufficiency
+    # 供旧版前端组件（CoverageGapPanel / InputQualityPanel）向后兼容读取，
+    # 同时写入合并后的 data_gaps 供新版 DataGapActionCard 使用。
     # data_gaps 同时落到 risk_assessment 与 recommendations，便于前端取用
     risk["data_gaps"] = data_gaps
     recommendations["data_gaps"] = data_gaps

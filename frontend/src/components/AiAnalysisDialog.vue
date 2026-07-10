@@ -173,6 +173,42 @@
             </span>
           </div>
 
+          <!-- v1.3.0 BugFix: 受众切换驱动条件渲染 -->
+          <div v-if="hasAudienceContent" class="audience-section mb-15">
+            <!-- 技术受众视图 -->
+            <div v-if="selectedAudience === 'technical' || selectedAudience === 'both'" class="audience-panel technical">
+              <div class="audience-panel-header">🔧 技术视图</div>
+              <div v-if="techCommands.length" class="audience-block">
+                <div class="audience-block-title">可执行命令</div>
+                <pre class="audience-code" v-for="(cmd, i) in techCommands" :key="'cmd-'+i">{{ cmd }}</pre>
+              </div>
+              <div v-if="techIocs.length" class="audience-block">
+                <div class="audience-block-title">IOC 清单</div>
+                <el-tag v-for="(ioc, i) in techIocs" :key="'ioc-'+i" size="small" effect="plain" class="mr-5 mb-5">{{ ioc }}</el-tag>
+              </div>
+              <div v-if="techScripts.length" class="audience-block">
+                <div class="audience-block-title">处置脚本</div>
+                <pre class="audience-code" v-for="(scr, i) in techScripts" :key="'scr-'+i">{{ scr }}</pre>
+              </div>
+            </div>
+            <!-- 管理层视图 -->
+            <div v-if="selectedAudience === 'executive' || selectedAudience === 'both'" class="audience-panel executive">
+              <div class="audience-panel-header">📊 管理层视图</div>
+              <div v-if="execImpact" class="audience-block">
+                <div class="audience-block-title">业务影响</div>
+                <p class="audience-text">{{ execImpact }}</p>
+              </div>
+              <div v-if="execRecommendations" class="audience-block">
+                <div class="audience-block-title">建议措施</div>
+                <p class="audience-text">{{ execRecommendations }}</p>
+              </div>
+              <div v-if="execBusinessLanguage" class="audience-block">
+                <div class="audience-block-title">业务语言摘要</div>
+                <p class="audience-text">{{ execBusinessLanguage }}</p>
+              </div>
+            </div>
+          </div>
+
           <div class="structured-grid mb-15">
             <InputQualityPanel
               :quality="parsedRiskAssessment.input_quality || {}"
@@ -574,12 +610,58 @@ const parsedTimelineAnalysis = computed(() => parseMaybeJson(currentReport.value
 const parsedRecommendations = computed(() => parseMaybeJson(currentReport.value?.recommendations))
 
 // v1.3.0 作战化：解析后端返回的新列（已结构化，parseMaybeJson 兜底）
-const parsedDataGaps = computed(() => parsedRiskAssessment.value?.data_gaps || [])
+// BugFix: 优先使用 API 层提取的顶层 data_gaps，回退到 risk_assessment 内嵌
+const parsedDataGaps = computed(() => {
+  const topLevel = currentReport.value?.data_gaps
+  if (Array.isArray(topLevel) && topLevel.length) return topLevel
+  return parsedRiskAssessment.value?.data_gaps || []
+})
 const parsedEscalation = computed(() => parsedRiskAssessment.value?.escalation_conditions || [])
 const parsedMitreAttack = computed(() => parseMaybeJson(currentReport.value?.mitre_attack) || [])
 const parsedRareSignals = computed(() => parseMaybeJson(currentReport.value?.rare_high_signals) || [])
 const parsedAttackChainHits = computed(() => parseMaybeJson(currentReport.value?.attack_chain_hits) || [])
 const parsedAudience = computed(() => parseMaybeJson(currentReport.value?.audience) || 'both')
+// v1.3.0 BugFix: 受众切换驱动条件渲染 — 从 parsedAudience 提取技术/管理层内容
+const techCommands = computed(() => {
+  if (typeof parsedAudience.value === 'object' && parsedAudience.value.technical) {
+    return parsedAudience.value.technical.commands || []
+  }
+  return []
+})
+const techIocs = computed(() => {
+  if (typeof parsedAudience.value === 'object' && parsedAudience.value.technical) {
+    return parsedAudience.value.technical.iocs || []
+  }
+  return []
+})
+const techScripts = computed(() => {
+  if (typeof parsedAudience.value === 'object' && parsedAudience.value.technical) {
+    return parsedAudience.value.technical.scripts || []
+  }
+  return []
+})
+const execImpact = computed(() => {
+  if (typeof parsedAudience.value === 'object' && parsedAudience.value.executive) {
+    return parsedAudience.value.executive.impact || ''
+  }
+  return ''
+})
+const execRecommendations = computed(() => {
+  if (typeof parsedAudience.value === 'object' && parsedAudience.value.executive) {
+    return parsedAudience.value.executive.recommendations || ''
+  }
+  return ''
+})
+const execBusinessLanguage = computed(() => {
+  if (typeof parsedAudience.value === 'object' && parsedAudience.value.executive) {
+    return parsedAudience.value.executive.business_language || ''
+  }
+  return ''
+})
+const hasAudienceContent = computed(() => {
+  return techCommands.value.length > 0 || techIocs.value.length > 0 || techScripts.value.length > 0 ||
+    execImpact.value || execRecommendations.value || execBusinessLanguage.value
+})
 // v1.3.0：受众切换（默认双受众，前端默认 technical 由主理人决策④）
 const selectedAudience = ref('both')
 
@@ -1477,6 +1559,19 @@ function formatElapsed(ms) {
 }
 
 /* ============================================================
+   v1.3.0 Audience Section
+   ============================================================ */
+.audience-section { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.audience-panel { border: 1px solid #ebeef5; border-radius: 8px; padding: 14px; background: #fff; }
+.audience-panel-header { font-size: 14px; font-weight: 600; color: #303133; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #f0f0f0; }
+.audience-block { margin-bottom: 10px; }
+.audience-block-title { font-size: 12px; font-weight: 600; color: #909399; margin-bottom: 4px; text-transform: uppercase; }
+.audience-code { background: #f5f7fa; padding: 8px 10px; border-radius: 4px; font-family: Consolas, 'Courier New', monospace; font-size: 12px; margin: 4px 0; white-space: pre-wrap; word-break: break-all; }
+.audience-text { font-size: 13px; color: #606266; line-height: 1.7; margin: 4px 0; }
+.audience-panel.technical { border-left: 3px solid #409eff; }
+.audience-panel.executive { border-left: 3px solid #e6a23c; }
+
+/* ============================================================
    Markdown 样式增强
    ============================================================ */
 .markdown-body :deep(table) {
@@ -1536,6 +1631,8 @@ function formatElapsed(ms) {
 .mb-10 { margin-bottom: 10px; }
 .mb-15 { margin-bottom: 15px; }
 .mb-20 { margin-bottom: 20px; }
+.mr-5 { margin-right: 5px; }
+.mb-5 { margin-bottom: 5px; }
 .ops-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

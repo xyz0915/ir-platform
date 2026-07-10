@@ -593,6 +593,16 @@ def _enrich_report(report: Optional[dict], host_id: int) -> Optional[dict]:
                 result[col] = raw
         else:
             result[col] = raw if raw is not None else None
+    # v1.3.0 BugFix: 从 risk_assessment JSON 中提取 data_gaps 作为顶层字段
+    # 便于前端 DataGapActionCard 直接取用，无需二次解析 risk_assessment
+    ra_raw = report.get("risk_assessment")
+    if isinstance(ra_raw, str) and ra_raw.strip():
+        try:
+            ra_parsed = json.loads(ra_raw)
+            if isinstance(ra_parsed, dict) and "data_gaps" in ra_parsed:
+                result["data_gaps"] = ra_parsed["data_gaps"]
+        except (json.JSONDecodeError, TypeError):
+            pass
     return result
 
 

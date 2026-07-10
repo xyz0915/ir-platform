@@ -456,11 +456,14 @@ class AiTaskService:
                 recommendations["recommended_questions"] = explainability["recommended_questions"]
 
                 # v1.3.0 解析层统一守护：评分回落/置信兜底/缺口合并/基线降噪/ATT&CK校验/稀有提级/受众归一
+                # BugFix: 透传 AI 返回的顶层 audience / mitre_attack，使 normalize_and_guard 能消费 AI 产出的双受众内容
                 guarded = normalize_and_guard(
                     {
                         "risk_assessment": risk_assessment,
                         "threat_analysis": threat_analysis,
                         "recommendations": recommendations,
+                        "audience": parsed.get("audience"),
+                        "mitre_attack": parsed.get("mitre_attack"),
                     },
                     baseline=baseline,
                     attack_chain_hits=attack_chain_hits,
@@ -798,6 +801,9 @@ class AiTaskService:
                         "threat_analysis": parsed.get("threat_analysis", {}),
                         "timeline_analysis": parsed.get("timeline_analysis", {}),
                         "recommendations": parsed.get("recommendations", {}),
+                        # v1.3.0 BugFix: 提取 AI 返回的顶层 audience / mitre_attack
+                        "audience": parsed.get("audience"),
+                        "mitre_attack": parsed.get("mitre_attack"),
                     }
                     # 保留 LLM 实际返回的顶层叙事/处置字段（任务② overview/remediation）。
                     # 作为独立顶层字段原样保留，不并入上述四段标准字段，
