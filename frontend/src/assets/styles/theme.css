@@ -1,0 +1,119 @@
+/* ==========================================================================
+ * GitHub Primer 设计令牌 + 亮/暗双主题
+ * - :root 定义亮色（默认）令牌
+ * - html.dark 定义暗色令牌
+ * - 业务与组件样式统一引用 var(--color-*) / Element Plus 变量
+ * ========================================================================== */
+
+/* ---------- 亮色（默认） ---------- */
+:root {
+  /* Primer 画布 */
+  --color-canvas-default: #ffffff;
+  --color-canvas-subtle: #f0f2f5;
+  --color-canvas-inset: #f6f8fa;
+
+  /* Primer 前景文字 */
+  --color-fg-default: #1f2328;
+  --color-fg-muted: #656d76;
+  --color-fg-subtle: #6e7781;
+
+  /* Primer 边框 */
+  --color-border-default: #d0d7de;
+  --color-border-muted: #d8dee4;
+
+  /* Primer 强调色（Accent / 主色） */
+  --color-accent-fg: #0969da;
+  --color-accent-emphasis: #0969da;
+  --color-accent-subtle: #ddf4ff;
+
+  /* Primer 语义色 */
+  --color-success-fg: #1a7f37;
+  --color-success-emphasis: #1f883d;
+  --color-success-subtle: #dafbe1;
+  --color-danger-fg: #cf222e;
+  --color-danger-emphasis: #cf222e;
+  --color-danger-subtle: #ffebe9;
+  --color-warning-fg: #9a6700;
+  --color-warning-emphasis: #bf8700;
+  --color-warning-subtle: #fff8c5;
+
+  /* 风险等级（与语义色对齐，供 RiskBadge / 重点页引用） */
+  --color-risk-critical: #cf222e;
+  --color-risk-high: #d4380d;
+  --color-risk-medium: #bf8700;
+  --color-risk-low: #0969da;
+  --color-risk-info: #656d76;
+
+  /* 侧边栏（GitHub 风，始终深色） */
+  --color-sidebar-bg: #24292f;
+  --color-sidebar-fg: #e6edf3;
+  --color-sidebar-fg-muted: #afb8c1;
+  --color-sidebar-border: rgba(240, 246, 252, 0.1);
+  --color-sidebar-hover-bg: rgba(255, 255, 255, 0.08);
+  --color-sidebar-active-bg: #1f6feb;
+  --color-fg-on-emphasis: #ffffff;
+
+  /* 代码块（两种主题均保持深色阅读区） */
+  --color-code-bg: #1e1e1e;
+
+  color-scheme: light;
+}
+
+/* ---------- 暗色 ---------- */
+html.dark {
+  --color-canvas-default: #0d1117;
+  --color-canvas-subtle: #161b22;
+  --color-canvas-inset: #010409;
+
+  --color-fg-default: #e6edf3;
+  --color-fg-muted: #8b949e;
+  --color-fg-subtle: #6e7681;
+
+  --color-border-default: #30363d;
+  --color-border-muted: #21262d;
+
+  --color-accent-fg: #58a6ff;
+  --color-accent-emphasis: #1f6feb;
+  --color-accent-subtle: #121d2f;
+
+  --color-success-fg: #3fb950;
+  --color-success-emphasis: #238636;
+  --color-success-subtle: #12261f;
+  --color-danger-fg: #f85149;
+  --color-danger-emphasis: #da3633;
+  --color-danger-subtle: #25171c;
+  --color-warning-fg: #d29922;
+  --color-warning-emphasis: #bb8009;
+  --color-warning-subtle: #272115;
+
+  --color-risk-critical: #f85149;
+  --color-risk-high: #ff7b72;
+  --color-risk-medium: #d29922;
+  --color-risk-low: #58a6ff;
+  --color-risk-info: #8b949e;
+
+  --color-sidebar-bg: #161b22;
+  --color-sidebar-fg: #e6edf3;
+  --color-sidebar-fg-muted: #8b949e;
+  --color-sidebar-border: rgba(240, 246, 252, 0.1);
+  --color-sidebar-hover-bg: rgba(255, 255, 255, 0.08);
+  --color-sidebar-active-bg: #1f6feb;
+  --color-fg-on-emphasis: #ffffff;
+
+  --color-code-bg: #161b22;
+
+  color-scheme: dark;
+}
+
+/* ---------- 全局平滑过渡（避免切换主题闪烁感） ---------- */
+body,
+.app-aside,
+.app-header,
+.app-main,
+.card-box,
+.el-card,
+.el-menu,
+.el-table,
+.batch-result {
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}

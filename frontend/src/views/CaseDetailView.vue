@@ -522,7 +522,7 @@ function renderBatchMarkdown(text) {
 .batch-subtitle {
   font-size: 14px;
   font-weight: 500;
-  color: #303133;
+  color: var(--color-fg-default);
   margin: 0 0 8px;
 }
 .batch-host-tag {
@@ -547,12 +547,12 @@ function renderBatchMarkdown(text) {
 .batch-stream-title {
   font-size: 15px;
   font-weight: 600;
-  color: #303133;
+  color: var(--color-fg-default);
 }
 
 .batch-result {
-  background: #f9fafb;
-  border: 1px solid #ebeef5;
+  background: var(--color-canvas-inset);
+  border: 1px solid var(--color-border-default);
   border-radius: 8px;
   padding: 16px;
   max-height: 50vh;
@@ -561,7 +561,7 @@ function renderBatchMarkdown(text) {
 .batch-result-content {
   font-size: 14px;
   line-height: 1.8;
-  color: #303133;
+  color: var(--color-fg-default);
 }
 
 /* Markdown styles for batch result */
@@ -572,16 +572,16 @@ function renderBatchMarkdown(text) {
 }
 .batch-result-content :deep(th),
 .batch-result-content :deep(td) {
-  border: 1px solid #e4e7ed;
+  border: 1px solid var(--color-border-default);
   padding: 8px 12px;
   text-align: left;
 }
 .batch-result-content :deep(th) {
-  background: #f5f7fa;
+  background: var(--color-canvas-subtle);
   font-weight: 600;
 }
 .batch-result-content :deep(pre) {
-  background: #1e1e1e;
+  background: var(--color-code-bg);
   border-radius: 6px;
   padding: 12px;
   overflow-x: auto;
@@ -596,13 +596,13 @@ function renderBatchMarkdown(text) {
 .batch-result-content :deep(h3),
 .batch-result-content :deep(h4) {
   margin: 12px 0 6px;
-  color: #303133;
+  color: var(--color-fg-default);
 }
 .batch-result-content :deep(blockquote) {
-  border-left: 4px solid #409eff;
+  border-left: 4px solid var(--color-accent-emphasis);
   padding: 4px 12px;
-  color: #606266;
-  background: #f0f7ff;
+  color: var(--color-fg-muted);
+  background: var(--color-accent-subtle);
   margin: 8px 0;
 }
 
@@ -621,7 +621,7 @@ function renderBatchMarkdown(text) {
 .mr-5 { margin-right: 5px; }
 .ml-5 { margin-left: 5px; }
 
-.text-muted { color: #909399; }
+.text-muted { color: var(--color-fg-muted); }
 
 .attack-path-card {
   font-size: 14px;

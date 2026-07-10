@@ -12,8 +12,8 @@ html, body, #app {
 }
 
 body {
-  background-color: #f0f2f5;
-  color: #303133;
+  background-color: var(--color-canvas-subtle);
+  color: var(--color-fg-default);
 }
 
 /* 滚动条样式 */
@@ -23,16 +23,16 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: var(--color-canvas-subtle);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c1c1c1;
+  background: var(--color-border-default);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #a8a8a8;
+  background: var(--color-fg-muted);
 }
 
 /* 通用工具类 */
@@ -60,12 +60,13 @@ body {
 .page-title {
   font-size: 20px;
   font-weight: bold;
-  color: #303133;
+  color: var(--color-fg-default);
 }
 
 /* 卡片 */
 .card-box {
-  background: #fff;
+  background: var(--color-canvas-default);
+  border: 1px solid var(--color-border-muted);
   border-radius: 4px;
   padding: 20px;
   margin-bottom: 20px;

@@ -42,6 +42,16 @@
           <span class="page-breadcrumb">{{ currentRouteName }}</span>
         </div>
         <div class="header-right">
+          <el-button
+            class="theme-toggle"
+            text
+            :title="themeStore.theme === 'dark' ? '切换到亮色' : '切换到暗色'"
+            @click="themeStore.toggleTheme()"
+          >
+            <el-icon size="18">
+              <component :is="themeStore.theme === 'dark' ? Sunny : Moon" />
+            </el-icon>
+          </el-button>
           <el-dropdown @command="handleCommand">
             <span class="user-info">
               <el-icon><User /></el-icon>
@@ -67,11 +77,13 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { Cpu, Lock, CircleCheck, Warning, Connection } from '@element-plus/icons-vue'
+import { useThemeStore } from '@/stores/theme'
+import { Cpu, Lock, CircleCheck, Warning, Connection, Sunny, Moon } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const themeStore = useThemeStore()
 
 const activeMenu = computed(() => {
   if (route.path.startsWith('/cases') || route.path.startsWith('/hosts')) return '/'
@@ -108,7 +120,7 @@ function handleCommand(command) {
 }
 
 .app-aside {
-  background: #304156;
+  background: var(--color-sidebar-bg);
   overflow: hidden;
 }
 
@@ -117,44 +129,49 @@ function handleCommand(command) {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
+  color: var(--color-fg-on-emphasis);
   font-size: 16px;
   font-weight: bold;
   gap: 8px;
-  border-bottom: 1px solid #3d4d5f;
+  border-bottom: 1px solid var(--color-sidebar-border);
 }
 
 .app-menu {
   border: none;
-  background: #304156;
+  background: var(--color-sidebar-bg);
 }
 
 .app-menu .el-menu-item {
-  color: #bfcbd9;
+  color: var(--color-sidebar-fg-muted);
 }
 
 .app-menu .el-menu-item:hover {
-  background: #263445;
+  background: var(--color-sidebar-hover-bg);
 }
 
 .app-menu .el-menu-item.is-active {
-  background: #1f2d3d;
-  color: #409EFF;
+  background: var(--color-sidebar-active-bg);
+  color: var(--color-fg-on-emphasis);
 }
 
 .app-header {
-  background: #fff;
+  background: var(--color-canvas-default);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid #e6e6e6;
+  border-bottom: 1px solid var(--color-border-default);
   height: 60px;
 }
 
 .page-breadcrumb {
   font-size: 16px;
   font-weight: bold;
-  color: #303133;
+  color: var(--color-fg-default);
+}
+
+.theme-toggle {
+  margin-right: 8px;
+  color: var(--color-fg-muted);
 }
 
 .user-info {
@@ -162,11 +179,11 @@ function handleCommand(command) {
   align-items: center;
   gap: 5px;
   cursor: pointer;
-  color: #606266;
+  color: var(--color-fg-muted);
 }
 
 .app-main {
-  background: #f0f2f5;
+  background: var(--color-canvas-subtle);
   padding: 20px;
   overflow-y: auto;
 }

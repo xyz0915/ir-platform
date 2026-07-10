@@ -62,7 +62,7 @@ async function handleDownloadPdf() {
 .report-frame-container {
   width: 100%;
   height: calc(100vh - 250px);
-  border: 1px solid #e6e6e6;
+  border: 1px solid var(--color-border-default);
   border-radius: 4px;
   overflow: hidden;
 }

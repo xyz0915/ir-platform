@@ -599,13 +599,13 @@ function statusLabel(status) {
   align-items: center;
   margin-bottom: 12px;
   padding: 8px 12px;
-  background: #f5f7fa;
+  background: var(--color-canvas-subtle);
   border-radius: 6px;
-  border: 1px solid #ebeef5;
+  border: 1px solid var(--color-border-default);
 }
 .tab-hint {
   font-size: 13px;
-  color: #606266;
+  color: var(--color-fg-muted);
 }
 .flex-center {
   display: flex;

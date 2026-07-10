@@ -2,7 +2,7 @@
   <div class="login-container">
     <el-card class="login-card">
       <div class="login-header">
-        <el-icon size="40" color="#409EFF"><Shield /></el-icon>
+        <el-icon size="40" color="var(--color-accent-fg)"><Shield /></el-icon>
         <h2>个人应急响应平台</h2>
         <p class="subtitle">IR Platform</p>
       </div>
@@ -98,12 +98,16 @@ async function handleLogin() {
   display: flex;
   justify-content: center;
   align-items: center;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: var(--color-canvas-subtle);
 }
 
 .login-card {
   width: 400px;
-  padding: 20px;
+  padding: 28px;
+  background: var(--color-canvas-default);
+  border: 1px solid var(--color-border-default);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(140, 149, 159, 0.2);
 }
 
 .login-header {
@@ -113,11 +117,11 @@ async function handleLogin() {
 
 .login-header h2 {
   margin: 10px 0 5px;
-  color: #303133;
+  color: var(--color-fg-default);
 }
 
 .login-header .subtitle {
-  color: #909399;
+  color: var(--color-fg-muted);
   font-size: 14px;
 }
 
