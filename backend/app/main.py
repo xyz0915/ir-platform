@@ -49,6 +49,7 @@ def startup_event() -> None:
 # 注册 API 路由
 from app.api import auth, cases, hosts, import_data, analysis, report, agent, rules, ai, whitelist, iocs  # noqa: E402
 from app.api import threat_intel  # noqa: E402
+from app.api import baseline  # noqa: E402  # v1.3.0 差分基线
 
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(cases.router, prefix="/api/cases", tags=["案件"])
@@ -59,6 +60,7 @@ app.include_router(report.router, prefix="/api", tags=["报告"])
 app.include_router(agent.router, prefix="/api/agent", tags=["Agent"])
 app.include_router(rules.router, prefix="/api/rules", tags=["规则"])
 app.include_router(ai.router, prefix="/api/ai", tags=["AI分析"])
+app.include_router(baseline.router, prefix="/api/baselines", tags=["差分基线"])
 app.include_router(whitelist.router, prefix="/api", tags=["白名单"])
 app.include_router(iocs.router, prefix="/api/iocs", tags=["IOC"])
 app.include_router(threat_intel.router, prefix="/api/threat-intel", tags=["威胁情报外联"])

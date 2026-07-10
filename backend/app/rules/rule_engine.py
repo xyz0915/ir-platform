@@ -1550,3 +1550,36 @@ class RuleEngine:
                 f"字段 '{field}' 值 '{str(value)[:100]}' — {description}"
             )
         return f"规则 '{rule_name}' 命中 — {description}"
+
+    # ── v1.3.0 R4-2：攻击链消费封装 ────────────────────────────────────
+
+    @staticmethod
+    def get_attack_chain_hits(host_id: int) -> list[dict]:
+        """读取引擎已落库的攻击链命中（来自 AnalysisResult.details.attack_chains）.
+
+        AI 仅**叙述**这些命中、绝不重判；此处为统一读取封装，供
+        ``ai_task_service._execute_task`` 与报告矩阵消费使用。
+
+        Args:
+            host_id: 主机 ID.
+
+        Returns:
+            攻击链命中列表（每条含 rule_name/severity/reason/steps）；
+            无命中或读取失败返回空列表。
+        """
+        try:
+            from app.models.analysis import AnalysisResult
+
+            analysis = AnalysisResult.get_by_host(host_id)
+            if not analysis:
+                return []
+            details = analysis.get("details")
+            if not isinstance(details, dict):
+                return []
+            hits = details.get("attack_chains")
+            if not isinstance(hits, list):
+                return []
+            return [h for h in hits if isinstance(h, dict)]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("读取攻击链命中失败 host=%d: %s", host_id, exc)
+            return []

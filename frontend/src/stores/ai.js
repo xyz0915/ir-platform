@@ -170,12 +170,13 @@ export const useAiStore = defineStore('ai', () => {
    * @returns {Promise<string>} taskId
    */
   async function startAnalysis(hostId, maskedMode, options = {}) {
-    const { mode, focusArea } = options
+    const { mode, focusArea, audience } = options
     const res = await aiAnalyze(hostId, {
       maskedMode,
       profileId: activeProfileId.value,
       mode: mode || 'standard',
       focusArea: focusArea || null,
+      audience: audience || null,
     })
     const taskId = res.data?.task_id
     if (!taskId) {

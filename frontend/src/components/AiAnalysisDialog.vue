@@ -168,6 +168,9 @@
             <el-tag size="small" v-if="currentReport.created_at">
               时间: {{ formatTime(currentReport.created_at) }}
             </el-tag>
+            <span class="ml-10">
+              <AudienceToggle v-model="selectedAudience" />
+            </span>
           </div>
 
           <div class="structured-grid mb-15">
@@ -181,6 +184,36 @@
             />
             <EvidenceTracePanel :evidence-trace="parsedThreatAnalysis.evidence_trace || {}" />
             <StructuredTimelinePanel :timeline="parsedTimelineAnalysis" />
+          </div>
+
+          <!-- v1.3.0 作战化：风险结论卡 + 稀有高危卡 -->
+          <div class="ops-grid mb-15">
+            <RiskConclusionCard
+              :risk-assessment="parsedRiskAssessment"
+              :escalation-conditions="parsedEscalation"
+              @toggle-escalation="onToggleEscalation"
+            />
+            <RareSignalCard v-if="parsedRareSignals.length" :rare-signals="parsedRareSignals" />
+          </div>
+
+          <!-- v1.3.0 作战化：ATT&CK 矩阵 + 攻击链叙述 -->
+          <div class="mb-15">
+            <AttckMatrix
+              :mitre-attack="parsedMitreAttack"
+              :attack-chain-hits="parsedAttackChainHits"
+            />
+          </div>
+          <div class="mb-15">
+            <AttackChainNarrative :attack-chain-hits="parsedAttackChainHits" />
+          </div>
+
+          <!-- v1.3.0 作战化：缺口即动作（可派发只读采集） -->
+          <div class="mb-15">
+            <DataGapActionCard
+              :data-gaps="parsedDataGaps"
+              :host-id="currentHostId"
+              @dispatched="onDispatched"
+            />
           </div>
 
           <DeepDiveQuestionPanel
@@ -350,6 +383,14 @@ import EvidenceTracePanel from '@/components/ai/EvidenceTracePanel.vue'
 import StructuredTimelinePanel from '@/components/ai/StructuredTimelinePanel.vue'
 import CoverageGapPanel from '@/components/ai/CoverageGapPanel.vue'
 import DeepDiveQuestionPanel from '@/components/ai/DeepDiveQuestionPanel.vue'
+// v1.3.0 作战化：风险结论 / 缺口动作 / 稀有信号 / 攻击链 / 受众 / ATT&CK 矩阵
+import RiskConclusionCard from '@/components/ai/RiskConclusionCard.vue'
+import DataGapActionCard from '@/components/ai/DataGapActionCard.vue'
+import RareSignalCard from '@/components/ai/RareSignalCard.vue'
+import AttackChainNarrative from '@/components/ai/AttackChainNarrative.vue'
+import AudienceToggle from '@/components/ai/AudienceToggle.vue'
+import AttckMatrix from '@/components/ai/AttckMatrix.vue'
+import { getDispatchStatus } from '@/api/dispatch'
 
 const store = useAiStore()
 
@@ -532,6 +573,16 @@ const parsedThreatAnalysis = computed(() => parseMaybeJson(currentReport.value?.
 const parsedTimelineAnalysis = computed(() => parseMaybeJson(currentReport.value?.timeline_analysis))
 const parsedRecommendations = computed(() => parseMaybeJson(currentReport.value?.recommendations))
 
+// v1.3.0 作战化：解析后端返回的新列（已结构化，parseMaybeJson 兜底）
+const parsedDataGaps = computed(() => parsedRiskAssessment.value?.data_gaps || [])
+const parsedEscalation = computed(() => parsedRiskAssessment.value?.escalation_conditions || [])
+const parsedMitreAttack = computed(() => parseMaybeJson(currentReport.value?.mitre_attack) || [])
+const parsedRareSignals = computed(() => parseMaybeJson(currentReport.value?.rare_high_signals) || [])
+const parsedAttackChainHits = computed(() => parseMaybeJson(currentReport.value?.attack_chain_hits) || [])
+const parsedAudience = computed(() => parseMaybeJson(currentReport.value?.audience) || 'both')
+// v1.3.0：受众切换（默认双受众，前端默认 technical 由主理人决策④）
+const selectedAudience = ref('both')
+
 // ============================================================
 // 监听 visible，重置状态
 // ============================================================
@@ -650,6 +701,7 @@ async function handleStartAnalysis() {
     const taskId = await store.startAnalysis(currentHostId.value, maskedMode.value ? 1 : 0, {
       mode: currentMode.value,
       focusArea: currentFocusArea.value,
+      audience: selectedAudience.value,
     })
     stage.value = 'analyzing'
     displayedContent.value = ''
@@ -746,6 +798,35 @@ async function loadReport() {
 function handleReanalyze() {
   resetState()
   stage.value = 'confirm'
+}
+
+// v1.3.0 作战化：可证伪升级条件勾选（仅前端推演，提示可复核）
+function onToggleEscalation(ec) {
+  ElMessage.info(`升级条件已勾选：${ec.condition} → ${ec.if_true}`)
+}
+
+// v1.3.0 作战化：只读派发回填轮询（绝不自动处置，仅回填证据）
+function onDispatched({ taskId }) {
+  if (!taskId) return
+  const timer = setInterval(async () => {
+    try {
+      const res = await getDispatchStatus(taskId)
+      const data = res.data?.data || {}
+      if (data.status && data.status !== 'running') {
+        clearInterval(timer)
+        if (data.status === 'completed' || data.status === 'timeout') {
+          ElMessage.success(`只读采集完成（${data.status}），证据已回填，可刷新报告查看`)
+        } else {
+          ElMessage.warning(`只读采集结束（${data.status}）`)
+        }
+      }
+    } catch (e) {
+      clearInterval(timer)
+      ElMessage.error(e?.response?.data?.message || '派发状态查询失败')
+    }
+  }, 2000)
+  // 安全上限：130s 后停止轮询（后端超时 120s）
+  setTimeout(() => clearInterval(timer), 130000)
 }
 
 // ============================================================
@@ -1455,6 +1536,15 @@ function formatElapsed(ms) {
 .mb-10 { margin-bottom: 10px; }
 .mb-15 { margin-bottom: 15px; }
 .mb-20 { margin-bottom: 20px; }
+.ops-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 15px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .ops-grid { grid-template-columns: 1fr; }
+}
 .mt-5 { margin-top: 5px; }
 .mt-10 { margin-top: 10px; }
 .mt-15 { margin-top: 15px; }

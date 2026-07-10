@@ -41,13 +41,15 @@ export function testAiConnection(profileId) {
 // ============================================================
 
 // 提交AI分析任务（异步模式，返回 task_id）
+// v1.3.0：支持 audience 透传（technical/executive/both），后端双受众路由
 export function aiAnalyze(hostId, options = {}) {
-  const { profileId, maskedMode, mode, focusArea, baseReportId } = options
+  const { profileId, maskedMode, mode, focusArea, baseReportId, audience } = options
   const params = new URLSearchParams()
   if (maskedMode !== undefined) params.set('masked_mode', maskedMode)
   if (mode) params.set('mode', mode)
   if (focusArea) params.set('focus_area', focusArea)
   if (baseReportId) params.set('base_report_id', baseReportId)
+  if (audience) params.set('audience', audience)
   const query = params.toString()
   return request.post(`/ai/analyze/${hostId}${query ? `?${query}` : ''}`, {
     profile_id: profileId ?? null,
@@ -55,6 +57,7 @@ export function aiAnalyze(hostId, options = {}) {
     mode: mode ?? 'standard',
     focus_area: focusArea ?? null,
     base_report_id: baseReportId ?? null,
+    audience: audience ?? null,
   })
 }
 

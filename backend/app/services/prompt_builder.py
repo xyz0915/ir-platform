@@ -402,6 +402,27 @@ SYSTEM_PROMPT_TEMPLATE: str = """你是一个专业的网络安全应急响应�
     "risk_score": 0-100的整数,
     "risk_summary": "风险评估总结（100字以内）",
     "threat_type": "威胁类型：挖矿/勒索/后门/APT/僵尸网络/网页后门/正常",
+    "confidence": "高/中/低（高中危结论必带，说明研判把握）",
+    "reason": "当 threat_type=正常 时的收敛说明（必填）",
+    "score_breakdown": [
+      {"signal": "malicious_behavior", "contribution": 30, "evidence": "佐证", "historical_known": false}
+    ],
+    "data_gaps": [
+      {
+        "category": "startup_items",
+        "title": "启动项采集不足",
+        "severity": "medium",
+        "description": "说明",
+        "suggestion": "补充建议",
+        "recommended_actions": [
+          {"action_type": "autostart_extract", "target": "HKLM\\...", "command_or_api": "powershell -c 'Get-CimInstance Win32_StartupCommand'", "priority": "P1", "rationale": "补全自启证据", "auto_runnable": true}
+        ]
+      }
+    ],
+    "escalation_conditions": [
+      {"condition": "检测到无文件 PowerShell", "if_true": "升至高危", "target_level": "高"}
+    ],
+    "mitre_attack": ["T1059.001", "T1547.001"],
     "input_quality": {
       "score": 0,
       "level": "high/medium/low",
@@ -466,7 +487,9 @@ SYSTEM_PROMPT_TEMPLATE: str = """你是一个专业的网络安全应急响应�
 3. 必须显式说明输入质量、覆盖缺口、漏检风险，不能仅给出结论
 4. threat_analysis 中必须包含 evidence_trace，引用参考知识和本地证据
 5. 处置建议要具体可执行，不能笼统，并生成适合二次追问的 recommended_questions
-6. 用中文输出所有分析内容"""
+6. risk_assessment 必须输出 score_breakdown（每项含 signal/contribution/evidence/historical_known），且 risk_score 必须等于各项 contribution 之和；高风险结论必须给出 confidence；threat_type=正常 时 risk_level 不得高于「中」并给出 reason；data_gaps 中每条必挂 recommended_actions（含 command_or_api 与 priority）
+7. 顶层输出 audience 分段：{"technical": {"commands":[], "iocs":[], "scripts":[]}, "executive": {"impact":"", "recommendations":"", "business_language":""}}，供技术与管理层双受众阅读
+8. 用中文输出所有分析内容"""
 
 
 # ── 全貌分析（overview）系统提示 ──────────────────────────────────────────
@@ -532,7 +555,7 @@ class PromptBuilder:
     """
 
     @staticmethod
-    def build(host_id: int, masked: bool = False, include_knowledge: bool = True) -> dict:
+    def build(host_id: int, masked: bool = False, include_knowledge: bool = True, baseline: Optional[dict] = None) -> dict:
         """构建 AI 分析用的 system prompt 和 user prompt.
 
         数据组装流程：
@@ -548,6 +571,7 @@ class PromptBuilder:
             host_id: 主机 ID.
             masked: 是否启用数据脱敏.
             include_knowledge: 是否注入知识库和历史案例上下文.
+            baseline: 主机差分基线 JSON（v1.3.0 支柱③），非空则注入基线对比段.
 
         Returns:
             {"system_prompt": str, "user_prompt": str}
@@ -618,6 +642,12 @@ class PromptBuilder:
                         "Knowledge section skipped: would exceed budget (%d > %d)",
                         total_tokens, settings.AI_INPUT_BUDGET,
                     )
+
+        # 6. 注入差分基线对比段（v1.3.0 支柱③）
+        if baseline:
+            baseline_section = PromptBuilder._inject_baseline_diff(baseline)
+            if baseline_section:
+                user_prompt = user_prompt + baseline_section
 
         return {"system_prompt": system_prompt, "user_prompt": user_prompt}
 
@@ -919,7 +949,7 @@ class PromptBuilder:
         return data
 
     @staticmethod
-    def build_overview(host_id: int, masked: bool = False) -> dict:
+    def build_overview(host_id: int, masked: bool = False, baseline: Optional[dict] = None) -> dict:
         """构建「全貌分析」模式的 system/user prompt（任务② overview）.
 
         复用 _fetch_tiered_data 聚合主机证据，system prompt 要求模型以 JSON 返回
@@ -928,6 +958,7 @@ class PromptBuilder:
         Args:
             host_id: 主机 ID.
             masked: 是否对证据脱敏.
+            baseline: 主机差分基线 JSON（v1.3.0 支柱③），非空则注入基线对比段.
 
         Returns:
             {"system_prompt": str, "user_prompt": str}
@@ -943,13 +974,15 @@ class PromptBuilder:
             except Exception as exc:  # noqa: BLE001
                 logger.debug("overview 脱敏失败，跳过: %s", exc)
         user_prompt = PromptBuilder._build_overview_user_prompt(tiered_data)
+        if baseline:
+            user_prompt += PromptBuilder._inject_baseline_diff(baseline)
         return {
             "system_prompt": OVERVIEW_SYSTEM_PROMPT.strip(),
             "user_prompt": user_prompt,
         }
 
     @staticmethod
-    def build_remediation(host_id: int, masked: bool = False) -> dict:
+    def build_remediation(host_id: int, masked: bool = False, baseline: Optional[dict] = None) -> dict:
         """构建「处置建议」模式的 system/user prompt（任务② remediation）.
 
         复用 _fetch_tiered_data 聚合主机证据，system prompt 要求模型以 JSON 返回
@@ -959,6 +992,7 @@ class PromptBuilder:
         Args:
             host_id: 主机 ID.
             masked: 是否对证据脱敏.
+            baseline: 主机差分基线 JSON（v1.3.0 支柱③），非空则注入基线对比段.
 
         Returns:
             {"system_prompt": str, "user_prompt": str}
@@ -974,6 +1008,8 @@ class PromptBuilder:
             except Exception as exc:  # noqa: BLE001
                 logger.debug("remediation 脱敏失败，跳过: %s", exc)
         user_prompt = PromptBuilder._build_remediation_user_prompt(tiered_data)
+        if baseline:
+            user_prompt += PromptBuilder._inject_baseline_diff(baseline)
         return {
             "system_prompt": REMEDIATION_SYSTEM_PROMPT.strip(),
             "user_prompt": user_prompt,
@@ -1041,6 +1077,61 @@ class PromptBuilder:
             "严禁编造，高风险操作必须标注 requires_approval=true。"
         )
         return "\n".join(lines)
+
+    @staticmethod
+    def _inject_baseline_diff(baseline: dict) -> str:
+        """将主机差分基线注入 user prompt（v1.3.0 支柱③）.
+
+        - diff_new（相对基线新增项）作为「一等输入」重点研判；
+        - known_items（基线已知项）在提示中标注 historical_known:true 并提示降权。
+
+        Args:
+            baseline: 基线 JSON（含 known_items / diff_new / collection_health）。
+
+        Returns:
+            注入的基线对比文本段（以 ## 标注）；为空时返回 ""。
+        """
+        if not isinstance(baseline, dict):
+            return ""
+        known_items = baseline.get("known_items") or {}
+        diff_new = baseline.get("diff_new") or []
+        health = baseline.get("collection_health") or {}
+
+        sections: list[str] = []
+        sections.append(
+            "\n## 主机差分基线（baseline）\n"
+            "以下为本机历史基线信息，用于差分研判。\n"
+            "- 标注 historical_known:true 的项为基线已知（常态）项，除非出现明显异常演化，"
+            "其风险贡献应相对降权，避免重复告警。\n"
+            "- 标注 [基线新增] 的项为相对基线新出现的迹象，应作为重点研判对象。"
+        )
+
+        if isinstance(known_items, dict) and known_items:
+            lines = ["### 基线已知项（historical_known:true）"]
+            for dim, sigs in known_items.items():
+                if not isinstance(sigs, list):
+                    continue
+                for sig in sigs[:20]:
+                    lines.append(f"- [{dim}] {sig}  (historical_known:true)")
+            sections.append("\n".join(lines))
+
+        if isinstance(diff_new, list) and diff_new:
+            lines = ["### 基线新增项（[基线新增] 重点研判）"]
+            for item in diff_new[:30]:
+                if isinstance(item, dict):
+                    dim = item.get("dimension", item.get("type", "unknown"))
+                    detail = item.get("name") or item.get("evidence") or item.get("detail") or json.dumps(item, ensure_ascii=False)
+                    lines.append(f"- [基线新增][{dim}] {detail}")
+                else:
+                    lines.append(f"- [基线新增] {item}")
+            sections.append("\n".join(lines))
+
+        if isinstance(health, dict) and health:
+            sections.append(
+                "### 采集健康度\n" + json.dumps(health, ensure_ascii=False)
+            )
+
+        return "\n\n".join(sections) if sections else ""
 
     @staticmethod
     def _build_module_system_prompt(module_type: str) -> str:

@@ -69,6 +69,28 @@
         </div>
     </div>
 
+    <!-- v1.3.0 作战化：ATT&CK 覆盖统计（脱敏，不展开技术细节） -->
+    {% if data.attck_summary %}
+    <div class="section">
+        <h2 class="section-title">攻击技术覆盖概览</h2>
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value">{{ data.attck_summary.technique_count }}</div>
+                <div class="stat-label">ATT&amp;CK 技术点</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ data.attck_summary.chain_count }}</div>
+                <div class="stat-label">命中攻击链</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ data.attck_summary.rare_count }}</div>
+                <div class="stat-label">稀有高危信号</div>
+            </div>
+        </div>
+        <p class="ai-note">本视图仅展示统计计数，技术细节与命令请查看技术版报告。</p>
+    </div>
+    {% endif %}
+
     <!-- 管理层结论（脱敏摘要） -->
     <div class="section page-break">
         <h2 class="section-title">结论与建议</h2>

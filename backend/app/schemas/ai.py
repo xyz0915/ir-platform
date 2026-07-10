@@ -93,6 +93,70 @@ class AiAnalysisRequest(BaseModel):
     include_rag_detail: bool = Field(default=True, description="是否返回 RAG 结构化证据")
     include_input_quality: bool = Field(default=True, description="是否返回输入质量评估")
     base_report_id: Optional[int] = Field(default=None, description="基于哪份已有报告继续深挖")
+    audience: Optional[str] = Field(default=None, description="受众偏好：technical/executive/both")
+
+
+# ============================================================
+# v1.3.0「AI 分析作战化」结构化子模型
+# ============================================================
+
+
+class ScoreBreakdownItem(BaseModel):
+    """评分明细项（R1-2 透明评分）."""
+    signal: str = Field(default="other", description="信号类型")
+    contribution: int = Field(default=0, description="该信号贡献分")
+    evidence: str = Field(default="", description="佐证")
+    historical_known: bool = Field(default=False, description="是否为基线已知项（R3-3 降噪）")
+
+
+class RecommendedAction(BaseModel):
+    """缺口即动作中的单条推荐动作（R2-2）."""
+    action_type: str = Field(default="manual_review", description="动作类型")
+    target: str = Field(default="", description="作用对象")
+    command_or_api: str = Field(default="", description="可复制的命令或 API")
+    priority: str = Field(default="P1", description="优先级 P0/P1/P2")
+    rationale: str = Field(default="", description="理由")
+    auto_runnable: bool = Field(default=False, description="是否可只读自动执行（R2-3 派发）")
+
+
+class DataGap(BaseModel):
+    """数据缺口（R2-1）."""
+    category: str = Field(default="", description="缺口维度")
+    title: str = Field(default="", description="缺口标题")
+    severity: str = Field(default="medium", description="严重度")
+    description: str = Field(default="", description="说明")
+    suggestion: str = Field(default="", description="补充建议")
+    recommended_actions: list[RecommendedAction] = Field(default_factory=list)
+
+
+class EscalationCondition(BaseModel):
+    """可证伪的升级条件（R7-1）."""
+    condition: str = Field(default="", description="触发条件")
+    if_true: str = Field(default="", description="若成立则")
+    target_level: str = Field(default="", description="目标风险等级")
+
+
+class AttackChainHit(BaseModel):
+    """攻击链命中叙述（R4-2，仅叙述不重判）."""
+    rule_name: str = Field(default="", description="命中的攻击链规则名")
+    severity: str = Field(default="", description="严重度")
+    reason: str = Field(default="", description="命中原因/叙述")
+    steps: list[dict] = Field(default_factory=list)
+
+
+class SupplementRequest(BaseModel):
+    """R6 P2 预留：补数请求（本期不实现自动重算、不落库任务）."""
+    host_id: int = Field(..., description="主机ID")
+    missing_categories: list[str] = Field(default_factory=list, description="缺失数据维度")
+    reason: Optional[str] = Field(default=None, description="补数理由")
+
+
+class DispatchReadonlyRequest(BaseModel):
+    """R2-3 只读派发请求（绝不自动处置）."""
+    action_type: str = Field(default="manual_review", description="动作类型（须为只读采集类）")
+    target: str = Field(default="", description="作用对象")
+    command_or_api: str = Field(..., description="可复制的只读采集命令或 API")
+    auto_runnable: bool = Field(default=False, description="是否声明为只读可自动执行")
 
 
 class AiAnalysisTaskResponse(BaseModel):
@@ -153,6 +217,11 @@ class AiReportResponse(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     created_at: str = ""
+    # v1.3.0 作战化新增列（JSON 字符串，向后兼容可选）
+    audience: Optional[str] = Field(default=None, description="受众：technical/executive/both（JSON）")
+    mitre_attack: Optional[str] = Field(default=None, description="ATT&CK 技术点（JSON 数组）")
+    attack_chain_hits: Optional[str] = Field(default=None, description="攻击链命中（JSON 数组）")
+    rare_high_signals: Optional[str] = Field(default=None, description="稀有高危信号（JSON 数组）")
 
 
 class AiReportVersionItem(BaseModel):

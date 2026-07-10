@@ -325,6 +325,36 @@
             <p style="white-space: pre-wrap;">{{ data.ai_report.recommendations }}</p>
         </div>
         {% endif %}
+
+        {# v1.3.0 作战化：ATT&CK 技术矩阵（仅技术报告渲染） #}
+        {% if data.attck_matrix_svg %}
+        <h3>ATT&amp;CK 技术矩阵</h3>
+        <div class="attck-matrix">
+            {{ data.attck_matrix_svg|safe }}
+        </div>
+        {% endif %}
+
+        {# v1.3.0 作战化：攻击链叙述（仅叙述引擎命中，不重判） #}
+        {% if data.attack_chain_hits %}
+        <h3>攻击链叙述（引擎命中）</h3>
+        <div class="info-card">
+            {% for hit in data.attack_chain_hits %}
+            <p><strong>{{ hit.rule_name }}</strong>
+               <span class="severity-tag severity-{{ hit.severity }}">{{ hit.severity }}</span></p>
+            <p style="white-space: pre-wrap;">{{ hit.reason }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {# v1.3.0 作战化：稀有高危信号高亮 #}
+        {% if data.rare_high_signals %}
+        <h3>稀有高危信号</h3>
+        <div class="rare-signals">
+            {% for sig in data.rare_high_signals %}
+            <span class="rare-tag">⚠ {{ sig.signal }} ({{ sig.priority }})</span>
+            {% endfor %}
+        </div>
+        {% endif %}
         
         <details>
             <summary>查看 AI 完整回复</summary>

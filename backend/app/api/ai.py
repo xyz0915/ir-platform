@@ -25,11 +25,13 @@ from app.schemas.ai import (
     AiChatResponse,
     CompareRequest,
     PromptOptimizeRequest,
+    DispatchReadonlyRequest,
 )
 from app.services.auth_service import get_current_user
 from app.services.ai_service import AiService
 from app.services.ai_task_service import AiTaskService
 from app.services.audit_service import AuditService
+from app.services.dispatch_service import DispatchService
 from app.services.pdf_export_service import PdfExportService
 from app.services.token_stats_service import TokenStatsService
 
@@ -311,6 +313,7 @@ async def submit_analysis(
     mode = "standard"
     focus_area: Optional[str] = None
     base_report_id: Optional[int] = None
+    audience: Optional[str] = None
     try:
         params = request.query_params
         if "masked_mode" in params:
@@ -321,6 +324,8 @@ async def submit_analysis(
             focus_area = params["focus_area"] or None
         if "base_report_id" in params:
             base_report_id = int(params["base_report_id"])
+        if "audience" in params:
+            audience = params["audience"] or None
     except (ValueError, TypeError):
         pass
 
@@ -340,6 +345,7 @@ async def submit_analysis(
             mode=mode,
             focus_area=focus_area,
             base_report_id=base_report_id,
+            audience=audience,
         )
         return _ok({
             "task_id": task["id"],
@@ -359,6 +365,65 @@ async def submit_analysis(
     except Exception as e:
         logger.exception("submit_analysis error")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/analyze/{host_id}/dispatch-readonly")
+async def dispatch_readonly(
+    host_id: int,
+    data: DispatchReadonlyRequest,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """R2-3 派发只读采集（绝不自动处置）.
+
+    仅接受 ``auto_runnable=true`` 的只读采集命令；子进程执行 ``timeout=120s``，
+    超时即中断；全程经审计；结果回填 ``ai_evidence_refills``。**不触发 AI 重算、
+    绝不 kill / 隔离 / 改配**。
+
+    返回 ``task_id`` 供前端轮询 ``GET /dispatch/{task_id}``。
+    """
+    host = Host.get_by_id(host_id)
+    if not host:
+        raise HTTPException(status_code=404, detail=f"主机 {host_id} 不存在")
+    try:
+        task = await DispatchService.dispatch_readonly(
+            host_id=host_id,
+            action_type=data.action_type,
+            target=data.target,
+            command_or_api=data.command_or_api,
+            auto_runnable=data.auto_runnable,
+            user=user,
+        )
+        return _ok({
+            "task_id": task["task_id"],
+            "host_id": host_id,
+            "status": task["status"],
+            "action_type": task["action_type"],
+            "created_at": task["created_at"],
+        }, "只读采集已派发")
+    except ValueError as e:
+        return _fail(str(e))
+    except Exception as e:
+        logger.exception("dispatch_readonly error")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/dispatch/{task_id}")
+def get_dispatch_status(task_id: str, user: dict = Depends(get_current_user)):
+    """轮询只读派发任务状态（含采集证据）."""
+    task = DispatchService.get_status(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"派发任务 {task_id} 不存在")
+    return _ok(task)
+
+
+@router.post("/dispatch/{task_id}/cancel")
+def cancel_dispatch(task_id: str, user: dict = Depends(get_current_user)):
+    """取消正在执行的只读派发（仅中断采集，绝不 kill/隔离主机）."""
+    ok = DispatchService.cancel(task_id)
+    if not ok:
+        return _fail("任务不存在或已结束，无法取消")
+    return _ok({"task_id": task_id, "status": "cancelled"}, "派发已取消")
 
 
 @router.get("/tasks/{task_id}")
@@ -517,6 +582,17 @@ def _enrich_report(report: Optional[dict], host_id: int) -> Optional[dict]:
             result["ai_payload"] = json.loads(ai_payload_raw)
         except (json.JSONDecodeError, TypeError):
             result["ai_payload"] = None
+
+    # v1.3.0 作战化新列：解析为结构化对象返回前端（向后兼容旧库为空）
+    for col in ("audience", "mitre_attack", "attack_chain_hits", "rare_high_signals"):
+        raw = report.get(col)
+        if isinstance(raw, str) and raw.strip():
+            try:
+                result[col] = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                result[col] = raw
+        else:
+            result[col] = raw if raw is not None else None
     return result
 
 

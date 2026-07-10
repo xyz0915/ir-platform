@@ -70,6 +70,52 @@ DATA_PRIORITY_ORDER: list[str] = [
 ]
 
 
+# ============================================================
+# v1.3.0「AI 分析作战化」关键常量（评分可信化 / 基线降噪 / 稀有提级）
+# 集中定义，运营可改、不散落。
+# ============================================================
+
+# 评分信号权重（可扩展）。risk_score 权威 = sum(score_breakdown.contribution)。
+SCORE_WEIGHTS: dict[str, int] = {
+    "malicious_behavior": 30,   # 恶意行为
+    "persistence": 15,          # 持久化
+    "c2_external": 10,          # 外连 C2
+    "lateral_movement": 10,     # 横向移动
+    "defense_evasion": 10,      # 防御规避
+    "privilege_escalation": 10, # 提权
+    "data_exfiltration": 10,    # 数据渗出
+    "reconnaissance": 5,        # 侦察
+    "other": 5,                 # 其他
+}
+
+# 风险等级阈值（0-100 整数分）
+RISK_SCORE_THRESHOLD_HIGH: int = 60   # >= 60 高危
+RISK_SCORE_THRESHOLD_MID: int = 30    # 30-59 中危；< 30 低危/安全
+
+# 输入质量阈值（P2 预留，本期仅定义常量；自动重算留 v1.3.1）
+INPUT_QUALITY_THRESHOLD: int = 60
+
+# 基线降噪系数：historical_known=true 的 score_breakdown 项贡献乘以该系数（即下调 50%）。
+BASELINE_PENALTY: float = 0.5
+
+# 稀有高危信号清单：命中其一即强制 P0 + 独立高亮卡 + escalation_conditions 触发。
+RARE_HIGH_SIGNALS: list[str] = [
+    "wmi_subscription",
+    "fileless_powershell",
+    "anomalous_service",
+    "hidden_scheduled_task",
+    "reflective_dll_injection",
+    "amsi_bypass",
+    "registry_hive_dump",
+    "shadow_copy_deletion",
+    "dns_over_https_tunnel",
+    "kernel_driver_without_signature",
+]
+
+# 受众默认值
+AUDIENCE_DEFAULT: str = "both"  # both | technical | executive
+
+
 # ---- 脱敏规则 ----
 
 

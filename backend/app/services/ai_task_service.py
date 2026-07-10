@@ -15,13 +15,15 @@ from app.models.ai_task import AiTask
 from app.models.ai_analysis import AiAnalysisReport
 from app.models.ai_config import AiConfigProfile, AiConfig
 from app.models.host import Host
-from app.shared.ai_constants import TaskStatus
+from app.models.agent_baseline import AgentBaseline
+from app.shared.ai_constants import TaskStatus, AUDIENCE_DEFAULT
 from app.shared.ai_error_mapping import map_http_error
 from app.services.prompt_builder import PromptBuilder
 from app.services.audit_service import AuditService
 from app.services.input_quality_service import InputQualityService
 from app.services.knowledge_retriever import KnowledgeRetriever
 from app.services.explainability_service import ExplainabilityService
+from app.services.ai_parse_guard import normalize_and_guard
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,8 @@ class AiTaskService:
 
     _task_streams: dict[str, asyncio.Queue] = {}
     _cancel_flags: dict[str, asyncio.Event] = {}
+    # v1.3.0：前端透传的受众偏好（technical/executive/both），按 task_id 暂存
+    _audience_map: dict[str, str] = {}
 
     @classmethod
     async def submit(
@@ -48,6 +52,7 @@ class AiTaskService:
         mode: str = "standard",
         focus_area: Optional[str] = None,
         base_report_id: Optional[int] = None,
+        audience: Optional[str] = None,
     ) -> dict:
         """提交 AI 分析任务并启动后台执行.
 
@@ -55,6 +60,7 @@ class AiTaskService:
             host_id: 主机 ID.
             profile_id: AI 配置 Profile ID（None 则使用激活配置）.
             masked_mode: 是否启用数据脱敏.
+            audience: 受众偏好（technical/executive/both），v1.3.0 双受众透传.
 
         Returns:
             任务字典（含 task_id 和初始状态）.
@@ -88,6 +94,11 @@ class AiTaskService:
         # 创建流队列和取消标志
         cls._task_streams[task_id_str] = asyncio.Queue()
         cls._cancel_flags[task_id_str] = asyncio.Event()
+        # v1.3.0：透传受众偏好（仅 both/technical/executive 合法）
+        if audience in ("technical", "executive", "both"):
+            cls._audience_map[task_id_str] = audience
+        else:
+            cls._audience_map[task_id_str] = AUDIENCE_DEFAULT
 
         # 启动后台执行
         asyncio.create_task(cls._execute_task(task_id=task["id"]))
@@ -208,6 +219,25 @@ class AiTaskService:
             mode = task.get("mode", "standard") if isinstance(task, dict) else "standard"
             focus_area = task.get("focus_area") if isinstance(task, dict) else None
             base_report_id = task.get("base_report_id") if isinstance(task, dict) else None
+            audience = cls._audience_map.get(task_id_str, AUDIENCE_DEFAULT)
+
+            # v1.3.0 支柱③：读取主机差分基线（R3-1），用于 Prompt 注入与解析层降噪
+            baseline: Optional[dict] = None
+            try:
+                baseline_rec = AgentBaseline.get_latest_by_host(host_id)
+                if baseline_rec:
+                    baseline = baseline_rec.get("baseline")
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("读取基线失败，跳过: %s", exc)
+
+            # v1.3.0 支柱④：读取引擎攻击链命中（仅叙述，不重判）
+            attack_chain_hits: list[dict] = []
+            try:
+                from app.rules.rule_engine import RuleEngine
+
+                attack_chain_hits = RuleEngine.get_attack_chain_hits(host_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("读取攻击链命中失败，跳过: %s", exc)
 
             if mode == "module" and focus_area:
                 # 模块化分析：只发送该模块专属数据
@@ -221,11 +251,11 @@ class AiTaskService:
                     masked=masked_mode,
                 )
             elif mode == "overview":
-                prompts = PromptBuilder.build_overview(host_id=host_id, masked=masked_mode)
+                prompts = PromptBuilder.build_overview(host_id=host_id, masked=masked_mode, baseline=baseline)
             elif mode == "remediation":
-                prompts = PromptBuilder.build_remediation(host_id=host_id, masked=masked_mode)
+                prompts = PromptBuilder.build_remediation(host_id=host_id, masked=masked_mode, baseline=baseline)
             else:
-                prompts = PromptBuilder.build(host_id=host_id, masked=masked_mode)
+                prompts = PromptBuilder.build(host_id=host_id, masked=masked_mode, baseline=baseline)
             system_prompt = prompts["system_prompt"]
             user_prompt = prompts["user_prompt"]
 
@@ -347,6 +377,13 @@ class AiTaskService:
                     ai_payload["key_events"] = parsed.get("key_events", [])
                 else:
                     ai_payload["remediation_scripts"] = parsed.get("remediation_scripts", [])
+                # v1.3.0 解析层守护（受众/ATT&CK/稀有 等列统一产出）
+                guarded = normalize_and_guard(
+                    parsed,
+                    baseline=baseline,
+                    attack_chain_hits=attack_chain_hits,
+                    audience=audience,
+                )
                 report = AiAnalysisReport.create(
                     host_id=host_id,
                     case_id=case_id,
@@ -364,6 +401,10 @@ class AiTaskService:
                     analysis_type=mode,
                     module_type=None,
                     ai_payload=json.dumps(ai_payload, ensure_ascii=False),
+                    audience=json.dumps(guarded["audience"], ensure_ascii=False),
+                    mitre_attack=json.dumps(guarded["mitre_attack"], ensure_ascii=False),
+                    attack_chain_hits=json.dumps(guarded["attack_chain_hits"], ensure_ascii=False),
+                    rare_high_signals=json.dumps(guarded["rare_high_signals"], ensure_ascii=False),
                 )
                 logger.info(
                     "AI task %d 生成 %s 报告: report_id=%s", task_id, mode, report.get("id"),
@@ -414,6 +455,21 @@ class AiTaskService:
                 recommendations["input_suggestions"] = quality_context["input_suggestions"]
                 recommendations["recommended_questions"] = explainability["recommended_questions"]
 
+                # v1.3.0 解析层统一守护：评分回落/置信兜底/缺口合并/基线降噪/ATT&CK校验/稀有提级/受众归一
+                guarded = normalize_and_guard(
+                    {
+                        "risk_assessment": risk_assessment,
+                        "threat_analysis": threat_analysis,
+                        "recommendations": recommendations,
+                    },
+                    baseline=baseline,
+                    attack_chain_hits=attack_chain_hits,
+                    audience=audience,
+                )
+                risk_assessment = guarded["risk_assessment"]
+                threat_analysis = guarded["threat_analysis"]
+                recommendations = guarded["recommendations"]
+
                 # 保存 AiAnalysisReport
                 report = AiAnalysisReport.create(
                     host_id=host_id,
@@ -431,6 +487,10 @@ class AiTaskService:
                     completion_tokens=completion_tokens,
                     analysis_type="module" if (mode == "module" and focus_area) else "full",
                     module_type=focus_area if (mode == "module" and focus_area) else None,
+                    audience=json.dumps(guarded["audience"], ensure_ascii=False),
+                    mitre_attack=json.dumps(guarded["mitre_attack"], ensure_ascii=False),
+                    attack_chain_hits=json.dumps(guarded["attack_chain_hits"], ensure_ascii=False),
+                    rare_high_signals=json.dumps(guarded["rare_high_signals"], ensure_ascii=False),
                 )
 
             # --- 阶段4: 审计日志 (90%) ---
@@ -681,6 +741,7 @@ class AiTaskService:
         task_id_str = str(task_id)
         cls._task_streams.pop(task_id_str, None)
         cls._cancel_flags.pop(task_id_str, None)
+        cls._audience_map.pop(task_id_str, None)
 
     @staticmethod
     def _parse_json_response(content: str) -> dict:

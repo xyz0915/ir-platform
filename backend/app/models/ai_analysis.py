@@ -43,6 +43,10 @@ class AiAnalysisReport:
         analysis_type: str = "full",
         module_type: Optional[str] = None,
         ai_payload: Optional[str] = None,
+        audience: Optional[str] = None,
+        mitre_attack: Optional[str] = None,
+        attack_chain_hits: Optional[str] = None,
+        rare_high_signals: Optional[str] = None,
     ) -> dict:
         """创建AI分析报告（新版本）.
 
@@ -89,8 +93,9 @@ class AiAnalysisReport:
                  model_used, tokens_used, version, profile_id,
                  is_latest, masked_mode, prompt_tokens, completion_tokens,
                  conversation_id, data_hash, cached_at,
-                 analysis_type, module_type, ai_payload)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 analysis_type, module_type, ai_payload,
+                 audience, mitre_attack, attack_chain_hits, rare_high_signals)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     host_id, case_id, risk_assessment, threat_analysis,
@@ -99,6 +104,7 @@ class AiAnalysisReport:
                     masked_mode, prompt_tokens, completion_tokens,
                     conversation_id, data_hash, cached_at,
                     analysis_type, module_type, ai_payload,
+                    audience, mitre_attack, attack_chain_hits, rare_high_signals,
                 ),
             )
             report_id = cursor.lastrowid

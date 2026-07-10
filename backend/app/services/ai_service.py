@@ -24,6 +24,7 @@ from app.services.explainability_service import ExplainabilityService
 from app.services.input_quality_service import InputQualityService
 from app.services.knowledge_retriever import KnowledgeRetriever
 from app.services.prompt_builder import PromptBuilder
+from app.services.ai_parse_guard import normalize_and_guard
 
 logger = logging.getLogger(__name__)
 
@@ -640,22 +641,53 @@ class AiService:
             try:
                 parsed = json.loads(json_str)
                 if isinstance(parsed, dict):
-                    return {
+                    parsed = {
                         "risk_assessment": parsed.get("risk_assessment", {}),
                         "threat_analysis": parsed.get("threat_analysis", {}),
                         "timeline_analysis": parsed.get("timeline_analysis", {}),
                         "recommendations": parsed.get("recommendations", {}),
                     }
+                    return AiService._guard_parsed(parsed)
             except json.JSONDecodeError:
                 logger.warning("Failed to parse AI JSON response, falling back to Markdown extraction")
 
         # 策略3：回退 Markdown 节提取（旧方式）
-        return {
+        parsed = {
             "risk_assessment": {"raw_analysis": AiService._extract_section(content, "风险评估") or content[:500]},
             "threat_analysis": {"raw_analysis": AiService._extract_section(content, "威胁分析") or ""},
             "timeline_analysis": {"raw_analysis": AiService._extract_section(content, "时间线解读") or ""},
             "recommendations": {"raw_analysis": AiService._extract_section(content, "处置建议") or ""},
         }
+        return AiService._guard_parsed(parsed)
+
+    @staticmethod
+    def _guard_parsed(parsed: dict) -> dict:
+        """T17：解析层统一守护委托。
+
+        对 risk/threat/recommendations 应用 ``normalize_and_guard`` 的一致性纠正
+        （评分回落、置信兜底、缺口合并、基线降噪、ATT&CK 校验、稀有提级、受众归一），
+        同时保留 timeline_analysis 不被评分逻辑改动，并附带作战化新字段。
+        """
+        try:
+            guarded = normalize_and_guard({
+                "risk_assessment": parsed.get("risk_assessment", {}),
+                "threat_analysis": parsed.get("threat_analysis", {}),
+                "recommendations": parsed.get("recommendations", {}),
+            })
+            merged = dict(parsed)
+            merged["risk_assessment"] = guarded["risk_assessment"]
+            merged["threat_analysis"] = guarded["threat_analysis"]
+            merged["recommendations"] = guarded["recommendations"]
+            merged["data_gaps"] = guarded["data_gaps"]
+            merged["mitre_attack"] = guarded["mitre_attack"]
+            merged["rare_high_signals"] = guarded["rare_high_signals"]
+            merged["escalation_conditions"] = guarded["escalation_conditions"]
+            merged["audience"] = guarded["audience"]
+            merged["attack_chain_hits"] = guarded["attack_chain_hits"]
+            return merged
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("解析层守护失败，降级返回原始解析: %s", exc)
+            return parsed
 
     # ================================================================
     # P2-01: 多轮对话

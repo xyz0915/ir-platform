@@ -713,6 +713,10 @@ def _alter_ai_analysis_reports_table(conn: sqlite3.Connection) -> None:
         ("analysis_type", "TEXT DEFAULT 'full'"),
         ("module_type", "TEXT"),
         ("ai_payload", "TEXT"),
+        ("audience", "TEXT"),
+        ("mitre_attack", "TEXT"),
+        ("attack_chain_hits", "TEXT"),
+        ("rare_high_signals", "TEXT"),
     ]
 
     for col_name, col_type in new_columns:
@@ -776,6 +780,46 @@ def _alter_ai_config_profiles_table(conn: sqlite3.Connection) -> None:
                 f"ALTER TABLE ai_config_profiles ADD COLUMN {col_name} {col_type}"
             )
             logger.info("Added column '%s' to ai_config_profiles table", col_name)
+
+
+def _create_agent_baselines_table(conn: sqlite3.Connection) -> None:
+    """创建 agent_baselines 表（v1.3.0 支柱③ 差分基线）."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_baselines (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            host_id       INTEGER NOT NULL,
+            baseline_json TEXT NOT NULL,
+            source        TEXT DEFAULT 'uploaded',
+            note          TEXT,
+            created_at    TEXT DEFAULT (datetime('now'))
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_baselines_host ON agent_baselines(host_id)"
+    )
+
+
+def _create_ai_evidence_refills_table(conn: sqlite3.Connection) -> None:
+    """创建 ai_evidence_refills 表（v1.3.0 R2-3 只读派发回填证据）."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ai_evidence_refills (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            host_id         INTEGER NOT NULL,
+            dispatch_task_id INTEGER NOT NULL,
+            action_type     TEXT,
+            target          TEXT,
+            evidence_json   TEXT,
+            status          TEXT DEFAULT 'completed',
+            created_at      TEXT DEFAULT (datetime('now'))
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ai_evidence_refills_host ON ai_evidence_refills(host_id)"
+    )
 
 
 def _migrate_old_ai_config(conn: sqlite3.Connection) -> None:
@@ -949,6 +993,9 @@ def init_db() -> None:
         _alter_network_connections_table(conn)
         _import_default_whitelist(conn)
         _import_default_iocs(conn)
+        # v1.3.0 作战化新表
+        _create_agent_baselines_table(conn)
+        _create_ai_evidence_refills_table(conn)
         conn.commit()
         logger.info("Database initialized successfully at %s", settings.DB_PATH)
     except Exception:
