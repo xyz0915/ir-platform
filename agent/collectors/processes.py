@@ -81,52 +81,65 @@ class ProcessesCollector(BaseCollector):
             return []
 
         processes = []
-        # 方案 A: wmic (CSV 格式，包含命令行)
+        # 方案 A: wmic (CSV 格式，含命令行) — 使用 csv 模块解析
+        import csv, io
         output = run_command(
             'wmic process get ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine /format:csv',
             timeout=30,
         )
         if output and "ProcessId" in output:
-            lines = output.strip().split("\n")
-            if len(lines) > 1:
-                header_line = lines[0]
-                headers = [h.strip() for h in header_line.split(",")]
-                for line in lines[1:]:
-                    values = [v.strip() for v in line.split(",")]
-                    if len(values) < len(headers):
-                        values += [""] * (len(headers) - len(values))
-                    row = dict(zip(headers, values))
-                    pid_str = row.get("ProcessId", "")
-                    if not pid_str or pid_str == "0":
-                        continue
-                    try:
-                        pid = int(pid_str)
-                    except ValueError:
-                        continue
-                    processes.append({
-                        "pid": pid,
-                        "ppid": int(row.get("ParentProcessId", "0") or "0"),
-                        "name": row.get("Name", ""),
-                        "path": row.get("ExecutablePath", ""),
-                        "command_line": row.get("CommandLine", ""),
-                        "user": "",
-                        "start_time": "",
-                        "threads": 0,
-                        "connections": [],
-                    })
-                return processes
+            try:
+                reader = csv.reader(io.StringIO(output.strip()))
+                rows = list(reader)
+                if len(rows) > 1:
+                    headers = [h.strip() for h in rows[0]]
+                    pid_idx = _find_col(headers, "ProcessId")
+                    ppid_idx = _find_col(headers, "ParentProcessId")
+                    name_idx = _find_col(headers, "Name")
+                    path_idx = _find_col(headers, "ExecutablePath")
+                    cmd_idx = _find_col(headers, "CommandLine")
+                    for row in rows[1:]:
+                        if len(row) < len(headers):
+                            continue
+                        pid_str = row[pid_idx].strip() if pid_idx < len(row) else ""
+                        if not pid_str or pid_str == "0":
+                            continue
+                        try:
+                            pid = int(pid_str)
+                        except ValueError:
+                            continue
+                        ppid_str = row[ppid_idx].strip() if ppid_idx < len(row) else "0"
+                        try:
+                            ppid = int(ppid_str) if ppid_str and ppid_str.isdigit() else 0
+                        except ValueError:
+                            ppid = 0
+                        processes.append({
+                            "pid": pid,
+                            "ppid": ppid,
+                            "name": row[name_idx].strip() if name_idx < len(row) else "",
+                            "path": row[path_idx].strip() if path_idx < len(row) else "",
+                            "command_line": row[cmd_idx].strip() if cmd_idx < len(row) else "",
+                            "user": "",
+                            "start_time": "",
+                            "threads": 0,
+                            "connections": [],
+                        })
+                    if processes:
+                        return processes
+            except Exception as exc:
+                logger.warning("wmic CSV parse failed: %s, trying tasklist", exc)
 
-        # 方案 B: tasklist（无命令行，但有 PID/PPID/Name/内存）
+        # 方案 B: tasklist（无命令行，但有 PID/Name）
         output = run_command('tasklist /fo csv /nh', timeout=15)
         if output:
-            import csv, io
             reader = csv.reader(io.StringIO(output.strip()))
             for row in reader:
                 if len(row) < 2:
                     continue
                 try:
                     name = row[0].strip('"')
-                    pid = int(row[1].strip('"'))
+                    pid_str = row[1].strip('"')
+                    pid = int(pid_str)
                 except (ValueError, IndexError):
                     continue
                 processes.append({
@@ -171,3 +184,11 @@ class ProcessesCollector(BaseCollector):
         except (psutil.AccessDenied, psutil.NoSuchProcess):
             pass
         return conn_map
+
+
+def _find_col(headers: list, name: str) -> int:
+    """在 CSV 表头中查找列索引（不区分大小写）."""
+    for i, h in enumerate(headers):
+        if h.strip().lower() == name.strip().lower():
+            return i
+    return 999  # 超出范围，调用方自行判断
