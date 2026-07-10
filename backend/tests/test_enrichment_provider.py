@@ -2,10 +2,13 @@
 """ThreatBookProvider 单元测试（T2 验收点）.
 
 使用 unittest.mock 替换 httpx.Client，不发起真实网络请求，验证:
-  - NormalizedIntel 归一化与 verdict 映射（judgments 优先 / risk_score 兜底）
-  - api_key_ref 经 expand_env 展开后作为查询参数 apikey 传递
+  - GET + query params(apikey/resource) 发请求（对齐微步官方示例）
+  - normalize 适配微步真实返回结构（IP / 域名分别处理）
+  - threat_level / judgments / risk_score 派生正确
+  - clean 特判（仅白名单类）→ threat_level=None、judgments=["clean"]（不回灌）
   - response_code != 0 上抛 ThreatIntelQueryError（不落库）
   - 不支持的 ioc_type 上抛 UnsupportedIocTypeError
+  - api_key 未配置上抛 ThreatIntelQueryError
 """
 
 import os
@@ -32,7 +35,7 @@ def _make_provider(api_key_ref="$THREATBOOK_KEY"):
         "type": "threatbook",
         "base_url": "https://api.threatbook.cn",
         "api_key_ref": api_key_ref,
-        "endpoints": {"ip": "/v3/scene/ip", "domain": "/v3/domain/adv"},
+        "endpoints": {"ip": "/v3/scene/ip_reputation", "domain": "/v3/domain/query"},
         "rate_limit_qps": 2,
     }
     return ThreatBookProvider(cfg)
@@ -40,18 +43,35 @@ def _make_provider(api_key_ref="$THREATBOOK_KEY"):
 
 @contextmanager
 def _patch_httpx(payload):
-    """替换 httpx.Client，返回可在 with 块内断言的 post mock 上下文."""
+    """替换 httpx.Client，返回可在 with 块内断言的 get mock 上下文."""
     with mock.patch("app.services.enrichment_service.httpx.Client") as MC:
         ctx = MC.return_value.__enter__.return_value
         fake_resp = mock.MagicMock()
         fake_resp.raise_for_status.return_value = None
         fake_resp.json.return_value = payload
-        ctx.post.return_value = fake_resp
+        ctx.get.return_value = fake_resp
         yield ctx
 
 
+def _assert_get_params(ctx, ioc_value, endpoint_substr):
+    """断言请求为 GET 且 query params 含 apikey + resource."""
+    ctx.get.assert_called_once()
+    call_args = ctx.get.call_args
+    # 端点路径正确
+    assert endpoint_substr in call_args.args[0], (
+        f"URL 不含预期端点 '{endpoint_substr}': {call_args.args[0]}"
+    )
+    # 通过 query params 传递 apikey + resource，不再用 form body(data)
+    assert "data" not in call_args.kwargs, "不应再使用 form body(data)"
+    params = call_args.kwargs.get("params", {})
+    assert params.get("apikey"), "params 缺少 apikey"
+    assert params.get("resource") == ioc_value, (
+        f"params.resource 应为 {ioc_value!r}，实际 {params.get('resource')!r}"
+    )
+
+
 class TestThreatBookProvider(unittest.TestCase):
-    """ThreatBookProvider 行为测试."""
+    """ThreatBookProvider 行为测试（对齐微步真实返回结构）."""
 
     def test_expand_api_key_ref(self):
         """api_key_ref 以 $ENV_VAR 引用，expand_env 应展开为环境变量值."""
@@ -61,71 +81,150 @@ class TestThreatBookProvider(unittest.TestCase):
         del os.environ["THREATBOOK_KEY"]
 
     def test_query_ip_malicious(self):
-        """IP 查询：judgments 含 malicious → threat_level=high."""
+        """IP 查询：severity=high → threat_level=high, judgments=[malicious], risk_score=90."""
         os.environ["THREATBOOK_KEY"] = "testkey"
         provider = _make_provider()
         payload = {
             "response_code": 0,
             "data": {
-                "1.2.3.4": {
-                    "risk_score": 92,
-                    "judgments": ["malicious"],
-                    "tags": ["c2", "botnet"],
-                    "confidence": 95,
-                    "company": ["evil-apt"],
-                    "attck": [{"tactic": "C2"}],
+                "8.8.8.8": {
+                    "is_malicious": True,
+                    "severity": "high",
+                    "confidence_level": "high",
+                    "judgments": ["Botnet", "C2"],
+                    "tags_classes": [],
                 }
             },
         }
         with _patch_httpx(payload) as ctx:
-            intel = provider.query("ip", "1.2.3.4")
+            intel = provider.query("ip", "8.8.8.8")
         self.assertEqual(intel.ioc_type, "ip")
-        self.assertEqual(intel.ioc_value, "1.2.3.4")
+        self.assertEqual(intel.ioc_value, "8.8.8.8")
         self.assertEqual(intel.provider, "threatbook")
-        self.assertEqual(intel.risk_score, 92)
-        self.assertEqual(intel.judgments, ["malicious"])
         self.assertEqual(intel.threat_level, "high")
-        self.assertEqual(intel.tags, ["c2", "botnet"])
-        self.assertEqual(intel.company, ["evil-apt"])
-        # URL 拼接与 apikey 参数校验
-        ctx.post.assert_called_once()
-        call_args = ctx.post.call_args
-        self.assertTrue(call_args.kwargs["params"]["apikey"])
-        self.assertIn("/v3/scene/ip", call_args.args[0])
+        self.assertEqual(intel.judgments, ["malicious"])
+        self.assertEqual(intel.risk_score, 90)
+        self.assertEqual(intel.tags, ["Botnet", "C2"])
+        self.assertEqual(intel.company, None)
+        self.assertEqual(intel.attck, [])
+        _assert_get_params(ctx, "8.8.8.8", "/v3/scene/ip_reputation")
 
-    def test_query_domain_suspicious(self):
-        """域名查询：judgments 含 suspicious → threat_level=medium."""
+    def test_query_domain_malicious(self):
+        """域名查询：judgments 含 C2/Malware → threat_level=high."""
         os.environ["THREATBOOK_KEY"] = "testkey"
         provider = _make_provider()
         payload = {
             "response_code": 0,
             "data": {
                 "evil.example.com": {
-                    "risk_score": 65,
-                    "judgments": ["suspicious"],
-                    "tags": [],
+                    "judgments": ["C2", "Malware"],
+                    "samples": [{"threat_level": "malicious"}],
+                    "tags_classes": [],
                 }
             },
         }
         with _patch_httpx(payload) as ctx:
             intel = provider.query("domain", "evil.example.com")
-        self.assertEqual(intel.threat_level, "medium")
+        self.assertEqual(intel.threat_level, "high")
+        self.assertEqual(intel.judgments, ["malicious"])
+        self.assertEqual(intel.risk_score, 90)
         self.assertEqual(intel.ioc_type, "domain")
+        self.assertEqual(intel.company, None)
+        self.assertEqual(intel.attck, [])
+        _assert_get_params(ctx, "evil.example.com", "/v3/domain/query")
 
-    def test_judgments_missing_fallback_by_risk(self):
-        """judgments 缺失时按 risk_score 兜底：>=80 high / 60-79 medium / <60 None."""
-        provider = _make_provider()
+    def test_query_ip_clean(self):
+        """IP 查询：仅白名单类(Whitelist)且非恶意 → threat_level=None, judgments=[clean]."""
         os.environ["THREATBOOK_KEY"] = "testkey"
+        provider = _make_provider()
+        payload = {
+            "response_code": 0,
+            "data": {
+                "1.2.3.4": {
+                    "is_malicious": False,
+                    "severity": "info",
+                    "confidence_level": "low",
+                    "judgments": ["Whitelist"],
+                    "tags_classes": [],
+                }
+            },
+        }
+        with _patch_httpx(payload) as ctx:
+            intel = provider.query("ip", "1.2.3.4")
+        self.assertIsNone(intel.threat_level)
+        self.assertEqual(intel.judgments, ["clean"])
+        self.assertEqual(intel.tags, ["Whitelist"])
+        _assert_get_params(ctx, "1.2.3.4", "/v3/scene/ip_reputation")
 
-        for score, expected in [(85, "high"), (65, "medium"), (30, None)]:
+    def test_query_domain_whitelist(self):
+        """域名查询：judgments 全白名单(Whitelist/ICP) → threat_level=None, judgments=[clean]."""
+        os.environ["THREATBOOK_KEY"] = "testkey"
+        provider = _make_provider()
+        payload = {
+            "response_code": 0,
+            "data": {
+                "good.example.com": {
+                    "judgments": ["Whitelist", "ICP"],
+                    "samples": [],
+                    "tags_classes": [],
+                }
+            },
+        }
+        with _patch_httpx(payload) as ctx:
+            intel = provider.query("domain", "good.example.com")
+        self.assertIsNone(intel.threat_level)
+        self.assertEqual(intel.judgments, ["clean"])
+        _assert_get_params(ctx, "good.example.com", "/v3/domain/query")
+
+    def test_query_ip_medium(self):
+        """IP 查询：severity=medium → threat_level=medium, judgments=[suspicious]."""
+        os.environ["THREATBOOK_KEY"] = "testkey"
+        provider = _make_provider()
+        payload = {
+            "response_code": 0,
+            "data": {
+                "5.5.5.5": {
+                    "severity": "medium",
+                    "confidence_level": "medium",
+                    "judgments": ["Scanner"],
+                    "tags_classes": [],
+                }
+            },
+        }
+        with _patch_httpx(payload) as ctx:
+            intel = provider.query("ip", "5.5.5.5")
+        self.assertEqual(intel.threat_level, "medium")
+        self.assertEqual(intel.judgments, ["suspicious"])
+        self.assertEqual(intel.risk_score, 70)
+        _assert_get_params(ctx, "5.5.5.5", "/v3/scene/ip_reputation")
+
+    def test_ip_severity_maps_to_level(self):
+        """IP severity → threat_level 映射：critical/high→high, medium→medium, low/info→low."""
+        os.environ["THREATBOOK_KEY"] = "testkey"
+        cases = [
+            ("critical", "high"),
+            ("high", "high"),
+            ("medium", "medium"),
+            ("low", "low"),
+            ("info", "low"),
+        ]
+        for severity, expect in cases:
             payload = {
                 "response_code": 0,
-                "data": {"1.2.3.4": {"risk_score": score, "judgments": []}},
+                "data": {
+                    "1.2.3.4": {
+                        "severity": severity,
+                        "confidence_level": "low",
+                        "judgments": [],
+                        "tags_classes": [],
+                    }
+                },
             }
-            with _patch_httpx(payload) as ctx:
+            provider = _make_provider()
+            with _patch_httpx(payload):
                 intel = provider.query("ip", "1.2.3.4")
             self.assertEqual(
-                intel.threat_level, expected, f"risk_score={score} 期望 {expected}"
+                intel.threat_level, expect, f"severity={severity} 期望 {expect}"
             )
 
     def test_response_code_nonzero_raises(self):
@@ -136,7 +235,7 @@ class TestThreatBookProvider(unittest.TestCase):
             "verbose_msg": "invalid apikey",
             "data": {},
         }
-        with _patch_httpx(payload) as ctx:
+        with _patch_httpx(payload):
             with self.assertRaises(ThreatIntelQueryError):
                 provider.query("ip", "1.2.3.4")
 

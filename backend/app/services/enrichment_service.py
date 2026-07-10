@@ -243,20 +243,40 @@ class BaseThreatIntelProvider:
 class ThreatBookProvider(BaseThreatIntelProvider):
     """微步在线（ThreatBook）威胁情报 provider 实现."""
 
-    # 类型 → 端点后缀（拼接在 base_url 之后）
+    # 类型 → 端点后缀（拼接在 base_url 之后）。
+    # 官方文档确认（路径错误会返回 response_code=-2 Invalid Api method）：
+    #   - IP 情报:   /v3/scene/ip_reputation
+    #   - 域名情报:  /v3/domain/query
+    # 两者均支持 GET/POST，参数均为 apikey + resource。
     ENDPOINT_MAP = {
-        "ip": "/v3/scene/ip",
-        "domain": "/v3/domain/adv",
+        "ip": "/v3/scene/ip_reputation",
+        "domain": "/v3/domain/query",
     }
+
+    # 威胁类型分类（用于内部判定 high / medium / clean）
+    _MALICIOUS_TYPES = {
+        "C2", "Malware", "Phishing", "Botnet", "Exploit", "Trojan",
+        "Ransomware", "Ransom", "Backdoor", "Miner", "Proxy", "TOR", "VPN",
+        "Scanner", "Zombie", "Brute Force", "Spam", "Worm", "Rootkit",
+    }
+    _SUSPICIOUS_TYPES = {
+        "Suspicious", "Dynamic IP", "DDNS", "Fast Flux", "Parking",
+    }
+    _WHITELIST_TYPES = {"Whitelist", "Info", "ICP", "CDN"}
+
+    # severity / confidence_level → risk_score / confidence 映射
+    _SEVERITY_RISK = {"critical": 100, "high": 90, "medium": 70, "low": 40, "info": 20}
+    _CONF_RISK = {"high": 90, "medium": 70, "low": 40}
+    _CONF_INT = {"high": 100, "medium": 70, "low": 40}
 
     def query(self, ioc_type: str, ioc_value: str) -> NormalizedIntel:
         """查询微步情报.
 
-        端点:
-          - IP      → ``POST {base_url}/v3/scene/ip``
-          - 域名    → ``POST {base_url}/v3/domain/adv``
+        端点（官方文档确认）：
+          - IP      → ``GET {base_url}/v3/scene/ip_reputation``
+          - 域名    → ``GET {base_url}/v3/domain/query``
 
-        请求: 查询参数 ``apikey``（由 api_key_ref 展开）；表单字段 ``resource=<indicator>``。
+        请求: query params ``apikey``（由 api_key_ref 展开）与 ``resource=<indicator>``。
         返回结构: ``{ "response_code": 0, "data": { "<indicator>": {...} } }``。
 
         Raises:
@@ -280,10 +300,9 @@ class ThreatBookProvider(BaseThreatIntelProvider):
             with httpx.Client(
                 timeout=httpx.Timeout(30.0), follow_redirects=True
             ) as client:
-                resp = client.post(
+                resp = client.get(
                     url,
-                    params={"apikey": api_key},
-                    data={"resource": ioc_value},
+                    params={"apikey": api_key, "resource": ioc_value},
                 )
                 resp.raise_for_status()
                 payload = resp.json()
@@ -304,18 +323,211 @@ class ThreatBookProvider(BaseThreatIntelProvider):
             )
 
         data = payload.get("data") or {}
-        # 优先按指标值取，其次取 data 中唯一值
+        # 优先按指标值取，其次取 data 中唯一值（兼容边界返回）
         verdict = data.get(ioc_value)
         if verdict is None and isinstance(data, dict) and len(data) == 1:
             verdict = next(iter(data.values()))
         if not isinstance(verdict, dict):
             verdict = {}
 
-        return BaseThreatIntelProvider.build_normalized(
+        return self._normalize(ioc_type, ioc_value, verdict)
+
+    @staticmethod
+    def _dedup(seq: List[Any]) -> List[Any]:
+        """保序去重."""
+        seen: List[Any] = []
+        for item in seq:
+            if item not in seen:
+                seen.append(item)
+        return seen
+
+    def _normalize(
+        self, ioc_type: str, ioc_value: str, data: Dict[str, Any]
+    ) -> NormalizedIntel:
+        """将微步真实返回结构归一化为 NormalizedIntel。
+
+        保持 ``NormalizedIntel`` 字段契约不变，仅修正填充逻辑以适配微步真实结构
+        （微步返回**没有** ``risk_score`` / ``attck`` / ``company`` 字段）。
+
+        Args:
+            ioc_type: ip / domain。
+            ioc_value: 指标值。
+            data: ``payload["data"][ioc_value]`` 的该指标详情 dict。
+
+        Returns:
+            NormalizedIntel。
+        """
+        if ioc_type == "ip":
+            return self._normalize_ip(ioc_value, data)
+        return self._normalize_domain(ioc_value, data)
+
+    def _normalize_ip(
+        self, ioc_value: str, data: Dict[str, Any]
+    ) -> NormalizedIntel:
+        """IP 情报归一化（/v3/scene/ip_reputation）。"""
+        is_malicious = data.get("is_malicious")
+        severity = data.get("severity")  # critical/high/medium/low/info
+        confidence_level = data.get("confidence_level")
+        tb_judgments = data.get("judgments") or []
+        if not isinstance(tb_judgments, list):
+            tb_judgments = [str(tb_judgments)]
+
+        tags = self._dedup(
+            list(tb_judgments)
+            + [
+                t
+                for cls in (data.get("tags_classes") or [])
+                for t in (cls.get("tags") or [])
+            ]
+        )
+
+        # 派生 threat_level（用于引擎回灌）
+        if severity in ("critical", "high") or is_malicious is True:
+            threat_level = "high"
+        elif severity == "medium" or confidence_level == "medium":
+            threat_level = "medium"
+        elif is_malicious is False or severity in ("low", "info"):
+            threat_level = "low"
+        else:
+            threat_level = "low"
+
+        # clean 特判：仅含白名单类且非恶意 → 不回灌
+        is_only_whitelist = bool(tb_judgments) and all(
+            j in self._WHITELIST_TYPES for j in tb_judgments
+        )
+        if is_only_whitelist and is_malicious is not True:
+            threat_level = None
+            judgments = ["clean"]
+        elif threat_level == "high":
+            judgments = ["malicious"]
+        elif threat_level == "medium":
+            judgments = ["suspicious"]
+        else:
+            judgments = ["clean"]
+
+        # 派生 risk_score / confidence（缺省 0）
+        if severity in self._SEVERITY_RISK:
+            risk_score = self._SEVERITY_RISK[severity]
+        elif confidence_level in self._CONF_RISK:
+            risk_score = self._CONF_RISK[confidence_level]
+        else:
+            risk_score = 0
+        confidence = self._CONF_INT.get(confidence_level, 0)
+
+        return self._build_intel(
+            ioc_type="ip",
+            ioc_value=ioc_value,
+            risk_score=risk_score,
+            judgments=judgments,
+            tags=tags,
+            confidence=confidence,
+            threat_level=threat_level,
+        )
+
+    def _normalize_domain(
+        self, ioc_value: str, data: Dict[str, Any]
+    ) -> NormalizedIntel:
+        """域名情报归一化（/v3/domain/query）。"""
+        tb_judgments = data.get("judgments") or []
+        if not isinstance(tb_judgments, list):
+            tb_judgments = [str(tb_judgments)]
+
+        sample_levels = [
+            s.get("threat_level")
+            for s in (data.get("samples") or [])
+            if isinstance(s, dict) and s.get("threat_level")
+        ]
+
+        tags = self._dedup(
+            list(tb_judgments)
+            + [
+                t
+                for cls in (data.get("tags_classes") or [])
+                for t in (cls.get("tags") or [])
+            ]
+        )
+
+        # 派生 threat_level（用于引擎回灌）
+        if (
+            any(j in self._MALICIOUS_TYPES for j in tb_judgments)
+            or "malicious" in sample_levels
+        ):
+            threat_level = "high"
+        elif (
+            any(j in self._SUSPICIOUS_TYPES for j in tb_judgments)
+            or "suspicious" in sample_levels
+        ):
+            threat_level = "medium"
+        elif (
+            bool(tb_judgments)
+            and all(j in self._WHITELIST_TYPES for j in tb_judgments)
+            and not any(j in self._MALICIOUS_TYPES for j in tb_judgments)
+        ):
+            threat_level = None  # 全白名单 → 不回灌
+        else:
+            threat_level = "low"
+
+        if threat_level is None:
+            judgments = ["clean"]
+        elif threat_level == "high":
+            judgments = ["malicious"]
+        elif threat_level == "medium":
+            judgments = ["suspicious"]
+        else:
+            judgments = ["clean"]
+
+        # 派生 risk_score：high→90, medium→70, low→40, clean→10
+        risk_map = {"high": 90, "medium": 70, "low": 40, None: 10}
+        risk_score = risk_map.get(threat_level, 40)
+
+        # confidence 取自 intelligences.threatbook_lab[0].confidence
+        intelligences = data.get("intelligences") or {}
+        lab_list = intelligences.get("threatbook_lab") or [{}]
+        first = lab_list[0] if isinstance(lab_list, list) and lab_list else {}
+        try:
+            confidence = int(first.get("confidence", 0) or 0)
+        except (ValueError, TypeError):
+            confidence = 0
+
+        return self._build_intel(
+            ioc_type="domain",
+            ioc_value=ioc_value,
+            risk_score=risk_score,
+            judgments=judgments,
+            tags=tags,
+            confidence=confidence,
+            threat_level=threat_level,
+        )
+
+    def _build_intel(
+        self,
+        ioc_type: str,
+        ioc_value: str,
+        risk_score: int,
+        judgments: List[str],
+        tags: List[str],
+        confidence: int,
+        threat_level: Optional[str],
+    ) -> NormalizedIntel:
+        """统一构造 NormalizedIntel（attck=[]、company=None）。"""
+        raw_summary = (
+            f"threat_level={threat_level}; "
+            f"judgments={json.dumps(judgments, ensure_ascii=False)}; "
+            f"tags={json.dumps(tags, ensure_ascii=False)}; "
+            f"risk_score={risk_score}"
+        )
+        return NormalizedIntel(
             ioc_type=ioc_type,
             ioc_value=ioc_value,
             provider=self.name,
-            verdict=verdict,
+            risk_score=int(risk_score or 0),
+            judgments=judgments,
+            tags=tags,
+            confidence=int(confidence or 0),
+            company=None,
+            attck=[],
+            threat_level=threat_level,
+            raw_summary=raw_summary,
         )
 
 

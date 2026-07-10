@@ -4,11 +4,12 @@
 
 实跑而非读码验证前任工程师的改动。特点：
   - 隔离临时库（data/qa_ioc_enrich_verify.db），不触碰生产/其他测试库。
-  - 全程不联网：用 unittest.mock 替换 httpx.Client，返回构造好的微步风格响应。
+  - 全程不联网：用 unittest.mock 替换 httpx.Client，返回构造好的微步真实风格响应。
   - 直接驱动真实的 ThreatBookProvider / EnrichmentService / RuleEngine / HTTP 接口。
 
 覆盖点：
-  A. ThreatBook normalize：judgments 优先 + risk_score 兜底（high / medium / None）。
+  A. ThreatBook normalize（ip/domain 真实返回结构）：
+     severity/confidence/judgments 派生 threat_level 与 judgments。
   B. 落库：enrich_ioc 写一条且字段齐全；清除去重缓存后再次 enrich 同 ioc 保留历史（2 条）。
   C. 配额：daily_quota=1 时第二条被拒（QuotaExceededError），provider.query 仅调用 1 次。
   D. TTL 去重：短时间内同 (value,provider,type) 第二次不重复打 API（query 仅 1 次，落库 1 条）。
@@ -82,35 +83,50 @@ def _make_provider():
         "type": "threatbook",
         "base_url": "https://api.threatbook.cn",
         "api_key_ref": "$THREATBOOK_KEY",
-        "endpoints": {"ip": "/v3/scene/ip", "domain": "/v3/domain/adv"},
+        "endpoints": {"ip": "/v3/scene/ip_reputation", "domain": "/v3/domain/query"},
         "rate_limit_qps": 1000,  # 测试内避免限流 sleep
     })
 
 
 @contextmanager
 def _patch_threatbook_httpx(payload):
-    """替换 app.services.enrichment_service.httpx.Client，返回构造好的微步风格响应。"""
+    """替换 app.services.enrichment_service.httpx.Client，返回构造好的微步真实风格响应。"""
     with mock.patch("app.services.enrichment_service.httpx.Client") as MC:
         ctx = MC.return_value.__enter__.return_value
         fake_resp = mock.MagicMock()
         fake_resp.raise_for_status.return_value = None
         fake_resp.json.return_value = payload
-        ctx.post.return_value = fake_resp
+        ctx.get.return_value = fake_resp
         yield ctx
 
 
-def _threatbook_payload(ioc_value, judgments=None, risk_score=0, **extra):
-    data = {
-        ioc_value: {
-            "risk_score": risk_score,
-            "judgments": judgments or [],
-            "tags": extra.get("tags", ["qa-tag"]),
-            "confidence": extra.get("confidence", 90),
-            "company": extra.get("company", ["apt-qa"]),
-            "attck": extra.get("attck", [{"tactic": "C2", "technique": "T1071"}]),
-        }
+# ── 微步真实返回结构构造器 ─────────────────────────────────────
+def _tb_ip(value, judgments=None, severity="info", confidence_level="low", is_malicious=None):
+    """构造 IP(/v3/scene/ip_reputation) 真实返回结构。"""
+    rec = {
+        "severity": severity,
+        "confidence_level": confidence_level,
+        "judgments": judgments or [],
+        "tags_classes": [],
     }
-    return {"response_code": 0, "data": data}
+    if is_malicious is not None:
+        rec["is_malicious"] = is_malicious
+    return {"response_code": 0, "data": {value: rec}}
+
+
+def _tb_domain(value, judgments=None, samples=None, intelligences=None):
+    """构造域名(/v3/domain/query) 真实返回结构。"""
+    return {
+        "response_code": 0,
+        "data": {
+            value: {
+                "judgments": judgments or [],
+                "samples": samples or [],
+                "tags_classes": [],
+                "intelligences": intelligences or {},
+            }
+        },
+    }
 
 
 # ── 结果收集 ─────────────────────────────────────────────────────
@@ -142,31 +158,40 @@ def _rel(x):
 # ── A. normalize ─────────────────────────────────────────────────
 def check_normalize():
     cases = [
-        ("A1", "1.2.3.4", ["malicious"], 92, "high"),
-        ("A2", "evil.example.com", ["suspicious"], 65, "medium"),
-        ("A3", "5.5.5.5", [], 90, "high"),     # risk 兜底 malicious(high)
-        ("A4", "6.6.6.6", [], 70, "medium"),   # risk 兜底 suspicious(medium)
-        ("A5", "7.7.7.7", [], 30, None),       # risk 兜底 clean(None, 不回灌)
+        ("A1", "ip", "1.2.3.4",
+         _tb_ip("1.2.3.4", judgments=["Botnet", "C2"], severity="high",
+                confidence_level="high", is_malicious=True), "high"),
+        ("A2", "domain", "evil.example.com",
+         _tb_domain("evil.example.com", judgments=["Suspicious"]), "medium"),
+        ("A3", "ip", "5.5.5.5",
+         _tb_ip("5.5.5.5", judgments=["Whitelist"], severity="info",
+                confidence_level="low", is_malicious=False), None),
+        ("A4", "ip", "6.6.6.6",
+         _tb_ip("6.6.6.6", judgments=["Scanner"], severity="medium",
+                confidence_level="medium"), "medium"),
+        ("A5", "ip", "7.7.7.7",
+         _tb_ip("7.7.7.7", judgments=["Exploit"], severity="low",
+                confidence_level="low"), "low"),
     ]
     detail = []
     all_ok = True
-    for cid, val, judg, score, expect in cases:
+    for cid, itype, val, payload, expect in cases:
         provider = _make_provider()
-        payload = _threatbook_payload(val, judgments=judg, risk_score=score)
         with _patch_threatbook_httpx(payload):
-            intel = provider.query("ip", val)
+            intel = provider.query(itype, val)
         ok = (intel.threat_level == expect)
         all_ok = all_ok and ok
-        detail.append(
-            f"{cid}:judg={judg},rs={score}→level={intel.threat_level}(期望{_rel(expect)})"
-        )
-    _record("A.ThreatBook normalize(judgments优先/risk兜底)", all_ok, "; ".join(detail))
+        detail.append(f"{cid}:{itype}→level={intel.threat_level}(期望{_rel(expect)})")
+    _record("A.ThreatBook normalize(ip/domain 真实结构)", all_ok, "; ".join(detail))
 
 
 # ── B. 落库 + 历史保留 ─────────────────────────────────────────
 def check_persist_and_history():
     provider = _make_provider()
-    payload = _threatbook_payload("9.9.9.9", judgments=["malicious"], risk_score=92)
+    payload = _tb_ip(
+        "9.9.9.9", judgments=["Botnet", "C2"], severity="high",
+        confidence_level="high", is_malicious=True,
+    )
     _clear_tables()
     with mock.patch.object(EnrichmentService, "get_provider", return_value=provider):
         svc = _fresh_service()
@@ -176,13 +201,13 @@ def check_persist_and_history():
         fields_ok = (
             rec["ioc_value"] == "9.9.9.9"
             and rec["provider"] == "threatbook"
-            and rec["risk_score"] == 92
+            and rec["risk_score"] == 90
             and rec["judgments"] == ["malicious"]
             and rec["threat_level"] == "high"
-            and rec["tags"] == ["qa-tag"]
-            and rec["confidence"] == 90
-            and rec["company"] == ["apt-qa"]
-            and rec["attck"] == [{"tactic": "C2", "technique": "T1071"}]
+            and rec["tags"] == ["Botnet", "C2"]
+            and rec["confidence"] == 100
+            and rec["company"] == []
+            and rec["attck"] == []
         )
         count1 = len(ThreatIntel.list_by_ioc(ioc["id"]))
 
@@ -208,7 +233,8 @@ def check_quota():
     second_rejected = False
     with mock.patch.object(EnrichmentService, "get_provider", return_value=provider):
         with _patch_threatbook_httpx(
-            _threatbook_payload("1.1.1.1", judgments=["malicious"], risk_score=90)
+            _tb_ip("1.1.1.1", judgments=["Botnet"], severity="high",
+                   confidence_level="high", is_malicious=True)
         ):
             try:
                 svc.enrich_ioc(None, "ip", "1.1.1.1")
@@ -216,7 +242,8 @@ def check_quota():
             except Exception as exc:  # noqa: BLE001
                 first_ok = False
         with _patch_threatbook_httpx(
-            _threatbook_payload("2.2.2.2", judgments=["malicious"], risk_score=90)
+            _tb_ip("2.2.2.2", judgments=["Botnet"], severity="high",
+                   confidence_level="high", is_malicious=True)
         ):
             try:
                 svc.enrich_ioc(None, "ip", "2.2.2.2")
@@ -234,7 +261,8 @@ def check_ttl_dedup():
     svc = _fresh_service()
     _clear_tables()
     with mock.patch.object(EnrichmentService, "get_provider", return_value=provider):
-        payload = _threatbook_payload("8.8.8.8", judgments=["malicious"], risk_score=90)
+        payload = _tb_ip("8.8.8.8", judgments=["Botnet"], severity="high",
+                         confidence_level="high", is_malicious=True)
         with _patch_threatbook_httpx(payload):
             svc.enrich_ioc(None, "ip", "8.8.8.8")
             svc.enrich_ioc(None, "ip", "8.8.8.8")  # 短期重复，应命中内存去重
@@ -378,7 +406,8 @@ def check_api_enrich_success(client, headers):
         )
         ioc_id = create.json()["data"]["id"]
         with _patch_threatbook_httpx(
-            _threatbook_payload("7.7.7.7", judgments=["malicious"], risk_score=92)
+            _tb_ip("7.7.7.7", judgments=["Botnet"], severity="high",
+                   confidence_level="high", is_malicious=True)
         ):
             resp = client.post(f"/api/iocs/{ioc_id}/enrich", headers=headers, json={})
     body = resp.json()

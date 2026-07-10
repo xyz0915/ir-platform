@@ -7,8 +7,8 @@
     "enabled": true,
     "rate_limit_qps": 2,
     "endpoints": {
-      "ip": "/v3/scene/ip",
-      "domain": "/v3/domain/adv"
+      "ip": "/v3/scene/ip_reputation",
+      "domain": "/v3/domain/query"
     }
   }
 ]
