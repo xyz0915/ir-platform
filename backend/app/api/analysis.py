@@ -170,6 +170,20 @@ def get_remote_control(host_id: int, current_user: dict = Depends(get_current_us
     return {"code": 0, "data": raw_data.get("remote_control", []) if raw_data else [], "message": "success"}
 
 
+@router.post("/hosts/{host_id}/network-connections/enrich")
+def enrich_network_connections(host_id: int, current_user: dict = Depends(get_current_user)):
+    """对网络连接的公网 IP 做一键威胁情报检测."""
+    host = HostService.get_host(host_id)
+    if not host:
+        raise HTTPException(status_code=404, detail="主机不存在")
+    try:
+        result = AnalysisService.enrich_network_connections(host_id)
+        return {"code": 0, "data": result, "message": "success"}
+    except Exception as e:
+        logger.exception("enrich_network_connections error")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/hosts/{host_id}/network-connections")
 def get_network_connections(host_id: int, current_user: dict = Depends(get_current_user)):
     """获取网络连接列表（数据采集增强 P1-2）."""

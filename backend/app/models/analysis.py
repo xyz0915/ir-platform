@@ -526,6 +526,21 @@ class NetworkConnection:
         with get_connection() as conn:
             conn.execute("DELETE FROM network_connections WHERE host_id = ?", (host_id,))
 
+    @staticmethod
+    def update_threat_info(rows: list) -> int:
+        """批量回写威胁情报字段（按 id 匹配）."""
+        if not rows:
+            return 0
+        with get_connection() as conn:
+            count = 0
+            for row in rows:
+                conn.execute(
+                    "UPDATE network_connections SET threat_level=?, threat_score=?, threat_tags=?, enriched_at=? WHERE id=?",
+                    (row.get("threat_level"), row.get("threat_score"), row.get("threat_tags"), row.get("enriched_at"), row["id"]),
+                )
+                count += 1
+            return count
+
 
 class FileHash:
     """文件哈希模型（数据采集增强 P1-3）."""

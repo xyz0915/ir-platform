@@ -123,10 +123,7 @@
           <SuspiciousConnTable :data="suspiciousConnections" />
         </el-tab-pane>
         <el-tab-pane label="网络连接" name="network">
-          <div class="tab-toolbar">
-            <span class="tab-hint">共 {{ networkConnections.length }} 条网络连接</span>
-          </div>
-          <NetworkConnectionTable :data="networkConnections" />
+          <NetworkConnectionTable :host-id="Number(hostId)" :data="networkConnections" @refresh="loadAllResults" />
         </el-tab-pane>
         <el-tab-pane label="文件哈希" name="filehash">
           <div class="tab-toolbar">

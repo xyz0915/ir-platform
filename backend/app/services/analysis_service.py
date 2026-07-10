@@ -334,6 +334,68 @@ class AnalysisService:
         return SuspiciousStartupItem.list_by_host(host_id)
 
     @staticmethod
+    def enrich_network_connections(host_id: int) -> dict:
+        """对主机所有网络连接的公网 IP 做一键威胁情报检测."""
+        connections = NetworkConnection.list_by_host(host_id)
+        total = len(connections)
+        public_ips: dict = {}
+        skipped_private = 0
+        for conn in connections:
+            remote = (conn.get("remote_addr") or "").strip()
+            if not remote:
+                continue
+            try:
+                ip_obj = ipaddress.ip_address(remote)
+            except ValueError:
+                continue
+            if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_multicast or ip_obj.is_reserved or ip_obj.is_unspecified:
+                skipped_private += 1
+                continue
+            public_ips[remote] = public_ips.get(remote, 0) + 1
+
+        public = len(public_ips)
+        enriched = 0
+        malicious = 0
+        suspicious = 0
+        errors: list = []
+        svc = get_enrichment_service()
+        ip_results: dict = {}
+        for ip in public_ips:
+            try:
+                record = svc.enrich_ioc(None, "ip", ip)
+            except (ThreatIntelQueryError, QuotaExceededError, UnsupportedIocTypeError) as exc:
+                errors.append({"ip": ip, "error": str(exc)})
+                continue
+            except Exception as exc:
+                errors.append({"ip": ip, "error": f"查询异常: {exc}"})
+                continue
+            threat_level = record.get("threat_level")
+            risk_score = int(record.get("risk_score") or 0)
+            tags = record.get("tags") or []
+            ip_results[ip] = {
+                "threat_level": threat_level,
+                "threat_score": risk_score,
+                "threat_tags": json.dumps(tags, ensure_ascii=False),
+            }
+            enriched += 1
+            if threat_level == "high":
+                malicious += 1
+            elif threat_level == "medium":
+                suspicious += 1
+
+        enriched_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        update_rows: list = []
+        for conn in connections:
+            remote = (conn.get("remote_addr") or "").strip()
+            res = ip_results.get(remote)
+            if res is None:
+                continue
+            update_rows.append({"id": conn["id"], "threat_level": res["threat_level"], "threat_score": res["threat_score"], "threat_tags": res["threat_tags"], "enriched_at": enriched_at})
+        if update_rows:
+            NetworkConnection.update_threat_info(update_rows)
+        return {"total": total, "public": public, "enriched": enriched, "malicious": malicious, "suspicious": suspicious, "skipped_private": skipped_private, "errors": errors}
+
+    @staticmethod
     def get_network_connections(host_id: int) -> list:
         """获取网络连接列表（数据采集增强 P1-2）."""
         return NetworkConnection.list_by_host(host_id)

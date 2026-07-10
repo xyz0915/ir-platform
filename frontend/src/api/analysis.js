@@ -49,6 +49,9 @@ export default {
   getNetworkConnections(hostId) {
     return request.get(`/hosts/${hostId}/network-connections`)
   },
+  enrichNetworkConnections(hostId) {
+    return request.post(`/hosts/${hostId}/network-connections/enrich`)
+  },
   getFileHashes(hostId) {
     return request.get(`/hosts/${hostId}/file-hashes`)
   },

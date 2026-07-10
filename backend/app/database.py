@@ -636,6 +636,22 @@ def _alter_abnormal_processes_table(conn: sqlite3.Connection) -> None:
             logger.info("Added column '%s' to abnormal_processes table", col_name)
 
 
+def _alter_network_connections_table(conn: sqlite3.Connection) -> None:
+    """检测并添加 network_connections 表的威胁情报列."""
+    cursor = conn.execute("PRAGMA table_info(network_connections)")
+    existing_columns: set[str] = {row["name"] for row in cursor.fetchall()}
+    new_columns: list[tuple[str, str]] = [
+        ("threat_level", "TEXT"),
+        ("threat_score", "INTEGER"),
+        ("threat_tags", "TEXT"),
+        ("enriched_at", "TIMESTAMP"),
+    ]
+    for col_name, col_type in new_columns:
+        if col_name not in existing_columns:
+            conn.execute(f"ALTER TABLE network_connections ADD COLUMN {col_name} {col_type}")
+            logger.info("Added column '%s' to network_connections table", col_name)
+
+
 def _alter_suspicious_connections_table(conn: sqlite3.Connection) -> None:
     """检测并添加 suspicious_connections 表的新增威胁情报列（一键检测增强）.
 
@@ -896,6 +912,7 @@ def init_db() -> None:
         _import_default_rules(conn)
         _alter_abnormal_processes_table(conn)
         _alter_suspicious_connections_table(conn)
+        _alter_network_connections_table(conn)
         _import_default_whitelist(conn)
         _import_default_iocs(conn)
         conn.commit()
