@@ -15,6 +15,10 @@ class AgentMetadata(BaseModel):
     platform: str = "unknown"
     hostname: str = "unknown"
     operator: str = "agent"
+    log_days: int = 7
+
+    class Config:
+        extra = "allow"
 
 
 class CpuInfo(BaseModel):
