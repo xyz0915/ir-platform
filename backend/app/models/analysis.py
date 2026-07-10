@@ -469,3 +469,241 @@ def clear_analysis_by_host(host_id: int) -> None:
         conn.execute("DELETE FROM persistence_items WHERE host_id = ?", (host_id,))
         conn.execute("DELETE FROM timeline_events WHERE host_id = ?", (host_id,))
         conn.execute("DELETE FROM ioc_hits WHERE host_id = ?", (host_id,))
+        conn.execute("DELETE FROM network_connections WHERE host_id = ?", (host_id,))
+        conn.execute("DELETE FROM file_hashes WHERE host_id = ?", (host_id,))
+        conn.execute("DELETE FROM wmi_subscriptions WHERE host_id = ?", (host_id,))
+        conn.execute("DELETE FROM registry_keys WHERE host_id = ?", (host_id,))
+
+
+class NetworkConnection:
+    """网络连接模型（数据采集增强 P1-2）."""
+
+    @staticmethod
+    def batch_create(host_id: int, items: list) -> int:
+        """批量创建网络连接记录."""
+        if not items:
+            return 0
+        with get_connection() as conn:
+            conn.execute("DELETE FROM network_connections WHERE host_id = ?", (host_id,))
+            count = 0
+            for item in items:
+                conn.execute(
+                    """
+                    INSERT INTO network_connections
+                    (host_id, protocol, local_addr, local_port, remote_addr,
+                     remote_port, state, pid, process_name, collected_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        host_id,
+                        item.get("protocol"),
+                        item.get("local_addr"),
+                        item.get("local_port"),
+                        item.get("remote_addr"),
+                        item.get("remote_port"),
+                        item.get("state"),
+                        item.get("pid"),
+                        item.get("process_name"),
+                        item.get("collected_at"),
+                    ),
+                )
+                count += 1
+            return count
+
+    @staticmethod
+    def list_by_host(host_id: int) -> list:
+        """获取主机的网络连接列表."""
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM network_connections WHERE host_id = ? ORDER BY id",
+                (host_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    def delete_by_host(host_id: int) -> None:
+        """删除主机的所有网络连接记录."""
+        with get_connection() as conn:
+            conn.execute("DELETE FROM network_connections WHERE host_id = ?", (host_id,))
+
+
+class FileHash:
+    """文件哈希模型（数据采集增强 P1-3）."""
+
+    @staticmethod
+    def batch_create(host_id: int, items: list) -> int:
+        """批量创建文件哈希记录."""
+        if not items:
+            return 0
+        with get_connection() as conn:
+            conn.execute("DELETE FROM file_hashes WHERE host_id = ?", (host_id,))
+            count = 0
+            for item in items:
+                conn.execute(
+                    """
+                    INSERT INTO file_hashes
+                    (host_id, file_path, file_name, sha256, is_signed, signer,
+                     file_size, product_name, product_version, collected_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        host_id,
+                        item.get("file_path"),
+                        item.get("file_name"),
+                        item.get("sha256"),
+                        1 if item.get("is_signed") else 0,
+                        item.get("signer"),
+                        item.get("file_size"),
+                        item.get("product_name"),
+                        item.get("product_version"),
+                        item.get("collected_at"),
+                    ),
+                )
+                count += 1
+            return count
+
+    @staticmethod
+    def list_by_host(host_id: int) -> list:
+        """获取主机的文件哈希列表."""
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM file_hashes WHERE host_id = ? ORDER BY id",
+                (host_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    def delete_by_host(host_id: int) -> None:
+        """删除主机的所有文件哈希记录."""
+        with get_connection() as conn:
+            conn.execute("DELETE FROM file_hashes WHERE host_id = ?", (host_id,))
+
+
+class WmiSubscription:
+    """WMI 订阅模型（数据采集增强 P1-5）.
+
+    event_filter / event_consumer 字段存储为 JSON 字符串，
+    list_by_host 自动做 json.loads() 反序列化，
+    batch_create 自动对 dict 值做 json.dumps() 序列化。
+    """
+
+    @staticmethod
+    def batch_create(host_id: int, items: list) -> int:
+        """批量创建 WMI 订阅记录."""
+        if not items:
+            return 0
+        with get_connection() as conn:
+            conn.execute("DELETE FROM wmi_subscriptions WHERE host_id = ?", (host_id,))
+            count = 0
+            for item in items:
+                event_filter = item.get("event_filter")
+                event_consumer = item.get("event_consumer")
+                # 对 dict 类型做 json.dumps() 序列化
+                if isinstance(event_filter, dict):
+                    event_filter = json.dumps(event_filter, ensure_ascii=False)
+                if isinstance(event_consumer, dict):
+                    event_consumer = json.dumps(event_consumer, ensure_ascii=False)
+                conn.execute(
+                    """
+                    INSERT INTO wmi_subscriptions
+                    (host_id, name, event_filter, event_consumer,
+                     binding_type, risk_level, collected_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        host_id,
+                        item.get("name"),
+                        event_filter,
+                        event_consumer,
+                        item.get("binding_type"),
+                        item.get("risk_level"),
+                        item.get("collected_at"),
+                    ),
+                )
+                count += 1
+            return count
+
+    @staticmethod
+    def list_by_host(host_id: int) -> list:
+        """获取主机的 WMI 订阅列表.
+
+        event_filter 和 event_consumer 字段自动做 json.loads() 反序列化。
+        如果字段为 None 或非法 JSON，返回原值。
+        """
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM wmi_subscriptions WHERE host_id = ? ORDER BY id",
+                (host_id,),
+            ).fetchall()
+            result_list = []
+            for r in rows:
+                sub = dict(r)
+                # 反序列化 event_filter
+                if sub.get("event_filter") is not None and isinstance(sub["event_filter"], str):
+                    try:
+                        sub["event_filter"] = json.loads(sub["event_filter"])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                # 反序列化 event_consumer
+                if sub.get("event_consumer") is not None and isinstance(sub["event_consumer"], str):
+                    try:
+                        sub["event_consumer"] = json.loads(sub["event_consumer"])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                result_list.append(sub)
+            return result_list
+
+    @staticmethod
+    def delete_by_host(host_id: int) -> None:
+        """删除主机的所有 WMI 订阅记录."""
+        with get_connection() as conn:
+            conn.execute("DELETE FROM wmi_subscriptions WHERE host_id = ?", (host_id,))
+
+
+class RegistryKey:
+    """注册表键值模型（数据采集增强 P1-6）."""
+
+    @staticmethod
+    def batch_create(host_id: int, items: list) -> int:
+        """批量创建注册表键值记录."""
+        if not items:
+            return 0
+        with get_connection() as conn:
+            conn.execute("DELETE FROM registry_keys WHERE host_id = ?", (host_id,))
+            count = 0
+            for item in items:
+                conn.execute(
+                    """
+                    INSERT INTO registry_keys
+                    (host_id, key_path, value_name, value_type, value_data,
+                     last_write_time, collected_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        host_id,
+                        item.get("key_path"),
+                        item.get("value_name"),
+                        item.get("value_type"),
+                        item.get("value_data"),
+                        item.get("last_write_time"),
+                        item.get("collected_at"),
+                    ),
+                )
+                count += 1
+            return count
+
+    @staticmethod
+    def list_by_host(host_id: int) -> list:
+        """获取主机的注册表键值列表."""
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM registry_keys WHERE host_id = ? ORDER BY id",
+                (host_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    def delete_by_host(host_id: int) -> None:
+        """删除主机的所有注册表键值记录."""
+        with get_connection() as conn:
+            conn.execute("DELETE FROM registry_keys WHERE host_id = ?", (host_id,))

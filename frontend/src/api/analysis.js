@@ -45,5 +45,17 @@ export default {
   },
   getRemoteControl(hostId) {
     return request.get(`/hosts/${hostId}/remote-control`)
+  },
+  getNetworkConnections(hostId) {
+    return request.get(`/hosts/${hostId}/network-connections`)
+  },
+  getFileHashes(hostId) {
+    return request.get(`/hosts/${hostId}/file-hashes`)
+  },
+  getWmiSubscriptions(hostId) {
+    return request.get(`/hosts/${hostId}/wmi-subscriptions`)
+  },
+  getRegistryKeys(hostId) {
+    return request.get(`/hosts/${hostId}/registry-keys`)
   }
 }

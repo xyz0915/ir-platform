@@ -367,6 +367,64 @@ DDL_STATEMENTS = [
         created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
     )
     """,
+    # network_connections — 网络连接表（数据采集增强 P1-2）
+    """
+    CREATE TABLE IF NOT EXISTS network_connections (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        host_id         INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+        protocol        TEXT,
+        local_addr      TEXT,
+        local_port      INTEGER,
+        remote_addr     TEXT,
+        remote_port     INTEGER,
+        state           TEXT,
+        pid             INTEGER,
+        process_name    TEXT,
+        collected_at    TEXT
+    )
+    """,
+    # file_hashes — 文件哈希表（数据采集增强 P1-3）
+    """
+    CREATE TABLE IF NOT EXISTS file_hashes (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        host_id         INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+        file_path       TEXT,
+        file_name       TEXT,
+        sha256          TEXT,
+        is_signed       INTEGER DEFAULT 0,
+        signer          TEXT,
+        file_size       INTEGER,
+        product_name    TEXT,
+        product_version TEXT,
+        collected_at    TEXT
+    )
+    """,
+    # wmi_subscriptions — WMI 订阅表（数据采集增强 P1-5）
+    """
+    CREATE TABLE IF NOT EXISTS wmi_subscriptions (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        host_id         INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+        name            TEXT,
+        event_filter    TEXT,
+        event_consumer  TEXT,
+        binding_type    TEXT,
+        risk_level      TEXT,
+        collected_at    TEXT
+    )
+    """,
+    # registry_keys — 注册表键值表（数据采集增强 P1-6）
+    """
+    CREATE TABLE IF NOT EXISTS registry_keys (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        host_id         INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+        key_path        TEXT,
+        value_name      TEXT,
+        value_type      TEXT,
+        value_data      TEXT,
+        last_write_time TEXT,
+        collected_at    TEXT
+    )
+    """,
 ]
 
 

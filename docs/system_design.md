@@ -1,7 +1,6 @@
-# 12 模块独立 AI 分析 — 系统架构设计 + 任务分解
+# SOC 平台「5 项数据采集增强」系统架构设计
 
-> 架构师：高见远（Bob）
-> 日期：2026-07-06
+> 架构师：高见远 | 日期：2026-07-06 | 技术栈：FastAPI + SQLite / Vue3 + Element Plus + Vite
 
 ---
 
@@ -9,402 +8,317 @@
 
 ### 1. 实现方案 + 框架选型
 
-#### 1.1 整体方案
+#### 1.1 核心结论
 
-**核心思路**：在现有 1 套全量分析链路上，通过新增 `mode="module"` + `focus_area="<module_name>"` 参数，在 `PromptBuilder` 层做数据过滤，实现 12 个模块各自只发送专属数据给 AI。
+**不引入任何新框架/新依赖包。** 全部复用现有技术栈：
+- 后端：FastAPI 路由 + SQLite（sqlite3 标准库）+ 现有 `get_connection()` 上下文管理器
+- 前端：Vue3 Composition API + Element Plus 表格组件 + Axios
 
-**不引入任何新框架/库**。所有改造在现有 FastAPI + SQLite + Vue3 + Element Plus + Vite 技术栈内完成。
+#### 1.2 关键设计决策
 
-#### 1.2 核心技术挑战与对策
+| 决策点 | 方案 | 理由 |
+|--------|------|------|
+| 网络连接表 | 新建 `network_connections`，与现有 `suspicious_connections` 独立 | 前者是原始采集数据（全量），后者是分析引擎标记的可疑子集，职责不同 |
+| WMI Filter/Consumer | JSON TEXT 字段存储 | SQLite 无原生 JSON 类型，参照现有 `details` 字段模式，存 `json.dumps()` 序列化字符串 |
+| 注册表值类型 | `value_type` 存字符串（REG_SZ/REG_DWORD/...） | 保留原始类型名，便于分析师直接识别 |
+| 命令行字段 | **无需变更** — `command_line TEXT` 已存在于 DDL 中，前端 `AbnormalProcessTable.vue` 已展示该列 | P1-4 实际已实现，零工作量 |
+| 文件签名 | `is_signed` 存 INTEGER 0/1，`signer` 存签名的证书主体名 | 简单布尔+文本即可满足分析师"判定文件是否合法"的需求 |
 
-| 挑战 | 对策 |
-|------|------|
-| `PromptBuilder._fetch_tiered_data()` 一次性拉取全部 12 类数据 | 新增 `_fetch_module_data()` 方法，按 `MODULE_DATA_MAP` 只拉对应子集 |
-| 全量 system_prompt 模板（71 行通用模板）对单模块分析过于冗长 | 每个模块有专属精简 `system_prompt` 模板，聚焦该模块的研判逻辑 |
-| 不同模块数据量差异大（进程树数据多、USB 记录少） | Token 预算分三档：重型 4000 / 中型 2000 / 轻型 1500 |
-| 全量分析和模块分析可能互相覆盖报告 | `ai_analysis_reports` 新增 `analysis_type` + `module_type` 字段区分 |
-| 前端弹窗标题和数据发送列表是硬编码的 | `AiAnalysisDialog` 接收 `mode`/`focusArea` props，动态渲染 |
+#### 1.3 架构模式
 
-#### 1.3 数据流总览
-
+沿用现有 MVC 分层：
 ```
-用户点击 tab 内 [AI 分析] 按钮
-  → HostDetailView.handleModuleAiAnalyze('connections')
-    → store.startAnalysis(hostId, maskedMode, { mode: 'module', focusArea: 'connections' })
-      → POST /api/ai/analyze/{host_id}?mode=module&focus_area=connections
-        → AiTaskService.submit(host_id, ..., mode='module', focus_area='connections')
-          → AiTaskService._execute_task()
-            → if mode == 'module':
-                PromptBuilder.build_module(host_id, 'connections', masked)
-                  → _fetch_module_data(host_id, 'connections')
-                    → 只拉 suspicious_connections 数据
-                  → _build_module_system_prompt('connections')
-                    → 加载"可疑外连"专属 system_prompt 模板
-                  → _build_module_user_prompt(..., budget=2000)
-            → LLM 流式调用 → 解析 → 保存 AiAnalysisReport(
-                analysis_type='module',
-                module_type='connections'
-              )
-            → SSE 推送 → AiAnalysisDialog 展示
+前端 Vue 组件 → api/analysis.js (Axios) → FastAPI Router → AnalysisService → Model (sqlite3)
 ```
 
 ---
 
-### 2. 文件列表
+### 2. 文件列表及相对路径
 
-| 相对路径 | 改动性质 | 说明 |
-|----------|----------|------|
-| `backend/app/services/prompt_builder.py` | **改** | 新增 `MODULE_DATA_MAP`、`MODULE_SYSTEM_PROMPTS`、`TOKEN_BUDGET_MAP`、`build_module()`、`_fetch_module_data()`、`_build_module_system_prompt()`、`_build_module_user_prompt()` |
-| `backend/app/services/ai_task_service.py` | **改** | `_execute_task()` 约 208-211 行新增 `mode == 'module'` 分支；`AiAnalysisReport.create()` 调用新增 `analysis_type`/`module_type` 参数 |
-| `backend/app/models/ai_analysis.py` | **改** | `create()` 方法签名新增 `analysis_type`/`module_type` 参数；INSERT 语句新增对应列 |
-| `backend/app/database.py` | **改** | `_alter_ai_analysis_reports_table()` 新增 `analysis_type`/`module_type` 两列 |
-| `backend/app/api/ai.py` | **不改** | 已有 `mode`/`focus_area` 解析逻辑（第 318-321 行），无需改动 |
-| `frontend/src/components/AiAnalysisDialog.vue` | **改** | 新增 `mode`/`focusArea` props；`dialogTitle` 动态化；`handleStartAnalysis()` 透传参数；数据发送列表按全量/模块动态展示 |
-| `frontend/src/stores/ai.js` | **改** | `startAnalysis(hostId, maskedMode, options)` 签名扩展，透传 `{mode, focusArea}` 到 API |
-| `frontend/src/views/HostDetailView.vue` | **改** | 12 个 tab-pane 各加工具栏区域 + `type="warning"` AI 分析按钮；新增 `handleModuleAiAnalyze(moduleType)` 方法 |
+| 文件 | 操作 | 说明 |
+|------|------|------|
+| `backend/app/database.py` | **改** | 新增 4 条 DDL_STATEMENTS |
+| `backend/app/models/analysis.py` | **改** | 新增 4 个模型类 + 更新 `clear_analysis_by_host()` |
+| `backend/app/api/analysis.py` | **改** | 新增 4 个 GET 端点 |
+| `backend/app/services/analysis_service.py` | **改** | 新增 4 个委托方法 |
+| `frontend/src/api/analysis.js` | **改** | 新增 4 个 API 函数 |
+| `frontend/src/views/HostDetailView.vue` | **改** | 新增 2 个 Tab + 调整持久化Tab数据联动 |
+| `frontend/src/components/NetworkConnectionTable.vue` | **新增** | 网络连接表格组件 |
+| `frontend/src/components/FileHashTable.vue` | **新增** | 文件哈希表格组件 |
+| `frontend/src/components/WmiDetailPanel.vue` | **新增** | WMI Filter/Consumer JSON 展开面板 |
+| `frontend/src/components/RegistryDetailPanel.vue` | **新增** | 注册表键值展开面板 |
+| `frontend/src/components/PersistenceTable.vue` | **改** | 增加可展开行（WMI/注册表类型） |
 
 ---
 
-### 3. 数据结构和接口
+### 3. 数据模型（简要 DDL）
 
-#### 3.1 MODULE_DATA_MAP（模块名 → PromptBuilder 数据获取方式）
+#### 3.1 新表：`network_connections`（P0-1）
 
-```python
-# 位于 prompt_builder.py 顶部
+```sql
+CREATE TABLE IF NOT EXISTS network_connections (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    host_id         INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+    protocol        TEXT,           -- TCP / UDP
+    local_addr      TEXT,           -- 本地地址
+    local_port      INTEGER,        -- 本地端口
+    remote_addr     TEXT,           -- 远程地址
+    remote_port     INTEGER,        -- 远程端口
+    state           TEXT,           -- LISTEN / ESTABLISHED / CLOSE_WAIT ...
+    pid             INTEGER,        -- 进程 ID
+    process_name    TEXT,           -- 进程名
+    collected_at    TEXT            -- 采集时间
+)
+```
 
-MODULE_DATA_MAP: dict[str, list[str]] = {
-    # 模块名            →  在 _fetch_module_data() 中需要拉取的数据键
-    "profile":           ["host_basic", "analysis_result", "profile"],
-    "process_list":      ["process_list"],           # 需新增进程树拉取
-    "abnormal_processes":["abnormal_processes_all"],  # 不按严重度分层，全量给
-    "connections":       ["suspicious_connections_all"],
-    "persistence":       ["persistence_all"],
-    "startup":           ["startup_items"],           # 需新增启动项拉取
-    "ioc":               ["ioc_hits_all"],
-    "timeline":          ["timeline_all"],
-    "users":             ["users"],                   # 需新增用户账户拉取
-    "services":          ["services"],                # 需新增系统服务拉取
-    "usb":               ["usb_devices"],             # 需新增 USB 记录拉取
-    "remote_control":    ["remote_tools"],            # 需新增远程工具拉取
+#### 3.2 新表：`file_hashes`（P0-2）
+
+```sql
+CREATE TABLE IF NOT EXISTS file_hashes (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    host_id         INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+    file_path       TEXT,           -- 文件完整路径
+    file_name       TEXT,           -- 文件名
+    sha256          TEXT,           -- SHA256 哈希值
+    is_signed       INTEGER DEFAULT 0,  -- 是否签名 (0/1)
+    signer          TEXT,           -- 签名者（证书主体）
+    file_size       INTEGER,        -- 文件大小（字节）
+    product_name    TEXT,           -- 产品名（版本信息）
+    product_version TEXT,           -- 产品版本
+    collected_at    TEXT            -- 采集时间
+)
+```
+
+#### 3.3 新表：`wmi_subscriptions`（P1-3）
+
+```sql
+CREATE TABLE IF NOT EXISTS wmi_subscriptions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    host_id         INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+    name            TEXT,           -- 订阅名称
+    event_filter    TEXT,           -- EventFilter 详情 (JSON 字符串)
+    event_consumer  TEXT,           -- EventConsumer 详情 (JSON 字符串)
+    binding_type    TEXT,           -- 绑定类型 (__FilterToConsumerBinding / ...)
+    risk_level      TEXT,           -- 风险等级 high/medium/low
+    collected_at    TEXT            -- 采集时间
+)
+```
+
+#### 3.4 新表：`registry_keys`（P2-5）
+
+```sql
+CREATE TABLE IF NOT EXISTS registry_keys (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    host_id         INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+    key_path        TEXT,           -- 注册表键路径
+    value_name      TEXT,           -- 值名称
+    value_type      TEXT,           -- 值类型 (REG_SZ / REG_DWORD / REG_BINARY / ...)
+    value_data      TEXT,           -- 值数据（文本表示）
+    last_write_time TEXT,           -- 最后写入时间
+    collected_at    TEXT            -- 采集时间
+)
+```
+
+#### 3.5 已有变更确认：`abnormal_processes.command_line`（P1-4）
+
+**无需变更。** 当前 DDL（`database.py` 行 100–113）已包含 `command_line TEXT`。前端 `AbnormalProcessTable.vue` 行 63 已渲染该列。`AnalysisService.analyze()` 在行 122 已写入 `item.get("command_line")`。
+
+> ⚠️ 假设：采集数据源（Agent JSON）已提供 `command_line` 字段。若未提供，前端列会显示空白——这不属于本需求范围。
+
+---
+
+### 4. API 端点设计
+
+所有端点均需 Bearer Token 认证（`Depends(get_current_user)`），统一响应格式 `{"code": 0, "data": ..., "message": "success"}`。
+
+| 功能 | 方法 | 路径 | 参数 | 说明 |
+|------|------|------|------|------|
+| P0-1 网络连接 | GET | `/api/hosts/{host_id}/network-connections` | `host_id` (path) | 返回全量网络连接列表 |
+| P0-2 文件哈希 | GET | `/api/hosts/{host_id}/file-hashes` | `host_id` (path) | 返回文件哈希及签名信息列表 |
+| P1-3 WMI 订阅 | GET | `/api/hosts/{host_id}/wmi-subscriptions` | `host_id` (path) | 返回 WMI 订阅详情（含 JSON Filter/Consumer） |
+| P2-5 注册表 | GET | `/api/hosts/{host_id}/registry-keys` | `host_id` (path) | 返回注册表键值列表 |
+
+URL 命名遵循现有 kebab-case 规范（参照 `/suspicious-connections`、`/abnormal-processes`）。
+
+**API 响应示例**（以网络连接为例）：
+
+```json
+{
+  "code": 0,
+  "data": [
+    {
+      "id": 1,
+      "host_id": 5,
+      "protocol": "TCP",
+      "local_addr": "192.168.1.100",
+      "local_port": 49152,
+      "remote_addr": "203.0.113.50",
+      "remote_port": 443,
+      "state": "ESTABLISHED",
+      "pid": 2840,
+      "process_name": "chrome.exe",
+      "collected_at": "2026-07-01 10:30:00"
+    }
+  ],
+  "message": "success"
 }
 ```
 
-**注意**：标记"需新增"的 6 个模块（进程树、启动项、用户账户、系统服务、USB 记录、远程工具），当前 `_fetch_tiered_data()` 未拉取这些数据。需在 `_fetch_module_data()` 中按需从对应 DB 表/API 拉取。这 6 个模块均属于**轻型数据**（Token 预算 1500）。
-
-#### 3.2 Token 预算分档
-
-```python
-TOKEN_BUDGET_MAP: dict[str, int] = {
-    # 重型（4000 tokens）— 数据量大、需要深层次分析
-    "process_list":       4000,
-    "abnormal_processes": 4000,
-    "timeline":           4000,
-
-    # 中型（2000 tokens）— 数据量中等
-    "connections":  2000,
-    "persistence":  2000,
-    "ioc":          2000,
-    "startup":      2000,
-    "profile":      2000,
-
-    # 轻型（1500 tokens）— 数据量小
-    "users":         1500,
-    "services":      1500,
-    "usb":           1500,
-    "remote_control":1500,
-}
-```
-
-#### 3.3 数据库变更
-
-在 `_alter_ai_analysis_reports_table()` 中新增两列：
-
-```python
-("analysis_type", "TEXT DEFAULT 'full'"),
-("module_type",   "TEXT"),
-```
-
-- `analysis_type`: `'full'`（全量分析，默认值，兼容旧数据）或 `'module'`（模块分析）
-- `module_type`: 当 `analysis_type='module'` 时记录模块名，如 `'connections'`
-
-**ALTER 兼容性**：沿用现有 PRAGMA table_info 检测模式，保证可重复执行。
-
-#### 3.4 AiAnalysisReport.create() 签名变更
-
-在现有参数列表末尾新增：
-
-```python
-analysis_type: str = "full",
-module_type: Optional[str] = None,
-```
-
-INSERT 语句新增对应列。
-
-#### 3.5 API 不变
-
-`POST /api/ai/analyze/{host_id}?mode=module&focus_area=connections`
-
-现有路由（`ai.py` 第 297 行）已支持解析 `mode` 和 `focus_area` query params，无需新增路由。
+WMI 订阅的 `event_filter` 和 `event_consumer` 字段在返回时需做 `json.loads()` 解析，以 JSON 对象形式返回给前端，便于渲染。
 
 ---
 
-### 4. 程序调用流程（Mermaid 时序图）
+### 5. 程序调用流程（P0-1 网络连接为例）
 
 ```mermaid
 sequenceDiagram
-    actor U as 用户
-    participant HDV as HostDetailView.vue
-    participant Store as ai.js Store
-    participant API as ai.js API
-    participant Route as ai.py Router
-    participant ATS as AiTaskService
-    participant PB as PromptBuilder
+    actor Analyst as 分析师
+    participant Vue as HostDetailView.vue
+    participant Api as api/analysis.js
+    participant Router as FastAPI Router
+    participant Svc as AnalysisService
+    participant Model as NetworkConnection
     participant DB as SQLite
-    participant LLM as AI 模型
-    participant SSE as SSE Stream
-    participant AD as AiAnalysisDialog.vue
 
-    U->>HDV: 点击 tab"可疑外连"内的 [AI 分析] 按钮
-    HDV->>HDV: handleModuleAiAnalyze('connections')
-    HDV->>Store: startAnalysis(hostId, maskedMode, {mode:'module', focusArea:'connections'})
-    Store->>API: aiAnalyze(hostId, {mode:'module', focusArea:'connections', maskedMode})
-    API->>Route: POST /api/ai/analyze/{host_id}?mode=module&focus_area=connections
-    Route->>Route: 解析 query params: mode='module', focus_area='connections'
-    Route->>ATS: submit(host_id, ..., mode='module', focus_area='connections')
-    ATS->>DB: AiTask.create() 创建任务记录
-    ATS->>ATS: asyncio.create_task(_execute_task())
-    ATS-->>Route: 返回 task_id
-
-    Note over ATS,LLM: === 后台异步执行 ===
-
-    ATS->>ATS: _execute_task() 开始
-    ATS->>ATS: 阶段1: progress=10 数据组装
-    alt mode == 'module' && focus_area 非空
-        ATS->>PB: build_module(host_id, 'connections', masked)
-        PB->>PB: _fetch_module_data(host_id, 'connections')
-        Note over PB: 只拉 MODULE_DATA_MAP['connections'] = [suspicious_connections_all]
-        PB->>DB: SuspiciousConnection.list_by_host(host_id)
-        DB-->>PB: 返回可疑外连数据
-        PB->>PB: _build_module_system_prompt('connections')
-        Note over PB: 加载"可疑外连"专属 system_prompt 模板
-        PB->>PB: _build_module_user_prompt(data, budget=2000)
-        PB-->>ATS: {system_prompt, user_prompt}
+    Analyst->>Vue: 点击"网络连接"Tab
+    alt 数据未缓存
+        Vue->>Api: getNetworkConnections(hostId)
+        Api->>Router: GET /api/hosts/{host_id}/network-connections
+        Router->>Router: 验证 JWT Token
+        Router->>Svc: get_network_connections(host_id)
+        Svc->>Model: list_by_host(host_id)
+        Model->>DB: SELECT * FROM network_connections WHERE host_id=?
+        DB-->>Model: list[Row]
+        Model-->>Svc: list[dict]
+        Svc-->>Router: list[dict]
+        Router-->>Api: {"code":0, "data":[...], "message":"success"}
+        Api-->>Vue: data array
     end
-
-    ATS->>ATS: 阶段2: progress=40 LLM 调用
-    ATS->>LLM: 流式调用（system_prompt + user_prompt）
-    LLM-->>ATS: 流式返回 chunks
-    ATS->>SSE: 推送 content chunks
-    SSE-->>AD: 打字机效果展示
-
-    ATS->>ATS: 阶段3: progress=70 解析 JSON
-    ATS->>ATS: 阶段4: progress=80 保存报告
-    ATS->>DB: AiAnalysisReport.create(analysis_type='module', module_type='connections', ...)
-    ATS->>SSE: 推送 complete 事件（含 report）
-    SSE-->>AD: 展示完成报告 + 追问区域
+    Vue->>Vue: networkConnections = data
+    Vue-->>Analyst: NetworkConnectionTable 渲染表格
 ```
 
 ---
 
-### 5. 待明确事项
+### 6. 待明确事项
 
-| # | 事项 | 影响范围 | 建议 |
-|---|------|----------|------|
-| 1 | **进程树数据源**：`_fetch_tiered_data()` 当前不拉取进程树。`process_list` 模块需要从哪个表/API 获取进程树数据？ | `_fetch_module_data('process_list')` | 复用 `analysisApi.getProcessTree(hostId)` 的后端对应数据源，需确认是 DB 表还是 JSON 文件 |
-| 2 | **用户/服务/USB/远程工具数据源**：这 4 个模块当前在 `_fetch_tiered_data()` 中也未拉取。需确认数据存储方式（DB 表？JSON 字段？） | `_fetch_module_data()` 的 4 个轻型模块 | 建议先确认 `analysisApi.getUsers()` / `getServices()` / `getUsb()` / `getRemoteControl()` 的后端实现 |
-| 3 | **模块分析与全量分析的报告展示切换**：`AiAnalysisReport.get_by_host()` 取 `is_latest=1` 的记录，若先做全量再做模块分析，`is_latest` 会被模块分析覆盖，导致全量报告不再通过默认接口返回 | `AiAnalysisReport.get_by_host()` | 建议 `get_by_host()` 增加可选参数 `analysis_type`，或前端报告列表区分全量/模块 |
-| 4 | **模块专属 system_prompt 模板内容**：需要安全分析师提供每个模块的 prompt 模板措辞 | `_build_module_system_prompt()` | 架构师先提供 12 个模板的通用骨架，待安全专家审查 |
+| # | 待明确项 | 当前假设 | 影响 |
+|---|---------|---------|------|
+| A | P1-4 `command_line` 已存在于 DDL，前端已渲染。是否仍需要本需求的任何改动？ | **零工作量**，仅确认现状 | 若确实需要额外改动（如格式化/截断），需补充 PRD |
+| B | 4 张新表的数据来源是什么？Agent 采集 JSON 是否已包含对应字段？ | 假设 Agent JSON 已包含 `network_connections`、`file_hashes`、`wmi_subscriptions`、`registry_keys` 对应字段，分析流程（`AnomalyDetector` 等）负责解析并调用 `batch_create` 写入 | 若 Agent 尚未采集，需额外 Agent 端开发（不在本需求范围） |
+| C | WMI 订阅的 `risk_level` 如何判定？ | 假设分析引擎（`PersistenceFinder` 或 `AnomalyDetector`）已有判定逻辑或规则 | 若需新增判定规则，需在规则文件 (`backend/app/rules/`) 中补充 |
+| D | 文件哈希采集范围是全盘还是指定路径？ | 不做假设，由 Agent 采集端决定；前端仅展示已有数据 | 不影响后端与前端实现 |
+| E | 持久化Tab 中"WMI 行可展开"指的是 persistence_items 表中 `type='wmi'` 的行，还是指完全独立的 WMI Tab？ | 假设为：① 新增 WMI 独立 API；② PersistenceTable 对 `type='wmi'` 的行增加展开按钮，展开后通过 API 查询同 host 的 wmi_subscriptions 详情 | 若实际需要独立的 WMI Tab，前端需多一个 `el-tab-pane` |
 
 ---
 
 ## Part B：任务分解
 
-### 6. 依赖包列表
+### 7. 依赖包列表
 
-**无需新增任何 pip/npm 包**。所有改造在现有依赖内完成。
+**无需新增任何 pip/npm 包。**
 
----
-
-### 7. 任务列表（共 5 个任务，按依赖顺序）
-
-#### T01：数据库迁移 + 模型字段 + 常量定义
-
-- **优先级**：P0
-- **依赖**：无
-- **涉及文件**：
-  - `backend/app/database.py`（改）
-  - `backend/app/models/ai_analysis.py`（改）
-  - `backend/app/services/prompt_builder.py`（改 — 仅新增常量）
-- **任务描述**：
-  1. 在 `database.py` 的 `_alter_ai_analysis_reports_table()` 中新增 `analysis_type TEXT DEFAULT 'full'` 和 `module_type TEXT` 两列（PRAGMA 探测，可重复执行）
-  2. 在 `ai_analysis.py` 的 `create()` 方法签名中新增 `analysis_type: str = "full"` 和 `module_type: Optional[str] = None` 参数，INSERT 语句新增对应列
-  3. 在 `prompt_builder.py` 顶部新增三个常量字典：`MODULE_DATA_MAP`、`TOKEN_BUDGET_MAP`、`MODULE_SYSTEM_PROMPTS`（12 个模块的 prompt 模板骨架）
-
-#### T02：PromptBuilder 模块化改造（build_module + _fetch_module_data + _build_module_system_prompt）
-
-- **优先级**：P0
-- **依赖**：T01
-- **涉及文件**：
-  - `backend/app/services/prompt_builder.py`（改）
-- **任务描述**：
-  1. 实现 `build_module(host_id, module_type, masked)` 静态方法：入口同 `build()`，参数精简（无 `include_knowledge`）
-  2. 实现 `_fetch_module_data(host_id, module_type)`：按 `MODULE_DATA_MAP[module_type]` 只拉取对应数据键，不拉全量
-  3. 实现 `_build_module_system_prompt(module_type)`：从 `MODULE_SYSTEM_PROMPTS` 取专属模板
-  4. 实现 `_build_module_user_prompt(host, module_data, budget, masked)`：按 `TOKEN_BUDGET_MAP[module_type]` 预算组装数据
-  5. 对于 6 个需新增数据源的模块（process_list, startup, users, services, usb, remote_control），在 `_fetch_module_data()` 中实现数据拉取逻辑（从对应 DB 表或现有 API 数据源）
-
-#### T03：AiTaskService._execute_task() 分支 + 报告保存透传
-
-- **优先级**：P0
-- **依赖**：T01, T02
-- **涉及文件**：
-  - `backend/app/services/ai_task_service.py`（改）
-- **任务描述**：
-  1. 在 `_execute_task()` 约 211 行（`PromptBuilder.build()` 调用处），新增 `if mode == "module" and focus_area:` 分支，调用 `PromptBuilder.build_module(host_id, focus_area, masked)` 替代 `build()`
-  2. 在约 370 行 `AiAnalysisReport.create()` 调用处，新增 `analysis_type` 和 `module_type` 参数透传：
-     - 当 `mode == "module"`：`analysis_type="module"`, `module_type=focus_area`
-     - 否则：`analysis_type="full"`, `module_type=None`（兼容旧行为）
-  3. 模块分析场景跳过 knowledge_section 注入（`include_knowledge=False`），避免无关知识干扰
-
-#### T04：前端 AiAnalysisDialog + ai.js Store 参数化改造
-
-- **优先级**：P0
-- **依赖**：T03
-- **涉及文件**：
-  - `frontend/src/components/AiAnalysisDialog.vue`（改）
-  - `frontend/src/stores/ai.js`（改）
-- **任务描述**：
-  1. **AiAnalysisDialog.vue**：
-     - 新增 props：`mode`（默认 `'standard'`）、`focusArea`（默认 `null`）
-     - `dialogTitle` computed：当 `mode === 'module'` 时显示 `AI 分析 — ${MODULE_NAME_MAP[focusArea]}`
-     - `show()` 方法扩展签名：`show(hostId, hostName = '', mode = 'standard', focusArea = null)`
-     - 数据发送列表（`<ul>` 区域）：`mode === 'module'` 时只显示当前模块对应的数据项
-     - `handleStartAnalysis()` 中透传 `mode` 和 `focusArea` 到 store
-  2. **ai.js Store**：
-     - `startAnalysis(hostId, maskedMode, options = {})` 签名扩展，解构 `{ mode, focusArea }`
-     - 透传到 `aiAnalyze(hostId, { maskedMode, profileId, mode, focusArea })`
-
-#### T05：HostDetailView 12 模块 AI 分析按钮
-
-- **优先级**：P0
-- **依赖**：T04
-- **涉及文件**：
-  - `frontend/src/views/HostDetailView.vue`（改）
-- **任务描述**：
-  1. 定义 `MODULE_TAB_MAP`：tab name → module_type 的映射常量
-  2. 在每个 `<el-tab-pane>` 内部顶部添加工具栏区域（`class="tab-toolbar"`），内含：
-     - 当前模块数据统计文本（如"共 5 条可疑外连"）
-     - `<el-button type="warning" @click="handleModuleAiAnalyze('connections')">🤖 AI 分析</el-button>`
-  3. 实现 `handleModuleAiAnalyze(moduleType)` 方法：
-     - 调用 `aiDialogRef.value?.show(Number(hostId), host.value?.hostname || '', 'module', moduleType)`
-  4. 按钮禁用逻辑：与现有全局 AI 分析按钮一致（`aiEnabled` 为 false 且 host status 非 pending）
-  5. 为工具栏区域和按钮添加适当的 CSS 样式（flex-between 布局，按钮右对齐）
+- 后端：`sqlite3`（标准库）、`json`（标准库）、`fastapi`（已有）
+- 前端：`vue`（已有）、`element-plus`（已有）、`axios`（已有）
 
 ---
 
-### 8. 共享知识（跨文件约定）
+### 8. 任务列表
 
-#### 8.1 模块名常量
-
-所有地方使用以下统一模块名（与 tab name 一致）：
-
-```python
-VALID_MODULE_TYPES = [
-    "profile",           # 主机画像
-    "process_list",      # 进程树
-    "abnormal_processes",# 异常进程
-    "connections",       # 可疑外连
-    "persistence",       # 持久化痕迹
-    "startup",           # 可疑启动项
-    "ioc",               # IOC 命中
-    "timeline",          # 时间线
-    "users",             # 用户账户
-    "services",          # 系统服务
-    "usb",               # USB 记录
-    "remote_control",    # 远程工具
-]
-```
-
-#### 8.2 Token 预算分档规则
-
-| 档位 | Token 数 | 适用模块 |
-|------|----------|----------|
-| 重型 | 4000 | process_list, abnormal_processes, timeline |
-| 中型 | 2000 | connections, persistence, ioc, startup, profile |
-| 轻型 | 1500 | users, services, usb, remote_control |
-
-**预算计算**：`module_budget = TOKEN_BUDGET_MAP[module_type]`，其中 system_prompt 固定消耗约 300-500 tokens，剩余为 user_prompt 预算。
-
-#### 8.3 system_prompt 模板结构
-
-每个模块的 system_prompt 遵循统一结构：
-
-```
-你是一个专业的网络安全应急响应分析专家。
-请针对【{模块中文名}】数据进行专项分析。
-
-## 分析要求
-1. {模块专属分析要点1}
-2. {模块专属分析要点2}
-...
-
-## 输出格式
-严格按以下 JSON 格式输出：
-{...精简 JSON Schema，只包含与当前模块相关的字段...}
-```
-
-#### 8.4 前端模块中文名映射
-
-```javascript
-// 位于 HostDetailView.vue 或共享常量文件
-const MODULE_NAME_MAP = {
-  profile: '主机画像',
-  process_list: '进程树',
-  abnormal_processes: '异常进程',
-  connections: '可疑外连',
-  persistence: '持久化痕迹',
-  startup: '可疑启动项',
-  ioc: 'IOC 命中',
-  timeline: '时间线',
-  users: '用户账户',
-  services: '系统服务',
-  usb: 'USB 记录',
-  remote_control: '远程工具',
-}
-```
-
-#### 8.5 模块分析数据发送列表（前端 AiAnalysisDialog 动态展示）
-
-当 `mode === 'module'` 时，确认页只展示单条数据项，如：
-- 可疑外连 → "可疑外连记录（含远程地址、端口、协议、关联进程）"
-
-当 `mode === 'standard'`（全量）时，展示现有全部 5 项列表。
+| 任务 ID | 任务名称 | 源文件 | 依赖 | 优先级 |
+|---------|---------|--------|------|--------|
+| **T01** | 后端全栈：数据库 DDL + 模型 + API + Service | `backend/app/database.py`（改）<br>`backend/app/models/analysis.py`（改）<br>`backend/app/api/analysis.py`（改）<br>`backend/app/services/analysis_service.py`（改） | 无 | P0 |
+| **T02** | 前端数据层 + 网络连接Tab + 文件哈希Tab | `frontend/src/api/analysis.js`（改）<br>`frontend/src/components/NetworkConnectionTable.vue`（新增）<br>`frontend/src/components/FileHashTable.vue`（新增）<br>`frontend/src/views/HostDetailView.vue`（改） | T01 | P0 |
+| **T03** | 持久化Tab 可展开改造：WMI 详情 + 注册表详情 | `frontend/src/components/PersistenceTable.vue`（改）<br>`frontend/src/components/WmiDetailPanel.vue`（新增）<br>`frontend/src/components/RegistryDetailPanel.vue`（新增）<br>`frontend/src/views/HostDetailView.vue`（改） | T01 | P1 |
 
 ---
 
-### 9. 任务依赖图
+#### T01 详情：后端全栈（数据库 DDL + 模型 + API + Service）
+
+**描述**：一次性完成后端所有变更：
+1. 在 `database.py` 的 `DDL_STATEMENTS` 列表末尾追加 4 条 `CREATE TABLE IF NOT EXISTS` 语句（network_connections、file_hashes、wmi_subscriptions、registry_keys）
+2. 在 `models/analysis.py` 中新增 4 个模型类（NetworkConnection、FileHash、WmiSubscription、RegistryKey），每个类含 `batch_create(host_id, items)`、`list_by_host(host_id)`、`delete_by_host(host_id)` 三个静态方法，完全参照现有 `PersistenceItem` 的模式
+3. 更新 `clear_analysis_by_host()` 函数，增加清理这 4 张新表
+4. 在 `api/analysis.py` 中新增 4 个 GET 端点，装饰器 `@router.get("/hosts/{host_id}/xxx")`，鉴权 `Depends(get_current_user)`
+5. 在 `services/analysis_service.py` 中新增 4 个委托方法 `get_network_connections(host_id)` 等，直接调用对应模型的 `list_by_host`
+
+**关键约定**：
+- WMI 的 `event_filter`/`event_consumer` 在 `list_by_host` 返回时需 `json.loads()` 反序列化（参照 `AbnormalProcess.list_by_host` 的 `matched_rules` 处理模式）
+- API 响应统一为 `{"code": 0, "data": list, "message": "success"}`
+- `batch_create` 遵循现有模式：先 `DELETE FROM xxx WHERE host_id=?` 再逐条 `INSERT`
+
+---
+
+#### T02 详情：前端数据层 + 网络连接Tab + 文件哈希Tab
+
+**描述**：实现两个 P0 级别的新 Tab：
+1. 在 `api/analysis.js` 中新增 4 个 API 函数：`getNetworkConnections`、`getFileHashes`、`getWmiSubscriptions`、`getRegistryKeys`（虽然 T03 才用到后两个，但一次性注册完避免文件反复修改）
+2. 创建 `NetworkConnectionTable.vue`：参照 `SuspiciousConnTable.vue` 模式，展示 10 列（协议、本地地址、本地端口、远程地址、远程端口、状态、PID、进程名、采集时间），纯数据展示，不含搜索/筛选
+3. 创建 `FileHashTable.vue`：展示 9 列（文件路径、文件名、SHA256、签名状态、签名者、文件大小、产品名、产品版本、采集时间），SHA256 列用 `show-overflow-tooltip` + 等宽字体；签名状态列用 `el-tag`（绿色"已签名"/红色"未签名"）
+4. 在 `HostDetailView.vue` 中：
+   - 添加两个 `el-tab-pane`："网络连接"（name="network"）、"文件哈希"（name="filehash"）
+   - 在 `<script setup>` 中新增 `networkConnections`、`fileHashes`、`wmiSubscriptions`、`registryKeys` 四个 ref
+   - 在 `loadAllResults()` 中通过 `Promise.all` 并行加载新增数据（容错：单个失败不影响其他）
+   - **P1-4 确认**：`abnormal_processes` 的 `command_line` 列已存在且前端已渲染——无需改动
+
+---
+
+#### T03 详情：持久化Tab 可展开改造（WMI 详情 + 注册表详情）
+
+**描述**：对现有持久化痕迹 Tab 做展开能力增强：
+1. 创建 `WmiDetailPanel.vue`：纯展示组件，接收 `hostId` prop，调用 `getWmiSubscriptions(hostId)` 获取数据，用 `el-table` 展示 WMI 订阅列表（名称、Filter JSON 格式化、Consumer JSON 格式化、绑定类型、风险等级），Filter/Consumer 用 `<pre>` 标签格式化展示 JSON
+2. 创建 `RegistryDetailPanel.vue`：纯展示组件，接收 `hostId` prop，调用 `getRegistryKeys(hostId)` 获取数据，用 `el-table` 展示注册表键值（键路径、值名称、值类型、值数据、最后写入时间）
+3. 修改 `PersistenceTable.vue`：
+   - 在 `<el-table>` 上添加 `row-key="id"`，为 `type === 'wmi'` 和 `type === 'registry'` 的行添加 `el-table-column type="expand"`
+   - 展开行内嵌入 `WmiDetailPanel` 或 `RegistryDetailPanel` 组件（通过 `v-if` + `type` 判断）
+4. 在 `HostDetailView.vue` 的 `loadAllResults()` 中确保 WMI 和注册表数据已通过 T02 的 API 调用加载完毕，传递给 PersistenceTable 或通过组件内自行加载
+
+---
+
+### 9. 共享知识（跨文件约定）
+
+```
+# ── 命名规范 ──
+- 数据库表名：snake_case 小写 + 下划线复数（network_connections, file_hashes, ...）
+- API URL：kebab-case（/network-connections, /file-hashes, /wmi-subscriptions, /registry-keys）
+- Vue 组件名：PascalCase（NetworkConnectionTable, FileHashTable, WmiDetailPanel, RegistryDetailPanel）
+- 前端 ref 变量：camelCase（networkConnections, fileHashes, wmiSubscriptions, registryKeys）
+
+# ── 模型模式 ──
+- 所有模型类位于 backend/app/models/analysis.py，每个类含三个静态方法：
+  - batch_create(host_id, items) → int (返回写入行数)
+  - list_by_host(host_id) → list[dict]
+  - delete_by_host(host_id) → None
+- batch_create 内部先 DELETE 旧数据再 INSERT（"覆盖式导入"模式）
+
+# ── API 响应格式 ──
+- 统一 {"code": 0, "data": ..., "message": "success"}
+- 列表为空时返回 [] 而非 null
+- JSON 字段（WMI event_filter/event_consumer）在 API 层反序列化为对象
+
+# ── 前端组件模式 ──
+- 表格组件接收 data: Array prop
+- 使用 el-table + border + stripe + size="small"
+- show-overflow-tooltip 用于长文本列
+- 使用 <script setup> + defineProps
+
+# ── 数据库连接 ──
+- 使用 get_connection() 上下文管理器
+- PRAGMA foreign_keys = ON 自动开启
+- row_factory = sqlite3.Row
+```
+
+---
+
+### 10. 任务依赖图
 
 ```mermaid
 graph TD
-    T01["T01: DB迁移 + 模型字段 + 常量定义<br/>database.py, ai_analysis.py, prompt_builder.py"]
-    T02["T02: PromptBuilder 模块化改造<br/>prompt_builder.py"]
-    T03["T03: AiTaskService 分支 + 报告保存<br/>ai_task_service.py"]
-    T04["T04: AiAnalysisDialog + Store 改造<br/>AiAnalysisDialog.vue, ai.js"]
-    T05["T05: HostDetailView 12模块按钮<br/>HostDetailView.vue"]
-
+    T01["T01: 后端全栈<br/>database.py + models + API + Service"]
+    T02["T02: 前端数据层 + 网络连接Tab + 文件哈希Tab<br/>api/analysis.js + NetworkConnectionTable + FileHashTable + HostDetailView"]
+    T03["T03: 持久化Tab 可展开改造<br/>PersistenceTable + WmiDetailPanel + RegistryDetailPanel"]
     T01 --> T02
     T01 --> T03
-    T02 --> T03
-    T03 --> T04
-    T04 --> T05
 ```
 
-**依赖说明**：
-- T01 是所有后端改造的前置（常量定义 + 模型字段）
-- T02 和 T03 可部分并行（T03 的 PromptBuilder 调用依赖 T02 的方法签名）
-- T04 依赖 T03 完成（API 链路贯通后才能测试前端交互）
-- T05 依赖 T04（弹窗和 Store 接口稳定后才能接入按钮）
-
----
-
-> **文档结束** — 提交给工程师（Eve）实现。
+> T02 和 T03 均依赖 T01（需要后端 API 就绪），但 T02 与 T03 之间无相互依赖，可并行开发。

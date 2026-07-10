@@ -1,51 +1,25 @@
 sequenceDiagram
-    actor U as 用户
-    participant HDV as HostDetailView.vue
-    participant Store as ai.js Store
-    participant API as ai.js API
-    participant Route as ai.py Router
-    participant ATS as AiTaskService
-    participant PB as PromptBuilder
+    actor Analyst as 分析师
+    participant Vue as HostDetailView.vue
+    participant Api as api/analysis.js
+    participant Router as FastAPI Router
+    participant Svc as AnalysisService
+    participant Model as NetworkConnection
     participant DB as SQLite
-    participant LLM as AI 模型
-    participant SSE as SSE Stream
-    participant AD as AiAnalysisDialog.vue
 
-    U->>HDV: 点击 tab"可疑外连"内的 [AI 分析] 按钮
-    HDV->>HDV: handleModuleAiAnalyze('connections')
-    HDV->>Store: startAnalysis(hostId, maskedMode, {mode:'module', focusArea:'connections'})
-    Store->>API: aiAnalyze(hostId, {mode:'module', focusArea:'connections', maskedMode})
-    API->>Route: POST /api/ai/analyze/{host_id}?mode=module&focus_area=connections
-    Route->>Route: 解析 query params: mode='module', focus_area='connections'
-    Route->>ATS: submit(host_id, ..., mode='module', focus_area='connections')
-    ATS->>DB: AiTask.create() 创建任务记录
-    ATS->>ATS: asyncio.create_task(_execute_task())
-    ATS-->>Route: 返回 task_id
-
-    Note over ATS,LLM: === 后台异步执行 ===
-
-    ATS->>ATS: _execute_task() 开始
-    ATS->>ATS: 阶段1: progress=10 数据组装
-    alt mode == 'module' && focus_area 非空
-        ATS->>PB: build_module(host_id, 'connections', masked)
-        PB->>PB: _fetch_module_data(host_id, 'connections')
-        Note over PB: 只拉 MODULE_DATA_MAP['connections'] = [suspicious_connections_all]
-        PB->>DB: SuspiciousConnection.list_by_host(host_id)
-        DB-->>PB: 返回可疑外连数据
-        PB->>PB: _build_module_system_prompt('connections')
-        Note over PB: 加载"可疑外连"专属 system_prompt 模板
-        PB->>PB: _build_module_user_prompt(data, budget=2000)
-        PB-->>ATS: {system_prompt, user_prompt}
+    Analyst->>Vue: 点击"网络连接"Tab
+    alt 数据未缓存
+        Vue->>Api: getNetworkConnections(hostId)
+        Api->>Router: GET /api/hosts/{host_id}/network-connections
+        Router->>Router: 验证 JWT Token
+        Router->>Svc: get_network_connections(host_id)
+        Svc->>Model: list_by_host(host_id)
+        Model->>DB: SELECT * FROM network_connections WHERE host_id=?
+        DB-->>Model: list[Row]
+        Model-->>Svc: list[dict]
+        Svc-->>Router: list[dict]
+        Router-->>Api: {"code":0, "data":[...], "message":"success"}
+        Api-->>Vue: data array
     end
-
-    ATS->>ATS: 阶段2: progress=40 LLM 调用
-    ATS->>LLM: 流式调用（system_prompt + user_prompt）
-    LLM-->>ATS: 流式返回 chunks
-    ATS->>SSE: 推送 content chunks
-    SSE-->>AD: 打字机效果展示
-
-    ATS->>ATS: 阶段3: progress=70 解析 JSON
-    ATS->>ATS: 阶段4: progress=80 保存报告
-    ATS->>DB: AiAnalysisReport.create(analysis_type='module', module_type='connections', ...)
-    ATS->>SSE: 推送 complete 事件（含 report）
-    SSE-->>AD: 展示完成报告 + 追问区域
+    Vue->>Vue: networkConnections = data
+    Vue-->>Analyst: NetworkConnectionTable 渲染表格

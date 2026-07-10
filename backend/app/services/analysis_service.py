@@ -17,6 +17,7 @@ from app.models.analysis import (
     AnalysisResult, HostProfile, AbnormalProcess, SuspiciousConnection,
     SuspiciousStartupItem, PersistenceItem, TimelineEvent, IocHit,
     clear_analysis_by_host,
+    NetworkConnection, FileHash, WmiSubscription, RegistryKey,
 )
 from app.models.host import Host
 from app.rules.rule_engine import RuleEngine
@@ -309,6 +310,26 @@ class AnalysisService:
     def get_startup_items(host_id: int) -> list:
         """获取可疑启动项列表."""
         return SuspiciousStartupItem.list_by_host(host_id)
+
+    @staticmethod
+    def get_network_connections(host_id: int) -> list:
+        """获取网络连接列表（数据采集增强 P1-2）."""
+        return NetworkConnection.list_by_host(host_id)
+
+    @staticmethod
+    def get_file_hashes(host_id: int) -> list:
+        """获取文件哈希列表（数据采集增强 P1-3）."""
+        return FileHash.list_by_host(host_id)
+
+    @staticmethod
+    def get_wmi_subscriptions(host_id: int) -> list:
+        """获取 WMI 订阅列表（数据采集增强 P1-5）."""
+        return WmiSubscription.list_by_host(host_id)
+
+    @staticmethod
+    def get_registry_keys(host_id: int) -> list:
+        """获取注册表键值列表（数据采集增强 P1-6）."""
+        return RegistryKey.list_by_host(host_id)
 
     @staticmethod
     def get_process_tree(host_id: int) -> dict:

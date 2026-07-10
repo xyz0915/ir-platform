@@ -1,95 +1,87 @@
 classDiagram
-    class PromptBuilder {
-        &lt;&lt;static&gt;&gt;
-        +build(host_id, masked, include_knowledge) dict
-        +build_module(host_id, module_type, masked) dict
-        -_fetch_tiered_data(host_id) dict
-        -_fetch_module_data(host_id, module_type) dict
-        -_build_user_prompt(host, tiered_data, budget, masked) str
-        -_build_module_user_prompt(host, module_data, budget, masked) str
-        -_build_module_system_prompt(module_type) str
-        -_build_knowledge_section(host_id, host, tiered_data) str
-        -_build_actual_matches(tiered_data) str
-        -_build_case_context(host_id, tiered_data) str
-        -_count_tokens(text) int
+    class NetworkConnection {
+        +int id
+        +int host_id
+        +str protocol
+        +str local_addr
+        +int local_port
+        +str remote_addr
+        +int remote_port
+        +str state
+        +int pid
+        +str process_name
+        +str collected_at
+        +batch_create(host_id, items) int$
+        +list_by_host(host_id) list$
+        +delete_by_host(host_id)$
     }
 
-    class AiTaskService {
-        &lt;&lt;static&gt;&gt;
-        +submit(host_id, profile_id, masked_mode, mode, focus_area, base_report_id) dict
-        -_execute_task(task_id) None
-        +get_status(task_id) dict
-        +stream_events(task_id) AsyncGenerator
-        +cancel(task_id) dict
-        +cleanup_task(task_id) None
-        -_fail_task(task_id, error_message, status) None
-        -_push_event(task_id_str, event_type, data) None
-        -_parse_json_response(content) dict
-        -_map_http_error(e) str
-        _task_streams dict
-        _cancel_flags dict
+    class FileHash {
+        +int id
+        +int host_id
+        +str file_path
+        +str file_name
+        +str sha256
+        +int is_signed
+        +str signer
+        +int file_size
+        +str product_name
+        +str product_version
+        +str collected_at
+        +batch_create(host_id, items) int$
+        +list_by_host(host_id) list$
+        +delete_by_host(host_id)$
     }
 
-    class AiAnalysisReport {
-        &lt;&lt;static&gt;&gt;
-        +create(host_id, case_id, risk_assessment, threat_analysis, timeline_analysis, recommendations, raw_response, model_used, tokens_used, profile_id, masked_mode, prompt_tokens, completion_tokens, conversation_id, data_hash, cached_at, input_quality, coverage_gaps, explainability, deep_dive, analysis_type, module_type) dict
-        +get_by_id(report_id) dict
-        +get_by_host(host_id) dict
-        +list_versions(host_id) list
-        +get_by_version(host_id, version) dict
-        +delete_by_host(host_id) None
-        +export_for_pdf(report_id) dict
-        +get_cached_report(host_id, data_hash) dict
-        +get_completed_by_case(case_id, exclude_host_id, limit) list
-        +get_by_risk_level(risk_level, exclude_host_id, limit) list
+    class WmiSubscription {
+        +int id
+        +int host_id
+        +str name
+        +str event_filter
+        +str event_consumer
+        +str binding_type
+        +str risk_level
+        +str collected_at
+        +batch_create(host_id, items) int$
+        +list_by_host(host_id) list$
+        +delete_by_host(host_id)$
     }
 
-    class MODULE_DATA_MAP {
-        &lt;&lt;constant dict&gt;&gt;
-        profile: [host_basic, analysis_result, profile]
-        process_list: [process_list]
-        abnormal_processes: [abnormal_processes_all]
-        connections: [suspicious_connections_all]
-        persistence: [persistence_all]
-        startup: [startup_items]
-        ioc: [ioc_hits_all]
-        timeline: [timeline_all]
-        users: [users]
-        services: [services]
-        usb: [usb_devices]
-        remote_control: [remote_tools]
+    class RegistryKey {
+        +int id
+        +int host_id
+        +str key_path
+        +str value_name
+        +str value_type
+        +str value_data
+        +str last_write_time
+        +str collected_at
+        +batch_create(host_id, items) int$
+        +list_by_host(host_id) list$
+        +delete_by_host(host_id)$
     }
 
-    class TOKEN_BUDGET_MAP {
-        &lt;&lt;constant dict&gt;&gt;
-        process_list: 4000 (重型)
-        abnormal_processes: 4000 (重型)
-        timeline: 4000 (重型)
-        connections: 2000 (中型)
-        persistence: 2000 (中型)
-        ioc: 2000 (中型)
-        startup: 2000 (中型)
-        profile: 2000 (中型)
-        users: 1500 (轻型)
-        services: 1500 (轻型)
-        usb: 1500 (轻型)
-        remote_control: 1500 (轻型)
+    class AnalysisService {
+        +get_network_connections(host_id) list$
+        +get_file_hashes(host_id) list$
+        +get_wmi_subscriptions(host_id) list$
+        +get_registry_keys(host_id) list$
     }
 
-    class MODULE_SYSTEM_PROMPTS {
-        &lt;&lt;constant dict&gt;&gt;
-        12个模块专属 system_prompt 模板
+    class FastAPIRouter {
+        +GET /hosts/{host_id}/network-connections
+        +GET /hosts/{host_id}/file-hashes
+        +GET /hosts/{host_id}/wmi-subscriptions
+        +GET /hosts/{host_id}/registry-keys
     }
 
-    class ai_analysis_reports_Table {
-        &lt;&lt;SQLite Table&gt;&gt;
-        +analysis_type TEXT DEFAULT 'full'
-        +module_type TEXT
-    }
+    FastAPIRouter --> AnalysisService : 调用
+    AnalysisService --> NetworkConnection : list_by_host()
+    AnalysisService --> FileHash : list_by_host()
+    AnalysisService --> WmiSubscription : list_by_host()
+    AnalysisService --> RegistryKey : list_by_host()
 
-    PromptBuilder ..> MODULE_DATA_MAP : 数据过滤依据
-    PromptBuilder ..> TOKEN_BUDGET_MAP : Token 预算控制
-    PromptBuilder ..> MODULE_SYSTEM_PROMPTS : 专属提示词模板
-    AiTaskService --> PromptBuilder : 调用 build() / build_module()
-    AiTaskService --> AiAnalysisReport : 创建报告
-    AiAnalysisReport ..> ai_analysis_reports_Table : 写入 analysis_type / module_type
+    NetworkConnection --> "hosts" : host_id FK
+    FileHash --> "hosts" : host_id FK
+    WmiSubscription --> "hosts" : host_id FK
+    RegistryKey --> "hosts" : host_id FK

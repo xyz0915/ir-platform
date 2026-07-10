@@ -122,6 +122,18 @@
           </div>
           <SuspiciousConnTable :data="suspiciousConnections" />
         </el-tab-pane>
+        <el-tab-pane label="网络连接" name="network">
+          <div class="tab-toolbar">
+            <span class="tab-hint">共 {{ networkConnections.length }} 条网络连接</span>
+          </div>
+          <NetworkConnectionTable :data="networkConnections" />
+        </el-tab-pane>
+        <el-tab-pane label="文件哈希" name="filehash">
+          <div class="tab-toolbar">
+            <span class="tab-hint">共 {{ fileHashes.length }} 条文件哈希</span>
+          </div>
+          <FileHashTable :data="fileHashes" />
+        </el-tab-pane>
         <el-tab-pane label="持久化痕迹" name="persistence">
           <div class="tab-toolbar">
             <span class="tab-hint">共 {{ persistenceItems.length }} 条持久化痕迹</span>
@@ -133,7 +145,7 @@
               🤖 AI 分析
             </el-button>
           </div>
-          <PersistenceTable :data="persistenceItems" />
+          <PersistenceTable :data="persistenceItems" :host-id="Number(hostId)" />
         </el-tab-pane>
         <el-tab-pane label="可疑启动项" name="startup">
           <div class="tab-toolbar">
@@ -252,6 +264,8 @@ import RiskBadge from '@/components/RiskBadge.vue'
 import ProfileCard from '@/components/ProfileCard.vue'
 import AbnormalProcessTable from '@/components/AbnormalProcessTable.vue'
 import SuspiciousConnTable from '@/components/SuspiciousConnTable.vue'
+import NetworkConnectionTable from '@/components/NetworkConnectionTable.vue'
+import FileHashTable from '@/components/FileHashTable.vue'
 import PersistenceTable from '@/components/PersistenceTable.vue'
 import SuspiciousStartupTable from '@/components/SuspiciousStartupTable.vue'
 import IocTable from '@/components/IocTable.vue'
@@ -289,6 +303,10 @@ const users = ref([])
 const services = ref([])
 const usb = ref([])
 const remoteControl = ref([])
+const networkConnections = ref([])
+const fileHashes = ref([])
+const wmiSubscriptions = ref([])
+const registryKeys = ref([])
 
 // 新增：进程树相关数据
 const processTree = ref({})
@@ -330,6 +348,8 @@ const TAB_DATA_LABEL = {
   services: '个系统服务',
   usb: '条USB记录',
   remote_control: '条远程工具记录',
+  network: '条网络连接',
+  filehash: '条文件哈希',
 }
 
 const alertType = computed(() => {
@@ -421,6 +441,14 @@ async function loadAllResults() {
   try { services.value = (await analysisApi.getServices(hostId)).data } catch (e) { services.value = [] }
   try { usb.value = (await analysisApi.getUsb(hostId)).data } catch (e) { usb.value = [] }
   try { remoteControl.value = (await analysisApi.getRemoteControl(hostId)).data } catch (e) { remoteControl.value = [] }
+
+  // Phase 4: New data collection tabs (P1-2, P1-3, P1-5, P1-6)
+  await Promise.allSettled([
+    analysisApi.getNetworkConnections(hostId).then(r => { networkConnections.value = r.data || [] }).catch(() => { networkConnections.value = [] }),
+    analysisApi.getFileHashes(hostId).then(r => { fileHashes.value = r.data || [] }).catch(() => { fileHashes.value = [] }),
+    analysisApi.getWmiSubscriptions(hostId).then(r => { wmiSubscriptions.value = r.data || [] }).catch(() => { wmiSubscriptions.value = [] }),
+    analysisApi.getRegistryKeys(hostId).then(r => { registryKeys.value = r.data || [] }).catch(() => { registryKeys.value = [] }),
+  ])
 }
 
 async function handleAnalyze() {
@@ -509,6 +537,8 @@ function getTabDataCount(tabName) {
     services: services.value?.length,
     usb: usb.value?.length,
     remote_control: remoteControl.value?.length,
+    network: networkConnections.value?.length,
+    filehash: fileHashes.value?.length,
   }
   return map[tabName] ?? null
 }

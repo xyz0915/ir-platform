@@ -168,3 +168,31 @@ def get_remote_control(host_id: int, current_user: dict = Depends(get_current_us
     """获取远程工具记录."""
     raw_data = ImportService.read_raw_json(host_id)
     return {"code": 0, "data": raw_data.get("remote_control", []) if raw_data else [], "message": "success"}
+
+
+@router.get("/hosts/{host_id}/network-connections")
+def get_network_connections(host_id: int, current_user: dict = Depends(get_current_user)):
+    """获取网络连接列表（数据采集增强 P1-2）."""
+    result = AnalysisService.get_network_connections(host_id)
+    return {"code": 0, "data": result, "message": "success"}
+
+
+@router.get("/hosts/{host_id}/file-hashes")
+def get_file_hashes(host_id: int, current_user: dict = Depends(get_current_user)):
+    """获取文件哈希列表（数据采集增强 P1-3）."""
+    result = AnalysisService.get_file_hashes(host_id)
+    return {"code": 0, "data": result, "message": "success"}
+
+
+@router.get("/hosts/{host_id}/wmi-subscriptions")
+def get_wmi_subscriptions(host_id: int, current_user: dict = Depends(get_current_user)):
+    """获取 WMI 订阅列表（数据采集增强 P1-5）."""
+    result = AnalysisService.get_wmi_subscriptions(host_id)
+    return {"code": 0, "data": result, "message": "success"}
+
+
+@router.get("/hosts/{host_id}/registry-keys")
+def get_registry_keys(host_id: int, current_user: dict = Depends(get_current_user)):
+    """获取注册表键值列表（数据采集增强 P1-6）."""
+    result = AnalysisService.get_registry_keys(host_id)
+    return {"code": 0, "data": result, "message": "success"}
