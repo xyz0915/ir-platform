@@ -71,6 +71,16 @@
           />
         </el-tab-pane>
         <el-tab-pane label="可疑外连" name="connections">
+          <div class="flex-between mb-10">
+            <span class="tab-hint">共 {{ suspiciousConnections.length }} 条可疑外连</span>
+            <el-button
+              type="primary"
+              :loading="enriching"
+              @click="handleEnrichConns"
+            >
+              一键威胁情报检测
+            </el-button>
+          </div>
           <SuspiciousConnTable :data="suspiciousConnections" />
         </el-tab-pane>
         <el-tab-pane label="持久化痕迹" name="persistence">
@@ -147,6 +157,7 @@ const analysis = ref(null)
 const profile = ref(null)
 const loading = ref(false)
 const analyzing = ref(false)
+const enriching = ref(false)
 const activeTab = ref('profile')
 
 const abnormalProcesses = ref([])
@@ -277,6 +288,38 @@ async function handleAnalyze() {
     // handled
   } finally {
     analyzing.value = false
+  }
+}
+
+async function reloadConnections() {
+  try {
+    const res = await analysisApi.getSuspiciousConnections(hostId)
+    suspiciousConnections.value = res.data || []
+  } catch (error) {
+    // handled by axios interceptor
+  }
+}
+
+async function handleEnrichConns() {
+  enriching.value = true
+  try {
+    const res = await analysisApi.enrichSuspiciousConnections(hostId)
+    const s = res.data || {}
+    const parts = [`检测公网 IP ${s.public || 0} 个`]
+    if (s.malicious) parts.push(`恶意 ${s.malicious}`)
+    if (s.suspicious) parts.push(`可疑 ${s.suspicious}`)
+    if (s.skipped_private) parts.push(`私网跳过 ${s.skipped_private}`)
+    if (s.errors && s.errors.length) parts.push(`失败 ${s.errors.length}`)
+    ElMessage.success('威胁情报检测完成：' + parts.join('，'))
+    // 刷新列表以展示最新威胁情报标签
+    await reloadConnections()
+    if (activeTab.value !== 'connections') {
+      activeTab.value = 'connections'
+    }
+  } catch (error) {
+    // handled by axios interceptor
+  } finally {
+    enriching.value = false
   }
 }
 

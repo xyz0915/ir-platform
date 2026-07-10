@@ -578,6 +578,36 @@ def _alter_abnormal_processes_table(conn: sqlite3.Connection) -> None:
             logger.info("Added column '%s' to abnormal_processes table", col_name)
 
 
+def _alter_suspicious_connections_table(conn: sqlite3.Connection) -> None:
+    """检测并添加 suspicious_connections 表的新增威胁情报列（一键检测增强）.
+
+    新增列:
+      - threat_level  TEXT      # 派生威胁等级 high/medium/low/None
+      - threat_score   INTEGER   # 风险评分 0-100
+      - threat_tags    TEXT      # JSON 字符串数组
+      - enriched_at    TIMESTAMP # 最近一次 enrichment 时间
+
+    使用 PRAGMA table_info 检测列是否已存在，不存在才 ALTER ADD COLUMN，
+    保证旧行不被破坏、可重复执行（兼容已存在的库）。
+    """
+    cursor = conn.execute("PRAGMA table_info(suspicious_connections)")
+    existing_columns: set[str] = {row["name"] for row in cursor.fetchall()}
+
+    new_columns: list[tuple[str, str]] = [
+        ("threat_level", "TEXT"),
+        ("threat_score", "INTEGER"),
+        ("threat_tags", "TEXT"),
+        ("enriched_at", "TIMESTAMP"),
+    ]
+
+    for col_name, col_type in new_columns:
+        if col_name not in existing_columns:
+            conn.execute(
+                f"ALTER TABLE suspicious_connections ADD COLUMN {col_name} {col_type}"
+            )
+            logger.info("Added column '%s' to suspicious_connections table", col_name)
+
+
 def _alter_ai_analysis_reports_table(conn: sqlite3.Connection) -> None:
     """检测并添加 ai_analysis_reports 表的新增列."""
     cursor = conn.execute("PRAGMA table_info(ai_analysis_reports)")
@@ -784,6 +814,7 @@ def init_db() -> None:
         _alter_rules_table(conn)
         _import_default_rules(conn)
         _alter_abnormal_processes_table(conn)
+        _alter_suspicious_connections_table(conn)
         _import_default_whitelist(conn)
         _import_default_iocs(conn)
         conn.commit()

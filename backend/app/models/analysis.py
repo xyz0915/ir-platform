@@ -210,6 +210,45 @@ class SuspiciousConnection:
             return [dict(r) for r in rows]
 
     @staticmethod
+    def update_threat_info(rows: list) -> int:
+        """批量回写威胁情报字段（按 id 匹配）.
+
+        用于「一键威胁情报检测」将 enrichment 结果写回可疑外连行。
+
+        Args:
+            rows: 列表，每项字典含字段:
+                id            — 可疑外连行主键
+                threat_level  — 派生威胁等级 high/medium/low/None
+                threat_score  — 风险评分 0-100
+                threat_tags   — JSON 字符串（标签数组）
+                enriched_at   — 检测时间（TEXT）
+
+        Returns:
+            成功更新的行数。
+        """
+        if not rows:
+            return 0
+        with get_connection() as conn:
+            count = 0
+            for row in rows:
+                conn.execute(
+                    """
+                    UPDATE suspicious_connections
+                    SET threat_level = ?, threat_score = ?, threat_tags = ?, enriched_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        row.get("threat_level"),
+                        int(row.get("threat_score") or 0),
+                        row.get("threat_tags"),
+                        row.get("enriched_at"),
+                        row.get("id"),
+                    ),
+                )
+                count += 1
+            return count
+
+    @staticmethod
     def delete_by_host(host_id: int) -> None:
         """删除主机的所有可疑外连记录."""
         with get_connection() as conn:

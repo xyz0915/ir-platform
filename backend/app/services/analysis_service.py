@@ -1,7 +1,9 @@
 """分析编排服务 — 协调各分析模块完成完整分析流程."""
 
+import ipaddress
 import json
 import logging
+from datetime import datetime
 from typing import Any, Optional
 
 from app.analysis.profile_builder import ProfileBuilder
@@ -20,6 +22,12 @@ from app.models.host import Host
 from app.rules.rule_engine import RuleEngine
 from app.services.import_service import ImportService
 from app.services.whitelist_service import WhitelistService
+from app.services.enrichment_service import (
+    get_enrichment_service,
+    ThreatIntelQueryError,
+    QuotaExceededError,
+    UnsupportedIocTypeError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +182,123 @@ class AnalysisService:
     def get_suspicious_connections(host_id: int) -> list:
         """获取可疑外连列表."""
         return SuspiciousConnection.list_by_host(host_id)
+    @staticmethod
+    def enrich_suspicious_connections(host_id: int) -> dict:
+        """对主机所有可疑外连的公网 IP 做一键威胁情报检测.
+
+        流程:
+          1. 读取该主机全部 ``suspicious_connections`` 行；
+          2. 提取 ``remote_address``，用 ``ipaddress`` 校验并过滤私网
+             （private/loopback/link-local/multicast/reserved/unspecified），按 IP 去重；
+          3. 逐个公网 IP 调 ``EnrichmentService.enrich_ioc(None, "ip", ip)``
+             复用既有 provider 落库 ``threat_intel``（保留全历史）；
+          4. 将 ``NormalizedIntel`` 的 ``threat_level/risk_score/tags`` 映射写回
+             对应 ``suspicious_connections`` 行（按 ``remote_address`` 匹配）；
+          5. 返回统计 dict。
+
+        Args:
+            host_id: 主机 ID.
+
+        Returns:
+            统计 dict::
+
+                {
+                    "total": int,            # 可疑外连总行数
+                    "public": int,           # 去重后的公网 IP 数（实际检测数）
+                    "enriched": int,         # 成功 enrichment 的 IP 数
+                    "malicious": int,        # 命中 high（恶意）的 IP 数
+                    "suspicious": int,       # 命中 medium（可疑）的 IP 数
+                    "skipped_private": int,  # 私网/保留地址被跳过的 IP 数
+                    "errors": List[dict],     # 失败 IP 列表 [{"ip", "error"}]
+                }
+        """
+        connections = SuspiciousConnection.list_by_host(host_id)
+        total = len(connections)
+
+        # 1) 提取公网 IP、过滤私网、按 IP 去重
+        public_ips: dict = {}            # ip(str) -> 出现次数（用于计数）
+        skipped_private = 0
+        for conn in connections:
+            remote = (conn.get("remote_address") or "").strip()
+            if not remote:
+                continue
+            try:
+                ip_obj = ipaddress.ip_address(remote)
+            except ValueError:
+                # 非 IP（如域名、空串）跳过
+                continue
+            if (
+                ip_obj.is_private
+                or ip_obj.is_loopback
+                or ip_obj.is_link_local
+                or ip_obj.is_multicast
+                or ip_obj.is_reserved
+                or ip_obj.is_unspecified
+            ):
+                skipped_private += 1
+                continue
+            public_ips[remote] = public_ips.get(remote, 0) + 1
+
+        public = len(public_ips)
+        enriched = 0
+        malicious = 0
+        suspicious = 0
+        errors: list = []
+
+        # 2) 逐个公网 IP 调用 EnrichmentService（复用 provider 与 threat_intel 落库）
+        svc = get_enrichment_service()
+        ip_results: dict = {}        # ip -> {threat_level, threat_score, threat_tags}
+        for ip in public_ips:
+            try:
+                record = svc.enrich_ioc(None, "ip", ip)
+            except (ThreatIntelQueryError, QuotaExceededError, UnsupportedIocTypeError) as exc:
+                errors.append({"ip": ip, "error": str(exc)})
+                continue
+            except Exception as exc:  # noqa: BLE001 — 单条失败不影响整体
+                errors.append({"ip": ip, "error": f"查询异常: {exc}"})
+                continue
+
+            threat_level = record.get("threat_level")
+            risk_score = int(record.get("risk_score") or 0)
+            tags = record.get("tags") or []
+            ip_results[ip] = {
+                "threat_level": threat_level,
+                "threat_score": risk_score,
+                "threat_tags": json.dumps(tags, ensure_ascii=False),
+            }
+            enriched += 1
+            if threat_level == "high":
+                malicious += 1
+            elif threat_level == "medium":
+                suspicious += 1
+
+        # 3) 写回 suspicious_connections（按 remote_address 匹配所有行）
+        enriched_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        update_rows: list = []
+        for conn in connections:
+            remote = (conn.get("remote_address") or "").strip()
+            res = ip_results.get(remote)
+            if res is None:
+                continue
+            update_rows.append({
+                "id": conn["id"],
+                "threat_level": res["threat_level"],
+                "threat_score": res["threat_score"],
+                "threat_tags": res["threat_tags"],
+                "enriched_at": enriched_at,
+            })
+        if update_rows:
+            SuspiciousConnection.update_threat_info(update_rows)
+
+        return {
+            "total": total,
+            "public": public,
+            "enriched": enriched,
+            "malicious": malicious,
+            "suspicious": suspicious,
+            "skipped_private": skipped_private,
+            "errors": errors,
+        }
 
     @staticmethod
     def get_abnormal_processes(host_id: int) -> list:

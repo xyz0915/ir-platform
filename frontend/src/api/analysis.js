@@ -22,6 +22,9 @@ export default {
   getSuspiciousConnections(hostId) {
     return request.get(`/hosts/${hostId}/suspicious-connections`)
   },
+  enrichSuspiciousConnections(hostId) {
+    return request.post(`/hosts/${hostId}/suspicious-connections/enrich`)
+  },
   getAbnormalProcesses(hostId) {
     return request.get(`/hosts/${hostId}/abnormal-processes`)
   },
