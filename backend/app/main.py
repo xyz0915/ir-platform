@@ -6,6 +6,12 @@
 import logging
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# 即使直接用 `uvicorn app.main:app` 启动也加载 backend/.env（app/main.py 在 backend/app，
+# parent.parent 即 backend 根）。override=False：终端环境变量优先，.env 作兜底。
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")  # backend/.env
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles

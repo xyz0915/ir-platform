@@ -29,6 +29,11 @@ from pathlib import Path
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_ROOT))
 
+# 即使不在带 THREATBOOK_KEY 的终端里运行，也从 backend/.env 兜底加载（override=False）。
+from dotenv import load_dotenv
+
+load_dotenv(BACKEND_ROOT / ".env")  # backend/.env
+
 from app.services.enrichment_service import (  # noqa: E402
     create_provider,
     ThreatIntelQueryError,
