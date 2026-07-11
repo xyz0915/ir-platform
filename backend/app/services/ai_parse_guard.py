@@ -578,6 +578,19 @@ def normalize_and_guard(
 
     # ── 缺口即动作 ──
     data_gaps = _merge_data_gaps(risk)
+    # v1.3.2: 平台 InputQualityService 不产出 data_gaps 键，
+    # 如果 risk 中仍存在 data_gaps，说明 AI 产出了缺口（旧 prompt 缓存或模型惯性），
+    # 追加一致性纠正说明。
+    ai_data_gaps = _as_list(risk.get("data_gaps"))
+    if ai_data_gaps:
+        corrections.append({
+            "rule": "R2-1-CONSISTENCY",
+            "field": "risk_assessment.data_gaps",
+            "action": "note",
+            "detail": "data_gaps 应由平台侧 input_quality_service 生成，AI 产生的缺口仅供参考",
+        })
+    # 合并平台侧 InputQualityService.evaluate() 产出的缺口
+    # （coverage_gaps / miss_risk / evidence_insufficiency 已由 _merge_data_gaps 合并）
     merged_actions: list[dict] = []
     for gap in data_gaps:
         gap["recommended_actions"] = _normalize_recommended_actions(gap)

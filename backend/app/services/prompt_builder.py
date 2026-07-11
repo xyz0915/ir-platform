@@ -111,34 +111,15 @@ TOKEN_BUDGET_MAP: dict[str, int] = {
 }
 
 # 模块分析 risk_assessment 附加的质量相关字段（追加到 threat_type 之后）
+# v1.3.2: coverage_gaps / miss_risk / evidence_insufficiency 已由平台 InputQualityService 自动生成，
+# 不再要求 AI 输出这些字段，避免 AI 反复报告缺失数据。
 _MODULE_RISK_QUALITY_FIELDS = """,
     "input_quality": {
       "score": 0,
       "level": "high/medium/low",
       "summary": "基于本模块数据量/覆盖度的质量评估说明",
       "evidence_counts": {}
-    },
-    "coverage_gaps": [
-      {
-        "category": "数据维度名（如 startup_items）",
-        "title": "缺失/不足的数据类型",
-        "severity": "high/medium/low",
-        "description": "该缺失对分析的具体影响",
-        "suggestion": "补充该数据的建议"
-      }
-    ],
-    "miss_risk": {
-      "level": "high/medium/low",
-      "summary": "基于当前有限数据的漏检风险概述",
-      "likely_blind_spots": ["可能遗漏的威胁视角"]
-    },
-    "evidence_insufficiency": [
-      {
-        "field": "字段名",
-        "label": "中文标签",
-        "reason": "证据不足以支撑结论的原因"
-      }
-    ],
+    }
 """
 MODULE_SYSTEM_PROMPTS: dict[str, str] = {
     "profile": """你是一个专业的网络安全应急响应分析专家。
@@ -209,9 +190,8 @@ MODULE_SYSTEM_PROMPTS: dict[str, str] = {
 
 【数据使用原则】
 - 你收到的 network_connections_all 就是当前可用的完整网络连接数据
-- 如果数据中存在连接记录，必须逐条分析后给出结论：「已检查 X 条连接，未发现与恶意 IP [列举] 的连接」
-- 仅在 network_connections_all 为空（没有任何连接记录）时，才在 data_gaps 中报告「缺失网络连接数据」
-- 禁止在有数据的情况下报告「无法确认是否曾连接」——你已经有数据了，做判断
+- 基于现有数据直接做出威胁研判，不要报告数据缺失
+- 数据完整性评估由平台自动完成
 
 ## 分析要求
 1. 分析每个外连的目标地址是否可疑（C2、矿池、恶意域名）
@@ -234,15 +214,10 @@ MODULE_SYSTEM_PROMPTS: dict[str, str] = {
     "persistence": """你是一个专业的网络安全应急响应分析专家。
 请针对【持久化痕迹】数据进行专项分析。
 
-## 重要说明
-你将收到两类数据：**persistence_all**（注册表 Run 键、计划任务、服务、启动文件夹等持久化项）和 **wmi_subscriptions_all**（WMI 事件订阅详情，含 event_filter / event_consumer）。
-- 请基于这些数据直接研判，**不要**报告「缺少 WMI 事件订阅详情」如果 wmi_subscriptions_all 中已有数据——这就是当前可获取的全部 WMI 订阅信息。
-- 如果 wmi_subscriptions_all 为空，说明该主机未采集到 WMI 订阅数据，可在 coverage_gaps 中如实说明。
-
 【数据使用原则】
 - 你收到的 wmi_subscriptions_all 包含 event_filter/event_consumer 字段
-- 如果 consumer 的 CommandLineTemplate 为空 → 判定为系统默认（如 SCM），标注「WMI 订阅为系统 SCM（Consumer 无执行命令），判定良性」
-- 仅在完全没有 WMI 数据时才报告缺失
+- 基于现有数据直接做出威胁研判，不要报告数据缺失
+- 数据完整性评估由平台自动完成
 
 ## 分析要求
 1. 检查注册表 Run 键、启动文件夹、计划任务、WMI 事件订阅等持久化项
@@ -268,8 +243,8 @@ MODULE_SYSTEM_PROMPTS: dict[str, str] = {
 
 【数据使用原则】
 - 你收到的 startup_items 就是当前可用的启动项数据
-- 基于已有的命令行信息做研判，不要因为"缺触发器/执行账户"就报缺失
-- 仅在启动项数据完全为空时才报告「启动项采集缺失」
+- 基于现有数据直接做出威胁研判，不要报告数据缺失
+- 数据完整性评估由平台自动完成
 
 ## 分析要求
 1. 分析每个启动项的可疑程度
@@ -433,18 +408,6 @@ SYSTEM_PROMPT_TEMPLATE: str = """你是一个专业的网络安全应急响应�
     "score_breakdown": [
       {"signal": "malicious_behavior", "contribution": 30, "evidence": "佐证", "historical_known": false}
     ],
-    "data_gaps": [
-      {
-        "category": "startup_items",
-        "title": "启动项采集不足",
-        "severity": "medium",
-        "description": "说明",
-        "suggestion": "补充建议",
-        "recommended_actions": [
-          {"action_type": "autostart_extract", "target": "HKLM\\...", "command_or_api": "powershell -c 'Get-CimInstance Win32_StartupCommand'", "priority": "P1", "rationale": "补全自启证据", "auto_runnable": true}
-        ]
-      }
-    ],
     "escalation_conditions": [
       {"condition": "检测到无文件 PowerShell", "if_true": "升至高危", "target_level": "高"}
     ],
@@ -454,28 +417,7 @@ SYSTEM_PROMPT_TEMPLATE: str = """你是一个专业的网络安全应急响应�
       "level": "high/medium/low",
       "summary": "输入质量总结",
       "evidence_counts": {}
-    },
-    "coverage_gaps": [
-      {
-        "category": "timeline_events",
-        "title": "缺失时间线",
-        "severity": "high/medium/low",
-        "description": "覆盖缺口说明",
-        "suggestion": "建议补充的信息"
-      }
-    ],
-    "miss_risk": {
-      "level": "high/medium/low",
-      "summary": "漏检风险概述",
-      "likely_blind_spots": ["可能漏掉的维度"]
-    },
-    "evidence_insufficiency": [
-      {
-        "field": "timeline_events",
-        "label": "时间线",
-        "reason": "证据不足原因"
-      }
-    ]
+    }
   },
   "threat_analysis": {
     "attack_vector": "可能的攻击入口和向量描述",
@@ -521,10 +463,10 @@ SYSTEM_PROMPT_TEMPLATE: str = """你是一个专业的网络安全应急响应�
 分析要求：
 1. 结合 IOC 命中、异常进程、可疑外连、持久化痕迹、时间线等数据进行综合研判
 2. 时间线分析需要串联事件形成攻击链，并补齐 key_events / phase_mapping / timeline_summary
-3. 必须显式说明输入质量、覆盖缺口、漏检风险，不能仅给出结论
+3. 数据完整性评估由平台自动完成，你无需报告数据缺失。专注于基于现有数据做威胁研判。
 4. threat_analysis 中必须包含 evidence_trace，引用参考知识和本地证据
 5. 处置建议要具体可执行，不能笼统，并生成适合二次追问的 recommended_questions
-6. risk_assessment 必须输出 score_breakdown（每项含 signal/contribution/evidence/historical_known），且 risk_score 必须等于各项 contribution 之和；高风险结论必须给出 confidence；threat_type=正常 时 risk_level 不得高于「中」并给出 reason；data_gaps 中每条必挂 recommended_actions（含 command_or_api 与 priority）
+6. risk_assessment 必须输出 score_breakdown（每项含 signal/contribution/evidence/historical_known），且 risk_score 必须等于各项 contribution 之和；高风险结论必须给出 confidence；threat_type=正常 时 risk_level 不得高于「中」并给出 reason
 7. 顶层输出 audience 分段：{"technical": {"commands":[], "iocs":[], "scripts":[]}, "executive": {"impact":"", "recommendations":"", "business_language":""}}，供技术与管理层双受众阅读
 8. malicious_behaviors 必须是对象数组，每条必须包含 evidence_chain（confirmed 已有证据 / missing 缺失证据 / upgrade_path 升级路径），严禁使用纯字符串列表
 9. 用中文输出所有分析内容
