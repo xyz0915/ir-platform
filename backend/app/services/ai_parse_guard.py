@@ -152,38 +152,48 @@ def _apply_baseline_penalty(risk: dict, baseline: Optional[dict], corrections: l
 
 
 def _apply_confidence_penalty(risk: dict, corrections: list[dict]) -> None:
-    """置信度惩罚：低/中置信度打折，无 confirmed 证据封顶 50 分。
-
-    在评分权威逻辑（_normalize_score_breakdown 求和覆盖 risk_score）之后调用，
-    且在基线降噪（_apply_baseline_penalty）之后，确保最终 risk_score 反映置信度与证据质量。
-    """
     breakdown = risk.get("score_breakdown")
     if not isinstance(breakdown, list) or not breakdown:
+        risk["risk_score"] = 0
         return
 
-    confidence_level = str(risk.get("confidence", "low")).strip().lower()
-    # 标准化中文置信度 → 英文字符匹配
-    _cn_to_en: dict[str, str] = {"高": "high", "中": "medium", "低": "low"}
-    confidence_level = _cn_to_en.get(confidence_level, confidence_level)
+    confidence_level = str(risk.get("confidence", "medium")).strip().lower()
+    _cn = {"高": "high", "中": "medium", "低": "low"}
+    confidence_level = _cn.get(confidence_level, confidence_level)
+    if confidence_level not in ("high", "medium", "low"):
+        confidence_level = "medium"  # 默认中等,不惩罚未知
 
-    penalty_map: dict[str, float] = {"high": 1.0, "medium": 0.8, "low": 0.6}
-    penalty = penalty_map.get(confidence_level, 0.6)
+    penalty = {"high": 1.0, "medium": 0.85, "low": 0.6}[confidence_level]
 
-    raw_score = sum(item["contribution"] for item in breakdown)
+    # 安全求和(防 KeyError)
+    raw_score = 0
+    for item in breakdown:
+        try:
+            raw_score += int(item.get("contribution", 0))
+        except (TypeError, ValueError):
+            pass
+
     adjusted_score = round(raw_score * penalty)
 
-    # 更新每个条目的 adjusted_contribution
+    # 更新 adjusted_contribution
     for item in breakdown:
-        item["adjusted_contribution"] = round(item["contribution"] * penalty)
+        try:
+            item["adjusted_contribution"] = round(int(item.get("contribution", 0)) * penalty)
+        except (TypeError, ValueError):
+            item["adjusted_contribution"] = 0
 
-    # 封顶：如果没有 confirmed 行为证据，最高 50
+    # 全局封顶 85——无论置信度多高,无人能在无实锤的情况下拿满分
+    adjusted_score = min(adjusted_score, 85)
+
+    # 无 confirmed 证据 → 进一步封顶 50
     evidence_confirmed = any(
-        it.get("evidence_source") == "confirmed" for it in breakdown
+        str(it.get("evidence_source", "")).strip().lower() == "confirmed" 
+        for it in breakdown
     )
     if not evidence_confirmed:
         adjusted_score = min(adjusted_score, 50)
 
-    if adjusted_score != raw_score:
+    if adjusted_score != raw_score or not evidence_confirmed:
         risk["risk_score"] = adjusted_score
         corrections.append({
             "rule": "R-CONFIDENCE",
@@ -191,8 +201,8 @@ def _apply_confidence_penalty(risk: dict, corrections: list[dict]) -> None:
             "action": "confidence_penalty",
             "detail": (
                 f"置信度 '{confidence_level}' ×{penalty}，"
-                f"风险评分 {raw_score} → {adjusted_score}"
-                f"{'（无 confirmed 证据封顶 50）' if not evidence_confirmed else ''}"
+                f"{raw_score} → {adjusted_score}"
+                f"{'（无 confirmed 证据封顶 50）' if not evidence_confirmed else '（全局封顶 85）' if raw_score > 85 else ''}"
             ),
         })
 
