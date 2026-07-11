@@ -235,6 +235,9 @@
           </div>
           <RemoteControlTable :data="remoteControl" />
         </el-tab-pane>
+        <el-tab-pane label="知识库" name="knowledge">
+          <HostKnowledgeTab :host-id="hostId" />
+        </el-tab-pane>
       </el-tabs>
     </div>
 
@@ -277,6 +280,7 @@ import AiAnalysisDialog from '@/components/AiAnalysisDialog.vue'
 import ProcessTreeChart from '@/components/ProcessTreeChart.vue'
 import ProcessDetailPanel from '@/components/ProcessDetailPanel.vue'
 import ProcessStatsCards from '@/components/ProcessStatsCards.vue'
+import HostKnowledgeTab from '@/components/HostKnowledgeTab.vue'
 import { getAiConfig } from '@/api/ai'
 
 const route = useRoute()
@@ -347,6 +351,7 @@ const TAB_DATA_LABEL = {
   remote_control: '条远程工具记录',
   network: '条网络连接',
   filehash: '条文件哈希',
+  knowledge: '',
 }
 
 const alertType = computed(() => {

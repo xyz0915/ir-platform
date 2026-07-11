@@ -90,22 +90,30 @@ class KnowledgeDraft:
             return dict(row) if row else None
 
     @staticmethod
-    def get_all(status: Optional[str] = None) -> list[dict]:
-        """获取所有草稿列表，可按 status 过滤.
+    def get_all(status: Optional[str] = None, host_id: Optional[str] = None) -> list[dict]:
+        """获取所有草稿列表，可按 status 和 host_id 过滤.
 
         Args:
             status: 过滤状态（pending / approved / rejected），None 则返回全部.
+            host_id: 按主机 ID 过滤（支持字符串匹配），None 则不过滤.
 
         Returns:
             草稿字典列表，按 created_at 降序排列.
         """
         with get_connection() as conn:
+            conditions: list[str] = []
+            params: list = []
             if status:
+                conditions.append("status = ?")
+                params.append(status)
+            if host_id is not None:
+                conditions.append("host_id = ?")
+                params.append(host_id)
+            if conditions:
+                where_clause = " AND ".join(conditions)
                 rows = conn.execute(
-                    """SELECT * FROM knowledge_drafts
-                       WHERE status = ?
-                       ORDER BY created_at DESC""",
-                    (status,),
+                    f"SELECT * FROM knowledge_drafts WHERE {where_clause} ORDER BY created_at DESC",
+                    tuple(params),
                 ).fetchall()
             else:
                 rows = conn.execute(
@@ -188,6 +196,117 @@ class KnowledgeDraft:
             )
         logger.info("Knowledge draft %d rejected: %s", draft_id, draft.get("title"))
         return KnowledgeDraft.get_by_id(draft_id)
+
+    @staticmethod
+    def recall(draft_id: int) -> Optional[dict]:
+        """撤回已批准/已拒绝的草稿，恢复为 pending 状态.
+
+        将 status 更新为 'pending'，同时记录撤回时间到 reviewed_at.
+
+        Args:
+            draft_id: 草稿 ID.
+
+        Returns:
+            更新后的草稿字典.
+
+        Raises:
+            ValueError: 草稿不存在或状态为 pending（无需撤回）.
+        """
+        draft = KnowledgeDraft.get_by_id(draft_id)
+        if draft is None:
+            raise ValueError(f"知识草稿 {draft_id} 不存在")
+        if draft.get("status") == "pending":
+            raise ValueError(
+                f"知识草稿 {draft_id} 状态为 pending，无需撤回"
+            )
+
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        with get_connection() as conn:
+            conn.execute(
+                """UPDATE knowledge_drafts
+                   SET status = 'pending', reviewed_at = ?
+                   WHERE id = ?""",
+                (now, draft_id),
+            )
+        logger.info("Knowledge draft %d recalled: %s", draft_id, draft.get("title"))
+        return KnowledgeDraft.get_by_id(draft_id)
+
+    @staticmethod
+    def batch_action(draft_ids: list[int], action: str) -> dict:
+        """批量批准或拒绝草稿.
+
+        Args:
+            draft_ids: 草稿 ID 列表.
+            action: 'approve' 或 'reject'.
+
+        Returns:
+            {"success": N, "failed": M, "errors": [...]} 统计字典.
+        """
+        success = 0
+        failed = 0
+        errors: list[str] = []
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        new_status = "approved" if action == "approve" else "rejected"
+
+        with get_connection() as conn:
+            for draft_id in draft_ids:
+                try:
+                    draft = KnowledgeDraft.get_by_id(draft_id)
+                    if draft is None:
+                        failed += 1
+                        errors.append(f"草稿 {draft_id} 不存在")
+                        continue
+                    if draft.get("status") != "pending":
+                        failed += 1
+                        errors.append(
+                            f"草稿 {draft_id} 状态为 {draft.get('status')}，"
+                            f"无法{action}（仅 pending 可操作）"
+                        )
+                        continue
+                    conn.execute(
+                        """UPDATE knowledge_drafts
+                           SET status = ?, reviewed_at = ?
+                           WHERE id = ?""",
+                        (new_status, now, draft_id),
+                    )
+                    success += 1
+                except Exception as exc:
+                    failed += 1
+                    errors.append(f"草稿 {draft_id} 操作失败: {exc}")
+        logger.info(
+            "Batch %s: success=%d, failed=%d", action, success, failed,
+        )
+        return {"success": success, "failed": failed, "errors": errors}
+
+    @staticmethod
+    def is_duplicate(title: str, category: str, mitre_attack: Optional[str] = None) -> bool:
+        """检查三元组 (title, category, mitre_attack) 是否已存在重复草稿.
+
+        Args:
+            title: 标题.
+            category: 分类.
+            mitre_attack: MITRE 技术编号（可选）.
+
+        Returns:
+            True 如果已存在相同三元组的草稿.
+        """
+        with get_connection() as conn:
+            if mitre_attack:
+                row = conn.execute(
+                    """SELECT id FROM knowledge_drafts
+                       WHERE title = ? AND category = ?
+                       AND (mitre_attack = ? OR mitre_attack IS NULL)
+                       LIMIT 1""",
+                    (title, category, mitre_attack),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """SELECT id FROM knowledge_drafts
+                       WHERE title = ? AND category = ? AND mitre_attack IS NULL
+                       LIMIT 1""",
+                    (title, category),
+                ).fetchone()
+            return row is not None
 
     @staticmethod
     def get_as_seed_entries() -> list[dict]:

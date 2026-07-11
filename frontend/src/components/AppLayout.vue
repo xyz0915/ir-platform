@@ -34,6 +34,10 @@
           <el-icon><Connection /></el-icon>
           <span>威胁情报外联</span>
         </el-menu-item>
+        <el-menu-item index="/knowledge">
+          <el-icon><Collection /></el-icon>
+          <span>知识库</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
     <el-container>
@@ -78,7 +82,7 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
-import { Cpu, Lock, CircleCheck, Warning, Connection, Sunny, Moon } from '@element-plus/icons-vue'
+import { Cpu, Lock, CircleCheck, Warning, Connection, Collection, Sunny, Moon } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -89,6 +93,7 @@ const activeMenu = computed(() => {
   if (route.path.startsWith('/cases') || route.path.startsWith('/hosts')) return '/'
   if (route.path === '/whitelist') return '/whitelist'
   if (route.path === '/iocs') return '/iocs'
+  if (route.path === '/knowledge') return '/knowledge'
   return route.path
 })
 
@@ -101,7 +106,8 @@ const currentRouteName = computed(() => {
     'Rules': '规则管理',
     'Whitelist': '白名单配置',
     'Iocs': 'IOC 指标管理',
-    'ThreatIntelConfig': '威胁情报外联配置'
+    'ThreatIntelConfig': '威胁情报外联配置',
+    'Knowledge': '知识库管理'
   }
   return names[route.name] || '应急响应平台'
 })

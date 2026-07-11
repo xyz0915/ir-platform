@@ -57,6 +57,11 @@ const routes = [
         path: 'threat-intel-config',
         name: 'ThreatIntelConfig',
         component: () => import('@/views/ThreatIntelConfigView.vue')
+      },
+      {
+        path: 'knowledge',
+        name: 'Knowledge',
+        component: () => import('@/views/KnowledgeView.vue')
       }
     ]
   }
