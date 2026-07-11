@@ -81,6 +81,46 @@ class DispatchService:
             raise ValueError("仅允许派发 auto_runnable=true 的只读采集动作（绝不自动处置）")
         cls._reject_dangerous(cmd)
 
+        # 证据回填优先查库：network/wmi/logs 三类缺口先查 DB，
+        # 已有数据则直接返回证据，不派 Agent 重采
+        existing = cls.check_existing_evidence(host_id, action_type)
+        if existing.get("found"):
+            evidence = existing["evidence"]
+            # 写入证据回填表
+            refill = AiEvidenceRefill.create(
+                host_id=host_id,
+                dispatch_task_id="db-cached",
+                evidence_json=evidence,
+                action_type=action_type,
+                target=target,
+                status="completed",
+            )
+            host = Host.get_by_id(host_id)
+            host_name = host.get("hostname", "") if host else ""
+            AuditService.log_call(
+                host_id=host_id,
+                host_name=host_name,
+                profile_id=None,
+                profile_name="",
+                model_name="readonly-collector",
+                status="cached",
+                error_message=f"dispatch:{action_type}:db-cached({existing.get('source', '')})",
+            )
+            return {
+                "task_id": f"cache_{int(time.time() * 1000)}",
+                "host_id": host_id,
+                "action_type": action_type,
+                "target": target,
+                "command_or_api": cmd,
+                "status": "completed",
+                "evidence": evidence,
+                "refill_id": refill.get("id") if refill else None,
+                "error": None,
+                "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "cached": True,
+                "source": existing.get("source", ""),
+            }
+
         # 生成任务 ID（进程内唯一）
         async with cls._lock:
             cls._counter += 1
@@ -248,3 +288,109 @@ class DispatchService:
         for kw in _DANGEROUS_KEYWORDS:
             if kw in low:
                 raise ValueError(f"拒绝执行可能改变系统状态的命令（命中红线关键字：{kw.strip()}）")
+
+    @staticmethod
+    def check_existing_evidence(host_id: int, action_type: str) -> dict:
+        """证据回填优先查库：对 network/wmi/logs 三类缺口先查 DB 是否有数据.
+
+        有数据 → 直接提取作为证据，不派 Agent；没有 → 返回空，调用方继续派发。
+
+        Args:
+            host_id: 主机 ID.
+            action_type: 动作类型（如 network_extract, wmi_subscription, security_logs）.
+
+        Returns:
+            {"found": bool, "evidence": dict | None, "source": str}
+        """
+        action_lower = (action_type or "").lower()
+
+        # ── 网络连接类 ──
+        if any(kw in action_lower for kw in ("network", "connection", "netconn")):
+            try:
+                from app.models.analysis import NetworkConnection
+                conns = NetworkConnection.list_by_host(host_id)
+                if conns:
+                    evidence_data = {
+                        "network_connections": [
+                            {
+                                "local": f"{c.get('local_addr', '')}:{c.get('local_port', '')}",
+                                "remote": f"{c.get('remote_addr', '')}:{c.get('remote_port', '')}",
+                                "protocol": c.get("protocol", ""),
+                                "process": c.get("process_name", ""),
+                                "state": c.get("state", ""),
+                                "pid": c.get("pid"),
+                            }
+                            for c in conns[:200]
+                        ],
+                        "total_count": len(conns),
+                    }
+                    logger.info(
+                        "证据回填命中（network）: host=%d, count=%d, 跳过 Agent 派发",
+                        host_id, len(conns),
+                    )
+                    return {"found": True, "evidence": evidence_data, "source": "network_connections_db"}
+            except Exception as e:
+                logger.warning("check_existing_evidence(network) failed: %s", e)
+
+        # ── WMI 订阅类 ──
+        if any(kw in action_lower for kw in ("wmi", "subscription", "event_filter")):
+            try:
+                from app.models.analysis import WmiSubscription
+                wmis = WmiSubscription.list_by_host(host_id)
+                if wmis:
+                    evidence_data = {
+                        "wmi_subscriptions": [
+                            {
+                                "name": w.get("name", ""),
+                                "type": w.get("binding_type", ""),
+                                "event_filter": str(w.get("event_filter", "")),
+                                "event_consumer": str(w.get("event_consumer", "")),
+                            }
+                            for w in wmis
+                        ],
+                        "total_count": len(wmis),
+                    }
+                    logger.info(
+                        "证据回填命中（wmi）: host=%d, count=%d, 跳过 Agent 派发",
+                        host_id, len(wmis),
+                    )
+                    return {"found": True, "evidence": evidence_data, "source": "wmi_subscriptions_db"}
+            except Exception as e:
+                logger.warning("check_existing_evidence(wmi) failed: %s", e)
+
+        # ── 安全事件日志类 ──
+        if any(kw in action_lower for kw in ("security_log", "event_log", "security_event")):
+            try:
+                import json as _json
+                from pathlib import Path as _Path
+
+                from app.models.host import Host
+                host = Host.get_by_id(host_id)
+                raw_path = host.get("raw_json_path", "") if host else ""
+                if raw_path:
+                    raw_file = _Path(raw_path)
+                    if raw_file.exists():
+                        with open(raw_file, "r", encoding="utf-8") as f:
+                            raw_data = _json.load(f)
+                        logs_section = raw_data.get("logs", {}) if isinstance(raw_data, dict) else {}
+                        security_logs = logs_section.get("security", [])
+                        if isinstance(security_logs, list) and security_logs:
+                            target_event_ids = {"4688", "4697", "4104"}
+                            filtered = [
+                                e for e in security_logs
+                                if str(e.get("EventID", "")) in target_event_ids
+                            ][:100]
+                            evidence_data = {
+                                "security_event_logs": filtered,
+                                "total_raw_count": len(security_logs),
+                                "filtered_count": len(filtered),
+                            }
+                            logger.info(
+                                "证据回填命中（security_logs）: host=%d, raw=%d, filtered=%d, 跳过 Agent 派发",
+                                host_id, len(security_logs), len(filtered),
+                            )
+                            return {"found": True, "evidence": evidence_data, "source": "raw_json_security_logs"}
+            except Exception as e:
+                logger.warning("check_existing_evidence(security_logs) failed: %s", e)
+
+        return {"found": False, "evidence": None, "source": ""}

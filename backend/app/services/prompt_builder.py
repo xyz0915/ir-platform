@@ -17,9 +17,11 @@ from app.models.analysis import (
     AnalysisResult,
     HostProfile,
     IocHit,
+    NetworkConnection,
     PersistenceItem,
     SuspiciousConnection,
     TimelineEvent,
+    WmiSubscription,
 )
 from app.models.host import Host
 
@@ -76,8 +78,9 @@ MODULE_DATA_MAP: dict[str, list[str]] = {
     "profile":            ["host_basic", "analysis_result", "profile"],
     "process_list":       ["process_list"],
     "abnormal_processes": ["abnormal_processes_all"],
-    "connections":        ["suspicious_connections_all"],
-    "persistence":        ["persistence_all"],
+    "connections":        ["network_connections_all"],
+    "persistence":        ["persistence_all", "wmi_subscriptions_all"],
+    "security_logs":      ["security_event_logs"],
     "startup":            ["startup_items"],
     "ioc":                ["ioc_hits_all"],
     "timeline":           ["timeline_all"],
@@ -818,19 +821,20 @@ class PromptBuilder:
                 for p in processes
             ]
 
-        # ── 可疑外连（全量） ──
-        if "suspicious_connections_all" in data_keys:
-            connections = SuspiciousConnection.list_by_host(host_id)
-            data["suspicious_connections_all"] = [
+        # ── 全量网络连接（network_connections 表） ──
+        if "network_connections_all" in data_keys:
+            conns = NetworkConnection.list_by_host(host_id)
+            data["network_connections_all"] = [
                 {
-                    "remote": f"{c.get('remote_address', '')}:{c.get('remote_port', '')}",
+                    "local": f"{c.get('local_addr', '')}:{c.get('local_port', '')}",
+                    "remote": f"{c.get('remote_addr', '')}:{c.get('remote_port', '')}",
                     "protocol": c.get("protocol", ""),
                     "process": c.get("process_name", ""),
-                    "reason": c.get("reason", ""),
-                    "severity": c.get("severity", ""),
+                    "state": c.get("state", ""),
+                    "pid": c.get("pid"),
                 }
-                for c in connections
-            ]
+                for c in conns
+            ][:200]  # 截断避免 token 溢出
 
         # ── 持久化痕迹（全量） ──
         if "persistence_all" in data_keys:
@@ -845,6 +849,20 @@ class PromptBuilder:
                     "reason": p.get("reason", ""),
                 }
                 for p in persistence
+            ]
+
+        # ── WMI 订阅详情（wmi_subscriptions 表） ──
+        if "wmi_subscriptions_all" in data_keys:
+            wmis = WmiSubscription.list_by_host(host_id)
+            data["wmi_subscriptions_all"] = [
+                {
+                    "name": w.get("name", ""),
+                    "type": w.get("binding_type", ""),
+                    "event_filter": str(w.get("event_filter", "")),
+                    "event_consumer": str(w.get("event_consumer", "")),
+                    "filter_to_consumer_binding": w.get("binding_type", ""),
+                }
+                for w in wmis
             ]
 
         # ── IOC 命中（全量） ──
@@ -972,6 +990,34 @@ class PromptBuilder:
                 host_id,
             )
             data["remote_tools"] = {}
+
+        # ── 安全事件日志（从 raw JSON 提取） ──
+        if "security_event_logs" in data_keys:
+            security_logs: list = []
+            try:
+                host = Host.get_by_id(host_id)
+                raw_path = host.get("raw_json_path", "") if host else ""
+                if raw_path:
+                    from pathlib import Path as _Path
+
+                    raw_file = _Path(raw_path)
+                    if raw_file.exists():
+                        with open(raw_file, "r", encoding="utf-8") as f:
+                            raw_data = json.load(f)
+                        logs_section = raw_data.get("logs", {}) if isinstance(raw_data, dict) else {}
+                        raw_security = logs_section.get("security", [])
+                        if isinstance(raw_security, list):
+                            security_logs = raw_security
+                    else:
+                        logger.warning("raw_json_path not found for host %d: %s", host_id, raw_path)
+            except Exception as e:
+                logger.warning("Failed to load security event logs for host %d: %s", host_id, e)
+
+            target_event_ids = {"4688", "4697", "4104"}
+            data["security_event_logs"] = [
+                e for e in security_logs
+                if str(e.get("EventID", "")) in target_event_ids
+            ][:100]  # 截断避免 token 溢出
 
         return data
 

@@ -959,6 +959,7 @@ class AiService:
         from app.models.analysis import (
             HostProfile, AbnormalProcess, SuspiciousConnection,
             PersistenceItem, TimelineEvent, IocHit,
+            NetworkConnection, WmiSubscription,
         )
 
         warnings.warn(
@@ -1020,6 +1021,24 @@ class AiService:
                 for p in connections[:20]
             ]
 
+        # 同时拉取全量网络连接（network_connections 表）
+        try:
+            all_conns = NetworkConnection.list_by_host(host_id)
+            if all_conns:
+                analysis_data["network_connections"] = [
+                    {
+                        "local": f"{c.get('local_addr', '')}:{c.get('local_port', '')}",
+                        "remote": f"{c.get('remote_addr', '')}:{c.get('remote_port', '')}",
+                        "protocol": c.get("protocol", ""),
+                        "process": c.get("process_name", ""),
+                        "state": c.get("state", ""),
+                        "pid": c.get("pid"),
+                    }
+                    for c in all_conns[:200]
+                ]
+        except Exception:
+            pass
+
         persistence = PersistenceItem.list_by_host(host_id)
         if persistence:
             analysis_data["persistence_items"] = [
@@ -1030,6 +1049,22 @@ class AiService:
                 }
                 for p in persistence[:20]
             ]
+
+        # 同时拉取 WMI 订阅详情（wmi_subscriptions 表）
+        try:
+            wmi_subs = WmiSubscription.list_by_host(host_id)
+            if wmi_subs:
+                analysis_data["wmi_subscriptions"] = [
+                    {
+                        "name": w.get("name", ""),
+                        "type": w.get("binding_type", ""),
+                        "event_filter": str(w.get("event_filter", "")),
+                        "event_consumer": str(w.get("event_consumer", "")),
+                    }
+                    for w in wmi_subs
+                ]
+        except Exception:
+            pass
 
         ioc_hits = IocHit.list_by_host(host_id)
         if ioc_hits:
