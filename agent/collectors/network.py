@@ -1,5 +1,6 @@
 """6. 网络信息采集器."""
 
+import json as _json
 import logging
 import socket
 from typing import Any
@@ -23,6 +24,7 @@ class NetworkCollector(BaseCollector):
     def collect(self) -> dict:
         """执行网络信息采集."""
         raw_connections = self._get_connections()
+        windows_conn = self._collect_windows_connections()
         result: dict[str, Any] = {
             "connections": raw_connections,
             "interfaces": self._get_interfaces(),
@@ -30,8 +32,134 @@ class NetworkCollector(BaseCollector):
             "hosts_file": self._get_hosts_file(),
             "routing_table": self._get_routing_table(),
             "network_connections": self._build_network_connections(raw_connections),
+            "tcp_connections": windows_conn.get("tcp_connections", []),
+            "udp_endpoints": windows_conn.get("udp_endpoints", []),
         }
         return result
+
+    # ------------------------------------------------------------------
+    # Windows 进程级网络连接采集 (PowerShell)
+    # ------------------------------------------------------------------
+
+    def _collect_windows_connections(self) -> dict[str, list]:
+        """采集 Windows 进程级 TCP/UDP 连接及 DNS 缓存.
+
+        使用 PowerShell Get-NetTCPConnection / Get-NetUDPEndpoint 获取
+        进程级连接详情，以及 ipconfig /displaydns 获取 DNS 解析缓存。
+
+        所有子采集独立 try/except，单项失败不影响其他项，
+        整体异常时返回空列表，不崩整个采集流程。
+
+        Returns:
+            {"tcp_connections": [...], "udp_endpoints": [...], "dns_cache": [...]}
+        """
+        result: dict[str, list] = {
+            "tcp_connections": [],
+            "udp_endpoints": [],
+            "dns_cache": [],
+        }
+
+        if not is_windows():
+            return result
+
+        # ---- TCP 连接 ----
+        try:
+            ps_cmd = (
+                'powershell -NoProfile -Command '
+                '"& { Get-NetTCPConnection | '
+                'Select-Object LocalAddress,LocalPort,RemoteAddress,RemotePort,State,OwningProcess | '
+                'ConvertTo-Json -Compress }"'
+            )
+            output = run_command(ps_cmd, timeout=30)
+            if output:
+                data = _json.loads(output)
+                if isinstance(data, dict):
+                    data = [data]
+                for conn in data or []:
+                    result["tcp_connections"].append({
+                        "local_address": str(conn.get("LocalAddress", "")),
+                        "local_port": int(conn.get("LocalPort", 0)),
+                        "remote_address": str(conn.get("RemoteAddress", "")),
+                        "remote_port": int(conn.get("RemotePort", 0)),
+                        "state": str(conn.get("State", "")),
+                        "owning_process": int(conn.get("OwningProcess", 0)),
+                    })
+                logger.info(
+                    "Collected %d TCP connections via PowerShell",
+                    len(result["tcp_connections"]),
+                )
+        except Exception as exc:
+            logger.warning("Failed to collect PowerShell TCP connections: %s", exc)
+
+        # ---- UDP 端点 ----
+        try:
+            ps_cmd = (
+                'powershell -NoProfile -Command '
+                '"& { Get-NetUDPEndpoint | '
+                'Select-Object LocalAddress,LocalPort,OwningProcess | '
+                'ConvertTo-Json -Compress }"'
+            )
+            output = run_command(ps_cmd, timeout=30)
+            if output:
+                data = _json.loads(output)
+                if isinstance(data, dict):
+                    data = [data]
+                for ep in data or []:
+                    result["udp_endpoints"].append({
+                        "local_address": str(ep.get("LocalAddress", "")),
+                        "local_port": int(ep.get("LocalPort", 0)),
+                        "owning_process": int(ep.get("OwningProcess", 0)),
+                    })
+                logger.info(
+                    "Collected %d UDP endpoints via PowerShell",
+                    len(result["udp_endpoints"]),
+                )
+        except Exception as exc:
+            logger.warning("Failed to collect PowerShell UDP endpoints: %s", exc)
+
+        # ---- DNS 缓存 (ipconfig /displaydns) ----
+        try:
+            dns_output = run_command("ipconfig /displaydns", timeout=15)
+            if dns_output:
+                current: dict[str, Any] = {}
+                for line in dns_output.split("\n"):
+                    line = line.strip()
+                    if line.startswith("Record Name") or line.startswith("记录名称"):
+                        if current:
+                            result["dns_cache"].append(current)
+                        current = {
+                            "domain": line.split(":", 1)[-1].strip() if ":" in line else "",
+                            "type": "",
+                            "value": "",
+                            "ttl": 0,
+                        }
+                    elif line.startswith("Record Type") or line.startswith("记录类型"):
+                        if current:
+                            current["type"] = line.split(":", 1)[-1].strip() if ":" in line else ""
+                    elif line.startswith("Record Data") or line.startswith("记录数据"):
+                        if current:
+                            current["value"] = line.split(":", 1)[-1].strip() if ":" in line else ""
+                    elif "TTL" in line or "生存时间" in line:
+                        if current:
+                            try:
+                                ttl_str = line.split(":", 1)[-1].strip() if ":" in line else "0"
+                                current["ttl"] = int(ttl_str)
+                            except ValueError:
+                                current["ttl"] = 0
+                if current:
+                    result["dns_cache"].append(current)
+                logger.info(
+                    "Collected %d DNS cache entries via ipconfig /displaydns",
+                    len(result["dns_cache"]),
+                )
+        except Exception as exc:
+            logger.warning("Failed to collect DNS cache via ipconfig /displaydns: %s", exc)
+
+        return result
+
+    # ------------------------------------------------------------------
+    # 连接列表构建
+    # ------------------------------------------------------------------
 
     def _build_network_connections(self, connections: list) -> list:
         """将内部连接列表映射为平台 network_connections 表所需格式.
@@ -136,7 +264,7 @@ class NetworkCollector(BaseCollector):
         return connections
 
     def _get_interfaces(self) -> list:
-        """获取网卡接口信息."""
+        """获取网卡接口信息（psutil 优先，失败回退 ipconfig）."""
         interfaces = []
         try:
             import psutil
@@ -162,27 +290,54 @@ class NetworkCollector(BaseCollector):
                             iface["netmask"] = addr.netmask
                         elif hasattr(sock_module, "AF_PACKET") and addr.family == sock_module.AF_PACKET:
                             iface["mac"] = addr.address
-                        # Windows: psutil uses AF_LINK (psutil.AF_LINK) for MAC
                         elif addr.family == getattr(psutil, "AF_LINK", -1):
                             iface["mac"] = addr.address
                 interfaces.append(iface)
 
-            # 获取默认网关
-            gateways = psutil.net_if_addrs()
-            gw_output = run_command("ip route show default 2>/dev/null || route -n 2>/dev/null", timeout=5)
-            if gw_output:
-                for line in gw_output.split("\n"):
-                    if "default" in line or "0.0.0.0" in line:
-                        parts = line.split()
-                        for i, part in enumerate(parts):
-                            if part == "via" and i + 1 < len(parts):
-                                for iface in interfaces:
-                                    if not iface["gateway"]:
-                                        iface["gateway"] = parts[i + 1]
-                                break
+            if not interfaces:
+                interfaces = self._get_interfaces_fallback()
         except ImportError:
-            pass
+            interfaces = self._get_interfaces_fallback()
         return interfaces
+
+    def _get_interfaces_fallback(self) -> list:
+        """使用 ipconfig 作为 Windows 网卡回退方案."""
+        interfaces = []
+        if not is_windows():
+            return interfaces
+        output = run_command("ipconfig /all", timeout=15)
+        if output:
+            current: dict[str, Any] = {}
+            for line in output.split("\n"):
+                line = line.strip()
+                if not line:
+                    if current:
+                        interfaces.append(current)
+                        current = {}
+                    continue
+                # 检测新适配器段
+                if "adapter" in line.lower() and ":" in line:
+                    if current:
+                        interfaces.append(current)
+                    name = line.split(":")[-1].strip().rstrip(":")
+                    current = {"name": name or line, "ip": "", "mac": "", "netmask": "", "gateway": "", "isup": True, "speed": 0}
+                    continue
+                if not current:
+                    current = {"name": "", "ip": "", "mac": "", "netmask": "", "gateway": "", "isup": True, "speed": 0}
+                lower = line.lower()
+                parts = line.split(":", 1)
+                val = parts[1].strip() if len(parts) > 1 else ""
+                if "physical" in lower:
+                    current["mac"] = val
+                elif "ipv4" in lower and "address" in lower:
+                    current["ip"] = val.split("(")[0].strip()
+                elif "subnet" in lower:
+                    current["netmask"] = val
+                elif "default gateway" in lower:
+                    current["gateway"] = val
+            if current:
+                interfaces.append(current)
+        return [i for i in interfaces if i.get("name")]
 
     def _get_dns_cache(self) -> list:
         """获取 DNS 缓存."""
@@ -277,82 +432,6 @@ class NetworkCollector(BaseCollector):
                             "metric": 0,
                         })
         return routes
-
-    def _get_interfaces_fallback(self) -> list:
-        """使用 ipconfig 作为 Windows 网卡回退方案."""
-        interfaces = []
-        if not is_windows():
-            return interfaces
-        output = run_command("ipconfig /all", timeout=15)
-        if output:
-            current: dict[str, Any] = {}
-            for line in output.split("\n"):
-                line = line.strip()
-                if not line:
-                    if current:
-                        interfaces.append(current)
-                        current = {}
-                    continue
-                # 检测新适配器段
-                if "adapter" in line.lower() and ":" in line:
-                    if current:
-                        interfaces.append(current)
-                    name = line.split(":")[-1].strip().rstrip(":")
-                    current = {"name": name or line, "ip": "", "mac": "", "netmask": "", "gateway": "", "isup": True, "speed": 0}
-                    continue
-                if not current:
-                    current = {"name": "", "ip": "", "mac": "", "netmask": "", "gateway": "", "isup": True, "speed": 0}
-                lower = line.lower()
-                parts = line.split(":", 1)
-                val = parts[1].strip() if len(parts) > 1 else ""
-                if "physical" in lower:
-                    current["mac"] = val
-                elif "ipv4" in lower and "address" in lower:
-                    current["ip"] = val.split("(")[0].strip()
-                elif "subnet" in lower:
-                    current["netmask"] = val
-                elif "default gateway" in lower:
-                    current["gateway"] = val
-            if current:
-                interfaces.append(current)
-        return [i for i in interfaces if i.get("name")]
-
-    def _get_interfaces(self) -> list:
-        """获取网卡接口信息（psutil 优先，失败回退 ipconfig）."""
-        interfaces = []
-        try:
-            import psutil
-            import socket as sock_module
-
-            stats = psutil.net_if_stats()
-            addrs = psutil.net_if_addrs()
-
-            for name, stat in stats.items():
-                iface: dict[str, Any] = {
-                    "name": name,
-                    "ip": "",
-                    "mac": "",
-                    "netmask": "",
-                    "gateway": "",
-                    "isup": stat.isup,
-                    "speed": stat.speed,
-                }
-                if name in addrs:
-                    for addr in addrs[name]:
-                        if addr.family == sock_module.AF_INET:
-                            iface["ip"] = addr.address
-                            iface["netmask"] = addr.netmask
-                        elif hasattr(sock_module, "AF_PACKET") and addr.family == sock_module.AF_PACKET:
-                            iface["mac"] = addr.address
-                        elif addr.family == getattr(psutil, "AF_LINK", -1):
-                            iface["mac"] = addr.address
-                interfaces.append(iface)
-
-            if not interfaces:
-                interfaces = self._get_interfaces_fallback()
-        except ImportError:
-            interfaces = self._get_interfaces_fallback()
-        return interfaces
 
 
 def _split_addr(addr: str) -> tuple:

@@ -63,6 +63,8 @@ _EMBEDDING_MODEL: Optional[Any] = None
 _COLLECTION: Optional[Any] = None
 _RULES_CACHE: list[dict] = []
 _C2_SIGNATURES_CACHE: list[str] = []
+_SEED_CACHE: list[dict] = []
+_SEED_INDEXED: bool = False
 
 
 # ============================================================================
@@ -166,6 +168,28 @@ def _load_c2_signatures() -> list[str]:
 
 
 # ============================================================================
+# 种子数据加载
+# ============================================================================
+
+
+def _load_seed_data() -> list[dict]:
+    """加载内置种子知识数据（进程级缓存）."""
+    global _SEED_CACHE
+    if _SEED_CACHE:
+        return _SEED_CACHE
+
+    try:
+        from app.data.knowledge_seed import ALL_SEED_KNOWLEDGE
+
+        _SEED_CACHE = list(ALL_SEED_KNOWLEDGE)
+        logger.info("Loaded %d seed knowledge items", len(_SEED_CACHE))
+    except ImportError as exc:
+        logger.warning("Failed to load knowledge_seed: %s", exc)
+        _SEED_CACHE = []
+    return _SEED_CACHE
+
+
+# ============================================================================
 # 向量索引构建
 # ============================================================================
 
@@ -255,6 +279,95 @@ def _build_index() -> bool:
         return True
     except Exception as exc:
         logger.error("ChromaDB add failed: %s", exc)
+        return False
+
+
+def _build_seed_index() -> bool:
+    """将内置种子知识数据索引到 ChromaDB.
+
+    在 ChromaDB collection 为空或 _build_index 后仍为空时调用。
+    幂等：已有记录则跳过。
+
+    Returns:
+        True 表示索引成功或已存在，False 表示构建失败。
+    """
+    global _SEED_INDEXED
+
+    collection = _get_collection()
+    model = _get_embedding_model()
+
+    if collection is None or model is None:
+        logger.info("_build_seed_index: collection or model unavailable, skip")
+        return False
+
+    # 幂等检查：如果种子已索引或 collection 已有任意记录，跳过
+    if _SEED_INDEXED:
+        return True
+    if collection.count() > 0:
+        _SEED_INDEXED = True
+        return True
+
+    seeds = _load_seed_data()
+    if not seeds:
+        logger.info("No seed data to index")
+        return True
+
+    # 准备数据
+    ids: list[str] = []
+    documents: list[str] = []
+    metadatas: list[dict[str, str]] = []
+
+    for i, seed in enumerate(seeds):
+        name: str = (seed.get("name") or "").strip()
+        desc: str = (seed.get("description") or "").strip()
+        severity: str = seed.get("severity", "medium")
+        category: str = seed.get("category", "")
+        seed_id: str = seed.get("id", "")
+
+        if not name:
+            continue
+
+        doc_id: str = f"seed_{i}_{seed_id or name}"
+        doc_text: str = f"{name}: {desc}"
+
+        ids.append(doc_id)
+        documents.append(doc_text)
+        metadatas.append({
+            "rule_name": name,
+            "severity": severity,
+            "category": category,
+        })
+
+    if not ids:
+        return True
+
+    # 批量编码
+    try:
+        embeddings = model.encode(
+            documents,
+            show_progress_bar=False,
+            normalize_embeddings=True,
+        ).tolist()
+    except Exception as exc:
+        logger.error("Seed embedding encoding failed: %s", exc)
+        return False
+
+    # 写入 ChromaDB
+    try:
+        collection.add(
+            ids=ids,
+            embeddings=embeddings,
+            documents=documents,
+            metadatas=metadatas,
+        )
+        _SEED_INDEXED = True
+        logger.info(
+            "Built seed index: %d knowledge items indexed into '%s'",
+            len(ids), COLLECTION_NAME,
+        )
+        return True
+    except Exception as exc:
+        logger.error("ChromaDB seed add failed: %s", exc)
         return False
 
 
@@ -466,6 +579,8 @@ class KnowledgeRetriever:
                 logger.info("Vector index ready for semantic retrieval")
             else:
                 logger.warning("Vector index build failed, will fall back to keyword")
+            # 无论 _build_index 结果如何，均尝试种子数据索引
+            _build_seed_index()
         else:
             logger.info(
                 "Vector retrieval unavailable (chroma=%s, embedding=%s), "
@@ -473,6 +588,8 @@ class KnowledgeRetriever:
                 _CHROMA_AVAILABLE,
                 _EMBEDDING_AVAILABLE,
             )
+        # 预加载种子数据供关键词回退使用
+        _load_seed_data()
 
     # ========================================================================
     # Public API
@@ -673,13 +790,15 @@ class KnowledgeRetriever:
         """
         rules = _load_rules()
         c2_sigs = _load_c2_signatures()
+        seeds = _load_seed_data()
         keywords = _extract_keywords(analysis_data)
 
-        if not rules and not c2_sigs:
+        if not rules and not c2_sigs and not seeds:
             return []
 
         scored: list[tuple[float, str]] = []
 
+        # ── 规则匹配 ──
         for rule in rules:
             rule_name = rule.get("name", "")
             rule_desc = rule.get("description", "")
@@ -689,13 +808,11 @@ class KnowledgeRetriever:
             name_parts = set(rule_name.lower().replace("_", " ").split())
             desc_words = set(rule_desc.lower().split())
 
-            # 策略1：规则名精确命中
             name_hits = len(name_parts & keywords)
             exact_name_hit = any(
                 name_part in " ".join(keywords) for name_part in name_parts
             )
 
-            # 策略2：描述关键词命中数
             desc_hits = len(desc_words & keywords)
 
             score: float = 0.0
@@ -706,7 +823,6 @@ class KnowledgeRetriever:
             elif desc_hits >= 1:
                 score += 0.5
 
-            # 严重度加成
             sev_bonus: dict[str, float] = {
                 "critical": 2.0,
                 "high": 1.0,
@@ -721,7 +837,55 @@ class KnowledgeRetriever:
                 )
                 scored.append((score, formatted_rule))
 
-        # C2 签名匹配
+        # ── 种子知识匹配 ──
+        for seed in seeds:
+            seed_name = seed.get("name", "")
+            seed_desc = seed.get("description", "")
+            seed_category = seed.get("category", "knowledge")
+            seed_severity = seed.get("severity", "medium")
+            seed_pattern = seed.get("pattern", "")
+
+            name_parts = set(seed_name.lower().replace("_", " ").split())
+            desc_words = set(seed_desc.lower().split())
+            pat_words = set(seed_pattern.lower().split())
+
+            name_hits = len(name_parts & keywords)
+            exact_name_hit = any(
+                name_part in " ".join(keywords) for name_part in name_parts
+            )
+
+            desc_hits = len(desc_words & keywords)
+            # 额外匹配 pattern 中的关键词（如"beacon""meterpreter"等技术术语）
+            pat_hits = len(pat_words & keywords)
+
+            score: float = 0.0
+            if exact_name_hit and name_hits >= 1:
+                score += 3.0
+            if desc_hits >= 2:
+                score += 1.5
+            elif desc_hits >= 1:
+                score += 0.5
+            # pattern 命中额外加分
+            if pat_hits >= 2:
+                score += 1.0
+            elif pat_hits >= 1:
+                score += 0.3
+
+            sev_bonus: dict[str, float] = {
+                "critical": 2.0,
+                "high": 1.0,
+                "medium": 0.5,
+                "low": 0.2,
+            }
+            score += sev_bonus.get(seed_severity, 0.0)
+
+            if score > 0:
+                formatted_seed = (
+                    f"[{seed_category}/{seed_severity}] {seed_name}: {seed_desc}"
+                )
+                scored.append((score, formatted_seed))
+
+        # ── C2 签名匹配 ──
         for sig in c2_sigs:
             if sig.lower() in " ".join(keywords):
                 scored.append(
