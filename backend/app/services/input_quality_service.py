@@ -43,6 +43,8 @@ class InputQualityService:
             + (tiered_data.get("ioc_hits_low", []) or [])
         )
         persistence_items = tiered_data.get("persistence_suspicious", []) or []
+        wmi_subscriptions = tiered_data.get("wmi_subscriptions_all", []) or []
+        startup_items = tiered_data.get("startup_items", []) or []
 
         if not host_basic.get("hostname") and not host_basic.get("ip_address"):
             score -= 20
@@ -114,6 +116,32 @@ class InputQualityService:
             issues.append("缺少持久化痕迹信息，驻留判断可能不充分。")
             suggestions.append(InputQualityService._suggestion("persistence", "补充持久化痕迹", "建议补充启动项、计划任务、注册表自启等信息。", "low"))
 
+        # v1.3.1: 检查 WMI 订阅数据
+        if not wmi_subscriptions:
+            score -= 5
+            issues.append("缺少 WMI 事件订阅数据，高级持久化检测可能遗漏。")
+            suggestions.append(InputQualityService._suggestion("wmi", "补充 WMI 订阅", "建议采集 WMI 事件订阅（event_filter/event_consumer）。", "low"))
+        else:
+            suggestions.append(InputQualityService._suggestion(
+                "wmi_present",
+                "WMI 订阅数据已就绪",
+                f"已有 {len(wmi_subscriptions)} 条 WMI 事件订阅记录可供分析。",
+                "low",
+            ))
+
+        # v1.3.1: 检查启动项数据
+        if not startup_items:
+            score -= 5
+            issues.append("缺少启动项数据，自启分析可能不完整。")
+            suggestions.append(InputQualityService._suggestion("startup", "补充启动项", "建议采集注册表自启项、启动文件夹等数据。", "low"))
+        else:
+            suggestions.append(InputQualityService._suggestion(
+                "startup_present",
+                "启动项数据已就绪",
+                f"已有 {len(startup_items)} 条启动项记录可供分析。",
+                "low",
+            ))
+
         if score >= 80:
             level = "high"
         elif score >= 55:
@@ -179,10 +207,13 @@ class InputQualityService:
             if isinstance(items, list):
                 connections.extend(items)
 
-        # 2. 直接 network_connections 字段
+        # 2. 直接 network_connections / network_connections_all 字段
         direct = tiered_data.get("network_connections")
         if isinstance(direct, list):
             connections.extend(direct)
+        direct_all = tiered_data.get("network_connections_all")
+        if isinstance(direct_all, list):
+            connections.extend(direct_all)
 
         # 3. 从 processes 中提取网络字段（processes 可能含 remote/connection 信息）
         for proc_key in ("abnormal_processes_high", "abnormal_processes_medium",

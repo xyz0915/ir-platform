@@ -20,6 +20,7 @@ from app.models.analysis import (
     NetworkConnection,
     PersistenceItem,
     SuspiciousConnection,
+    SuspiciousStartupItem,
     TimelineEvent,
     WmiSubscription,
 )
@@ -204,7 +205,12 @@ MODULE_SYSTEM_PROMPTS: dict[str, str] = {
 用中文输出所有分析内容。""",
 
     "connections": """你是一个专业的网络安全应急响应分析专家。
-请针对【可疑外连】数据进行专项分析。
+请针对【网络连接】数据进行专项分析。
+
+## 重要说明
+你收到的网络连接数据就是当前主机可获取的**完整网络连接记录**（含五元组：协议、本地地址/端口、远端地址/端口、状态、关联进程 PID）。
+- 请基于这些数据直接研判，**不要**报告「缺失网络连接详细记录」或「仅有摘要」——你收到的就是最详细的网络数据。
+- 如果数据中包含公网 IP、非标准端口等特征，请据此深入分析；如果数据只有内网/回环连接，请在分析中如实说明「当前仅采集到内网连接」。
 
 ## 分析要求
 1. 分析每个外连的目标地址是否可疑（C2、矿池、恶意域名）
@@ -227,12 +233,18 @@ MODULE_SYSTEM_PROMPTS: dict[str, str] = {
     "persistence": """你是一个专业的网络安全应急响应分析专家。
 请针对【持久化痕迹】数据进行专项分析。
 
+## 重要说明
+你将收到两类数据：**persistence_all**（注册表 Run 键、计划任务、服务、启动文件夹等持久化项）和 **wmi_subscriptions_all**（WMI 事件订阅详情，含 event_filter / event_consumer）。
+- 请基于这些数据直接研判，**不要**报告「缺少 WMI 事件订阅详情」如果 wmi_subscriptions_all 中已有数据——这就是当前可获取的全部 WMI 订阅信息。
+- 如果 wmi_subscriptions_all 为空，说明该主机未采集到 WMI 订阅数据，可在 coverage_gaps 中如实说明。
+
 ## 分析要求
-1. 检查注册表 Run 键、启动文件夹、计划任务等持久化项
-2. 识别可疑的持久化机制
-3. 判断持久化项是否与恶意软件相关
-4. 分析持久化项之间的关联
-5. 给出清理建议
+1. 检查注册表 Run 键、启动文件夹、计划任务、WMI 事件订阅等持久化项
+2. 对 WMI 订阅重点分析 event_filter（触发条件）和 event_consumer（执行动作），判断是否为恶意持久化
+3. 识别可疑的持久化机制
+4. 判断持久化项是否与恶意软件相关
+5. 分析持久化项之间的关联
+6. 给出清理建议
 
 ## 输出格式
 严格按以下 JSON 格式输出：
@@ -247,6 +259,11 @@ MODULE_SYSTEM_PROMPTS: dict[str, str] = {
 
     "startup": """你是一个专业的网络安全应急响应分析专家。
 请针对【可疑启动项】数据进行专项分析。
+
+## 重要说明
+你收到的启动项数据来自平台自动采集（注册表自启项、启动文件夹、计划任务等）。这就是当前可获取的**全部启动项信息**。
+- 请基于现有数据研判，**不要**报告「启动项收集不完整」如果数据中已有内容——如实评估现有启动项的风险即可。
+- 如果某些启动项维度（如特定注册表路径）确实未被采集，可在 coverage_gaps 中具体指出缺失的路径。
 
 ## 分析要求
 1. 分析每个启动项的可疑程度
@@ -925,8 +942,6 @@ class PromptBuilder:
         # ── 启动项（startup 模块） ──
         if "startup_items" in data_keys:
             try:
-                from app.models.analysis import SuspiciousStartupItem
-
                 startup_items = SuspiciousStartupItem.list_by_host(host_id)
                 data["startup_items"] = [
                     {
@@ -1455,6 +1470,59 @@ class PromptBuilder:
             if item.get("is_suspicious"):
                 data["persistence_suspicious"].append(entry)
 
+        # ── 全量网络连接（v1.3.1：补入主分析流程，避免 AI 误报缺失） ──
+        data["network_connections_all"] = []
+        try:
+            conns = NetworkConnection.list_by_host(host_id)
+            data["network_connections_all"] = [
+                {
+                    "local": f"{c.get('local_addr', '')}:{c.get('local_port', '')}",
+                    "remote": f"{c.get('remote_addr', '')}:{c.get('remote_port', '')}",
+                    "protocol": c.get("protocol", ""),
+                    "process": c.get("process_name", ""),
+                    "state": c.get("state", ""),
+                    "pid": c.get("pid"),
+                }
+                for c in conns
+            ][:200]
+        except Exception:
+            pass
+
+        # ── WMI 订阅（v1.3.1：补入主分析流程） ──
+        data["wmi_subscriptions_all"] = []
+        try:
+            wmis = WmiSubscription.list_by_host(host_id)
+            data["wmi_subscriptions_all"] = [
+                {
+                    "name": w.get("name", ""),
+                    "type": w.get("binding_type", ""),
+                    "event_filter": str(w.get("event_filter", "")),
+                    "event_consumer": str(w.get("event_consumer", "")),
+                }
+                for w in wmis
+            ]
+        except Exception:
+            pass
+
+        # ── 启动项（v1.3.1：补入主分析流程） ──
+        data["startup_items"] = []
+        try:
+            startup_items = SuspiciousStartupItem.list_by_host(host_id)
+            data["startup_items"] = [
+                {
+                    "name": s.get("name", ""),
+                    "command": s.get("command", ""),
+                    "location": s.get("location", ""),
+                    "type": s.get("type", ""),
+                    "user": s.get("user", ""),
+                    "reason": s.get("reason", ""),
+                    "severity": s.get("severity", ""),
+                }
+                for s in startup_items
+            ]
+        except Exception:
+            pass
+
         return data
 
     @staticmethod
@@ -1515,6 +1583,9 @@ class PromptBuilder:
             ("abnormal_processes_low", "## 异常进程 (低危)", tiered_data.get("abnormal_processes_low", [])),
             ("timeline_low", "## 时间线 (低危)", tiered_data.get("timeline_low", [])),
             ("persistence_all", "## 所有持久化痕迹", tiered_data.get("persistence_all", [])),
+            ("network_connections_all", "## 网络连接（全量）", tiered_data.get("network_connections_all", [])),
+            ("wmi_subscriptions_all", "## WMI 事件订阅", tiered_data.get("wmi_subscriptions_all", [])),
+            ("startup_items", "## 启动项", tiered_data.get("startup_items", [])),
         ]
 
         # 组装数据
