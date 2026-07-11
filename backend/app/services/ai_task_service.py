@@ -364,6 +364,44 @@ class AiTaskService:
             host_obj = Host.get_by_id(host_id)
             case_id = host_obj.get("case_id", 0) if host_obj else 0
 
+            # ── 知识入库：提取 knowledge_suggestions 并写入草稿 ──────
+            knowledge_suggestions = parsed.get("knowledge_suggestions", [])
+            if knowledge_suggestions and isinstance(knowledge_suggestions, list):
+                try:
+                    from app.models.knowledge_draft import KnowledgeDraft
+
+                    draft_count = 0
+                    for suggestion in knowledge_suggestions:
+                        if not isinstance(suggestion, dict):
+                            continue
+                        title = suggestion.get("title", "")
+                        description = suggestion.get("description", "")
+                        if not title or not description:
+                            continue
+                        KnowledgeDraft.create(
+                            host_id=str(host_id),
+                            analysis_report_id=None,  # 报告尚未创建，后续可关联
+                            title=title,
+                            description=description,
+                            category=suggestion.get("category", "auto"),
+                            severity=suggestion.get("severity", "medium"),
+                            mitre_attack=suggestion.get("mitre_attack"),
+                            pattern=suggestion.get("pattern"),
+                            source="ai_suggest",
+                            raw_ioc=suggestion.get("raw_ioc"),
+                        )
+                        draft_count += 1
+                    if draft_count > 0:
+                        logger.info(
+                            "AI task %d generated %d knowledge draft(s) from analysis",
+                            task_id, draft_count,
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to create knowledge drafts for task %d: %s",
+                        task_id, exc,
+                    )
+
             # Token 统计
             prompt_tokens = usage_info.get("prompt_tokens", 0)
             completion_tokens = usage_info.get("completion_tokens", 0)

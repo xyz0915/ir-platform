@@ -438,6 +438,25 @@ DDL_STATEMENTS = [
         updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
     )
     """,
+    # knowledge_drafts — AI 自动知识草稿（AI 自动知识入库）
+    """
+    CREATE TABLE IF NOT EXISTS knowledge_drafts (
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        host_id             TEXT,
+        analysis_report_id  INTEGER,
+        title               TEXT NOT NULL,
+        description         TEXT NOT NULL,
+        category            TEXT DEFAULT 'auto',
+        severity            TEXT DEFAULT 'medium',
+        mitre_attack        TEXT,
+        pattern             TEXT,
+        status              TEXT DEFAULT 'pending',
+        source              TEXT DEFAULT 'ai_suggest',
+        raw_ioc             TEXT,
+        created_at          TEXT,
+        reviewed_at         TEXT
+    )
+    """,
 ]
 
 
@@ -960,6 +979,20 @@ def _import_default_whitelist(conn: sqlite3.Connection) -> None:
     )
 
 
+def _init_knowledge_drafts(conn: sqlite3.Connection) -> None:
+    """确保 knowledge_drafts 表存在（幂等：DDL 中用 IF NOT EXISTS）.
+
+    依赖 DDL_STATEMENTS 中的 CREATE TABLE IF NOT EXISTS knowledge_drafts。
+    此函数作为显式钩子，方便将来在此处添加知识草稿相关的迁移逻辑。
+    """
+    # DDL 已通过 DDL_STATEMENTS 执行，此处仅做日志记录
+    cursor = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_drafts'"
+    )
+    if cursor.fetchone():
+        logger.info("knowledge_drafts table ready")
+
+
 def init_db() -> None:
     """初始化数据库：创建目录、执行建表语句、迁移旧数据、ALTER表、创建默认用户、导入默认规则、导入默认白名单."""
     # 确保数据目录存在
@@ -996,6 +1029,8 @@ def init_db() -> None:
         # v1.3.0 作战化新表
         _create_agent_baselines_table(conn)
         _create_ai_evidence_refills_table(conn)
+        # AI 自动知识入库（knowledge_drafts 已通过 DDL 幂等创建）
+        _init_knowledge_drafts(conn)
         conn.commit()
         logger.info("Database initialized successfully at %s", settings.DB_PATH)
     except Exception:

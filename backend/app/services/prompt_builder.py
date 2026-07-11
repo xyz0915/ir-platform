@@ -501,7 +501,22 @@ SYSTEM_PROMPT_TEMPLATE: str = """你是一个专业的网络安全应急响应�
 6. risk_assessment 必须输出 score_breakdown（每项含 signal/contribution/evidence/historical_known），且 risk_score 必须等于各项 contribution 之和；高风险结论必须给出 confidence；threat_type=正常 时 risk_level 不得高于「中」并给出 reason；data_gaps 中每条必挂 recommended_actions（含 command_or_api 与 priority）
 7. 顶层输出 audience 分段：{"technical": {"commands":[], "iocs":[], "scripts":[]}, "executive": {"impact":"", "recommendations":"", "business_language":""}}，供技术与管理层双受众阅读
 8. malicious_behaviors 必须是对象数组，每条必须包含 evidence_chain（confirmed 已有证据 / missing 缺失证据 / upgrade_path 升级路径），严禁使用纯字符串列表
-9. 用中文输出所有分析内容"""
+9. 用中文输出所有分析内容
+10. 如果发现知识库未覆盖的新威胁模式或攻击行为，在输出 JSON 顶层附加 `knowledge_suggestions` 数组，格式如下：
+    ```json
+    "knowledge_suggestions": [
+      {
+        "title": "可疑外连模式: C2 over DNS",
+        "description": "检测到高频 DNS TXT 查询，结合进程链和注册表分析，该行为模式与已知 DNS C2 隧道技术一致，但当前知识库未覆盖此具体变种。建议将以下特征作为新规则入库：高频 DNS TXT 查询 + 非标准 DNS 端口 + 长周期心跳。",
+        "category": "c2_framework",
+        "severity": "high",
+        "mitre_attack": "T1071.004",
+        "pattern": "dns txt,tunnel,c2,high_frequency",
+        "raw_ioc": "{\"domain\": \"evil.example.com\", \"process\": \"svchost.exe\"}"
+      }
+    ]
+    ```
+    每条 suggestion 包含 title（标题）、description（详细描述）、category（mitre_attack/c2_framework/malware/auto）、severity（low/medium/high/critical）、mitre_attack（MITRE 技术编号，可选）、pattern（检测关键词，逗号分隔）、raw_ioc（原始 IOC 数据 JSON string，可选）。若无需新增知识条目，则省略此字段。"""
 
 
 # ── 全貌分析（overview）系统提示 ──────────────────────────────────────────

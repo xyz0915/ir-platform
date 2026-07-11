@@ -173,7 +173,15 @@ def _load_c2_signatures() -> list[str]:
 
 
 def _load_seed_data() -> list[dict]:
-    """加载内置种子知识数据（进程级缓存）."""
+    """加载内置种子知识数据 + 已批准的知识草稿（进程级缓存）.
+
+    合并来源：
+    - knowledge_seed.ALL_SEED_KNOWLEDGE（MITRE_TECHNIQUES + C2_FRAMEWORKS + MALWARE_PATTERNS）
+    - knowledge_drafts 表中 status='approved' 的条目
+
+    Returns:
+        合并后的种子知识列表.
+    """
     global _SEED_CACHE
     if _SEED_CACHE:
         return _SEED_CACHE
@@ -182,10 +190,25 @@ def _load_seed_data() -> list[dict]:
         from app.data.knowledge_seed import ALL_SEED_KNOWLEDGE
 
         _SEED_CACHE = list(ALL_SEED_KNOWLEDGE)
-        logger.info("Loaded %d seed knowledge items", len(_SEED_CACHE))
+        logger.info("Loaded %d hardcoded seed knowledge items", len(_SEED_CACHE))
     except ImportError as exc:
         logger.warning("Failed to load knowledge_seed: %s", exc)
         _SEED_CACHE = []
+
+    # ── 加载已批准的知识草稿作为额外种子源 ──
+    try:
+        from app.models.knowledge_draft import KnowledgeDraft
+
+        approved_drafts = KnowledgeDraft.get_as_seed_entries()
+        if approved_drafts:
+            _SEED_CACHE.extend(approved_drafts)
+            logger.info(
+                "Loaded %d approved draft(s) as additional seed knowledge",
+                len(approved_drafts),
+            )
+    except Exception as exc:
+        logger.warning("Failed to load approved drafts as seed data: %s", exc)
+
     return _SEED_CACHE
 
 
@@ -590,6 +613,54 @@ class KnowledgeRetriever:
             )
         # 预加载种子数据供关键词回退使用
         _load_seed_data()
+
+    @classmethod
+    def rebuild_seed_index(cls) -> bool:
+        """重建种子索引（批准知识草稿后调用）.
+
+        清空进程级缓存并重新加载种子数据（含已批准草稿），
+        然后重建 ChromaDB 种子索引。
+
+        Returns:
+            True 表示重建成功，False 表示跳过或失败.
+        """
+        global _SEED_CACHE, _SEED_INDEXED
+
+        # 清空缓存，强制重新加载（含已批准草稿）
+        _SEED_CACHE = []
+        _SEED_INDEXED = False
+
+        # 重新加载种子数据
+        _load_seed_data()
+
+        # 如果 ChromaDB 可用，删除旧种子条目并重建
+        collection = _get_collection()
+        if collection is not None and _EMBEDDING_AVAILABLE:
+            try:
+                # 删除所有 seed_ 前缀的旧条目
+                existing_ids = collection.get()
+                if existing_ids and existing_ids.get("ids"):
+                    seed_ids = [
+                        rid for rid in existing_ids["ids"]
+                        if rid.startswith("seed_") or rid.startswith("draft_")
+                    ]
+                    if seed_ids:
+                        collection.delete(ids=seed_ids)
+                        logger.info(
+                            "Deleted %d old seed/draft entries from ChromaDB", len(seed_ids),
+                        )
+            except Exception as exc:
+                logger.warning("Failed to delete old seed entries: %s", exc)
+
+            result = _build_seed_index()
+            logger.info("Seed index rebuild: %s", "success" if result else "failed")
+            return result
+        else:
+            logger.info(
+                "Seed index rebuild skipped (collection=%s, embedding=%s)",
+                collection is not None, _EMBEDDING_AVAILABLE,
+            )
+            return False
 
     # ========================================================================
     # Public API
