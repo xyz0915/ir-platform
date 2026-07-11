@@ -41,6 +41,8 @@ _RISK_LEVEL_ORDER: dict[str, int] = {
     "中": 2,
     "高危": 3,
     "高": 3,
+    "严重": 4,
+    "critical": 4,
 }
 
 
@@ -81,6 +83,7 @@ def _normalize_score_breakdown(risk: dict, corrections: list[dict]) -> None:
             "contribution": _coerce_int(item.get("contribution", 0)),
             "evidence": str(item.get("evidence", "")),
             "historical_known": bool(item.get("historical_known", False)),
+            "evidence_source": str(item.get("evidence_source", "")),
         })
     risk["score_breakdown"] = cleaned
 
@@ -146,6 +149,52 @@ def _apply_baseline_penalty(risk: dict, baseline: Optional[dict], corrections: l
             "detail": f"基线降噪后 risk_score 回落至 {new_score}",
         })
         risk["risk_score"] = new_score
+
+
+def _apply_confidence_penalty(risk: dict, corrections: list[dict]) -> None:
+    """置信度惩罚：低/中置信度打折，无 confirmed 证据封顶 50 分。
+
+    在评分权威逻辑（_normalize_score_breakdown 求和覆盖 risk_score）之后调用，
+    且在基线降噪（_apply_baseline_penalty）之后，确保最终 risk_score 反映置信度与证据质量。
+    """
+    breakdown = risk.get("score_breakdown")
+    if not isinstance(breakdown, list) or not breakdown:
+        return
+
+    confidence_level = str(risk.get("confidence", "low")).strip().lower()
+    # 标准化中文置信度 → 英文字符匹配
+    _cn_to_en: dict[str, str] = {"高": "high", "中": "medium", "低": "low"}
+    confidence_level = _cn_to_en.get(confidence_level, confidence_level)
+
+    penalty_map: dict[str, float] = {"high": 1.0, "medium": 0.8, "low": 0.6}
+    penalty = penalty_map.get(confidence_level, 0.6)
+
+    raw_score = sum(item["contribution"] for item in breakdown)
+    adjusted_score = round(raw_score * penalty)
+
+    # 更新每个条目的 adjusted_contribution
+    for item in breakdown:
+        item["adjusted_contribution"] = round(item["contribution"] * penalty)
+
+    # 封顶：如果没有 confirmed 行为证据，最高 50
+    evidence_confirmed = any(
+        it.get("evidence_source") == "confirmed" for it in breakdown
+    )
+    if not evidence_confirmed:
+        adjusted_score = min(adjusted_score, 50)
+
+    if adjusted_score != raw_score:
+        risk["risk_score"] = adjusted_score
+        corrections.append({
+            "rule": "R-CONFIDENCE",
+            "field": "risk_score",
+            "action": "confidence_penalty",
+            "detail": (
+                f"置信度 '{confidence_level}' ×{penalty}，"
+                f"风险评分 {raw_score} → {adjusted_score}"
+                f"{'（无 confirmed 证据封顶 50）' if not evidence_confirmed else ''}"
+            ),
+        })
 
 
 def _ensure_confidence(risk: dict, threat: dict, corrections: list[dict]) -> None:
@@ -514,6 +563,7 @@ def normalize_and_guard(
     _ensure_confidence(risk, threat, corrections)
     _cap_normal_threat(risk, threat, corrections)
     _apply_baseline_penalty(risk, baseline, corrections)
+    _apply_confidence_penalty(risk, corrections)
     _ensure_evidence_chains(threat, risk, corrections)
 
     # ── 缺口即动作 ──
@@ -551,20 +601,81 @@ def normalize_and_guard(
         c for c in escalation_conditions if isinstance(c, dict)
     ]
     escalation_conditions.extend(rare_escalations)
-    # 高分触发升级条件（可证伪）
+    # 高分触发升级条件（可证伪，禁止自我引用循环）
     try:
         score = int(risk.get("risk_score", 0))
     except (TypeError, ValueError):
         score = 0
-    if score >= RISK_SCORE_THRESHOLD_HIGH and not any(
-        c.get("condition", "").startswith("风险评分") for c in escalation_conditions
-    ):
-        escalation_conditions.append({
-            "condition": "风险评分达到高危阈值",
-            "if_true": "提升至高危并触发处置闭环",
-            "target_level": "高",
-        })
+    if score >= RISK_SCORE_THRESHOLD_HIGH:
+        # 不再生成「评分达到高危阈值 → 升高危」这种循环升级条件。
+        # 改为基于实际证据缺口生成可证伪的升级条件。
+        breakdown = risk.get("score_breakdown", [])
+        if not isinstance(breakdown, list):
+            breakdown = []
+        mitre_attack_ids = risk.get("mitre_attack", [])
+        has_confirmed = any(
+            it.get("evidence_source") == "confirmed" for it in breakdown
+        )
+        has_c2_signal = any(
+            str(it.get("signal", "")).lower() in ("c2_external", "data_exfiltration")
+            for it in breakdown
+        )
+
+        # 避免重复生成同类条件
+        existing_conditions = {c.get("condition", "") for c in escalation_conditions}
+
+        if mitre_attack_ids and not has_confirmed:
+            cond = "发现行为证据（如进程注入/内存加载）"
+            if cond not in existing_conditions:
+                escalation_conditions.append({
+                    "condition": cond,
+                    "if_true": "升高危",
+                    "target_level": "高",
+                })
+        elif has_c2_signal and not has_confirmed:
+            cond = "外连流量出现 beacon 模式"
+            if cond not in existing_conditions:
+                escalation_conditions.append({
+                    "condition": cond,
+                    "if_true": "升高危",
+                    "target_level": "高",
+                })
+        elif has_confirmed:
+            cond = "新增 confirmed 证据"
+            if cond not in existing_conditions:
+                escalation_conditions.append({
+                    "condition": cond,
+                    "if_true": "保持或升级风险等级",
+                    "target_level": "高",
+                })
+        else:
+            cond = "若补充到 confirmed 级别证据"
+            if cond not in existing_conditions:
+                escalation_conditions.append({
+                    "condition": cond,
+                    "if_true": "升一级",
+                    "target_level": "高",
+                })
     risk["escalation_conditions"] = escalation_conditions
+
+    # ── 风险等级自洽约束：低置信度 + 评分 < 60 → 等级不高于「高」──
+    confidence_for_level = str(risk.get("confidence", "")).strip().lower()
+    _cn_low = {"低", "low"}
+    if confidence_for_level in _cn_low and score < RISK_SCORE_THRESHOLD_HIGH:
+        current_level = str(risk.get("risk_level", ""))
+        current_order = _RISK_LEVEL_ORDER.get(current_level, 0)
+        cap_order = _RISK_LEVEL_ORDER.get("高", 3)
+        if current_order > cap_order:
+            risk["risk_level"] = "高"
+            corrections.append({
+                "rule": "R-CONSISTENCY",
+                "field": "risk_assessment.risk_level",
+                "action": "cap",
+                "detail": (
+                    f"置信度为低且评分 {score} < {RISK_SCORE_THRESHOLD_HIGH}，"
+                    f"风险等级从 '{current_level}' 封顶为 '高'"
+                ),
+            })
 
     # ── 一致性纠正痕迹 ──
     risk["consistency_corrections"] = corrections

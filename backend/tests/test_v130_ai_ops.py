@@ -28,6 +28,7 @@ class TestGuardScoreBreakdown(unittest.TestCase):
             "risk_assessment": {
                 "risk_level": "高",
                 "risk_score": 999,  # 故意与 breakdown 不符
+                "confidence": "高",
                 "score_breakdown": [
                     {"signal": "malicious_behavior", "contribution": 30, "evidence": "x"},
                     {"signal": "persistence", "contribution": 15, "evidence": "y"},
@@ -45,6 +46,7 @@ class TestGuardScoreBreakdown(unittest.TestCase):
             "risk_assessment": {
                 "risk_level": "高",
                 "risk_score": 45,
+                "confidence": "高",
                 "score_breakdown": [
                     {"signal": "malicious_behavior", "contribution": 30, "evidence": "x"},
                     {"signal": "persistence", "contribution": 15, "evidence": "y"},
@@ -80,6 +82,7 @@ class TestGuardBaselinePenalty(unittest.TestCase):
             "risk_assessment": {
                 "risk_level": "高",
                 "risk_score": 45,
+                "confidence": "高",
                 "score_breakdown": [
                     {"signal": "malicious_behavior", "contribution": 30, "evidence": "新发现", "historical_known": False},
                     {"signal": "persistence", "contribution": 30, "evidence": "基线已知", "historical_known": True},
