@@ -359,7 +359,7 @@ class TimelineEvent:
 
     @staticmethod
     def batch_create(host_id: int, items: list) -> int:
-        """批量创建时间线事件记录."""
+        """批量创建时间线事件记录（含 V1-5 新增字段）."""
         if not items:
             return 0
         with get_connection() as conn:
@@ -369,8 +369,9 @@ class TimelineEvent:
                 conn.execute(
                     """
                     INSERT INTO timeline_events
-                    (host_id, timestamp, event_type, source, description, severity, details)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (host_id, timestamp, event_type, source, description, severity, details,
+                     kill_chain_stage, mitre_technique_id, status, assigned_to, resolution, ioc_hit_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         host_id,
@@ -380,6 +381,12 @@ class TimelineEvent:
                         item.get("description"),
                         item.get("severity", "info"),
                         json.dumps(item.get("details", {}), ensure_ascii=False) if item.get("details") else None,
+                        item.get("kill_chain_stage"),
+                        item.get("mitre_technique_id"),
+                        item.get("status", "new"),
+                        item.get("assigned_to"),
+                        item.get("resolution"),
+                        item.get("ioc_hit_id"),
                     ),
                 )
                 count += 1
@@ -387,8 +394,23 @@ class TimelineEvent:
 
     @staticmethod
     def list_by_host(host_id: int, start: Optional[str] = None,
-                     end: Optional[str] = None, event_type: Optional[str] = None) -> list:
-        """获取主机的时间线事件列表（支持时间范围和类型过滤）."""
+                     end: Optional[str] = None, event_type: Optional[str] = None,
+                     severities: Optional[str] = None, event_types: Optional[str] = None,
+                     ioc_hit: Optional[bool] = None) -> list:
+        """获取主机的时间线事件列表（支持时间范围和类型/严重度/IOC过滤）.
+
+        Args:
+            host_id: 主机 ID.
+            start: 开始时间（ISO 8601）.
+            end: 结束时间（ISO 8601）.
+            event_type: 单个事件类型（向后兼容）.
+            severities: 逗号分隔的严重度列表，如 "high,medium".
+            event_types: 逗号分隔的事件类型列表，如 "process,network".
+            ioc_hit: 为 True 时仅返回 ioc_hit_id 非空的事件.
+
+        Returns:
+            事件列表.
+        """
         with get_connection() as conn:
             query = "SELECT * FROM timeline_events WHERE host_id = ?"
             params: list = [host_id]
@@ -398,12 +420,139 @@ class TimelineEvent:
             if end:
                 query += " AND timestamp <= ?"
                 params.append(end)
-            if event_type:
+            # 优先级：新参数 event_types（逗号分隔）> 旧参数 event_type（单值）
+            if event_types:
+                types_list = [t.strip() for t in event_types.split(",") if t.strip()]
+                if types_list:
+                    placeholders = ",".join(["?"] * len(types_list))
+                    query += f" AND event_type IN ({placeholders})"
+                    params.extend(types_list)
+            elif event_type:
                 query += " AND event_type = ?"
                 params.append(event_type)
+            if severities:
+                sev_list = [s.strip() for s in severities.split(",") if s.strip()]
+                if sev_list:
+                    placeholders = ",".join(["?"] * len(sev_list))
+                    query += f" AND severity IN ({placeholders})"
+                    params.extend(sev_list)
+            if ioc_hit:
+                query += " AND ioc_hit_id IS NOT NULL"
             query += " ORDER BY timestamp ASC"
             rows = conn.execute(query, params).fetchall()
             return [dict(r) for r in rows]
+
+    @staticmethod
+    def get_stats(host_id: int) -> dict:
+        """获取主机时间线事件统计摘要.
+
+        一次 SQL 聚合查询返回:
+          - highCount: 高危事件数
+          - mediumCount: 中危事件数
+          - lowCount: 低危事件数
+          - iocHitCount: IOC 命中事件数
+          - timeSpan: 时间跨度（小时），若无事件则返回 0
+
+        Args:
+            host_id: 主机 ID.
+
+        Returns:
+            统计字典.
+        """
+        with get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    COALESCE(SUM(CASE WHEN severity = 'high' THEN 1 ELSE 0 END), 0) AS highCount,
+                    COALESCE(SUM(CASE WHEN severity = 'medium' THEN 1 ELSE 0 END), 0) AS mediumCount,
+                    COALESCE(SUM(CASE WHEN severity = 'low' THEN 1 ELSE 0 END), 0) AS lowCount,
+                    COALESCE(SUM(CASE WHEN ioc_hit_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS iocHitCount,
+                    COALESCE(
+                        ROUND(
+                            (JULIANDAY(MAX(timestamp)) - JULIANDAY(MIN(timestamp))) * 24,
+                            1
+                        ),
+                        0
+                    ) AS timeSpan
+                FROM timeline_events
+                WHERE host_id = ?
+                """,
+                (host_id,),
+            ).fetchone()
+            if row:
+                return {
+                    "highCount": row["highCount"],
+                    "mediumCount": row["mediumCount"],
+                    "lowCount": row["lowCount"],
+                    "iocHitCount": row["iocHitCount"],
+                    "timeSpan": row["timeSpan"],
+                }
+            return {"highCount": 0, "mediumCount": 0, "lowCount": 0, "iocHitCount": 0, "timeSpan": 0}
+
+    @staticmethod
+    def update_status(event_id: int, data: dict) -> dict:
+        """更新事件处置状态并写入审计日志.
+
+        Args:
+            event_id: 事件 ID.
+            data: 包含 status/resolution/operator 的字典.
+
+        Returns:
+            更新后的事件字典.
+        """
+        with get_connection() as conn:
+            # 读取旧状态
+            old_row = conn.execute(
+                "SELECT status FROM timeline_events WHERE id = ?", (event_id,)
+            ).fetchone()
+            if not old_row:
+                raise ValueError(f"事件 {event_id} 不存在")
+
+            old_status = old_row["status"]
+            new_status = data.get("status", old_status)
+            resolution = data.get("resolution")
+            operator = data.get("operator")
+            assigned_to = data.get("assigned_to")
+
+            # 更新事件
+            conn.execute(
+                """
+                UPDATE timeline_events
+                SET status = ?, resolution = ?, assigned_to = ?, updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (new_status, resolution, assigned_to, event_id),
+            )
+
+            # 写入审计日志
+            conn.execute(
+                """
+                INSERT INTO timeline_event_audit
+                (event_id, old_status, new_status, operator, comment)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (event_id, old_status, new_status, operator, resolution),
+            )
+
+        # 返回更新后的事件
+        return TimelineEvent.get_by_id(event_id)
+
+    @staticmethod
+    def get_by_id(event_id: int) -> Optional[dict]:
+        """根据 ID 获取单个时间线事件."""
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM timeline_events WHERE id = ?", (event_id,)
+            ).fetchone()
+            if row:
+                result = dict(row)
+                if result.get("details") and isinstance(result["details"], str):
+                    try:
+                        result["details"] = json.loads(result["details"])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                return result
+            return None
 
     @staticmethod
     def delete_by_host(host_id: int) -> None:
@@ -422,6 +571,45 @@ class IocHit:
             return 0
         with get_connection() as conn:
             conn.execute("DELETE FROM ioc_hits WHERE host_id = ?", (host_id,))
+            count = 0
+            for item in items:
+                conn.execute(
+                    """
+                    INSERT INTO ioc_hits
+                    (host_id, ioc_type, ioc_value, matched_in, context, severity)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        host_id,
+                        item.get("ioc_type"),
+                        item.get("ioc_value"),
+                        item.get("matched_in"),
+                        item.get("context"),
+                        item.get("severity", "medium"),
+                    ),
+                )
+                count += 1
+            return count
+
+    @staticmethod
+    def append(host_id: int, items: list) -> int:
+        """追加 IOC 命中记录（不删除既有记录，供增量写入通道复用）.
+
+        与 batch_create 的区别：batch_create 会先 DELETE 本机全部 ioc_hits
+        （用于 step 6 常规 IOC 检测的整体刷新）；本方法仅 INSERT，避免覆盖
+        同一次分析流程中其他环节已写入的 ioc_hits（如文件哈希情报命中）。
+
+        Args:
+            host_id: 主机 ID.
+            items: 待追加的命中列表，每项为
+                   {ioc_type, ioc_value, matched_in, context, severity}.
+
+        Returns:
+            新增记录数.
+        """
+        if not items:
+            return 0
+        with get_connection() as conn:
             count = 0
             for item in items:
                 conn.execute(

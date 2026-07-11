@@ -28,6 +28,8 @@ class AuditService:
         total_tokens: int = 0,
         latency_ms: int = 0,
         masked_mode: int = 0,
+        prompt: str = "",
+        response: str = "",
         error_message: Optional[str] = None,
         ip_address: str = "",
         user_id: Optional[int] = None,
@@ -46,6 +48,8 @@ class AuditService:
             total_tokens: 总 token 数.
             latency_ms: 调用延迟（毫秒）.
             masked_mode: 是否脱敏模式.
+            prompt: 用户提示词（完整原文）.
+            response: AI 响应内容（完整原文）.
             error_message: 错误信息.
             ip_address: 调用方 IP.
             user_id: 用户 ID.
@@ -54,14 +58,17 @@ class AuditService:
             创建的审计日志记录字典.
         """
         logger.info(
-            "Audit log: host=%d, model=%s, status=%s, tokens=%d, latency=%dms",
+            "AuditService.log_call: ENTER host=%d, model=%s, status=%s, tokens=(%d,%d,%d), latency=%dms, masked=%d",
             host_id or 0,
             model_name,
             status,
+            prompt_tokens,
+            completion_tokens,
             total_tokens,
             latency_ms,
+            masked_mode,
         )
-        return AiAuditLog.create(
+        result = AiAuditLog.create(
             host_id=host_id,
             host_name=host_name,
             profile_id=profile_id,
@@ -73,10 +80,19 @@ class AuditService:
             total_tokens=total_tokens,
             latency_ms=latency_ms,
             masked_mode=masked_mode,
+            prompt=prompt,
+            response=response,
             error_message=error_message,
             ip_address=ip_address,
             user_id=user_id,
         )
+        logger.info(
+            "AuditService.log_call: DONE id=%s, host=%d, model=%s",
+            result.get("id") if result else "NONE",
+            host_id or 0,
+            model_name,
+        )
+        return result
 
     @staticmethod
     def query_logs(

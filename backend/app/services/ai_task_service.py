@@ -549,6 +549,26 @@ class AiTaskService:
                     ExplainabilityService.normalize_section(parsed.get("timeline_analysis", {})),
                     tiered_data,
                 )
+
+                # ── V2-6: AI key_events 与原始 timeline_events 关联 ──
+                source_event_ids: Optional[str] = None
+                try:
+                    from app.models.analysis import TimelineEvent
+                    raw_events = TimelineEvent.list_by_host(host_id)
+                    ai_key_events = timeline_analysis.get("key_events", [])
+                    if ai_key_events and raw_events:
+                        matched_events = ExplainabilityService.normalize_key_events(
+                            ai_key_events, raw_events,
+                        )
+                        matched_ids = [
+                            e.get("source_event_id") for e in matched_events
+                            if e.get("source_event_id") is not None
+                        ]
+                        if matched_ids:
+                            source_event_ids = json.dumps(matched_ids, ensure_ascii=False)
+                            timeline_analysis["key_events"] = matched_events
+                except Exception as exc:
+                    logger.warning("normalize_key_events failed: %s", exc)
                 recommendations = ExplainabilityService.normalize_section(parsed.get("recommendations", {}))
 
                 risk_assessment.setdefault("risk_level", tiered_data.get("analysis_result", {}).get("risk_level", "待确认"))
@@ -621,6 +641,7 @@ class AiTaskService:
                     mitre_attack=json.dumps(guarded["mitre_attack"], ensure_ascii=False),
                     attack_chain_hits=json.dumps(guarded["attack_chain_hits"], ensure_ascii=False),
                     rare_high_signals=json.dumps(guarded["rare_high_signals"], ensure_ascii=False),
+                    source_event_id=source_event_ids,
                 )
 
             # --- 阶段4: 审计日志 (90%) ---
@@ -637,6 +658,8 @@ class AiTaskService:
                 total_tokens=total_tokens,
                 latency_ms=latency_ms,
                 masked_mode=1 if masked_mode else 0,
+                prompt=user_prompt,
+                response=full_content,
             )
 
             # --- 完成 ---
@@ -695,6 +718,12 @@ class AiTaskService:
 
             # 写入失败审计日志（失败原因使用友好提示）
             try:
+                _prompt = user_prompt
+                _response = full_content
+            except NameError:
+                _prompt = ""
+                _response = ""
+            try:
                 AuditService.log_call(
                     host_id=host_id,
                     host_name=host_name,
@@ -707,6 +736,8 @@ class AiTaskService:
                     total_tokens=total_tokens,
                     latency_ms=latency_ms,
                     masked_mode=1 if (task and task.get("masked_mode")) else 0,
+                    prompt=_prompt,
+                    response=_response,
                     error_message=friendly_msg,
                 )
             except Exception:
@@ -742,6 +773,12 @@ class AiTaskService:
 
             # 写入失败审计日志
             try:
+                _prompt = user_prompt
+                _response = full_content
+            except NameError:
+                _prompt = ""
+                _response = ""
+            try:
                 AuditService.log_call(
                     host_id=host_id,
                     host_name=host_name,
@@ -754,6 +791,8 @@ class AiTaskService:
                     total_tokens=total_tokens,
                     latency_ms=latency_ms,
                     masked_mode=1 if (task and task.get("masked_mode")) else 0,
+                    prompt=_prompt,
+                    response=_response,
                     error_message=error_msg,
                 )
             except Exception:

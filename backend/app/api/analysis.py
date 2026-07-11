@@ -4,6 +4,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 
 from app.services.analysis_service import AnalysisService
 from app.services.auth_service import get_current_user
@@ -63,11 +64,24 @@ def get_timeline(
     host_id: int,
     start: Optional[str] = Query(None, description="开始时间"),
     end: Optional[str] = Query(None, description="结束时间"),
-    event_type: Optional[str] = Query(None, description="事件类型"),
+    event_type: Optional[str] = Query(None, description="事件类型（单值，向后兼容）"),
+    event_types: Optional[str] = Query(None, description="事件类型（逗号分隔多值），如 process,network"),
+    severity: Optional[str] = Query(None, description="严重度（逗号分隔多值），如 high,medium"),
+    ioc_hit: Optional[bool] = Query(None, description="仅返回 IOC 命中事件"),
     current_user: dict = Depends(get_current_user),
 ):
     """获取时间线事件."""
-    result = AnalysisService.get_timeline(host_id, start, end, event_type)
+    result = AnalysisService.get_timeline(
+        host_id, start, end, event_type,
+        severities=severity, event_types=event_types, ioc_hit=ioc_hit,
+    )
+    return {"code": 0, "data": result, "message": "success"}
+
+
+@router.get("/hosts/{host_id}/timeline/stats")
+def get_timeline_stats(host_id: int, current_user: dict = Depends(get_current_user)):
+    """获取时间线事件统计摘要."""
+    result = AnalysisService.get_timeline_stats(host_id)
     return {"code": 0, "data": result, "message": "success"}
 
 
@@ -210,3 +224,93 @@ def get_registry_keys(host_id: int, current_user: dict = Depends(get_current_use
     """获取注册表键值列表（数据采集增强 P1-6）."""
     result = AnalysisService.get_registry_keys(host_id)
     return {"code": 0, "data": result, "message": "success"}
+
+
+# ── V3-2: 事件状态更新 ──
+@router.patch("/analysis/timeline/{event_id}")
+def update_timeline_event(
+    event_id: int,
+    body: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    """更新时间线事件处置状态."""
+    try:
+        result = AnalysisService.update_timeline_event(event_id, body)
+        return {"code": 0, "data": result, "message": "success"}
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        )
+
+
+# ── V3-4: 多主机时间线对比 ──
+@router.get("/analysis/timeline/compare")
+def compare_timelines(
+    host_ids: str = Query(..., description="逗号分隔的主机ID列表，如 1,2,3"),
+    current_user: dict = Depends(get_current_user),
+):
+    """多主机时间线叠加对比."""
+    try:
+        ids = [int(hid.strip()) for hid in host_ids.split(",") if hid.strip()]
+        if not ids:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="host_ids 不能为空")
+        if len(ids) > 5:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="最多支持 5 台主机对比")
+        result = AnalysisService.compare_timelines(ids)
+        return {"code": 0, "data": result, "message": "success"}
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="host_ids 格式错误")
+
+
+# ── V3-5: CSV 导出 ──
+@router.get("/analysis/timeline/{host_id}/export/csv")
+def export_timeline_csv(
+    host_id: int,
+    start: Optional[str] = Query(None),
+    end: Optional[str] = Query(None),
+    event_types: Optional[str] = Query(None),
+    severity: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
+):
+    """导出时间线为 CSV 文件."""
+    try:
+        csv_content, filename = AnalysisService.export_timeline_csv(
+            host_id, start=start, end=end,
+            event_types=event_types, severity=severity,
+        )
+        return StreamingResponse(
+            iter([csv_content]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as exc:
+        logger.exception("CSV export failed for host %d", host_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"CSV 导出失败: {exc}",
+        )
+
+
+# ── V3-5: PDF 导出 ──
+@router.get("/analysis/timeline/{host_id}/export/pdf")
+def export_timeline_pdf(
+    host_id: int,
+    start: Optional[str] = Query(None),
+    end: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
+):
+    """导出时间线为 PDF 报告."""
+    try:
+        pdf_bytes = AnalysisService.export_timeline_pdf(host_id, start=start, end=end)
+        return StreamingResponse(
+            iter([pdf_bytes]),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="timeline_{host_id}.pdf"'},
+        )
+    except Exception as exc:
+        logger.exception("PDF export failed for host %d", host_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"PDF 导出失败: {exc}",
+        )

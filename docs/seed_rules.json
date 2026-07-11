@@ -1,0 +1,254 @@
+[
+  {
+    "name": "AC_webshell_to_c2",
+    "description": "Web 入侵→WebShell 特征命令→派生命令执行→外连已知 C2 的攻击链还原",
+    "category": "web",
+    "rule_type": "attack_chain",
+    "severity": "critical",
+    "enabled": true,
+    "label": "Web 入侵到 C2 攻击链",
+    "source": "default",
+    "condition": {
+      "window_minutes": 1440,
+      "host_scope": "single",
+      "_meta": { "mitre_attack": "T1190/T1505.003/T1071" },
+      "ordered_steps": [
+        {
+          "dimension": "process",
+          "match": {
+            "type": "composite", "logic": "AND",
+            "sub_rules": [
+              { "type": "regex", "field": "process_name", "pattern": "(w3wp|httpd|apache|nginx|php|php-cgi|tomcat|java)", "flags": "ignorecase" },
+              { "type": "regex", "field": "command_line", "pattern": "(eval\\(|system\\(|passthru|shell_exec|base64_decode|assert\\(|preg_replace|cmd\\.exe|powershell\\.exe|whoami|ipconfig)", "flags": "ignorecase" }
+            ]
+          }
+        },
+        {
+          "dimension": "process",
+          "match": { "type": "regex", "field": "command_line", "pattern": "(powershell|certutil|curl|wget|bitsadmin|cmd\\.exe|/bin/sh|bash)", "flags": "ignorecase" }
+        },
+        {
+          "dimension": "connection",
+          "match": { "type": "list", "field": "remote_address", "values": [], "match_mode": "exact" }
+        }
+      ]
+    }
+  },
+
+  {
+    "name": "AC_lateral_to_cred",
+    "description": "显式凭据/远程登录→远程执行工具→凭据窃取(LSASS) 的横向移动+窃取链还原",
+    "category": "lateral",
+    "rule_type": "attack_chain",
+    "severity": "critical",
+    "enabled": true,
+    "label": "横向移动到凭据窃取攻击链",
+    "source": "default",
+    "condition": {
+      "window_minutes": 240,
+      "host_scope": "single",
+      "_meta": { "mitre_attack": "T1021/T1003" },
+      "ordered_steps": [
+        {
+          "dimension": "process",
+          "match": { "type": "regex", "field": "command_line", "pattern": "(net use \\\\\\|wmic /node:|/user:|runas |psexec|winrm|invoke-command|enter-pssession|new-pssession|schtasks /run /s)", "flags": "ignorecase" }
+        },
+        {
+          "dimension": "process",
+          "match": { "type": "regex", "field": "command_line", "pattern": "(psexec|wmiexec|smbexec|atexec|schtasks /create /s|sc \\\\\\\\\\w+ create|wmic process call create|winrs -r:)", "flags": "ignorecase" }
+        },
+        {
+          "dimension": "process",
+          "match": { "type": "regex", "field": "command_line", "pattern": "(lsass|mimikatz|procdump|sekurlsa|comsvcs\\.dll|rundll32|reg save.*(sam|system)|ntds\\.dit|secretsdump)", "flags": "ignorecase" }
+        }
+      ]
+    }
+  },
+
+  {
+    "name": "AC_collect_to_exfil",
+    "description": "侦察(≥3 侦察命令)→数据暂存压缩→外连 C2 回传 的数据渗出链还原",
+    "category": "exfiltration",
+    "rule_type": "attack_chain",
+    "severity": "critical",
+    "enabled": true,
+    "label": "收集到数据外泄攻击链",
+    "source": "default",
+    "condition": {
+      "window_minutes": 1440,
+      "host_scope": "single",
+      "_meta": { "mitre_attack": "T1041/T1071" },
+      "ordered_steps": [
+        {
+          "dimension": "process",
+          "match": { "type": "behavior", "pattern": "discovery_recon" }
+        },
+        {
+          "dimension": "process",
+          "match": { "type": "regex", "field": "command_line", "pattern": "(7z|winrar|rar\\.exe|makecab|tar|gzip|zip|compress-archive)", "flags": "ignorecase" }
+        },
+        {
+          "dimension": "connection",
+          "match": { "type": "list", "field": "remote_address", "values": [], "match_mode": "exact" }
+        }
+      ]
+    }
+  },
+
+  {
+    "name": "AC_persist_to_beacon",
+    "description": "安装计划任务/服务持久化→窗口内 beacon 外连已知 C2 的持久化回连链还原",
+    "category": "persistence",
+    "rule_type": "attack_chain",
+    "severity": "critical",
+    "enabled": true,
+    "label": "持久化到 C2 Beacon 攻击链",
+    "source": "default",
+    "condition": {
+      "window_minutes": 1440,
+      "host_scope": "single",
+      "_meta": { "mitre_attack": "T1543/T1071" },
+      "ordered_steps": [
+        {
+          "dimension": "persistence",
+          "match": {
+            "type": "composite", "logic": "OR",
+            "sub_rules": [
+              { "type": "regex", "field": "type", "pattern": "(scheduled_task|service|startup|wmi|registry_run)", "flags": "ignorecase" },
+              { "type": "regex", "field": "command", "pattern": "(schtasks|sc create|New-Service|regsvr32|wmic /namespace)", "flags": "ignorecase" }
+            ]
+          }
+        },
+        {
+          "dimension": "connection",
+          "match": { "type": "list", "field": "remote_address", "values": [], "match_mode": "exact" }
+        }
+      ]
+    }
+  },
+
+  {
+    "name": "EXF_cloud_drive",
+    "description": "检测到 rclone/mega/onedrive/百度网盘等工具向外部云存储上传（数据外泄信道）",
+    "category": "exfiltration",
+    "rule_type": "composite",
+    "severity": "high",
+    "enabled": true,
+    "label": "云盘外传数据",
+    "source": "default",
+    "condition": {
+      "logic": "AND",
+      "_meta": { "mitre_attack": "T1567.002" },
+      "sub_rules": [
+        { "type": "regex", "field": "command_line", "pattern": "(rclone|megacmd|megacli|mega-|onedrive|onedrivecmd|baidunetdisk|百度网盘|drive\\.google\\.com|mega\\.nz)", "flags": "ignorecase" },
+        { "type": "regex", "field": "command_line", "pattern": "(upload|sync|copyto|move|--upload|transfer)", "flags": "ignorecase" }
+      ]
+    }
+  },
+
+  {
+    "name": "EXF_encrypted_archive",
+    "description": "检测到加密压缩包创建(7z -p/gpg/openssl enc)，疑似规避检测的外传载荷",
+    "category": "exfiltration",
+    "rule_type": "composite",
+    "severity": "high",
+    "enabled": true,
+    "label": "加密压缩包外传",
+    "source": "default",
+    "condition": {
+      "logic": "AND",
+      "_meta": { "mitre_attack": "T1560.001/T1027" },
+      "sub_rules": [
+        { "type": "regex", "field": "command_line", "pattern": "(7z|winrar|rar\\.exe|makecab|tar|gzip|zip|gpg|openssl enc)", "flags": "ignorecase" },
+        { "type": "regex", "field": "command_line", "pattern": "(-p\\s+\\S+|-crypt|-e\\s|enc -aes|--passphrase|password|-aes256)", "flags": "ignorecase" }
+      ]
+    }
+  },
+
+  {
+    "name": "EXF_email",
+    "description": "检测到邮件客户端/脚本外发(swaks/blat/sendmail/SMTP)，疑似邮件信道外泄",
+    "category": "exfiltration",
+    "rule_type": "regex",
+    "severity": "medium",
+    "enabled": true,
+    "label": "邮件外发数据",
+    "source": "default",
+    "condition": {
+      "field": "command_line",
+      "pattern": "(swaks|blat\\.exe|sendemail|sendmail|mutt\\s|mailx|\"curl.*smtp\"|\"openssl s_client -connect.*:25\"|imap_upload|\"thunderbird.*-compose\")",
+      "flags": "ignorecase",
+      "_meta": { "mitre_attack": "T1567" }
+    }
+  },
+
+  {
+    "name": "LAT_impacket",
+    "description": "检测到 Impacket 工具链(psexec/wmiexec/smbexec/atexec/secretsdump)横向移动",
+    "category": "lateral",
+    "rule_type": "regex",
+    "severity": "high",
+    "enabled": true,
+    "label": "Impacket 横向移动",
+    "source": "default",
+    "condition": {
+      "field": "command_line",
+      "pattern": "(psexec\\.py|wmiexec\\.py|smbexec\\.py|atexec\\.py|secretsdump\\.py|impacket\\.|dcomexec\\.py|mmcexec\\.py)",
+      "flags": "ignorecase",
+      "_meta": { "mitre_attack": "T1021.002/T1021.003" }
+    }
+  },
+
+  {
+    "name": "WEB_upload_exec",
+    "description": "Web 运行时(php/w3wp/tomcat)执行脚本文件(.php/.aspx/.jsp)，疑似 WebShell 被执行",
+    "category": "web",
+    "rule_type": "composite",
+    "severity": "high",
+    "enabled": true,
+    "label": "WebShell 被执行",
+    "source": "default",
+    "condition": {
+      "logic": "AND",
+      "_meta": { "mitre_attack": "T1505.003" },
+      "sub_rules": [
+        { "type": "regex", "field": "command_line", "pattern": "(\\.php|\\.aspx|\\.jsp|\\.jspx|\\.war)", "flags": "ignorecase" },
+        { "type": "regex", "field": "process_name", "pattern": "(php|php-cgi|w3wp|tomcat|httpd|nginx|java)", "flags": "ignorecase" }
+      ]
+    }
+  },
+
+  {
+    "name": "IA_edge_exploit",
+    "description": "检测到公网应用漏洞利用特征(Log4j/ProxyShell/Spring4Shell 等)",
+    "category": "network",
+    "rule_type": "regex",
+    "severity": "critical",
+    "enabled": true,
+    "label": "边界漏洞利用",
+    "source": "default",
+    "condition": {
+      "field": "command_line",
+      "pattern": "(\\$\\{jndi:|\\$\\{\\s*jndi|proxylogon|proxyshell|\"class\\.module\\.classLoader\"|spring4shell|log4j|\"jndi:ldap\"|\"jndi:rmi\"|cve-2021-44228|cve-2022-1388|cve-2022-22965)",
+      "flags": "ignorecase",
+      "_meta": { "mitre_attack": "T1190" }
+    }
+  },
+
+  {
+    "name": "TI_malware_hash",
+    "description": "文件哈希命中恶意样本情报(iocs 表 hash 类，动态引用)",
+    "category": "ioc",
+    "rule_type": "list",
+    "severity": "high",
+    "enabled": true,
+    "label": "恶意文件哈希命中",
+    "source": "default",
+    "condition": {
+      "field": "file_hash",
+      "values": [],
+      "match_mode": "exact",
+      "_meta": { "mitre_attack": "T1204/T1027" }
+    }
+  }
+]

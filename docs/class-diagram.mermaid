@@ -1,87 +1,128 @@
 classDiagram
-    class NetworkConnection {
-        +int id
+    %% ── Python 后端类 ──
+    class TimelineEvent {
         +int host_id
-        +str protocol
-        +str local_addr
-        +int local_port
-        +str remote_addr
-        +int remote_port
-        +str state
-        +int pid
-        +str process_name
-        +str collected_at
+        +str timestamp
+        +str event_type
+        +str source
+        +str description
+        +str severity
+        +dict details
+        +str kill_chain_stage
+        +str mitre_technique_id
+        +str status
+        +str assigned_to
+        +str resolution
+        +int ioc_hit_id
         +batch_create(host_id, items) int$
-        +list_by_host(host_id) list$
+        +list_by_host(host_id, start, end, event_types, severities) list$
+        +update_status(event_id, status, operator, comment) dict$
         +delete_by_host(host_id)$
     }
 
-    class FileHash {
-        +int id
+    class IocHit {
         +int host_id
-        +str file_path
-        +str file_name
-        +str sha256
-        +int is_signed
-        +str signer
-        +int file_size
-        +str product_name
-        +str product_version
-        +str collected_at
+        +str ioc_type
+        +str ioc_value
+        +str matched_in
+        +str context
+        +str severity
         +batch_create(host_id, items) int$
         +list_by_host(host_id) list$
-        +delete_by_host(host_id)$
-    }
-
-    class WmiSubscription {
-        +int id
-        +int host_id
-        +str name
-        +str event_filter
-        +str event_consumer
-        +str binding_type
-        +str risk_level
-        +str collected_at
-        +batch_create(host_id, items) int$
-        +list_by_host(host_id) list$
-        +delete_by_host(host_id)$
-    }
-
-    class RegistryKey {
-        +int id
-        +int host_id
-        +str key_path
-        +str value_name
-        +str value_type
-        +str value_data
-        +str last_write_time
-        +str collected_at
-        +batch_create(host_id, items) int$
-        +list_by_host(host_id) list$
-        +delete_by_host(host_id)$
     }
 
     class AnalysisService {
-        +get_network_connections(host_id) list$
-        +get_file_hashes(host_id) list$
-        +get_wmi_subscriptions(host_id) list$
-        +get_registry_keys(host_id) list$
+        +analyze(host_id) dict$
+        +get_timeline(host_id, start, end, event_types, severities) list$
+        +get_ioc_hits(host_id) list$
+        +update_timeline_event(event_id, data) dict$
+        +compare_timelines(host_ids) list$
+        +export_timeline_csv(host_id, start, end) str$
+        +get_timeline_stats(host_id) dict$
     }
 
-    class FastAPIRouter {
-        +GET /hosts/{host_id}/network-connections
-        +GET /hosts/{host_id}/file-hashes
-        +GET /hosts/{host_id}/wmi-subscriptions
-        +GET /hosts/{host_id}/registry-keys
+    class TimelineBuilder {
+        +build(raw_data, ioc_hits) list$
+        +inject_mitre_tactic(event) dict$
+        +_extract_from_processes(raw_data) list$
+        +_extract_from_network(raw_data) list$
+        +_extract_from_logs(raw_data) list$
+        +_extract_from_files(raw_data) list$
+        +_extract_from_browser(raw_data) list$
+        +_extract_from_security(raw_data) list$
+        +sort_events(events) list$
     }
 
-    FastAPIRouter --> AnalysisService : 调用
-    AnalysisService --> NetworkConnection : list_by_host()
-    AnalysisService --> FileHash : list_by_host()
-    AnalysisService --> WmiSubscription : list_by_host()
-    AnalysisService --> RegistryKey : list_by_host()
+    class ExplainabilityService {
+        +build_coverage_gaps(tiered_data, evidence_items, input_quality) dict$
+        +normalize_key_events(ai_key_events, timeline_events) list$
+    }
 
-    NetworkConnection --> "hosts" : host_id FK
-    FileHash --> "hosts" : host_id FK
-    WmiSubscription --> "hosts" : host_id FK
-    RegistryKey --> "hosts" : host_id FK
+    class AiAnalysisReport {
+        +int host_id
+        +int case_id
+        +str source_event_id
+        +str timeline_analysis
+        +create(...) dict$
+        +get_by_host(host_id) dict$
+    }
+
+    class MitreTacticMapper {
+        +str EVENT_TYPE
+        +str SOURCE
+        +str DESCRIPTION_KW
+        +map(event) dict$
+        +_rules list
+    }
+
+    %% ── TypeScript 前端类型 ──
+    class TimelineEventItem {
+        +number id
+        +string timestamp
+        +string event_type
+        +string source
+        +string description
+        +Severity severity
+        +object details
+        +string kill_chain_stage
+        +string mitre_technique_id
+        +EventStatus status
+        +string assigned_to
+        +string resolution
+        +number ioc_hit_id
+    }
+
+    class SummaryStats {
+        +number highCount
+        +number mediumCount
+        +number lowCount
+        +number iocHitCount
+        +number totalHours
+    }
+
+    class DesignTokens {
+        +Record~Severity,string~ severityColor
+        +Record~Severity,number~ severitySymbolSize
+        +Record~EventType,string~ eventTypeColor
+        +Record~EventType,string~ eventTypeIcon
+        +Record~KillChainStage,string~ killChainLabel
+        +Record~string,string~ spacing
+    }
+
+    class EventFilter {
+        +string[] eventTypes
+        +Severity[] severities
+        +string timeStart
+        +string timeEnd
+    }
+
+    %% ── 关系 ──
+    AnalysisService --> TimelineEvent : 调用
+    AnalysisService --> IocHit : 调用
+    AnalysisService --> AiAnalysisReport : 读取
+    TimelineBuilder --> MitreTacticMapper : 使用
+    TimelineBuilder --> IocHit : 关联 ioc_hit_id
+    ExplainabilityService --> TimelineEvent : 匹配 key_events
+    TimelineEvent "1" --> "0..1" IocHit : ioc_hit_id FK
+    TimelineEventItem ..> DesignTokens : 引用常量
+    EventFilter --> DesignTokens : 引用枚举值

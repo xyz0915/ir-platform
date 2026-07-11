@@ -175,6 +175,67 @@ class ExplainabilityService:
         return result[:5]
 
     @staticmethod
+    def normalize_key_events(ai_key_events: list, timeline_events: list) -> list:
+        """将 AI key_events 与原始 timeline_events 进行模糊匹配，建立关联.
+
+        对每个 AI key_event，按 timestamp + event_type + description 前 30 字符
+        模糊匹配 timeline_events，匹配成功则追加 source_event_id。
+
+        Args:
+            ai_key_events: AI 分析产出的 key_events 列表.
+            timeline_events: 原始时间线事件列表（来自 TimelineEvent.list_by_host）.
+
+        Returns:
+            增强后的 key_events 列表，匹配成功的条目含 source_event_id.
+        """
+        if not ai_key_events or not timeline_events:
+            return list(ai_key_events) if ai_key_events else []
+
+        result: list[dict] = []
+        # 构建 timeline_events 索引：{event_type: {description_prefix: event}}
+        tl_index: dict[str, list[dict]] = {}
+        for te in timeline_events:
+            if not isinstance(te, dict):
+                continue
+            et = (te.get("event_type") or "").lower()
+            if et not in tl_index:
+                tl_index[et] = []
+            tl_index[et].append(te)
+
+        for ke in ai_key_events:
+            if not isinstance(ke, dict):
+                result.append(ke)
+                continue
+
+            ke_copy = dict(ke)
+            ke_ts: str = (ke_copy.get("timestamp") or ke_copy.get("time") or "").strip()
+            ke_type: str = (ke_copy.get("type") or ke_copy.get("event_type") or "").lower()
+            ke_desc: str = (ke_copy.get("desc") or ke_copy.get("description") or ke_copy.get("event") or "")
+            ke_desc_prefix = ke_desc[:30].lower() if ke_desc else ""
+
+            matched_id = None
+            candidates = tl_index.get(ke_type, [])
+
+            for te in candidates:
+                te_ts = (te.get("timestamp") or "").strip()
+                te_desc = (te.get("description") or "").lower()
+
+                # 匹配条件：时间戳相同 或 描述前 30 字符匹配
+                ts_match = ke_ts and te_ts and ke_ts == te_ts
+                desc_match = ke_desc_prefix and te_desc and ke_desc_prefix in te_desc
+
+                if ts_match or desc_match:
+                    matched_id = te.get("id")
+                    break
+
+            if matched_id is not None:
+                ke_copy["source_event_id"] = matched_id
+
+            result.append(ke_copy)
+
+        return result
+
+    @staticmethod
     def normalize_section(section: Any) -> dict:
         """把任意 AI 返回的"分段"归一化为安全的可变 dict.
 

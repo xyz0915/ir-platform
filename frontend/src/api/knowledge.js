@@ -11,6 +11,11 @@ export default {
     return request.get('/knowledge/seeds')
   },
 
+  /** 获取单条知识草稿详情（供证据溯源跳转） */
+  getDraftDetail(id) {
+    return request.get(`/knowledge/drafts/${id}`)
+  },
+
   /** 批准单条草稿 */
   approveDraft(id) {
     return request.post(`/knowledge/drafts/${id}/approve`)

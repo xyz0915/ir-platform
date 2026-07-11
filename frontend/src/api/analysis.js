@@ -13,6 +13,9 @@ export default {
   getTimeline(hostId, params = {}) {
     return request.get(`/hosts/${hostId}/timeline`, { params })
   },
+  getTimelineStats(hostId) {
+    return request.get(`/hosts/${hostId}/timeline/stats`)
+  },
   getIocHits(hostId) {
     return request.get(`/hosts/${hostId}/ioc-hits`)
   },
@@ -60,5 +63,13 @@ export default {
   },
   getRegistryKeys(hostId) {
     return request.get(`/hosts/${hostId}/registry-keys`)
-  }
+  },
+  // T04: 更新时间线事件状态
+  updateTimelineEvent(eventId, data) {
+    return request.patch(`/analysis/timeline/${eventId}`, data)
+  },
+  // T05: 多主机对比
+  getCompareTimeline(hostIds) {
+    return request.get('/analysis/timeline/compare', { params: { host_ids: hostIds.join(',') } })
+  },
 }

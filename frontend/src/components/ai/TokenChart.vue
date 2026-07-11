@@ -49,7 +49,10 @@ onMounted(() => {
 async function loadData() {
   loading.value = true
   try {
-    const res = await getAiTokenStats({ period: period.value })
+    // 后端仅支持 days 参数；将周期映射为天数
+    const daysMap = { daily: 30, weekly: 90, monthly: 365 }
+    const days = daysMap[period.value] || 30
+    const res = await getAiTokenStats({ days })
     const raw = res.data
     // 兼容多种后端返回格式
     let data = raw
@@ -76,7 +79,7 @@ function buildChartOption(data) {
 
   const xData = data.map((d) => d.period || d.date || d.day || d.week || d.month || '')
   const tokenData = data.map((d) => d.tokens || d.total_tokens || d.token_count || 0)
-  const callData = data.map((d) => d.calls || d.total_calls || d.call_count || 0)
+  const callData = data.map((d) => d.calls || d.total_calls || d.call_count || d.count || 0)
 
   chartOption.value = {
     tooltip: {

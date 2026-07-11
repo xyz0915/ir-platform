@@ -1,0 +1,46 @@
+sequenceDiagram
+    autonumber
+    participant Seed as seed_rules.py
+    participant DB as rules 表 (DB)
+    participant AS as analysis_service.run_analysis
+    participant RE as RuleEngine.evaluate
+    participant HE as _build_host_events
+    participant AC as _match_attack_chain
+    participant AR as AnalysisResult
+    participant AT as ai_task_service
+    participant NG as normalize_and_guard
+    participant AI as AI 报告/叙述
+    participant KR as KnowledgeRetriever(RAG)
+
+    Note over Seed,DB: ══ 落库阶段（一次性，幂等）══
+    Seed->>DB: Rule.create(name, rule_type='attack_chain', condition{ordered_steps,window_minutes})
+    Note right of DB: 4 条链规则 + 7 条单点 = 11 条<br/>attack_chain 配置存于 condition JSON 列<br/>source='default'，不碰 default_rules.json
+
+    Note over AS,AI: ══ 分析阶段（运行时）══
+    AS->>RE: load_rules() → 全部启用规则（含 11 条新）
+    RE->>RE: 按 rule_type 分桶<br/>per_item_rules / attack_chain_rules
+
+    rect rgb(235,245,255)
+        Note over AS,AC: 链规则路径（主机级下钻）
+        AS->>RE: evaluate([], attack_chain_rules, global_context={host_id})
+        RE->>HE: _build_host_events(global_context)
+        HE->>DB: AbnormalProcess/SuspiciousConnection/PersistenceItem/IocHit/RegistryKey/TimelineEvent.list_by_host(host_id)
+        HE-->>RE: 统一事件列表(按时间升序，无时间戳置末尾)
+        RE->>AC: 逐条链规则贪心顺序匹配 ordered_steps + 时间窗
+        AC-->>RE: {steps, reason} 或 None
+        RE-->>AS: attack_chain_matches (severity 强制 critical)
+    end
+
+    AS->>AR: details.attack_chains = [rule_name, severity, reason, steps]
+    Note right of AR: 不影响既有风险分数/等级
+
+    AT->>AR: get_attack_chain_hits(host_id)
+    AR-->>AT: details.attack_chains
+    AT->>NG: normalize_and_guard(parsed, attack_chain_hits=...)
+    NG->>AI: AiAnalysisReport.attack_chain_hits + AI 叙述上下文
+    Note right of AI: AI 只叙述、不重判（高权重确定性证据）
+
+    Note over KR: ══ RAG 索引（契约隔离，本设计不改动）══
+    KR->>KR: _load_rules() 读 default_rules.json（静态）
+    KR->>KR: _build_index() 幂等(count()>0 跳过)
+    Note over KR,DB: rule_{i}_{name} 顺序仅由 default_rules.json 决定<br/>与 DB rules 表新增 11 条无关 → 契约 100%  intact

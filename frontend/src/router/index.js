@@ -62,6 +62,11 @@ const routes = [
         path: 'knowledge',
         name: 'Knowledge',
         component: () => import('@/views/KnowledgeView.vue')
+      },
+      {
+        path: 'knowledge/detail/:entryRef',
+        name: 'KnowledgeDetail',
+        component: () => import('@/views/KnowledgeDetailView.vue')
       }
     ]
   }

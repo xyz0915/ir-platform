@@ -277,7 +277,7 @@ class TestBuildModuleWithData(unittest.TestCase):
         result = PromptBuilder.build_module(host_id=1, module_type="connections")
 
         user_prompt = result["user_prompt"]
-        self.assertIn("suspicious_connections_all", user_prompt,
+        self.assertIn("network_connections_all", user_prompt,
                       "connections 模块应包含外连数据")
         self.assertNotIn("ioc_hits_all", user_prompt,
                          "connections 模块不应含 IOC 数据")

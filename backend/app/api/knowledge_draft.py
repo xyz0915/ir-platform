@@ -14,11 +14,12 @@ import json
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.data.knowledge_seed import ALL_SEED_KNOWLEDGE
 from app.models.knowledge_draft import KnowledgeDraft
+from app.services.auth_service import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,7 @@ def _parse_text_items(text: str) -> list[dict]:
 def list_drafts(
     status: Optional[str] = Query(None, description="按状态过滤：pending/approved/rejected"),
     host_id: Optional[str] = Query(None, description="按主机 ID 过滤"),
+    current_user: dict = Depends(get_current_user),
 ):
     """获取所有知识草稿列表，支持按状态和主机过滤.
 
@@ -110,7 +112,7 @@ def list_drafts(
 
 
 @router.get("/seeds")
-def list_seeds():
+def list_seeds(current_user: dict = Depends(get_current_user)):
     """获取内置种子知识数据（10 条 MITRE/C2/Malware）.
 
     返回 MITRE_TECHNIQUES（5）、C2_FRAMEWORKS（3）、MALWARE_PATTERNS（2）共 10 条。
@@ -122,8 +124,25 @@ def list_seeds():
     }
 
 
+@router.get("/drafts/{draft_id}")
+def get_draft_detail(draft_id: int, current_user: dict = Depends(get_current_user)):
+    """获取单条知识草稿详情（供证据溯源跳转）.
+
+    纯透传封装 KnowledgeDraft.get_by_id。
+    草稿不存在时返回 404（FastAPI HTTPException），前端 axios 以 HTTP 错误
+    进入 catch 分支，渲染「该知识条目已不存在（可能已被拒绝/撤回）」空态。
+
+    注意：路径 `/drafts/{draft_id}` 与既有 `POST /drafts/{draft_id}/approve`
+    等方法不冲突（GET vs POST + 子路径），无需调整路由注册顺序。
+    """
+    draft = KnowledgeDraft.get_by_id(draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail=f"知识草稿 {draft_id} 不存在")
+    return {"code": 0, "data": draft, "message": "success"}
+
+
 @router.post("/drafts/{draft_id}/approve")
-def approve_draft(draft_id: int):
+def approve_draft(draft_id: int, current_user: dict = Depends(get_current_user)):
     """批准知识草稿.
 
     批准后：
@@ -147,35 +166,53 @@ def approve_draft(draft_id: int):
 
 
 @router.post("/drafts/{draft_id}/reject")
-def reject_draft(draft_id: int):
+def reject_draft(draft_id: int, current_user: dict = Depends(get_current_user)):
     """拒绝知识草稿.
 
-    将草稿 status 更新为 'rejected'，该条目不会进入知识库.
+    将草稿 status 更新为 'rejected'，该条目不会进入知识库。
+    拒绝后触发种子索引重建，确保该条目（若曾被批准）的向量从 ChromaDB 移除。
     """
     try:
         draft = KnowledgeDraft.reject(draft_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    # 拒绝后触发种子索引重建，移除该条目在 ChromaDB 中的向量
+    try:
+        from app.services.knowledge_retriever import KnowledgeRetriever
+
+        KnowledgeRetriever.rebuild_seed_index()
+    except Exception as exc:
+        logger.warning("拒绝后重建种子索引失败（不影响拒绝操作）: %s", exc)
+
     return {"code": 0, "data": draft, "message": "草稿已拒绝"}
 
 
 @router.post("/drafts/{draft_id}/recall")
-def recall_draft(draft_id: int):
+def recall_draft(draft_id: int, current_user: dict = Depends(get_current_user)):
     """撤回已批准或已拒绝的草稿，恢复为 pending 状态.
 
     撤回后 reviewed_at 记录为撤回时间。
+    撤回后触发种子索引重建，确保该条目（若曾被批准）的向量从 ChromaDB 移除。
     """
     try:
         draft = KnowledgeDraft.recall(draft_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    # 撤回后触发种子索引重建，移除该条目在 ChromaDB 中的向量
+    try:
+        from app.services.knowledge_retriever import KnowledgeRetriever
+
+        KnowledgeRetriever.rebuild_seed_index()
+    except Exception as exc:
+        logger.warning("撤回后重建种子索引失败（不影响撤回操作）: %s", exc)
+
     return {"code": 0, "data": draft, "message": "草稿已撤回至待审核"}
 
 
 @router.post("/drafts/batch")
-def batch_action(body: BatchRequest):
+def batch_action(body: BatchRequest, current_user: dict = Depends(get_current_user)):
     """批量批准或拒绝知识草稿.
 
     Args:
@@ -202,7 +239,7 @@ def batch_action(body: BatchRequest):
 
 
 @router.post("/import")
-def import_knowledge(body: ImportRequest):
+def import_knowledge(body: ImportRequest, current_user: dict = Depends(get_current_user)):
     """手动导入知识条目（支持 JSON 条目与自由文本）.
 
     校验规则：
@@ -287,7 +324,11 @@ def import_knowledge(body: ImportRequest):
 
 
 @router.post("/sync/{provider}")
-def sync_from_provider(provider: str, body: Optional[SyncRequest] = None):
+def sync_from_provider(
+    provider: str,
+    body: Optional[SyncRequest] = None,
+    current_user: dict = Depends(get_current_user),
+):
     """从第三方威胁情报平台同步 IOC 列表到知识草稿区.
 
     支持的 provider：

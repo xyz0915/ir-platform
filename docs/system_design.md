@@ -1,324 +1,667 @@
-# SOC 平台「5 项数据采集增强」系统架构设计
+# IR Platform 时间线功能全面升级 — 系统架构设计
 
-> 架构师：高见远 | 日期：2026-07-06 | 技术栈：FastAPI + SQLite / Vue3 + Element Plus + Vite
+> **作者**: Bob (Architect)  
+> **版本**: 1.0  
+> **日期**: 2026-07-11
 
 ---
 
-## Part A：系统设计
+## Part A: 系统设计
 
-### 1. 实现方案 + 框架选型
+### 1. 实现方案与框架选型
 
-#### 1.1 核心结论
+#### 1.1 核心技术栈（不变）
 
-**不引入任何新框架/新依赖包。** 全部复用现有技术栈：
-- 后端：FastAPI 路由 + SQLite（sqlite3 标准库）+ 现有 `get_connection()` 上下文管理器
-- 前端：Vue3 Composition API + Element Plus 表格组件 + Axios
+| 层 | 技术 | 版本 | 说明 |
+|----|------|------|------|
+| 后端框架 | FastAPI | 现有 | 保持不变 |
+| 数据库 | SQLite | 现有 | 使用 ALTER TABLE 增量迁移 |
+| 前端框架 | Vue 3 + Vite | 现有 | Composition API |
+| UI 组件库 | Element Plus | ^2.7.6 | 已有 |
+| 图表库 | ECharts | ^5.5.1 | 已有 |
+| Vue-ECharts 桥接 | vue-echarts | ^7.0.3 | 已有 |
 
-#### 1.2 关键设计决策
+#### 1.2 无需新增依赖
 
-| 决策点 | 方案 | 理由 |
-|--------|------|------|
-| 网络连接表 | 新建 `network_connections`，与现有 `suspicious_connections` 独立 | 前者是原始采集数据（全量），后者是分析引擎标记的可疑子集，职责不同 |
-| WMI Filter/Consumer | JSON TEXT 字段存储 | SQLite 无原生 JSON 类型，参照现有 `details` 字段模式，存 `json.dumps()` 序列化字符串 |
-| 注册表值类型 | `value_type` 存字符串（REG_SZ/REG_DWORD/...） | 保留原始类型名，便于分析师直接识别 |
-| 命令行字段 | **无需变更** — `command_line TEXT` 已存在于 DDL 中，前端 `AbnormalProcessTable.vue` 已展示该列 | P1-4 实际已实现，零工作量 |
-| 文件签名 | `is_signed` 存 INTEGER 0/1，`signer` 存签名的证书主体名 | 简单布尔+文本即可满足分析师"判定文件是否合法"的需求 |
+- **前端**: 所有需求用 ECharts 内置能力实现（dataZoom、scatter、graph、custom series），无需额外图表库
+- **后端**: 现有 FastAPI + SQLite 完全够用；V3 CSV 导出用 Python 标准库 `csv` 模块；PDF 导出复用已有 `PdfExportService`
 
 #### 1.3 架构模式
 
-沿用现有 MVC 分层：
+- **后端**: 分层架构 — API 层(`api/analysis.py`) → Service 层(`services/analysis_service.py`) → Model 层(`models/analysis.py`) → DB
+- **前端**: 组件化 — View(`HostDetailView.vue`) 编排子组件，子组件通过 props/emits 通信；新增共享 `design-tokens.js` 统一常量
+
+#### 1.4 V1→V2→V3 依赖关系与实现策略
+
 ```
-前端 Vue 组件 → api/analysis.js (Axios) → FastAPI Router → AnalysisService → Model (sqlite3)
+V1 (快速止血) ── 独立，无外部依赖，直接改现有文件
+   │
+   └── V2 (能力补全) ── 依赖 V1 的 DB 字段(V1-5)和 Design Tokens(V2-7)
+         │
+         └── V3 (体验升维) ── 依赖 V2 的 API 基础(V2-2/V2-6)和数据模型(V2-4)
+```
+
+**策略**: 严格按 V1→V2→V3 顺序实施。同阶段内：后端优先（数据基础先行），共享基础设施优先于独立功能。
+
+---
+
+### 2. 文件列表
+
+#### 2.1 后端文件
+
+```
+backend/app/database.py                     # [修改] 新增 _alter_timeline_events_table() + DDL 更新
+backend/app/models/analysis.py              # [修改] TimelineEvent/IocHit 模型扩展字段
+backend/app/analysis/timeline_builder.py    # [修改] V2-5 MITRE 战术自动注入
+backend/app/services/analysis_service.py    # [修改] 新增 compare/export/status 方法
+backend/app/services/explainability_service.py # [修改] V2-6 AI key_events 关联
+backend/app/api/analysis.py                 # [修改] 新增 PATCH/compare/export 端点
+backend/app/models/ai_analysis.py           # [修改] V2-6 source_event_id 字段
+```
+
+#### 2.2 前端文件
+
+```
+frontend/src/
+├── constants/
+│   └── design-tokens.js                   # [新建] V2-7 统一 Design Tokens
+├── components/
+│   ├── TimelineChart.vue                  # [修改] V1-1/V1-2/V1-6 严重度+缩放+IOC标记
+│   ├── SummaryStatsBar.vue                # [新建] V1-3 摘要统计栏
+│   ├── timeline/
+│   │   ├── EventTable.vue                 # [新建] V2-1 事件列表+排序筛选
+│   │   ├── EventDetailDrawer.vue          # [新建] V2-3 事件详情侧边面板(含V3-2状态)
+│   │   ├── TimelineFilterBar.vue          # [新建] V2-2 时间范围+类型过滤器
+│   │   ├── KillChainView.vue              # [新建] V2-4 Kill Chain 泳道图
+│   │   ├── AttackChainDag.vue             # [新建] V3-3 攻击链 DAG 可视化
+│   │   ├── TimelineCompare.vue            # [新建] V3-4 多主机时间线叠加对比
+│   │   ├── SlaOverlay.vue                 # [新建] V3-6 SLA 时效可视化
+│   │   └── WarRoomMode.vue                # [新建] V3-7 作战视图模式
+│   └── ai/
+│       └── StructuredTimelinePanel.vue    # [修改] V1-4/V2-6 增强
+├── api/
+│   └── analysis.js                        # [修改] 新增 API 调用函数
+└── views/
+    └── HostDetailView.vue                 # [修改] 集成新组件(V2-1~V3-7)
 ```
 
 ---
 
-### 2. 文件列表及相对路径
+### 3. 数据结构与接口设计
 
-| 文件 | 操作 | 说明 |
-|------|------|------|
-| `backend/app/database.py` | **改** | 新增 4 条 DDL_STATEMENTS |
-| `backend/app/models/analysis.py` | **改** | 新增 4 个模型类 + 更新 `clear_analysis_by_host()` |
-| `backend/app/api/analysis.py` | **改** | 新增 4 个 GET 端点 |
-| `backend/app/services/analysis_service.py` | **改** | 新增 4 个委托方法 |
-| `frontend/src/api/analysis.js` | **改** | 新增 4 个 API 函数 |
-| `frontend/src/views/HostDetailView.vue` | **改** | 新增 2 个 Tab + 调整持久化Tab数据联动 |
-| `frontend/src/components/NetworkConnectionTable.vue` | **新增** | 网络连接表格组件 |
-| `frontend/src/components/FileHashTable.vue` | **新增** | 文件哈希表格组件 |
-| `frontend/src/components/WmiDetailPanel.vue` | **新增** | WMI Filter/Consumer JSON 展开面板 |
-| `frontend/src/components/RegistryDetailPanel.vue` | **新增** | 注册表键值展开面板 |
-| `frontend/src/components/PersistenceTable.vue` | **改** | 增加可展开行（WMI/注册表类型） |
+#### 3.1 数据库表结构变更
 
----
-
-### 3. 数据模型（简要 DDL）
-
-#### 3.1 新表：`network_connections`（P0-1）
+##### 3.1.1 timeline_events 表 ALTER（V1-5）
 
 ```sql
-CREATE TABLE IF NOT EXISTS network_connections (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    host_id         INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
-    protocol        TEXT,           -- TCP / UDP
-    local_addr      TEXT,           -- 本地地址
-    local_port      INTEGER,        -- 本地端口
-    remote_addr     TEXT,           -- 远程地址
-    remote_port     INTEGER,        -- 远程端口
-    state           TEXT,           -- LISTEN / ESTABLISHED / CLOSE_WAIT ...
-    pid             INTEGER,        -- 进程 ID
-    process_name    TEXT,           -- 进程名
-    collected_at    TEXT            -- 采集时间
-)
+ALTER TABLE timeline_events ADD COLUMN kill_chain_stage TEXT;
+ALTER TABLE timeline_events ADD COLUMN mitre_technique_id TEXT;
+ALTER TABLE timeline_events ADD COLUMN status TEXT DEFAULT 'new';
+ALTER TABLE timeline_events ADD COLUMN assigned_to TEXT;
+ALTER TABLE timeline_events ADD COLUMN resolution TEXT;
+ALTER TABLE timeline_events ADD COLUMN ioc_hit_id INTEGER REFERENCES ioc_hits(id);
 ```
 
-#### 3.2 新表：`file_hashes`（P0-2）
+##### 3.1.2 ai_analysis_reports 表 ALTER（V2-6）
 
 ```sql
-CREATE TABLE IF NOT EXISTS file_hashes (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    host_id         INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
-    file_path       TEXT,           -- 文件完整路径
-    file_name       TEXT,           -- 文件名
-    sha256          TEXT,           -- SHA256 哈希值
-    is_signed       INTEGER DEFAULT 0,  -- 是否签名 (0/1)
-    signer          TEXT,           -- 签名者（证书主体）
-    file_size       INTEGER,        -- 文件大小（字节）
-    product_name    TEXT,           -- 产品名（版本信息）
-    product_version TEXT,           -- 产品版本
-    collected_at    TEXT            -- 采集时间
-)
+ALTER TABLE ai_analysis_reports ADD COLUMN source_event_id TEXT;
+-- source_event_id 存储 JSON 数组，如 '["event_uuid_1","event_uuid_2"]'
+-- 将 AI key_events 与 timeline_events 建立关联
 ```
 
-#### 3.3 新表：`wmi_subscriptions`（P1-3）
+##### 3.1.3 timeline_events 处置审计表（V3-2）
 
 ```sql
-CREATE TABLE IF NOT EXISTS wmi_subscriptions (
+CREATE TABLE IF NOT EXISTS timeline_event_audit (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    host_id         INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
-    name            TEXT,           -- 订阅名称
-    event_filter    TEXT,           -- EventFilter 详情 (JSON 字符串)
-    event_consumer  TEXT,           -- EventConsumer 详情 (JSON 字符串)
-    binding_type    TEXT,           -- 绑定类型 (__FilterToConsumerBinding / ...)
-    risk_level      TEXT,           -- 风险等级 high/medium/low
-    collected_at    TEXT            -- 采集时间
-)
+    event_id        INTEGER NOT NULL REFERENCES timeline_events(id) ON DELETE CASCADE,
+    old_status      TEXT,
+    new_status      TEXT,
+    operator        TEXT,
+    comment         TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
 ```
 
-#### 3.4 新表：`registry_keys`（P2-5）
+#### 3.2 Mermaid 类图
 
-```sql
-CREATE TABLE IF NOT EXISTS registry_keys (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    host_id         INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
-    key_path        TEXT,           -- 注册表键路径
-    value_name      TEXT,           -- 值名称
-    value_type      TEXT,           -- 值类型 (REG_SZ / REG_DWORD / REG_BINARY / ...)
-    value_data      TEXT,           -- 值数据（文本表示）
-    last_write_time TEXT,           -- 最后写入时间
-    collected_at    TEXT            -- 采集时间
-)
+```mermaid
+classDiagram
+    %% ── Python 后端类 ──
+    class TimelineEvent {
+        +int host_id
+        +str timestamp
+        +str event_type
+        +str source
+        +str description
+        +str severity
+        +dict details
+        +str kill_chain_stage
+        +str mitre_technique_id
+        +str status
+        +str assigned_to
+        +str resolution
+        +int ioc_hit_id
+        +batch_create(host_id, items) int$
+        +list_by_host(host_id, start, end, event_types, severities) list$
+        +update_status(event_id, status, operator, comment) dict$
+        +delete_by_host(host_id)$
+    }
+
+    class IocHit {
+        +int host_id
+        +str ioc_type
+        +str ioc_value
+        +str matched_in
+        +str context
+        +str severity
+        +batch_create(host_id, items) int$
+        +list_by_host(host_id) list$
+    }
+
+    class AnalysisService {
+        +analyze(host_id) dict$
+        +get_timeline(host_id, start, end, event_types, severities) list$
+        +get_ioc_hits(host_id) list$
+        +update_timeline_event(event_id, data) dict$
+        +compare_timelines(host_ids) list$
+        +export_timeline_csv(host_id, start, end) str$
+        +get_timeline_stats(host_id) dict$
+    }
+
+    class TimelineBuilder {
+        +build(raw_data, ioc_hits) list$
+        +inject_mitre_tactic(event) dict$
+        +_extract_from_processes(raw_data) list$
+        +_extract_from_network(raw_data) list$
+        +_extract_from_logs(raw_data) list$
+        +_extract_from_files(raw_data) list$
+        +_extract_from_browser(raw_data) list$
+        +_extract_from_security(raw_data) list$
+        +sort_events(events) list$
+    }
+
+    class ExplainabilityService {
+        +build_coverage_gaps(tiered_data, evidence_items, input_quality) dict$
+        +normalize_key_events(ai_key_events, timeline_events) list$
+    }
+
+    class AiAnalysisReport {
+        +int host_id
+        +int case_id
+        +str source_event_id
+        +str timeline_analysis
+        +create(...) dict$
+        +get_by_host(host_id) dict$
+    }
+
+    class MitreTacticMapper {
+        +str EVENT_TYPE
+        +str SOURCE
+        +str DESCRIPTION_KW
+        +map(event) dict$
+        +_rules list
+    }
+
+    %% ── TypeScript 前端类型 ──
+    class TimelineEventItem {
+        +number id
+        +string timestamp
+        +string event_type
+        +string source
+        +string description
+        +Severity severity
+        +object details
+        +string kill_chain_stage
+        +string mitre_technique_id
+        +EventStatus status
+        +string assigned_to
+        +string resolution
+        +number ioc_hit_id
+    }
+
+    class SummaryStats {
+        +number highCount
+        +number mediumCount
+        +number lowCount
+        +number iocHitCount
+        +number totalHours
+    }
+
+    class DesignTokens {
+        +Record~Severity,string~ severityColor
+        +Record~Severity,number~ severitySymbolSize
+        +Record~EventType,string~ eventTypeColor
+        +Record~EventType,string~ eventTypeIcon
+        +Record~KillChainStage,string~ killChainLabel
+        +Record~string,string~ spacing
+    }
+
+    class EventFilter {
+        +string[] eventTypes
+        +Severity[] severities
+        +string timeStart
+        +string timeEnd
+    }
+
+    %% ── 关系 ──
+    AnalysisService --> TimelineEvent : 调用
+    AnalysisService --> IocHit : 调用
+    AnalysisService --> AiAnalysisReport : 读取
+    TimelineBuilder --> MitreTacticMapper : 使用
+    TimelineBuilder --> IocHit : 关联 ioc_hit_id
+    ExplainabilityService --> TimelineEvent : 匹配 key_events
+    TimelineEvent "1" --> "0..1" IocHit : ioc_hit_id FK
+    TimelineEventItem ..> DesignTokens : 引用常量
+    EventFilter --> DesignTokens : 引用枚举值
 ```
 
-#### 3.5 已有变更确认：`abnormal_processes.command_line`（P1-4）
+#### 3.3 API 端点设计
 
-**无需变更。** 当前 DDL（`database.py` 行 100–113）已包含 `command_line TEXT`。前端 `AbnormalProcessTable.vue` 行 63 已渲染该列。`AnalysisService.analyze()` 在行 122 已写入 `item.get("command_line")`。
+##### 修改现有端点
 
-> ⚠️ 假设：采集数据源（Agent JSON）已提供 `command_line` 字段。若未提供，前端列会显示空白——这不属于本需求范围。
+| 方法 | 路径 | 变更说明 |
+|------|------|----------|
+| GET | `/api/hosts/{host_id}/timeline` | 扩展查询参数: `severity`(多值), `event_types`(逗号分隔多值), `ioc_hit`(bool); 响应增加 `ioc_hit_id`/`kill_chain_stage`/`mitre_technique_id`/`status` 字段 |
 
----
+##### 新增端点
 
-### 4. API 端点设计
+| 方法 | 路径 | 说明 | 阶段 |
+|------|------|------|------|
+| GET | `/api/hosts/{host_id}/timeline/stats` | 返回摘要统计 `{highCount, mediumCount, lowCount, iocHitCount, timeSpan}` | V1 |
+| PATCH | `/api/analysis/timeline/{event_id}` | 更新事件状态 `{status, resolution, operator}` → 返回更新后事件 | V3 |
+| GET | `/api/analysis/timeline/compare` | Query: `host_ids=1,2,3` → 返回 `{hosts: [{host_id, hostname, events}]}` | V3 |
+| GET | `/api/analysis/timeline/{host_id}/export/csv` | 流式返回 CSV 文件 | V3 |
+| GET | `/api/analysis/timeline/{host_id}/export/pdf` | 复用 PdfExportService 生成时间线 PDF 报告 | V3 |
 
-所有端点均需 Bearer Token 认证（`Depends(get_current_user)`），统一响应格式 `{"code": 0, "data": ..., "message": "success"}`。
-
-| 功能 | 方法 | 路径 | 参数 | 说明 |
-|------|------|------|------|------|
-| P0-1 网络连接 | GET | `/api/hosts/{host_id}/network-connections` | `host_id` (path) | 返回全量网络连接列表 |
-| P0-2 文件哈希 | GET | `/api/hosts/{host_id}/file-hashes` | `host_id` (path) | 返回文件哈希及签名信息列表 |
-| P1-3 WMI 订阅 | GET | `/api/hosts/{host_id}/wmi-subscriptions` | `host_id` (path) | 返回 WMI 订阅详情（含 JSON Filter/Consumer） |
-| P2-5 注册表 | GET | `/api/hosts/{host_id}/registry-keys` | `host_id` (path) | 返回注册表键值列表 |
-
-URL 命名遵循现有 kebab-case 规范（参照 `/suspicious-connections`、`/abnormal-processes`）。
-
-**API 响应示例**（以网络连接为例）：
-
+**PATCH 请求体示例**:
 ```json
 {
-  "code": 0,
-  "data": [
-    {
-      "id": 1,
-      "host_id": 5,
-      "protocol": "TCP",
-      "local_addr": "192.168.1.100",
-      "local_port": 49152,
-      "remote_addr": "203.0.113.50",
-      "remote_port": 443,
-      "state": "ESTABLISHED",
-      "pid": 2840,
-      "process_name": "chrome.exe",
-      "collected_at": "2026-07-01 10:30:00"
-    }
-  ],
-  "message": "success"
+  "status": "contained",
+  "resolution": "已隔离主机并阻断外连",
+  "operator": "admin"
 }
 ```
 
-WMI 订阅的 `event_filter` 和 `event_consumer` 字段在返回时需做 `json.loads()` 解析，以 JSON 对象形式返回给前端，便于渲染。
+**compare 响应示例**:
+```json
+{
+  "code": 0,
+  "data": {
+    "hosts": [
+      {
+        "host_id": 1,
+        "hostname": "DESKTOP-A",
+        "color": "#409EFF",
+        "events": [...]
+      },
+      {
+        "host_id": 2,
+        "hostname": "DESKTOP-B",
+        "color": "#E6A23C",
+        "events": [...]
+      }
+    ],
+    "timeRange": {"start": "...", "end": "..."}
+  }
+}
+```
 
 ---
 
-### 5. 程序调用流程（P0-1 网络连接为例）
+### 4. 程序调用流程
+
+#### 4.1 关键场景：用户框选时间范围→API过滤→图表+表格联动刷新
 
 ```mermaid
 sequenceDiagram
-    actor Analyst as 分析师
-    participant Vue as HostDetailView.vue
-    participant Api as api/analysis.js
-    participant Router as FastAPI Router
-    participant Svc as AnalysisService
-    participant Model as NetworkConnection
+    participant User as 👤 用户
+    participant FilterBar as TimelineFilterBar
+    participant HostView as HostDetailView
+    participant API as /api/analysis.js
+    participant Backend as FastAPI Backend
     participant DB as SQLite
 
-    Analyst->>Vue: 点击"网络连接"Tab
-    alt 数据未缓存
-        Vue->>Api: getNetworkConnections(hostId)
-        Api->>Router: GET /api/hosts/{host_id}/network-connections
-        Router->>Router: 验证 JWT Token
-        Router->>Svc: get_network_connections(host_id)
-        Svc->>Model: list_by_host(host_id)
-        Model->>DB: SELECT * FROM network_connections WHERE host_id=?
-        DB-->>Model: list[Row]
-        Model-->>Svc: list[dict]
-        Svc-->>Router: list[dict]
-        Router-->>Api: {"code":0, "data":[...], "message":"success"}
-        Api-->>Vue: data array
-    end
-    Vue->>Vue: networkConnections = data
-    Vue-->>Analyst: NetworkConnectionTable 渲染表格
+    User->>FilterBar: 选择时间范围 + 事件类型 + 严重度
+    FilterBar->>HostView: emit('filter-change', {start, end, eventTypes, severities})
+    HostView->>API: getTimeline(hostId, {start, end, event_types, severity})
+    API->>Backend: GET /api/hosts/{host_id}/timeline?start=...&end=...&event_types=process,network&severity=high,medium
+    Backend->>DB: SELECT * FROM timeline_events WHERE host_id=? AND timestamp>=? AND timestamp<=? AND event_type IN (?,?) AND severity IN (?,?) ORDER BY timestamp
+    DB-->>Backend: 过滤后的事件列表
+    Backend-->>API: {code:0, data: [...], message:"success"}
+    API-->>HostView: 返回过滤数据
+    HostView->>HostView: 更新 events ref
+    HostView->>TimelineChart: props.events 变化 → watch 触发 initChart()
+    HostView->>EventTable: props.events 变化 → 表格刷新
+    TimelineChart-->>User: 散点图重渲染(仅显示过滤后事件)
+    EventTable-->>User: 表格更新行数据
+
+    User->>EventTable: 点击表格行
+    EventTable->>HostView: emit('row-click', event)
+    HostView->>TimelineChart: dispatchAction({type:'highlight', dataIndex})
+    TimelineChart-->>User: 对应散点高亮
+    HostView->>EventDetailDrawer: open(event) → 展示详情面板
+```
+
+#### 4.2 关键场景：AI分析完成→key_events与原始events关联→跳转
+
+```mermaid
+sequenceDiagram
+    participant AI as AI Service
+    participant Explain as ExplainabilityService
+    participant Report as AiAnalysisReport
+    participant DB as SQLite
+    participant Frontend as StructuredTimelinePanel
+
+    AI->>AI: AI 分析完成，产出 key_events
+    AI->>Explain: normalize_key_events(ai_key_events, timeline_events)
+    Explain->>Explain: 将 AI key_events 按 timestamp+event_type+description 模糊匹配到原始 timeline_events.id
+    Explain-->>AI: 返回匹配的 source_event_id 列表
+    AI->>Report: create(..., source_event_id=JSON[matched_ids])
+    Report->>DB: INSERT ai_analysis_reports (source_event_id=...)
+    
+    Note over Frontend: 用户查看 AI 报告
+    Frontend->>API: GET ai_analysis_reports (含 source_event_id)
+    Frontend->>Frontend: 渲染 StructuredTimelinePanel，每个 key_event 旁显示 🔗 跳转按钮
+    User->>Frontend: 点击跳转按钮
+    Frontend->>Frontend: emit('jump-to-event', source_event_id)
+    Frontend->>TimelineChart: dispatchAction({type:'highlight'}) + scrollToEvent
+```
+
+#### 4.3 关键场景：多主机时间线叠加对比
+
+```mermaid
+sequenceDiagram
+    participant User as 👤 用户
+    participant View as TimelineCompare
+    participant API as /api/analysis.js
+    participant Backend as FastAPI
+    participant DB as SQLite
+
+    User->>View: 选择 host_ids=[1,2,3]
+    View->>API: getCompareTimeline([1,2,3])
+    API->>Backend: GET /api/analysis/timeline/compare?host_ids=1,2,3
+    Backend->>DB: FOR each host_id: SELECT * FROM timeline_events WHERE host_id=?
+    DB-->>Backend: 各主机事件列表
+    Backend->>Backend: 合并时间范围，分配每主机颜色
+    Backend-->>API: {hosts:[{host_id,hostname,color,events},...], timeRange}
+    API-->>View: 对比数据
+    View->>View: 渲染多 Lane 散点图(每主机一个 yAxis category)
+    View-->>User: 展示叠加对比视图
 ```
 
 ---
 
-### 6. 待明确事项
+### 5. 待明确事项
 
-| # | 待明确项 | 当前假设 | 影响 |
-|---|---------|---------|------|
-| A | P1-4 `command_line` 已存在于 DDL，前端已渲染。是否仍需要本需求的任何改动？ | **零工作量**，仅确认现状 | 若确实需要额外改动（如格式化/截断），需补充 PRD |
-| B | 4 张新表的数据来源是什么？Agent 采集 JSON 是否已包含对应字段？ | 假设 Agent JSON 已包含 `network_connections`、`file_hashes`、`wmi_subscriptions`、`registry_keys` 对应字段，分析流程（`AnomalyDetector` 等）负责解析并调用 `batch_create` 写入 | 若 Agent 尚未采集，需额外 Agent 端开发（不在本需求范围） |
-| C | WMI 订阅的 `risk_level` 如何判定？ | 假设分析引擎（`PersistenceFinder` 或 `AnomalyDetector`）已有判定逻辑或规则 | 若需新增判定规则，需在规则文件 (`backend/app/rules/`) 中补充 |
-| D | 文件哈希采集范围是全盘还是指定路径？ | 不做假设，由 Agent 采集端决定；前端仅展示已有数据 | 不影响后端与前端实现 |
-| E | 持久化Tab 中"WMI 行可展开"指的是 persistence_items 表中 `type='wmi'` 的行，还是指完全独立的 WMI Tab？ | 假设为：① 新增 WMI 独立 API；② PersistenceTable 对 `type='wmi'` 的行增加展开按钮，展开后通过 API 查询同 host 的 wmi_subscriptions 详情 | 若实际需要独立的 WMI Tab，前端需多一个 `el-tab-pane` |
-
----
-
-## Part B：任务分解
-
-### 7. 依赖包列表
-
-**无需新增任何 pip/npm 包。**
-
-- 后端：`sqlite3`（标准库）、`json`（标准库）、`fastapi`（已有）
-- 前端：`vue`（已有）、`element-plus`（已有）、`axios`（已有）
+| # | 问题 | 当前假设 | 影响范围 |
+|---|------|----------|----------|
+| 1 | IOC 命中事件如何与 timeline_events 关联？ioc_hit_id 写入时机？ | 在 TimelineBuilder.build() 中，IOC 命中检查结果匹配到对应 event 时写入 ioc_hit_id | V1-6 前端标记 + V1-3 统计 |
+| 2 | MITRE 战术映射规则表的完整性和维护方式？ | 先内置硬编码规则表（约20条核心规则），后续可扩展为独立配置文件 | V2-5 |
+| 3 | Kill Chain 泳道图中"事件点放置"逻辑：一个事件可能匹配多个战术阶段？ | 事件放置在其 kill_chain_stage 字段对应的唯一阶段，若为空则归入 "Unknown" | V2-4 |
+| 4 | 多主机对比时，不同主机的时区如何处理？ | 全部按 UTC 存储和比较（当前架构已如此） | V3-4 |
+| 5 | PDF 时间线报告是否需要包含图表截图？ | 使用文字+表格形式，不嵌入 ECharts 截图（技术复杂度可控） | V3-5 |
 
 ---
 
-### 8. 任务列表
+## Part B: 任务分解
 
-| 任务 ID | 任务名称 | 源文件 | 依赖 | 优先级 |
-|---------|---------|--------|------|--------|
-| **T01** | 后端全栈：数据库 DDL + 模型 + API + Service | `backend/app/database.py`（改）<br>`backend/app/models/analysis.py`（改）<br>`backend/app/api/analysis.py`（改）<br>`backend/app/services/analysis_service.py`（改） | 无 | P0 |
-| **T02** | 前端数据层 + 网络连接Tab + 文件哈希Tab | `frontend/src/api/analysis.js`（改）<br>`frontend/src/components/NetworkConnectionTable.vue`（新增）<br>`frontend/src/components/FileHashTable.vue`（新增）<br>`frontend/src/views/HostDetailView.vue`（改） | T01 | P0 |
-| **T03** | 持久化Tab 可展开改造：WMI 详情 + 注册表详情 | `frontend/src/components/PersistenceTable.vue`（改）<br>`frontend/src/components/WmiDetailPanel.vue`（新增）<br>`frontend/src/components/RegistryDetailPanel.vue`（新增）<br>`frontend/src/views/HostDetailView.vue`（改） | T01 | P1 |
+### 6. 所需依赖包
 
----
-
-#### T01 详情：后端全栈（数据库 DDL + 模型 + API + Service）
-
-**描述**：一次性完成后端所有变更：
-1. 在 `database.py` 的 `DDL_STATEMENTS` 列表末尾追加 4 条 `CREATE TABLE IF NOT EXISTS` 语句（network_connections、file_hashes、wmi_subscriptions、registry_keys）
-2. 在 `models/analysis.py` 中新增 4 个模型类（NetworkConnection、FileHash、WmiSubscription、RegistryKey），每个类含 `batch_create(host_id, items)`、`list_by_host(host_id)`、`delete_by_host(host_id)` 三个静态方法，完全参照现有 `PersistenceItem` 的模式
-3. 更新 `clear_analysis_by_host()` 函数，增加清理这 4 张新表
-4. 在 `api/analysis.py` 中新增 4 个 GET 端点，装饰器 `@router.get("/hosts/{host_id}/xxx")`，鉴权 `Depends(get_current_user)`
-5. 在 `services/analysis_service.py` 中新增 4 个委托方法 `get_network_connections(host_id)` 等，直接调用对应模型的 `list_by_host`
-
-**关键约定**：
-- WMI 的 `event_filter`/`event_consumer` 在 `list_by_host` 返回时需 `json.loads()` 反序列化（参照 `AbnormalProcess.list_by_host` 的 `matched_rules` 处理模式）
-- API 响应统一为 `{"code": 0, "data": list, "message": "success"}`
-- `batch_create` 遵循现有模式：先 `DELETE FROM xxx WHERE host_id=?` 再逐条 `INSERT`
-
----
-
-#### T02 详情：前端数据层 + 网络连接Tab + 文件哈希Tab
-
-**描述**：实现两个 P0 级别的新 Tab：
-1. 在 `api/analysis.js` 中新增 4 个 API 函数：`getNetworkConnections`、`getFileHashes`、`getWmiSubscriptions`、`getRegistryKeys`（虽然 T03 才用到后两个，但一次性注册完避免文件反复修改）
-2. 创建 `NetworkConnectionTable.vue`：参照 `SuspiciousConnTable.vue` 模式，展示 10 列（协议、本地地址、本地端口、远程地址、远程端口、状态、PID、进程名、采集时间），纯数据展示，不含搜索/筛选
-3. 创建 `FileHashTable.vue`：展示 9 列（文件路径、文件名、SHA256、签名状态、签名者、文件大小、产品名、产品版本、采集时间），SHA256 列用 `show-overflow-tooltip` + 等宽字体；签名状态列用 `el-tag`（绿色"已签名"/红色"未签名"）
-4. 在 `HostDetailView.vue` 中：
-   - 添加两个 `el-tab-pane`："网络连接"（name="network"）、"文件哈希"（name="filehash"）
-   - 在 `<script setup>` 中新增 `networkConnections`、`fileHashes`、`wmiSubscriptions`、`registryKeys` 四个 ref
-   - 在 `loadAllResults()` 中通过 `Promise.all` 并行加载新增数据（容错：单个失败不影响其他）
-   - **P1-4 确认**：`abnormal_processes` 的 `command_line` 列已存在且前端已渲染——无需改动
-
----
-
-#### T03 详情：持久化Tab 可展开改造（WMI 详情 + 注册表详情）
-
-**描述**：对现有持久化痕迹 Tab 做展开能力增强：
-1. 创建 `WmiDetailPanel.vue`：纯展示组件，接收 `hostId` prop，调用 `getWmiSubscriptions(hostId)` 获取数据，用 `el-table` 展示 WMI 订阅列表（名称、Filter JSON 格式化、Consumer JSON 格式化、绑定类型、风险等级），Filter/Consumer 用 `<pre>` 标签格式化展示 JSON
-2. 创建 `RegistryDetailPanel.vue`：纯展示组件，接收 `hostId` prop，调用 `getRegistryKeys(hostId)` 获取数据，用 `el-table` 展示注册表键值（键路径、值名称、值类型、值数据、最后写入时间）
-3. 修改 `PersistenceTable.vue`：
-   - 在 `<el-table>` 上添加 `row-key="id"`，为 `type === 'wmi'` 和 `type === 'registry'` 的行添加 `el-table-column type="expand"`
-   - 展开行内嵌入 `WmiDetailPanel` 或 `RegistryDetailPanel` 组件（通过 `v-if` + `type` 判断）
-4. 在 `HostDetailView.vue` 的 `loadAllResults()` 中确保 WMI 和注册表数据已通过 T02 的 API 调用加载完毕，传递给 PersistenceTable 或通过组件内自行加载
-
----
-
-### 9. 共享知识（跨文件约定）
+**后端 (pip)** — 无需新增：
 
 ```
-# ── 命名规范 ──
-- 数据库表名：snake_case 小写 + 下划线复数（network_connections, file_hashes, ...）
-- API URL：kebab-case（/network-connections, /file-hashes, /wmi-subscriptions, /registry-keys）
-- Vue 组件名：PascalCase（NetworkConnectionTable, FileHashTable, WmiDetailPanel, RegistryDetailPanel）
-- 前端 ref 变量：camelCase（networkConnections, fileHashes, wmiSubscriptions, registryKeys）
+# 所有功能均使用现有依赖或Python标准库(csv模块)
+```
 
-# ── 模型模式 ──
-- 所有模型类位于 backend/app/models/analysis.py，每个类含三个静态方法：
-  - batch_create(host_id, items) → int (返回写入行数)
-  - list_by_host(host_id) → list[dict]
-  - delete_by_host(host_id) → None
-- batch_create 内部先 DELETE 旧数据再 INSERT（"覆盖式导入"模式）
+**前端 (npm)** — 无需新增：
 
-# ── API 响应格式 ──
-- 统一 {"code": 0, "data": ..., "message": "success"}
-- 列表为空时返回 [] 而非 null
-- JSON 字段（WMI event_filter/event_consumer）在 API 层反序列化为对象
-
-# ── 前端组件模式 ──
-- 表格组件接收 data: Array prop
-- 使用 el-table + border + stripe + size="small"
-- show-overflow-tooltip 用于长文本列
-- 使用 <script setup> + defineProps
-
-# ── 数据库连接 ──
-- 使用 get_connection() 上下文管理器
-- PRAGMA foreign_keys = ON 自动开启
-- row_factory = sqlite3.Row
+```
+# ECharts 5.5.1 已包含 dataZoom/graph/scatter/custom series
+# Element Plus 2.7.6 已包含 el-drawer/el-table/el-date-picker/el-select/el-tag/el-fullscreen
+# dayjs 已存在，用于时间格式化
 ```
 
 ---
 
-### 10. 任务依赖图
+### 7. 任务列表
+
+#### T01: 项目基础设施 — DB迁移 + Design Tokens + API基础扩展
+
+| 属性 | 内容 |
+|------|------|
+| **任务ID** | T01 |
+| **优先级** | P0 |
+| **依赖** | 无 |
+| **源文件** | |
+| | `backend/app/database.py` — [修改] 新增 `_alter_timeline_events_table()` + `_create_timeline_event_audit_table()` |
+| | `backend/app/models/analysis.py` — [修改] TimelineEvent 模型扩展字段 (kill_chain_stage, mitre_technique_id, status, assigned_to, resolution, ioc_hit_id) + 新增 TimelineEventAudit 模型 |
+| | `backend/app/api/analysis.py` — [修改] 扩展 GET /timeline 端点参数 + 新增 GET /timeline/stats 端点 |
+| | `backend/app/services/analysis_service.py` — [修改] get_timeline 扩展查询 + 新增 get_timeline_stats() |
+| | `frontend/src/constants/design-tokens.js` — [新建] 统一 Design Tokens（severity颜色/symbolSize映射/event_type颜色图标/间距/kill_chain阶段标签） |
+| | `frontend/src/api/analysis.js` — [修改] 新增 getTimelineStats() 函数 |
+| **产出** | DB 迁移完成（6个新字段到位），stats API 上线，前端 Design Tokens 可供所有组件引用 |
+
+#### T02: V1 快速止血 — 图表+面板+统计全面增强
+
+| 属性 | 内容 |
+|------|------|
+| **任务ID** | T02 |
+| **优先级** | P0 |
+| **依赖** | T01 |
+| **源文件** | |
+| | `frontend/src/components/TimelineChart.vue` — [修改] V1-1 severity→symbolSize映射+描边/光晕 + V1-2 dataZoom启用 + V1-6 IOC命中星形标记 |
+| | `frontend/src/components/SummaryStatsBar.vue` — [新建] V1-3 横向5列摘要统计卡片（高危X/中危Y/低危Z/IOC命中N/时间跨度H） |
+| | `frontend/src/components/ai/StructuredTimelinePanel.vue` — [修改] V1-4 严重度颜色编码 + phase分组+divider + 事件类型图标 + significance折叠 |
+| | `frontend/src/views/HostDetailView.vue` — [修改] 集成 SummaryStatsBar（在 TimelineChart 上方） |
+| **产出** | 散点图可区分严重度/IOC命中、支持缩放平移、统计栏实时展示、结构化面板增强 |
+
+#### T03: V2 能力补全 — 事件列表+详情+过滤器+KillChain+MITRE+AI关联
+
+| 属性 | 内容 |
+|------|------|
+| **任务ID** | T03 |
+| **优先级** | P1 |
+| **依赖** | T01, T02 |
+| **源文件** | |
+| | `backend/app/analysis/timeline_builder.py` — [修改] V2-5 MITRE 战术自动注入 `inject_mitre_tactic()` 方法 + 新类 `MitreTacticMapper` |
+| | `backend/app/services/explainability_service.py` — [修改] V2-6 `normalize_key_events()` 匹配 AI key_events 到原始 event |
+| | `backend/app/models/ai_analysis.py` — [修改] V2-6 AiAnalysisReport.create() 支持 source_event_id |
+| | `backend/app/database.py` — [修改] V2-6 ai_analysis_reports ALTER 加 source_event_id |
+| | `frontend/src/components/timeline/TimelineFilterBar.vue` — [新建] V2-2 el-date-picker range + el-select 多选(event_type+severity) |
+| | `frontend/src/components/timeline/EventTable.vue` — [新建] V2-1 el-table 事件列表（severity/event_type/source列排序筛选） |
+| | `frontend/src/components/timeline/EventDetailDrawer.vue` — [新建] V2-3 el-drawer 事件详情面板（完整 details JSON + 元信息） |
+| | `frontend/src/components/timeline/KillChainView.vue` — [新建] V2-4 横向泳道图（7个MITRE ATT&CK战术阶段） |
+| | `frontend/src/components/ai/StructuredTimelinePanel.vue` — [修改] V2-6 key_event 旁加跳转按钮（emit jump-to-event） |
+| | `frontend/src/views/HostDetailView.vue` — [修改] 集成 FilterBar + EventTable + EventDetailDrawer + KillChainView + 图表联动逻辑 |
+| **产出** | 事件列表可排序筛选、图表联动、详情面板、Kill Chain 泳道、AI 关联跳转 |
+
+#### T04: V3 体验升维 Part 1 — 自适应密度+状态流转+攻击链DAG
+
+| 属性 | 内容 |
+|------|------|
+| **任务ID** | T04 |
+| **优先级** | P2 |
+| **依赖** | T03 |
+| **源文件** | |
+| | `backend/app/api/analysis.py` — [修改] V3-2 新增 `PATCH /api/analysis/timeline/{event_id}` 端点 |
+| | `backend/app/services/analysis_service.py` — [修改] V3-2 `update_timeline_event()` 方法 |
+| | `backend/app/models/analysis.py` — [修改] V3-2 TimelineEvent.update_status() + TimelineEventAudit 写入 |
+| | `frontend/src/components/TimelineChart.vue` — [修改] V3-1 自适应 symbolSize + bubble aggregation（5分钟内同类型>5事件合并气泡） |
+| | `frontend/src/components/timeline/EventDetailDrawer.vue` — [修改] V3-2 状态选择器(new→triaging→contained→closed) + 处置备注 + operator/timestamp 展示 |
+| | `frontend/src/components/timeline/AttackChainDag.vue` — [新建] V3-3 ECharts graph 渲染有向无环图（进程→网络→文件→持久化） |
+| | `frontend/src/views/HostDetailView.vue` — [修改] V3-1 自适应逻辑集成 + V3-3 DAG 切换按钮 |
+| **产出** | 密集场景图表不重叠、事件状态可流转审计、攻击链可视化 |
+
+#### T05: V3 体验升维 Part 2 — 多主机对比+导出+SLA+作战视图
+
+| 属性 | 内容 |
+|------|------|
+| **任务ID** | T05 |
+| **优先级** | P2 |
+| **依赖** | T03（不依赖T04，可与T04并行） |
+| **源文件** | |
+| | `backend/app/api/analysis.py` — [修改] V3-4 GET /compare + V3-5 GET /export/csv + GET /export/pdf |
+| | `backend/app/services/analysis_service.py` — [修改] V3-4 compare_timelines() + V3-5 export_csv() / export_pdf() |
+| | `frontend/src/components/timeline/TimelineCompare.vue` — [新建] V3-4 多主机时间线叠加对比视图（每主机一条 lane） |
+| | `frontend/src/components/timeline/SlaOverlay.vue` — [新建] V3-6 时效列(发现→当前elapsed) + 超时红色标记 + 响应时间线虚线叠加 |
+| | `frontend/src/components/timeline/WarRoomMode.vue` — [新建] V3-7 全屏+暗色主题+实时统计滚动条 |
+| | `frontend/src/components/timeline/EventTable.vue` — [修改] V3-6 时效列 + 导出按钮组 |
+| | `frontend/src/views/HostDetailView.vue` — [修改] V3-4~V3-7 对比/导出/作战模式入口集成 |
+| **产出** | 多主机对比、CSV/PDF导出、SLA时效监控、作战大屏模式 |
+
+---
+
+### 8. 共享知识（跨文件约定）
+
+#### 8.1 Design Tokens 具体定义
+
+```javascript
+// frontend/src/constants/design-tokens.js
+
+// ── Severity ──
+export const SEVERITY = {
+  COLOR: {
+    high: '#F56C6C',      // 红色
+    medium: '#E6A23C',     // 橙色
+    low: '#909399',       // 灰色
+    info: '#C0C4CC',      // 浅灰
+    critical: '#FF0000',  // 深红（攻击链命中）
+  },
+  SYMBOL_SIZE: {
+    high: 16,
+    medium: 12,
+    low: 8,
+    info: 6,
+    critical: 20,
+  },
+  LABEL: {
+    high: '高危',
+    medium: '中危',
+    low: '低危',
+    info: '信息',
+    critical: '严重',
+  },
+}
+
+// ── Event Type ──
+export const EVENT_TYPE = {
+  COLOR: {
+    process: '#409EFF',     // 蓝色
+    network: '#67C23A',     // 绿色
+    file: '#E6A23C',       // 橙色
+    log: '#909399',         // 灰色
+    persistence: '#F56C6C', // 红色
+    system: '#9B59B6',      // 紫色
+    other: '#95A5A6',       // 暗灰
+  },
+  ICON: {
+    process: 'Cpu',
+    network: 'Connection',
+    file: 'Document',
+    log: 'Notebook',
+    persistence: 'Lock',
+    system: 'Setting',
+    other: 'QuestionFilled',
+  },
+  LABEL: {
+    process: '进程',
+    network: '网络',
+    file: '文件',
+    log: '日志',
+    persistence: '持久化',
+    system: '系统',
+    other: '其他',
+  },
+}
+
+// ── Kill Chain Stages ──
+export const KILL_CHAIN = {
+  STAGES: [
+    { key: 'reconnaissance', label: '侦查', ta_id: 'TA0043' },
+    { key: 'resource_development', label: '武器化', ta_id: 'TA0042' },
+    { key: 'initial_access', label: '初始访问', ta_id: 'TA0001' },
+    { key: 'execution', label: '执行', ta_id: 'TA0002' },
+    { key: 'persistence', label: '持久化', ta_id: 'TA0003' },
+    { key: 'privilege_escalation', label: '提权', ta_id: 'TA0004' },
+    { key: 'defense_evasion', label: '防御规避', ta_id: 'TA0005' },
+    { key: 'credential_access', label: '凭据访问', ta_id: 'TA0006' },
+    { key: 'discovery', label: '发现', ta_id: 'TA0007' },
+    { key: 'lateral_movement', label: '横向移动', ta_id: 'TA0008' },
+    { key: 'collection', label: '采集', ta_id: 'TA0009' },
+    { key: 'command_and_control', label: 'C2', ta_id: 'TA0011' },
+    { key: 'exfiltration', label: '数据渗出', ta_id: 'TA0010' },
+    { key: 'impact', label: '影响', ta_id: 'TA0040' },
+  ],
+}
+
+// ── 泳道图使用的7个核心阶段（简化版） ──
+export const KILL_CHAIN_SWIMLANE = [
+  { key: 'reconnaissance', label: '侦查', color: '#909399' },
+  { key: 'weaponization', label: '武器化', color: '#E6A23C' },
+  { key: 'delivery', label: '投递', color: '#F56C6C' },
+  { key: 'exploitation', label: '利用', color: '#FF0000' },
+  { key: 'installation', label: '安装', color: '#9B59B6' },
+  { key: 'c2', label: 'C2通信', color: '#409EFF' },
+  { key: 'actions', label: '目标行动', color: '#67C23A' },
+]
+
+// ── Spacing ──
+export const SPACING = {
+  xs: '4px',
+  sm: '8px',
+  md: '16px',
+  lg: '24px',
+  xl: '32px',
+}
+
+// ── Event Status ──
+export const EVENT_STATUS = {
+  new: { label: '新建', color: '#909399' },
+  triaging: { label: '研判中', color: '#E6A23C' },
+  contained: { label: '已遏制', color: '#409EFF' },
+  closed: { label: '已关闭', color: '#67C23A' },
+}
+
+// ── SLA ──
+export const SLA = {
+  TIMEOUT_HOURS: 24,        // 24h 未处置视为超时
+  WARNING_HOURS: 12,        // 12h 预警
+}
+```
+
+#### 8.2 关键常量命名规范
+
+- 所有 API 响应格式: `{code: 0, data: ..., message: "success"}`
+- 时间戳统一: ISO 8601 UTC (`YYYY-MM-DDTHH:mm:ss`)
+- severity 值域: `high | medium | low | info | critical`
+- event_type 值域: `process | network | file | log | persistence | system | other`
+- status 值域: `new | triaging | contained | closed`
+- kill_chain_stage 值域: 上述 KILL_CHAIN.STAGES 中定义的 key 值
+
+#### 8.3 前后端通信约定
+
+- 多值查询参数使用逗号分隔: `?event_types=process,network&severity=high,medium`
+- 时间参数使用 ISO 8601 格式: `?start=2026-07-03T00:00:00&end=2026-07-04T00:00:00`
+- CSV 导出: `Content-Type: text/csv`, `Content-Disposition: attachment; filename="timeline_export.csv"`
+- PDF 导出: `Content-Type: application/pdf`, 流式返回
+
+---
+
+### 9. 任务依赖图
 
 ```mermaid
 graph TD
-    T01["T01: 后端全栈<br/>database.py + models + API + Service"]
-    T02["T02: 前端数据层 + 网络连接Tab + 文件哈希Tab<br/>api/analysis.js + NetworkConnectionTable + FileHashTable + HostDetailView"]
-    T03["T03: 持久化Tab 可展开改造<br/>PersistenceTable + WmiDetailPanel + RegistryDetailPanel"]
+    T01["T01: 基础设施<br/>DB迁移 + Design Tokens<br/>+ API基础扩展"]
+    T02["T02: V1快速止血<br/>图表增强 + 统计栏<br/>+ 结构化面板"]
+    T03["T03: V2能力补全<br/>事件列表 + 过滤器<br/>+ KillChain + MITRE + AI关联"]
+    T04["T04: V3体验Part1<br/>自适应密度 + 状态流转<br/>+ 攻击链DAG"]
+    T05["T05: V3体验Part2<br/>多主机对比 + 导出<br/>+ SLA + 作战视图"]
+
     T01 --> T02
     T01 --> T03
+    T02 --> T03
+    T03 --> T04
+    T03 --> T05
 ```
-
-> T02 和 T03 均依赖 T01（需要后端 API 就绪），但 T02 与 T03 之间无相互依赖，可并行开发。

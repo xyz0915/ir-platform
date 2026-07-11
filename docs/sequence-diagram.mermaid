@@ -1,25 +1,27 @@
 sequenceDiagram
-    actor Analyst as 分析师
-    participant Vue as HostDetailView.vue
-    participant Api as api/analysis.js
-    participant Router as FastAPI Router
-    participant Svc as AnalysisService
-    participant Model as NetworkConnection
+    participant User as 👤 用户
+    participant FilterBar as TimelineFilterBar
+    participant HostView as HostDetailView
+    participant API as /api/analysis.js
+    participant Backend as FastAPI Backend
     participant DB as SQLite
 
-    Analyst->>Vue: 点击"网络连接"Tab
-    alt 数据未缓存
-        Vue->>Api: getNetworkConnections(hostId)
-        Api->>Router: GET /api/hosts/{host_id}/network-connections
-        Router->>Router: 验证 JWT Token
-        Router->>Svc: get_network_connections(host_id)
-        Svc->>Model: list_by_host(host_id)
-        Model->>DB: SELECT * FROM network_connections WHERE host_id=?
-        DB-->>Model: list[Row]
-        Model-->>Svc: list[dict]
-        Svc-->>Router: list[dict]
-        Router-->>Api: {"code":0, "data":[...], "message":"success"}
-        Api-->>Vue: data array
-    end
-    Vue->>Vue: networkConnections = data
-    Vue-->>Analyst: NetworkConnectionTable 渲染表格
+    User->>FilterBar: 选择时间范围 + 事件类型 + 严重度
+    FilterBar->>HostView: emit('filter-change', {start, end, eventTypes, severities})
+    HostView->>API: getTimeline(hostId, {start, end, event_types, severity})
+    API->>Backend: GET /api/hosts/{host_id}/timeline?start=...&end=...&event_types=process,network&severity=high,medium
+    Backend->>DB: SELECT * FROM timeline_events WHERE host_id=? AND timestamp>=? AND timestamp<=? AND event_type IN (?,?) AND severity IN (?,?) ORDER BY timestamp
+    DB-->>Backend: 过滤后的事件列表
+    Backend-->>API: {code:0, data: [...], message:"success"}
+    API-->>HostView: 返回过滤数据
+    HostView->>HostView: 更新 events ref
+    HostView->>TimelineChart: props.events 变化 → watch 触发 initChart()
+    HostView->>EventTable: props.events 变化 → 表格刷新
+    TimelineChart-->>User: 散点图重渲染(仅显示过滤后事件)
+    EventTable-->>User: 表格更新行数据
+
+    User->>EventTable: 点击表格行
+    EventTable->>HostView: emit('row-click', event)
+    HostView->>TimelineChart: dispatchAction({type:'highlight', dataIndex})
+    TimelineChart-->>User: 对应散点高亮
+    HostView->>EventDetailDrawer: open(event) → 展示详情面板

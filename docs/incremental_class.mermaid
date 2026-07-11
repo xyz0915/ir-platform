@@ -1,0 +1,65 @@
+classDiagram
+    class KnowledgeRetriever {
+        +_vector_retrieve(...) list
+        +_keyword_retrieve(...) list
+    }
+    class KnowledgeDraft {
+        +get_by_id(draft_id) dict
+    }
+    class KnowledgeDraftAPI {
+        +list_drafts()
+        +list_seeds()
+        +get_draft_detail(draft_id)*
+    }
+    class ExplainabilityService {
+        +build_evidence_trace(...) dict
+    }
+    class KnowledgeEvidenceItem {
+        source: str
+        rule_name: str
+        title: str
+        severity: str
+        category: str
+        description: str
+        summary: str
+        formatted_text: str
+        score: float
+        confidence: str
+        match_reason: str
+        tags: str[]
+        evidence_text: str
+        entry_ref: str
+        entry_type: str
+    }
+    class DraftDetailResponse {
+        id: int
+        title: str
+        description: str
+        category: str
+        severity: str
+        mitre_attack: str
+        pattern: str
+        status: str
+        source: str
+        created_at: str
+        reviewed_at: str
+    }
+    class EvidenceTracePanel {
+        +goDetail(item)
+    }
+    class KnowledgeDetailView {
+        +parseEntryRef(entryRef)
+        +loadDetail()
+    }
+    class KnowledgeApi {
+        +getDrafts()
+        +getSeeds()
+        +getDraftDetail(id)*
+    }
+    KnowledgeRetriever ..> KnowledgeEvidenceItem : emits entry_ref/entry_type
+    ExplainabilityService ..> KnowledgeEvidenceItem : passthrough dict(item)
+    KnowledgeDraftAPI ..> KnowledgeDraft : get_by_id
+    KnowledgeDraftAPI ..> DraftDetailResponse : returns 200
+    EvidenceTracePanel ..> KnowledgeApi : getSeeds (indirect)
+    KnowledgeDetailView ..> KnowledgeApi : getDraftDetail / getSeeds
+    EvidenceTracePanel ..> KnowledgeDetailView : router.push

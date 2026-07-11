@@ -77,6 +77,7 @@
             </el-button>
           </div>
           <ProcessTreeChart
+            v-if="activeTab === 'tree'"
             :tree-data="processTree"
             :abnormal-pids="abnormalPidsForTree"
             @node-click="handleNodeClick"
@@ -173,15 +174,65 @@
         <el-tab-pane label="时间线" name="timeline">
           <div class="tab-toolbar">
             <span class="tab-hint">共 {{ timelineEvents.length }} 条时间线事件</span>
-            <el-button
-              type="warning"
-              :disabled="!aiEnabled || host?.status === 'pending'"
-              @click="handleModuleAiAnalyze('timeline')"
-            >
-              🤖 AI 分析
-            </el-button>
+            <div class="flex-center" style="gap: 8px">
+              <el-button
+                type="warning"
+                size="small"
+                :disabled="!aiEnabled || host?.status === 'pending'"
+                @click="handleModuleAiAnalyze('timeline')"
+              >
+                🤖 AI 分析
+              </el-button>
+              <el-button size="small" @click="showCompare = true">对比模式</el-button>
+              <el-button size="small" @click="handleExportCsv">导出 CSV</el-button>
+              <el-button size="small" @click="handleExportPdf">导出 PDF</el-button>
+              <el-button size="small" type="danger" @click="warRoomActive = true">作战视图</el-button>
+            </div>
           </div>
-          <TimelineChart :events="timelineEvents" />
+          <SummaryStatsBar :host-id="hostId" :stats="timelineStats" @stats-loaded="handleTimelineStatsLoaded" />
+          <TimelineFilterBar v-if="activeTab === 'timeline'" :host-id="hostId" @filter-change="handleTimelineFilter" />
+          <TimelineChart
+            v-if="activeTab === 'timeline'"
+            :events="filteredTimelineEvents"
+            :stats="timelineStats"
+            :adaptive-mode="true"
+            :show-sla-line="true"
+          />
+          <KillChainView v-if="activeTab === 'timeline'" :events="timelineEvents" />
+          <EventTable
+            :events="filteredTimelineEvents"
+            :loading="timelineLoading"
+            @row-click="handleTimelineRowClick"
+          >
+            <template #toolbar>
+              <el-button size="small" @click="handleExportCsv">导出 CSV</el-button>
+              <el-button size="small" @click="handleExportPdf">导出 PDF</el-button>
+            </template>
+          </EventTable>
+          <EventDetailDrawer
+            :event="selectedEvent"
+            :visible="drawerVisible"
+            :audit-logs="eventAuditLogs"
+            @close="drawerVisible = false"
+            @status-updated="handleEventStatusUpdate"
+          />
+          <!-- 对比弹窗 -->
+          <el-dialog v-model="showCompare" title="多主机时间线对比" width="90%" top="5vh" destroy-on-close>
+            <TimelineCompare :available-hosts="compareHosts" />
+          </el-dialog>
+          <!-- 作战视图模式 -->
+          <WarRoomMode
+            v-if="warRoomActive"
+            :events="timelineEvents"
+            :host-id="Number(hostId)"
+            :active="warRoomActive"
+            @close="warRoomActive = false"
+          />
+          <!-- 攻击链 DAG -->
+          <AttackChainDag
+            v-if="aiReportAttackChain"
+            :attack-chain="aiReportAttackChain"
+          />
         </el-tab-pane>
         <el-tab-pane label="用户账户" name="users">
           <div class="tab-toolbar">
@@ -270,6 +321,14 @@ import PersistenceTable from '@/components/PersistenceTable.vue'
 import SuspiciousStartupTable from '@/components/SuspiciousStartupTable.vue'
 import IocTable from '@/components/IocTable.vue'
 import TimelineChart from '@/components/TimelineChart.vue'
+import SummaryStatsBar from '@/components/SummaryStatsBar.vue'
+import TimelineFilterBar from '@/components/timeline/TimelineFilterBar.vue'
+import EventTable from '@/components/timeline/EventTable.vue'
+import EventDetailDrawer from '@/components/timeline/EventDetailDrawer.vue'
+import KillChainView from '@/components/timeline/KillChainView.vue'
+import TimelineCompare from '@/components/timeline/TimelineCompare.vue'
+import WarRoomMode from '@/components/timeline/WarRoomMode.vue'
+import AttackChainDag from '@/components/timeline/AttackChainDag.vue'
 import UsersTable from '@/components/UsersTable.vue'
 import ServicesTable from '@/components/ServicesTable.vue'
 import UsbTable from '@/components/UsbTable.vue'
@@ -308,6 +367,16 @@ const networkConnections = ref([])
 const fileHashes = ref([])
 const wmiSubscriptions = ref([])
 const registryKeys = ref([])
+
+const timelineStats = ref(null)
+const timelineLoading = ref(false)
+const filteredTimelineEvents = ref([])
+const selectedEvent = ref(null)
+const drawerVisible = ref(false)
+const eventAuditLogs = ref([])
+const filterParams = ref({})
+const showCompare = ref(false)
+const warRoomActive = ref(false)
 
 // 新增：进程树相关数据
 const processTree = ref({})
@@ -421,7 +490,8 @@ async function loadAllResults() {
     persistenceItems.value = persRes.data
     startupItems.value = startupRes.data
     iocHits.value = iocRes.data
-    timelineEvents.value = tlRes.data
+    timelineEvents.value = tlRes.data || []
+    filteredTimelineEvents.value = tlRes.data || []
 
     // 提取异常 PID 列表用于进程树
     abnormalPidsForTree.value = abnormalProcesses.value.map(p => p.pid)
@@ -451,6 +521,7 @@ async function loadAllResults() {
     analysisApi.getWmiSubscriptions(hostId).then(r => { wmiSubscriptions.value = r.data || [] }).catch(() => { wmiSubscriptions.value = [] }),
     analysisApi.getRegistryKeys(hostId).then(r => { registryKeys.value = r.data || [] }).catch(() => { registryKeys.value = [] }),
   ])
+
 }
 
 async function handleAnalyze() {
@@ -581,9 +652,103 @@ function handleViewDetail(row) {
   detailPanelVisible.value = true
 }
 
-function handleTabChange() {
-  // Tab 切换时数据已预加载
+function handleTabChange(_tabName) {
+  // v-if 已确保组件仅在 Tab 可见时挂载，ECharts 在 onMounted 中初始化即可获得正确容器尺寸
+  // TimelineChart: echarts.init + window.resize listener
+  // ProcessTreeChart: vue-echarts autoresize (ResizeObserver)
+  // 无需在此处触发 window.resize
 }
+
+function handleTimelineStatsLoaded(statsData) {
+  timelineStats.value = statsData
+}
+
+// ── 时间线过滤 ──
+async function handleTimelineFilter(params) {
+  filterParams.value = params
+  timelineLoading.value = true
+  try {
+    const apiParams = {}
+    if (params.start) apiParams.start = params.start
+    if (params.end) apiParams.end = params.end
+    if (params.eventTypes && params.eventTypes.length > 0) {
+      apiParams.event_types = params.eventTypes.join(',')
+    }
+    if (params.severities && params.severities.length > 0) {
+      apiParams.severity = params.severities.join(',')
+    }
+    const res = await analysisApi.getTimeline(hostId, apiParams)
+    filteredTimelineEvents.value = res.data || []
+  } catch (e) {
+    filteredTimelineEvents.value = timelineEvents.value
+  } finally {
+    timelineLoading.value = false
+  }
+}
+
+// ── 表格行点击 ──
+function handleTimelineRowClick(event) {
+  selectedEvent.value = event
+  drawerVisible.value = true
+  eventAuditLogs.value = []
+}
+
+// ── 事件状态更新 ──
+async function handleEventStatusUpdate({ eventId, status, resolution }) {
+  try {
+    await analysisApi.updateTimelineEvent(eventId, { status, resolution, operator: 'admin' })
+    ElMessage.success('状态更新成功')
+    drawerVisible.value = false
+    // 刷新数据
+    await loadAllResults()
+  } catch (e) {
+    ElMessage.error('状态更新失败')
+  }
+}
+
+// ── 导出 CSV ──
+function handleExportCsv() {
+  const params = new URLSearchParams()
+  if (filterParams.value.start) params.append('start', filterParams.value.start)
+  if (filterParams.value.end) params.append('end', filterParams.value.end)
+  if (filterParams.value.eventTypes?.length) params.append('event_types', filterParams.value.eventTypes.join(','))
+  if (filterParams.value.severities?.length) params.append('severity', filterParams.value.severities.join(','))
+  const url = `${import.meta.env.VITE_API_BASE || ''}/api/analysis/timeline/${hostId}/export/csv?${params.toString()}`
+  window.open(url, '_blank')
+}
+
+// ── 导出 PDF ──
+async function handleExportPdf() {
+  try {
+    const params = new URLSearchParams()
+    if (filterParams.value.start) params.append('start', filterParams.value.start)
+    if (filterParams.value.end) params.append('end', filterParams.value.end)
+    const url = `${import.meta.env.VITE_API_BASE || ''}/api/analysis/timeline/${hostId}/export/pdf?${params.toString()}`
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` } })
+    const blob = await response.blob()
+    const downloadUrl = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = downloadUrl
+    a.download = `timeline_${hostId}.pdf`
+    a.click()
+    URL.revokeObjectURL(downloadUrl)
+  } catch (e) {
+    ElMessage.error('PDF 导出失败')
+  }
+}
+
+// 对比主机列表（同一 case 下的主机）
+const compareHosts = computed(() => {
+  if (host.value) {
+    return [{ id: Number(hostId), hostname: host.value.hostname }]
+  }
+  return []
+})
+
+// AI 报告中的 attack_chain（用于 AttackChainDag）
+const aiReportAttackChain = computed(() => {
+  return null // 从 AI 分析报告中获取，T04 完善
+})
 
 function statusType(status) {
   const map = { pending: 'info', imported: 'warning', analyzed: 'success' }

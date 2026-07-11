@@ -112,7 +112,7 @@ class AnalysisService:
         logger.info("Found %d IOC hits", len(ioc_hits))
 
         # 7. 时间线构建
-        timeline_events = TimelineBuilder.build(raw_data)
+        timeline_events = TimelineBuilder.build(raw_data, ioc_hits=ioc_hits)
         TimelineEvent.batch_create(host_id, timeline_events)
         logger.info("Built %d timeline events", len(timeline_events))
 
@@ -137,6 +137,47 @@ class AnalysisService:
         if isinstance(reg_data, list) and reg_data:
             RegistryKey.batch_create(host_id, reg_data)
             logger.info("Extracted %d registry keys", len(reg_data))
+
+        # 8.6 文件哈希情报匹配（TI_malware_hash：list 规则 field=file_hash，动态并入 iocs.hash）
+        # 把已落库的 FileHash 维度作为 data_items 送入 RuleEngine.evaluate，
+        # 使 TI_malware_hash 规则能够命中（此前 FileHash 未进入评估输入，该规则永不执行）。
+        # 注意：此处仅「追加」hash 类命中到 ioc_hits，绝不使用 IocHit.batch_create
+        # （其会 DELETE 整主机 ioc_hits，破坏 step 6 已写入的常规 IOC 命中）。
+        hash_rules = [
+            r for r in rules
+            if r.get("rule_type") == "list"
+            and (r.get("condition") or {}).get("field") == "file_hash"
+        ]
+        if hash_rules:
+            fh_rows = FileHash.list_by_host(host_id) or []
+            fh_items = [
+                {
+                    "file_hash": (r.get("sha256") or r.get("hash") or ""),
+                    "file_name": r.get("file_name"),
+                    "file_path": r.get("file_path"),
+                }
+                for r in fh_rows
+                if (r.get("sha256") or r.get("hash"))
+            ]
+            if fh_items:
+                hash_matches = RuleEngine.evaluate(
+                    fh_items, hash_rules, global_context={"host_id": host_id}
+                )
+                if hash_matches:
+                    IocHit.append(
+                        host_id,
+                        [
+                            {
+                                "ioc_type": "hash",
+                                "ioc_value": m["item"].get("file_hash"),
+                                "matched_in": m["rule_name"],
+                                "context": m["reason"],
+                                "severity": m["severity"],
+                            }
+                            for m in hash_matches
+                        ],
+                    )
+                    logger.info("Detected %d file-hash (TI_malware_hash) matches", len(hash_matches))
 
         # 8.5 攻击链关联检测（任务①）：主机级跨维度顺序匹配
         # 此时各维度取证数据已落库，_build_host_events 可按 host_id 下钻聚合。
@@ -210,9 +251,133 @@ class AnalysisService:
 
     @staticmethod
     def get_timeline(host_id: int, start: Optional[str] = None,
-                     end: Optional[str] = None, event_type: Optional[str] = None) -> list:
-        """获取时间线事件."""
-        return TimelineEvent.list_by_host(host_id, start, end, event_type)
+                     end: Optional[str] = None, event_type: Optional[str] = None,
+                     severities: Optional[str] = None, event_types: Optional[str] = None,
+                     ioc_hit: Optional[bool] = None) -> list:
+        """获取时间线事件（支持多维度过滤）."""
+        return TimelineEvent.list_by_host(
+            host_id, start, end, event_type,
+            severities=severities, event_types=event_types, ioc_hit=ioc_hit,
+        )
+
+    @staticmethod
+    def get_timeline_stats(host_id: int) -> dict:
+        """获取时间线事件统计摘要."""
+        return TimelineEvent.get_stats(host_id)
+
+    @staticmethod
+    def update_timeline_event(event_id: int, data: dict) -> dict:
+        """更新时间线事件处置状态（V3-2）."""
+        return TimelineEvent.update_status(event_id, data)
+
+    @staticmethod
+    def compare_timelines(host_ids: list) -> dict:
+        """多主机时间线叠加对比（V3-4）.
+
+        Args:
+            host_ids: 主机 ID 列表.
+
+        Returns:
+            含 hosts 列表和 timeRange 的对比数据字典.
+        """
+        palette = ["#409EFF", "#E6A23C", "#67C23A", "#F56C6C", "#9B59B6"]
+        hosts_data: list = []
+        all_timestamps: list = []
+
+        for idx, hid in enumerate(host_ids):
+            host = Host.get_by_id(hid)
+            hostname = host.get("hostname", f"Host-{hid}") if host else f"Host-{hid}"
+            events = TimelineEvent.list_by_host(hid)
+            for e in events:
+                ts = e.get("timestamp", "")
+                if ts:
+                    all_timestamps.append(ts)
+            hosts_data.append({
+                "host_id": hid,
+                "hostname": hostname,
+                "color": palette[idx % len(palette)],
+                "events": events,
+            })
+
+        # 计算时间范围
+        time_range: dict = {"start": None, "end": None}
+        if all_timestamps:
+            all_timestamps.sort()
+            time_range["start"] = all_timestamps[0]
+            time_range["end"] = all_timestamps[-1]
+
+        return {"hosts": hosts_data, "timeRange": time_range}
+
+    @staticmethod
+    def export_timeline_csv(host_id: int, start: Optional[str] = None,
+                            end: Optional[str] = None, event_types: Optional[str] = None,
+                            severity: Optional[str] = None) -> tuple:
+        """导出时间线为 CSV 格式（V3-5）.
+
+        Returns:
+            (csv_content: str, filename: str) 用于 StreamingResponse.
+        """
+        import csv as csv_mod
+        import io
+
+        events = TimelineEvent.list_by_host(
+            host_id, start=start, end=end,
+            event_types=event_types, severities=severity,
+        )
+
+        output = io.StringIO()
+        writer = csv_mod.writer(output)
+        writer.writerow([
+            "ID", "Timestamp", "Event Type", "Source", "Description",
+            "Severity", "Kill Chain Stage", "MITRE Technique ID",
+            "Status", "IOC Hit ID",
+        ])
+
+        for e in events:
+            writer.writerow([
+                e.get("id", ""),
+                e.get("timestamp", ""),
+                e.get("event_type", ""),
+                e.get("source", ""),
+                e.get("description", ""),
+                e.get("severity", ""),
+                e.get("kill_chain_stage", ""),
+                e.get("mitre_technique_id", ""),
+                e.get("status", ""),
+                e.get("ioc_hit_id", ""),
+            ])
+
+        csv_content = output.getvalue()
+        output.close()
+        host = Host.get_by_id(host_id)
+        hostname = host.get("hostname", f"host-{host_id}") if host else f"host-{host_id}"
+        filename = f"timeline_{hostname}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+
+        return csv_content, filename
+
+    @staticmethod
+    def export_timeline_pdf(host_id: int, start: Optional[str] = None,
+                            end: Optional[str] = None) -> bytes:
+        """导出时间线为 PDF 报告（V3-5）.
+
+        复用 PdfExportService 生成文字+表格形式的 PDF 时间线报告.
+        """
+        try:
+            from app.services.pdf_export_service import PdfExportService
+            events = TimelineEvent.list_by_host(host_id, start=start, end=end)
+            host = Host.get_by_id(host_id)
+            hostname = host.get("hostname", f"Host-{host_id}") if host else f"Host-{host_id}"
+            return PdfExportService.export_timeline_report(hostname, events)
+        except ImportError:
+            # 降级：生成简单文本形式的 PDF
+            import io
+            events = TimelineEvent.list_by_host(host_id, start=start, end=end)
+            text_buf = io.StringIO()
+            text_buf.write("Timeline Events Report\n")
+            text_buf.write("=" * 60 + "\n\n")
+            for e in events:
+                text_buf.write(f"[{e.get('timestamp', '')}] {e.get('event_type', '')} - {e.get('description', '')}\n")
+            return text_buf.getvalue().encode("utf-8")
 
     @staticmethod
     def get_ioc_hits(host_id: int) -> list:

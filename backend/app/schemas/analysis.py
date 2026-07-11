@@ -241,8 +241,14 @@ def validate_condition(rule_type: str, condition: dict) -> None:
         if not condition.get("field") or not condition.get("pattern"):
             raise ValueError("regex 规则必须包含 field 与 pattern")
     elif rule_type == "list":
-        if not condition.get("field") or not condition.get("values"):
-            raise ValueError("list 规则必须包含 field 与 values")
+        if not condition.get("field"):
+            raise ValueError("list 规则必须包含 field")
+        # 允许 values 为空列表：当 field 命中 FIELD_TO_IOC_TYPE 动态 IOC 映射时，
+        # 引擎会在运行时从 iocs 表动态并入对应类型指标（如 TI_malware_hash 的
+        # field=file_hash、attack_chain C2 步骤的 remote_address）。仅当 values
+        # 键缺失（None）时才视为非法结构。
+        if condition.get("values") is None:
+            raise ValueError("list 规则必须包含 values（可为空列表以仅依赖动态 IOC 引用）")
     elif rule_type == "threshold":
         if not condition.get("field"):
             raise ValueError("threshold 规则必须包含 field")

@@ -1,0 +1,38 @@
+sequenceDiagram
+    participant U as 分析师
+    participant P as EvidenceTracePanel
+    participant R as VueRouter
+    participant V as KnowledgeDetailView
+    participant A as knowledgeApi (axios)
+    participant B as knowledge_draft API
+    participant M as KnowledgeDraft model
+    participant S as getSeeds (后端)
+
+    U->>P: 在证据溯源面板点击某条知识证据
+    P->>P: parseEntryRef(item.entry_ref) → {entryType, internalId}
+    alt entry_type == 'rule'
+        P-->>U: 渲染不可点击「规则引擎」徽标（不跳转）
+    else entry_type ∈ {seed, draft}
+        P->>R: router.push('/knowledge/detail/' + item.entry_ref)
+        R->>V: 加载 KnowledgeDetailView，route.params.entryRef
+        V->>V: parseEntryRef(entryRef)
+        alt entryType == 'draft'
+            V->>A: getDraftDetail(internalId=7)
+            A->>B: GET /api/knowledge/drafts/7 (Depends get_current_user)
+            B->>M: get_by_id(7)
+            alt 找到
+                M-->>B: draft dict
+                B-->>A: 200 {code:0, data}
+                A-->>V: 渲染草稿详情
+            else 已拒绝/撤回/不存在
+                M-->>B: None
+                B-->>A: 404 HTTPException
+                A-->>V: catch → 渲染友好空态「该知识条目已不存在（可能已被拒绝/撤回）」
+            end
+        else entryType == 'seed'
+            V->>A: getSeeds()
+            A->>S: GET /api/knowledge/seeds
+            S-->>A: 200 {data: ALL_SEED_KNOWLEDGE[]}
+            A-->>V: 按 s.id === internalId(MITRE ID) 定位 → 渲染种子详情
+        end
+    end

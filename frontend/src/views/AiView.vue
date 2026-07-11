@@ -293,9 +293,9 @@
             </el-table-column>
             <el-table-column prop="host_name" label="主机名" min-width="140" show-overflow-tooltip />
             <el-table-column prop="model_name" label="模型" width="150" show-overflow-tooltip />
-            <el-table-column prop="tokens_used" label="Token 数" width="100" align="right" sortable="custom">
+            <el-table-column prop="total_tokens" label="Token 数" width="100" align="right" sortable="custom">
               <template #default="{ row }">
-                {{ formatNumber(row.tokens_used) }}
+                {{ formatNumber(row.total_tokens) }}
               </template>
             </el-table-column>
             <el-table-column prop="status" label="状态" width="90" align="center">
@@ -555,7 +555,7 @@
           <el-descriptions-item label="时间">{{ formatTime(auditDetail.created_at) }}</el-descriptions-item>
           <el-descriptions-item label="主机名">{{ auditDetail.host_name || '-' }}</el-descriptions-item>
           <el-descriptions-item label="模型">{{ auditDetail.model_name || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="Token 数">{{ formatNumber(auditDetail.tokens_used) }}</el-descriptions-item>
+          <el-descriptions-item label="Token 数">{{ formatNumber(auditDetail.total_tokens) }}</el-descriptions-item>
           <el-descriptions-item label="状态">
             <el-tag :type="statusTagType(auditDetail.status)" size="small">
               {{ statusLabel(auditDetail.status) }}
@@ -994,12 +994,14 @@ async function submitProfile() {
 // ============================================================
 async function loadStats() {
   try {
-    const res = await getAiTokenStats()
+    // 调用 summary 端点获取汇总统计数据（total_tokens/calls/success_rate 等）
+    const res = await getAiTokenSummary()
     const d = res.data || {}
-    stats.totalTokens = d.total_tokens_this_month || d.total_tokens || 0
-    stats.totalCalls = d.total_calls_this_month || d.total_calls || 0
-    stats.avgLatency = d.avg_latency_ms || d.avg_latency || 0
-    stats.successRate = d.success_rate != null ? Number(d.success_rate).toFixed(1) : '0.0'
+    stats.totalTokens = d.this_month_tokens || d.total_tokens || 0
+    stats.totalCalls = d.this_month_calls || d.total_calls || 0
+    stats.avgLatency = Math.round(d.avg_latency_ms || d.avg_latency || 0)
+    const rate = d.success_rate != null ? Number(d.success_rate) : 0
+    stats.successRate = (rate * 100).toFixed(1)
   } catch {
     // 静默失败
   }
@@ -1010,8 +1012,12 @@ async function loadStats() {
 async function loadChartData() {
   chartLoading.value = true
   try {
-    const res = await getAiTokenSummary(chartPeriod.value)
-    const data = res.data || []
+    // 使用 stats/tokens 端点获取按日聚合的时间序列数据
+    const daysMap = { daily: 30, weekly: 90, monthly: 365 }
+    const days = daysMap[chartPeriod.value] || 30
+    const res = await getAiTokenStats({ days })
+    const raw = res.data || {}
+    const data = raw?.items || raw?.list || []
     buildChartOption(data)
   } catch {
     chartOption.value = null
@@ -1029,7 +1035,7 @@ function buildChartOption(data) {
 
   const xData = data.map((d) => d.period || d.date || '')
   const tokenData = data.map((d) => d.tokens || d.total_tokens || 0)
-  const callData = data.map((d) => d.calls || d.total_calls || 0)
+  const callData = data.map((d) => d.calls || d.total_calls || d.call_count || d.count || 0)
 
   chartOption.value = {
     tooltip: {

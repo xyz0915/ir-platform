@@ -28,6 +28,8 @@ class AiAuditLog:
         total_tokens: int = 0,
         latency_ms: int = 0,
         masked_mode: int = 0,
+        prompt: str = "",
+        response: str = "",
         error_message: Optional[str] = None,
         ip_address: str = "",
         user_id: Optional[int] = None,
@@ -39,16 +41,23 @@ class AiAuditLog:
                 INSERT INTO ai_audit_log
                 (host_id, host_name, profile_id, profile_name, model_name,
                  status, prompt_tokens, completion_tokens, total_tokens,
-                 latency_ms, masked_mode, error_message, ip_address, user_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 latency_ms, masked_mode, prompt, response,
+                 error_message, ip_address, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     host_id, host_name, profile_id, profile_name, model_name,
                     status, prompt_tokens, completion_tokens, total_tokens,
-                    latency_ms, masked_mode, error_message, ip_address, user_id,
+                    latency_ms, masked_mode, prompt, response,
+                    error_message, ip_address, user_id,
                 ),
             )
             log_id = cursor.lastrowid
+            logger.info(
+                "AiAuditLog.create: id=%d, host=%s, model=%s, status=%s, tokens=(%d,%d,%d), latency=%dms",
+                log_id, host_name or f"host_{host_id}", model_name, status,
+                prompt_tokens, completion_tokens, total_tokens, latency_ms,
+            )
         return AiAuditLog.get_by_id(log_id)
 
     @staticmethod

@@ -81,7 +81,6 @@ MODULE_DATA_MAP: dict[str, list[str]] = {
     "abnormal_processes": ["abnormal_processes_all"],
     "connections":        ["network_connections_all"],
     "persistence":        ["persistence_all", "wmi_subscriptions_all"],
-    "security_logs":      ["security_event_logs"],
     "startup":            ["startup_items"],
     "ioc":                ["ioc_hits_all"],
     "timeline":           ["timeline_all"],

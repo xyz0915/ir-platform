@@ -2,6 +2,7 @@
 
 import logging
 from datetime import datetime
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -10,14 +11,15 @@ class TimelineBuilder:
     """时间线构建器."""
 
     @staticmethod
-    def build(raw_data: dict) -> list:
+    def build(raw_data: dict, ioc_hits: Optional[list] = None) -> list:
         """从采集数据构建时间线.
 
         Args:
             raw_data: Agent JSON 数据.
+            ioc_hits: IOC 命中列表（可选），用于关联 ioc_hit_id.
 
         Returns:
-            时间线事件列表（已排序）.
+            时间线事件列表（已排序，含 MITRE 战术注入和 IOC 关联）.
         """
         events: list[dict] = []
 
@@ -57,7 +59,38 @@ class TimelineBuilder:
                         })
 
         # 排序
-        return TimelineBuilder.sort_events(events)
+        events = TimelineBuilder.sort_events(events)
+
+        # ── V2-5: MITRE 战术自动注入 ──
+        for event in events:
+            mitre_result = MitreTacticMapper.map(event)
+            if mitre_result:
+                event["kill_chain_stage"] = mitre_result.get("kill_chain_stage")
+                event["mitre_technique_id"] = mitre_result.get("mitre_technique_id")
+
+        # ── V1-6: IOC 关联 ──
+        if ioc_hits:
+            for event in events:
+                for ioc in ioc_hits:
+                    if not isinstance(ioc, dict):
+                        continue
+                    ioc_ctx = ioc.get("context", "") or ""
+                    ioc_matched = ioc.get("matched_in", "") or ""
+                    evt_desc = event.get("description", "") or ""
+                    evt_source = event.get("source", "") or ""
+                    # 按 context/matched_in/description 做模糊匹配
+                    if (
+                        ioc_ctx and evt_desc and (
+                            ioc_ctx[:50] in evt_desc
+                            or evt_desc[:50] in ioc_ctx
+                        )
+                    ) or (
+                        ioc_matched and evt_source and ioc_matched in evt_source
+                    ):
+                        event["ioc_hit_id"] = ioc.get("id")
+                        break
+
+        return events
 
     @staticmethod
     def _normalize_timestamp(ts: str) -> str:
@@ -354,3 +387,122 @@ class TimelineBuilder:
                             },
                         })
         return events
+
+
+class MitreTacticMapper:
+    """MITRE ATT&CK 战术自动映射器.
+
+    基于事件类型、来源关键字和描述关键字进行三重匹配，
+    将事件映射到对应的 Kill Chain 阶段和 MITRE 技术 ID.
+    """
+
+    # 规则列表：每条含 event_type / source_kw / description_kw / tactic / technique_id
+    # 匹配优先级：规则列表中越靠前越优先
+    RULES: list[dict] = [
+        # ── 执行 (Execution) ──
+        {"event_type": "process", "source_kw": "powershell", "description_kw": "",
+         "tactic": "execution", "technique_id": "T1059.001"},
+        {"event_type": "process", "source_kw": "cmd", "description_kw": "",
+         "tactic": "execution", "technique_id": "T1059.003"},
+        {"event_type": "process", "source_kw": "wmic", "description_kw": "",
+         "tactic": "execution", "technique_id": "T1047"},
+        {"event_type": "process", "source_kw": "wscript", "description_kw": "",
+         "tactic": "execution", "technique_id": "T1059.005"},
+        {"event_type": "process", "source_kw": "cscript", "description_kw": "",
+         "tactic": "execution", "technique_id": "T1059.005"},
+        {"event_type": "process", "source_kw": "mshta", "description_kw": "",
+         "tactic": "execution", "technique_id": "T1218.005"},
+
+        # ── 持久化 (Persistence) ──
+        {"event_type": "file", "source_kw": "startup", "description_kw": "",
+         "tactic": "persistence", "technique_id": "T1547.001"},
+        {"event_type": "persistence", "source_kw": "", "description_kw": "",
+         "tactic": "persistence", "technique_id": "T1547"},
+        {"event_type": "log", "source_kw": "", "description_kw": "4732",
+         "tactic": "persistence", "technique_id": "T1098"},
+        {"event_type": "log", "source_kw": "", "description_kw": "4720",
+         "tactic": "persistence", "technique_id": "T1136.001"},
+
+        # ── 凭据访问 (Credential Access) ──
+        {"event_type": "log", "source_kw": "", "description_kw": "4625",
+         "tactic": "credential_access", "technique_id": "T1110"},
+        {"event_type": "log", "source_kw": "", "description_kw": "4648",
+         "tactic": "credential_access", "technique_id": "T1078"},
+        {"event_type": "log", "source_kw": "", "description_kw": "4672",
+         "tactic": "privilege_escalation", "technique_id": "T1068"},
+        {"event_type": "process", "source_kw": "mimikatz", "description_kw": "",
+         "tactic": "credential_access", "technique_id": "T1003.001"},
+        {"event_type": "process", "source_kw": "lsass", "description_kw": "",
+         "tactic": "credential_access", "technique_id": "T1003.001"},
+
+        # ── 发现 (Discovery) ──
+        {"event_type": "network", "source_kw": "", "description_kw": "port scan",
+         "tactic": "discovery", "technique_id": "T1046"},
+        {"event_type": "process", "source_kw": "netstat", "description_kw": "",
+         "tactic": "discovery", "technique_id": "T1049"},
+        {"event_type": "process", "source_kw": "whoami", "description_kw": "",
+         "tactic": "discovery", "technique_id": "T1033"},
+        {"event_type": "process", "source_kw": "query", "description_kw": "",
+         "tactic": "discovery", "technique_id": "T1018"},
+
+        # ── C2 (Command and Control) ──
+        {"event_type": "network", "source_kw": "", "description_kw": "C2",
+         "tactic": "command_and_control", "technique_id": "T1071"},
+        {"event_type": "network", "source_kw": "dns", "description_kw": "",
+         "tactic": "command_and_control", "technique_id": "T1071.004"},
+        {"event_type": "network", "source_kw": "", "description_kw": "dns",
+         "tactic": "command_and_control", "technique_id": "T1071.004"},
+        {"event_type": "network", "source_kw": "beacon", "description_kw": "",
+         "tactic": "command_and_control", "technique_id": "T1071"},
+
+        # ── 影响 (Impact) ──
+        {"event_type": "file", "source_kw": "encrypt", "description_kw": "",
+         "tactic": "impact", "technique_id": "T1486"},
+        {"event_type": "process", "source_kw": "shutdown", "description_kw": "",
+         "tactic": "impact", "technique_id": "T1529"},
+
+        # ── 防御规避 (Defense Evasion) ──
+        {"event_type": "process", "source_kw": "taskkill", "description_kw": "",
+         "tactic": "defense_evasion", "technique_id": "T1562.001"},
+    ]
+
+    @staticmethod
+    def map(event: dict) -> Optional[dict]:
+        """将事件映射到 MITRE 战术阶段.
+
+        三重匹配策略（按优先级）:
+          1. event_type + source_kw 精确匹配
+          2. event_type + description_kw 模糊匹配
+          3. event_type 仅匹配（兜底）
+
+        Args:
+            event: 时间线事件字典，含 event_type / source / description.
+
+        Returns:
+            含 kill_chain_stage 和 mitre_technique_id 的字典，
+            无匹配时返回 None.
+        """
+        evt_type = (event.get("event_type") or "").lower()
+        evt_source = (event.get("source") or "").lower()
+        evt_desc = (event.get("description") or "").lower()
+
+        # 规则按优先级匹配
+        for rule in MitreTacticMapper.RULES:
+            rule_type = rule.get("event_type", "").lower()
+            if rule_type and rule_type != evt_type:
+                continue
+
+            source_kw = (rule.get("source_kw") or "").lower()
+            desc_kw = (rule.get("description_kw") or "").lower()
+
+            # 三重匹配
+            source_match = (not source_kw) or (source_kw in evt_source)
+            desc_match = (not desc_kw) or (desc_kw in evt_desc)
+
+            if source_match and desc_match:
+                return {
+                    "kill_chain_stage": rule["tactic"],
+                    "mitre_technique_id": rule["technique_id"],
+                }
+
+        return None

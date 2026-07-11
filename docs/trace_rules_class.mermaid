@@ -1,0 +1,92 @@
+classDiagram
+    %% ===== 规则定义层 =====
+    class Rule {
+        +int id
+        +str name  %% 唯一技术键
+        +str category
+        +str rule_type  %% regex/list/threshold/behavior/composite/exists/attack_chain
+        +str condition  %% JSON 文本，attack_chain 配置(ordered_steps/window_minutes)存于此
+        +str severity
+        +bool enabled
+        +str label
+        +str source  %% 'default' | 'user'
+        +str mitre_attack
+        +create()  %% json.dumps(condition) 入库
+        +list_enabled()  %% RuleEngine.load_rules 调用
+    }
+
+    class ConditionModel {
+        <<pydantic>>
+        +str field
+        +str pattern
+        +list values
+        +str match_mode
+        +str operator
+        +Any value
+        +str logic
+        +list sub_rules
+        +int window_minutes  %% attack_chain 专用，1..1440
+        +str host_scope  %% 'single' 预留 'cluster'
+        +list ordered_steps  %% attack_chain 专用
+    }
+
+    class AttackChainStep {
+        +str dimension  %% process/connection/registry/persistence/timeline/ioc
+        +dict match  %% 复用 regex/list/threshold/behavior/composite/exists
+    }
+    ConditionModel "1" *-- "0..*" AttackChainStep : ordered_steps
+
+    %% ===== 引擎层 =====
+    class RuleEngine {
+        +evaluate(data_items, rules, global_context)
+        +match_rule(item, rule, global_context)
+        -_match_attack_chain(rule, global_context, host_events)
+        -_build_host_events(global_context)  HostEvent[]
+        -_match_attack_chain_step(step, event_data, global_context)
+        -_summarize_event(ev)
+        +get_attack_chain_hits(host_id)
+    }
+    RuleEngine ..> ConditionModel : 读取 condition
+
+    class HostEvent {
+        +str dimension
+        +datetime timestamp  %% process/conn/persist/ioc 为 None
+        +dict data  %% 来自各维度表 dict(r)
+    }
+    RuleEngine "1" *-- "0..*" HostEvent : _build_host_events
+
+    %% ===== 取证数据表（attack_chain 事件源）=====
+    class AbnormalProcess { +str process_name +str command_line +str parent_name }
+    class SuspiciousConnection { +str remote_address +int remote_port +str process_name }
+    class PersistenceItem { +str type +str command +str name }
+    class IocHit { +str ioc_type +str ioc_value }
+    class RegistryKey { +str key_path +str last_write_time }
+    class TimelineEvent { +str event_type +datetime timestamp }
+    HostEvent ..> AbnormalProcess : process
+    HostEvent ..> SuspiciousConnection : connection
+    HostEvent ..> PersistenceItem : persistence
+    HostEvent ..> IocHit : ioc
+    HostEvent ..> RegistryKey : registry
+    HostEvent ..> TimelineEvent : timeline
+
+    %% ===== 分析与证据层 =====
+    class AnalysisResult {
+        +dict details
+        +details.attack_chains  %% 链命中列表(rule_name/severity/reason/steps)
+    }
+    class ExplainabilityService {
+        +build_evidence_trace(parsed, knowledge, tiered)
+    }
+    class AiAnalysisReport {
+        +str attack_chain_hits  %% normalize_and_guard 注入
+    }
+    RuleEngine ..> AnalysisResult : 写入 details.attack_chains
+    AnalysisResult <.. AiAnalysisReport : get_attack_chain_hits 读取
+
+    %% ===== RAG 索引（契约隔离，独立于 DB rules 表）=====
+    class KnowledgeRetriever {
+        -_load_rules()  %% 读 default_rules.json（静态，非 DB）
+        -_build_index()  %% 幂等：count()>0 跳过
+        +retrieve()  %% rule_{i}_{name} 与 _build_index 同序
+    }
+    Rule <|.. KnowledgeRetriever : 契约无关(default_rules.json 而非 DB)

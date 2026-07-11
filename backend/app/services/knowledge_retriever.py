@@ -305,11 +305,32 @@ def _build_index() -> bool:
         return False
 
 
-def _build_seed_index() -> bool:
-    """将内置种子知识数据索引到 ChromaDB.
+def _seed_or_draft_exists(collection: Any) -> bool:
+    """判断集合里是否已存在种子/草稿向量（按 source 元数据精确判定）.
 
-    在 ChromaDB collection 为空或 _build_index 后仍为空时调用。
-    幂等：已有记录则跳过。
+    替代原先的 `collection.count() > 0` 早退逻辑：规则(rule_*) 的存在
+    不应阻止种子知识(真正的攻防 KB)与已批准草稿写入向量库。
+    """
+    try:
+        existing = collection.get(
+            where={"source": {"$in": ["seed", "draft"]}},
+            limit=1,
+        )
+        return bool(existing and existing.get("ids"))
+    except Exception as exc:  # pragma: no cover - 探测失败不算错误
+        logger.debug("Probe seed/draft existence failed: %s", exc)
+        return False
+
+
+def _build_seed_index() -> bool:
+    """将内置种子知识数据 + 已批准草稿索引到 ChromaDB.
+
+    种子条目使用 `seed_` 前缀 ID，已批准草稿使用 `draft_` 前缀 ID（与
+    models.knowledge_draft.get_as_seed_entries 返回的 id 一致）。每条都会
+    打上 source 元数据（seed / draft）以便精确判定是否已索引。
+
+    幂等：仅当集合里确实不存在种子/草稿向量时才 upsert 进去，
+    不再用 collection.count() > 0（规则 rule_* 的存在会误判早退）。
 
     Returns:
         True 表示索引成功或已存在，False 表示构建失败。
@@ -323,24 +344,27 @@ def _build_seed_index() -> bool:
         logger.info("_build_seed_index: collection or model unavailable, skip")
         return False
 
-    # 幂等检查：如果种子已索引或 collection 已有任意记录，跳过
-    if _SEED_INDEXED:
-        return True
-    if collection.count() > 0:
+    # 幂等检查：按 source 元数据精确判断种子/草稿是否已写入，
+    # 不再依赖 collection.count() > 0（规则 rule_* 的存在会误判早退）。
+    if _seed_or_draft_exists(collection):
         _SEED_INDEXED = True
         return True
 
-    seeds = _load_seed_data()
-    if not seeds:
-        logger.info("No seed data to index")
-        return True
-
-    # 准备数据
     ids: list[str] = []
     documents: list[str] = []
     metadatas: list[dict[str, str]] = []
 
-    for i, seed in enumerate(seeds):
+    # ── 1) 内置种子知识（ALL_SEED_KNOWLEDGE：MITRE/C2/Malware 共 10 条）──
+    try:
+        from app.data.knowledge_seed import ALL_SEED_KNOWLEDGE
+
+        seed_knowledge = list(ALL_SEED_KNOWLEDGE)
+        logger.info("Loaded %d hardcoded seed knowledge items", len(seed_knowledge))
+    except ImportError as exc:
+        logger.warning("Failed to load knowledge_seed: %s", exc)
+        seed_knowledge = []
+
+    for i, seed in enumerate(seed_knowledge):
         name: str = (seed.get("name") or "").strip()
         desc: str = (seed.get("description") or "").strip()
         severity: str = seed.get("severity", "medium")
@@ -359,9 +383,50 @@ def _build_seed_index() -> bool:
             "rule_name": name,
             "severity": severity,
             "category": category,
+            "source": "seed",
+        })
+
+    # ── 2) 已批准草稿（draft_<id> 前缀）──
+    try:
+        from app.models.knowledge_draft import KnowledgeDraft
+
+        approved_drafts = KnowledgeDraft.get_as_seed_entries()
+        if approved_drafts:
+            logger.info(
+                "Loaded %d approved draft(s) as additional seed knowledge",
+                len(approved_drafts),
+            )
+    except Exception as exc:
+        logger.warning("Failed to load approved drafts as seed data: %s", exc)
+        approved_drafts = []
+
+    for draft in approved_drafts:
+        name: str = (draft.get("name") or draft.get("title") or "").strip()
+        desc: str = (draft.get("description") or "").strip()
+        severity: str = draft.get("severity", "medium")
+        category: str = draft.get("category", "")
+        draft_id: str = draft.get("id", "")
+
+        if not name:
+            continue
+
+        # get_as_seed_entries 返回的 id 形如 "draft_<numeric_id>"
+        doc_id: str = draft_id if draft_id else f"draft_{name}"
+        doc_text: str = f"{name}: {desc}"
+
+        ids.append(doc_id)
+        documents.append(doc_text)
+        metadatas.append({
+            "rule_name": name,
+            "severity": severity,
+            "category": category,
+            "source": "draft",
         })
 
     if not ids:
+        # 没有任何种子/草稿可索引时也视为已完成，避免反复尝试
+        logger.info("No seed data to index")
+        _SEED_INDEXED = True
         return True
 
     # 批量编码
@@ -568,6 +633,29 @@ def _extract_keywords(data: dict) -> set[str]:
 
     _recurse(data)
     return keywords
+
+
+def _derive_entry_type(entry_ref: Optional[str]) -> str:
+    """根据 entry_ref 前缀派生 entry_type（与前端 parseEntryRef 逻辑一致）.
+
+    约定：
+    - seed_*  → seed   （内置种子知识，entry_ref 形如 seed_{i}_{mitre_id}）
+    - draft_* → draft  （已批准 AI 建议草稿，entry_ref 形如 draft_{numeric_id}）
+    - rule_*  → rule   （规则引擎命中，entry_ref 形如 rule_{i}_{name}）
+    - 其它 / 缺失 → unknown（前端按不可点击纯文本降级）
+
+    Args:
+        entry_ref: chroma 文档 ID 或等效引用字符串。
+
+    Returns:
+        entry_type 字符串。
+    """
+    if not entry_ref:
+        return "unknown"
+    prefix = entry_ref.split("_", 1)[0]
+    if prefix in ("seed", "draft", "rule"):
+        return prefix
+    return "unknown"
 
 
 # ============================================================================
@@ -819,6 +907,9 @@ class KnowledgeRetriever:
                         "match_reason": "语义相似检索命中",
                         "tags": [category, severity],
                         "evidence_text": formatted_text,
+                        # ── 证据可点击溯源：entry_ref = chroma 文档 ID 本身 ──
+                        "entry_ref": doc_id,
+                        "entry_type": _derive_entry_type(doc_id),
                     }
                 )
             else:
@@ -867,10 +958,14 @@ class KnowledgeRetriever:
         if not rules and not c2_sigs and not seeds:
             return []
 
-        scored: list[tuple[float, str]] = []
+        # 四元组：(score, text, src_type, entry_ref)
+        # - src_type: 来源类型（rule/seed/draft/c2），用于分类
+        # - entry_ref: chroma 文档 ID（seed_*/draft_*/rule_*），C2 签名为 None
+        scored: list[tuple[float, str, str, Optional[str]]] = []
 
         # ── 规则匹配 ──
-        for rule in rules:
+        # i 为 enumerate(rules) 索引，须与 _build_index 中 rule_{i}_{name} 的 i 同序
+        for i, rule in enumerate(rules):
             rule_name = rule.get("name", "")
             rule_desc = rule.get("description", "")
             rule_category = rule.get("category", "")
@@ -906,15 +1001,28 @@ class KnowledgeRetriever:
                 formatted_rule = (
                     f"[{rule_category}/{rule_severity}] {rule_name}: {rule_desc}"
                 )
-                scored.append((score, formatted_rule))
+                scored.append((score, formatted_rule, "rule", f"rule_{i}_{rule_name}"))
 
         # ── 种子知识匹配 ──
-        for seed in seeds:
+        # i 为 enumerate(seeds) 索引：内置种子恒为前 10 条（i=0..9），
+        # 已批准草稿（id 形如 draft_<n>）追加在尾部，二者顺序与 _build_seed_index 一致。
+        for i, seed in enumerate(seeds):
             seed_name = seed.get("name", "")
             seed_desc = seed.get("description", "")
             seed_category = seed.get("category", "knowledge")
             seed_severity = seed.get("severity", "medium")
             seed_pattern = seed.get("pattern", "")
+
+            # 区分内置种子（seed.get("id") 为 MITRE ID）与已批准草稿（id 形如 draft_<n>）
+            seed_id = seed.get("id", "")
+            if seed_id.startswith("draft_"):
+                # 来自 get_as_seed_entries，entry_ref 直接复用 draft_{numeric_id}
+                seed_entry_ref: Optional[str] = seed_id
+                seed_entry_type = "draft"
+            else:
+                # 纯种子：seed_{i}_{mitre_id}，i 与 _build_seed_index 同序
+                seed_entry_ref = f"seed_{i}_{seed_id}" if seed_id else None
+                seed_entry_type = "seed"
 
             name_parts = set(seed_name.lower().replace("_", " ").split())
             desc_words = set(seed_desc.lower().split())
@@ -954,20 +1062,20 @@ class KnowledgeRetriever:
                 formatted_seed = (
                     f"[{seed_category}/{seed_severity}] {seed_name}: {seed_desc}"
                 )
-                scored.append((score, formatted_seed))
+                scored.append((score, formatted_seed, seed_entry_type, seed_entry_ref))
 
         # ── C2 签名匹配 ──
         for sig in c2_sigs:
             if sig.lower() in " ".join(keywords):
                 scored.append(
-                    (3.0, f"[network/critical] C2 框架特征: {sig}")
+                    (3.0, f"[network/critical] C2 框架特征: {sig}", "c2", None)
                 )
 
         scored.sort(key=lambda x: x[0], reverse=True)
 
         seen: set[str] = set()
         results: list[Any] = []
-        for score, text in scored:
+        for score, text, src_type, entry_ref in scored:
             if text in seen:
                 continue
             seen.add(text)
@@ -981,23 +1089,26 @@ class KnowledgeRetriever:
                 if len(parts) == 2 and "/" in parts[0]:
                     category, severity = parts[0].split("/", 1)
                     rule_name = parts[1]
-                results.append(
-                    {
-                        "source": "keyword",
-                        "rule_name": rule_name,
-                        "title": rule_name,
-                        "severity": severity,
-                        "category": category,
-                        "description": summary,
-                        "summary": summary,
-                        "formatted_text": text,
-                        "score": round(score, 4),
-                        "confidence": "medium" if score < 4 else "high",
-                        "match_reason": "关键词匹配回退命中",
-                        "tags": [category, severity],
-                        "evidence_text": text,
-                    }
-                )
+                result = {
+                    "source": "keyword",
+                    "rule_name": rule_name,
+                    "title": rule_name,
+                    "severity": severity,
+                    "category": category,
+                    "description": summary,
+                    "summary": summary,
+                    "formatted_text": text,
+                    "score": round(score, 4),
+                    "confidence": "medium" if score < 4 else "high",
+                    "match_reason": "关键词匹配回退命中",
+                    "tags": [category, severity],
+                    "evidence_text": text,
+                }
+                # 仅当 entry_ref 非空时注入（C2 签名分支为 None，前端按纯文本渲染）
+                if entry_ref:
+                    result["entry_ref"] = entry_ref
+                    result["entry_type"] = _derive_entry_type(entry_ref)
+                results.append(result)
             else:
                 results.append(text)
             if len(results) >= limit:

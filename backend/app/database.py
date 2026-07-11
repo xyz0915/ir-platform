@@ -259,6 +259,8 @@ DDL_STATEMENTS = [
         total_tokens        INTEGER DEFAULT 0,
         latency_ms          INTEGER DEFAULT 0,
         masked_mode         INTEGER DEFAULT 0,
+        prompt              TEXT,
+        response            TEXT,
         error_message       TEXT,
         ip_address          TEXT,
         user_id             INTEGER,
@@ -783,6 +785,24 @@ def _alter_ai_tasks_table(conn: sqlite3.Connection) -> None:
             logger.info("Added column '%s' to ai_tasks table", col_name)
 
 
+def _alter_ai_audit_log_table(conn: sqlite3.Connection) -> None:
+    """检测并添加 ai_audit_log 表的新增列（prompt, response）."""
+    cursor = conn.execute("PRAGMA table_info(ai_audit_log)")
+    existing_columns: set[str] = {row["name"] for row in cursor.fetchall()}
+
+    new_columns: list[tuple[str, str]] = [
+        ("prompt", "TEXT"),
+        ("response", "TEXT"),
+    ]
+
+    for col_name, col_type in new_columns:
+        if col_name not in existing_columns:
+            conn.execute(
+                f"ALTER TABLE ai_audit_log ADD COLUMN {col_name} {col_type}"
+            )
+            logger.info("Added column '%s' to ai_audit_log table", col_name)
+
+
 def _alter_ai_config_profiles_table(conn: sqlite3.Connection) -> None:
     """检测并添加 ai_config_profiles 表的新增列（owner_user_id, is_public）."""
     cursor = conn.execute("PRAGMA table_info(ai_config_profiles)")
@@ -979,6 +999,84 @@ def _import_default_whitelist(conn: sqlite3.Connection) -> None:
     )
 
 
+def _alter_timeline_events_table(conn: sqlite3.Connection) -> None:
+    """检测并添加 timeline_events 表的新增列（V1-5 时间线增强）.
+
+    新增 6 列:
+      - kill_chain_stage      TEXT     MITRE ATT&CK 战术阶段
+      - mitre_technique_id    TEXT     MITRE ATT&CK 技术 ID
+      - status                TEXT     处置状态，默认 'new'
+      - assigned_to           TEXT     指派给
+      - resolution            TEXT     处置备注
+      - ioc_hit_id            INTEGER  IOC 命中外键 REFERENCES ioc_hits(id)
+
+    使用 try/except 包裹逐列 ALTER，列已存在则跳过（兼容重复执行）.
+    """
+    cursor = conn.execute("PRAGMA table_info(timeline_events)")
+    existing_columns: set[str] = {row["name"] for row in cursor.fetchall()}
+
+    new_columns: list[tuple[str, str]] = [
+        ("kill_chain_stage", "TEXT"),
+        ("mitre_technique_id", "TEXT"),
+        ("status", "TEXT DEFAULT 'new'"),
+        ("assigned_to", "TEXT"),
+        ("resolution", "TEXT"),
+        ("ioc_hit_id", "INTEGER REFERENCES ioc_hits(id)"),
+    ]
+
+    for col_name, col_type in new_columns:
+        if col_name not in existing_columns:
+            try:
+                conn.execute(
+                    f"ALTER TABLE timeline_events ADD COLUMN {col_name} {col_type}"
+                )
+                logger.info("Added column '%s' to timeline_events table", col_name)
+            except Exception as exc:
+                logger.warning("Failed to add column '%s' to timeline_events: %s", col_name, exc)
+
+
+def _create_timeline_event_audit_table(conn: sqlite3.Connection) -> None:
+    """创建 timeline_event_audit 处置审计表（V3-2）.
+
+    记录事件状态变更历史，包含 old_status/new_status/operator/comment.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS timeline_event_audit (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id    INTEGER NOT NULL REFERENCES timeline_events(id) ON DELETE CASCADE,
+            old_status  TEXT,
+            new_status  TEXT,
+            operator    TEXT,
+            comment     TEXT,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_timeline_event_audit_event ON timeline_event_audit(event_id)"
+    )
+    logger.info("timeline_event_audit table ready")
+
+
+def _alter_ai_analysis_reports_table_v2(conn: sqlite3.Connection) -> None:
+    """检测并添加 ai_analysis_reports 表的 source_event_id 列（V2-6）.
+
+    source_event_id 存储 JSON 数组字符串，用于将 AI key_events 与 timeline_events 建立关联.
+    """
+    cursor = conn.execute("PRAGMA table_info(ai_analysis_reports)")
+    existing_columns: set[str] = {row["name"] for row in cursor.fetchall()}
+
+    if "source_event_id" not in existing_columns:
+        try:
+            conn.execute(
+                "ALTER TABLE ai_analysis_reports ADD COLUMN source_event_id TEXT"
+            )
+            logger.info("Added column 'source_event_id' to ai_analysis_reports table")
+        except Exception as exc:
+            logger.warning("Failed to add column 'source_event_id': %s", exc)
+
+
 def _init_knowledge_drafts(conn: sqlite3.Connection) -> None:
     """确保 knowledge_drafts 表存在（幂等：DDL 中用 IF NOT EXISTS）.
 
@@ -1011,12 +1109,20 @@ def init_db() -> None:
         _migrate_old_ai_config(conn)
         # ALTER ai_analysis_reports 添加新列
         _alter_ai_analysis_reports_table(conn)
+        # ALTER ai_analysis_reports 添加 source_event_id 列（V2-6）
+        _alter_ai_analysis_reports_table_v2(conn)
         # ALTER ai_tasks 添加 mode/focus_area/base_report_id 列
         _alter_ai_tasks_table(conn)
         # ALTER ai_config_profiles 添加权限隔离列
         _alter_ai_config_profiles_table(conn)
         # ALTER threat_intel 添加多源聚合列（任务④）
         _alter_threat_intel_table(conn)
+        # ALTER ai_audit_log 添加 prompt/response 列（审计记录用户提示词与响应原文）
+        _alter_ai_audit_log_table(conn)
+        # ALTER timeline_events 添加 6 个新列（时间线增强 V1-5）
+        _alter_timeline_events_table(conn)
+        # 创建 timeline_event_audit 处置审计表（V3-2）
+        _create_timeline_event_audit_table(conn)
         conn.commit()
         _create_default_admin(conn)
         _alter_rules_table(conn)
