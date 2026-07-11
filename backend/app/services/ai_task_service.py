@@ -407,6 +407,28 @@ class AiTaskService:
             completion_tokens = usage_info.get("completion_tokens", 0)
             total_tokens = usage_info.get("total_tokens", 0)
 
+            # 若流式 API 未返回 usage（DeepSeek 第三方直连兼容性）
+            if total_tokens == 0:
+                try:
+                    import tiktoken
+                    enc = tiktoken.get_encoding("cl100k_base")
+                    prompt_tokens = len(enc.encode(system_prompt + user_prompt))
+                    completion_tokens = len(enc.encode(full_content))
+                    total_tokens = prompt_tokens + completion_tokens
+                    logger.info(
+                        "Tokens estimated via tiktoken: prompt=%d, completion=%d, total=%d",
+                        prompt_tokens, completion_tokens, total_tokens,
+                    )
+                except Exception:
+                    # tiktoken 不可用时粗略估算（1 字符 ≈ 0.3 token）
+                    prompt_tokens = len(system_prompt + user_prompt) // 3
+                    completion_tokens = len(full_content) // 3
+                    total_tokens = prompt_tokens + completion_tokens
+                    logger.info(
+                        "Tokens estimated via char-based: prompt=%d, completion=%d, total=%d",
+                        prompt_tokens, completion_tokens, total_tokens,
+                    )
+
             # ── overview / remediation 专属报告（任务②）──────────────
             if mode in ("overview", "remediation"):
                 ai_payload: dict = {"mode": mode, "payload": parsed}
@@ -650,6 +672,27 @@ class AiTaskService:
             # 更新任务为失败（友好提示）
             await cls._fail_task(task_id, friendly_msg, TaskStatus.FAILED)
 
+            # 若 token 为空，尝试估算（DeepSeek 流式兼容；system_prompt
+            # 可能在极早异常时未定义，此时保持 0 亦属合理）
+            if total_tokens == 0:
+                try:
+                    _sp = system_prompt  # noqa: F841
+                    _up = user_prompt    # noqa: F841
+                    _fc = full_content   # noqa: F841
+                except NameError:
+                    pass
+                else:
+                    try:
+                        import tiktoken
+                        enc = tiktoken.get_encoding("cl100k_base")
+                        prompt_tokens = len(enc.encode(system_prompt + user_prompt))
+                        completion_tokens = len(enc.encode(full_content))
+                        total_tokens = prompt_tokens + completion_tokens
+                    except Exception:
+                        prompt_tokens = len(system_prompt + user_prompt) // 3
+                        completion_tokens = len(full_content) // 3
+                        total_tokens = prompt_tokens + completion_tokens
+
             # 写入失败审计日志（失败原因使用友好提示）
             try:
                 AuditService.log_call(
@@ -676,6 +719,26 @@ class AiTaskService:
 
             # 更新任务为失败
             await cls._fail_task(task_id, error_msg, TaskStatus.FAILED)
+
+            # 若 token 为空，尝试估算（DeepSeek 流式兼容）
+            if total_tokens == 0:
+                try:
+                    _sp = system_prompt  # noqa: F841
+                    _up = user_prompt    # noqa: F841
+                    _fc = full_content   # noqa: F841
+                except NameError:
+                    pass
+                else:
+                    try:
+                        import tiktoken
+                        enc = tiktoken.get_encoding("cl100k_base")
+                        prompt_tokens = len(enc.encode(system_prompt + user_prompt))
+                        completion_tokens = len(enc.encode(full_content))
+                        total_tokens = prompt_tokens + completion_tokens
+                    except Exception:
+                        prompt_tokens = len(system_prompt + user_prompt) // 3
+                        completion_tokens = len(full_content) // 3
+                        total_tokens = prompt_tokens + completion_tokens
 
             # 写入失败审计日志
             try:
