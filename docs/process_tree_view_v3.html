@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>进程树与攻击链分析 - 优化版</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #F1F5F9;
+    color: #0F172A;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 18px 16px 28px; }
+  h1 { font-size: 15px; font-weight: 500; margin: 0; }
+  .sub { font-size: 12px; color: #64748B; margin-top: 2px; }
+
+  .kpis { display: flex; gap: 8px; }
+  .kpi { border-radius: 8px; padding: 6px 12px; text-align: center; min-width: 64px; }
+  .kpi .num { font-size: 15px; font-weight: 500; }
+  .kpi .lbl { font-size: 11px; }
+  .kpi.crit { background: #FCEBEB; border: 1px solid #F7C1C1; }
+  .kpi.crit .num { color: #A32D2D; } .kpi.crit .lbl { color: #791F1F; }
+  .kpi.high { background: #FAECE7; border: 1px solid #F5C4B3; }
+  .kpi.high .num { color: #993C1D; } .kpi.high .lbl { color: #712B13; }
+  .kpi.chain { background: #E6F1FB; border: 1px solid #B5D4F4; }
+  .kpi.chain .num { color: #185FA5; } .kpi.chain .lbl { color: #0C447C; }
+
+  .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 0 12px; border-bottom: 1px solid #E2E8F0; margin: 12px 0; }
+  .toolbar input { flex: 1; min-width: 180px; border: 1px solid #CBD5E1; border-radius: 8px; padding: 7px 10px; font-size: 13px; color: #0F172A; background: #fff; }
+  .btn { border-radius: 8px; padding: 7px 12px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+  .btn.ghost { border: 1px solid #CBD5E1; background: #fff; color: #0F172A; }
+  .btn.high { border: 1px solid #993C1D; background: #FAECE7; color: #993C1D; }
+  .btn.chain { border: 1px solid #185FA5; background: #E6F1FB; color: #185FA5; }
+
+  .body { display: flex; gap: 16px; align-items: flex-start; }
+  .tree-wrap { flex: 1; min-width: 0; background: #fff; border: 1px solid #E2E8F0; border-radius: 12px; padding: 12px; }
+
+  .tree ul { list-style: none; margin: 0; padding: 0; position: relative; }
+  .tree > ul > li { padding-left: 0; }
+  .tree ul ul { margin-left: 13px; padding-left: 18px; }
+  .tree ul ul::before { content: ""; position: absolute; left: 0; top: 0; bottom: 24px; border-left: 1.5px solid #CBD5E1; }
+  .tree li { position: relative; list-style: none; }
+  .tree li::after { content: ""; position: absolute; top: 24px; left: -18px; width: 18px; border-top: 1.5px solid #CBD5E1; }
+  .tree > ul > li::after { display: none; }
+
+  .node { display: flex; align-items: flex-start; gap: 8px; background: #fff; border: 1px solid #E2E8F0; border-left: 4px solid #5F5E5A; border-radius: 8px; padding: 9px 10px; margin: 4px 0; cursor: pointer; transition: background .12s; }
+  .node:hover { background: #F8FAFC; }
+  .node.sev-critical { border-color: #F7C1C1; border-left-color: #A32D2D; }
+  .node.sev-high { border-color: #F5C4B3; border-left-color: #993C1D; }
+  .node.sev-medium { border-color: #FAC775; border-left-color: #854F0B; }
+  .node.selected { background: #E6F1FB; border: 2px solid #185FA5; }
+  .toggle { cursor: pointer; border: 1px solid #CBD5E1; background: #F8FAFC; border-radius: 4px; width: 18px; height: 18px; font-size: 12px; line-height: 1; color: #475569; display: inline-flex; align-items: center; justify-content: center; flex: none; margin-top: 2px; }
+  .ic { width: 18px; display: inline-block; margin-top: 2px; flex: none; }
+  .nm { font-size: 13px; font-weight: 500; }
+  .pid { font-size: 11px; color: #64748B; }
+  .meta { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: #64748B; margin-top: 3px; }
+  .badge { font-size: 11px; border-radius: 999px; padding: 1px 7px; white-space: nowrap; }
+  .b-sev-critical { border: 1px solid #A32D2D; background: #FCEBEB; color: #A32D2D; }
+  .b-sev-high { border: 1px solid #993C1D; background: #FAECE7; color: #993C1D; }
+  .b-sev-medium { border: 1px solid #854F0B; background: #FAEEDA; color: #854F0B; }
+  .b-chain { border: 1px solid #185FA5; background: #E6F1FB; color: #185FA5; }
+  .b-c2 { border: 1px solid #A32D2D; background: #FCEBEB; color: #A32D2D; }
+  .b-spoof { border: 1px solid #A32D2D; background: #FCEBEB; color: #A32D2D; }
+  .b-suspect { border: 1px solid #BA7517; background: #FAEEDA; color: #854F0B; }
+  .b-sys { border: 1px solid #D3D1C7; background: #F1EFE8; color: #444441; }
+
+  .detail { width: 320px; flex: none; background: #fff; border: 1px solid #E2E8F0; border-radius: 12px; padding: 14px; }
+  .detail .d-head { display: flex; align-items: center; gap: 8px; padding-bottom: 10px; border-bottom: 1px solid #E2E8F0; }
+  .detail .d-name { font-size: 14px; font-weight: 500; }
+  .detail .d-sub { font-size: 11px; color: #64748B; }
+  .risk { font-size: 12px; border-radius: 999px; padding: 3px 10px; margin-left: auto; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; padding: 12px 0; border-bottom: 1px solid #E2E8F0; }
+  .grid .lab { font-size: 11px; color: #94A3B8; }
+  .grid .val { font-size: 13px; }
+  .sec { padding: 10px 0; border-bottom: 1px solid #E2E8F0; }
+  .sec .lab { font-size: 11px; color: #94A3B8; margin-bottom: 6px; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip { font-size: 11px; border: 1px solid #993C1D; background: #FAECE7; color: #993C1D; border-radius: 999px; padding: 2px 8px; }
+  .conn { border: 1px solid #F7C1C1; background: #FCEBEB; border-radius: 8px; padding: 8px; font-size: 12px; color: #A32D2D; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #A32D2D; margin-right: 6px; }
+  .actions { display: flex; gap: 8px; padding-top: 10px; }
+  .actions .btn { flex: 1; }
+
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; padding: 14px 2px 4px; font-size: 12px; color: #64748B; }
+  .legend .sw { width: 10px; height: 10px; display: inline-block; margin-right: 5px; vertical-align: middle; }
+
+  @media (max-width: 880px) {
+    .body { flex-direction: column; }
+    .detail { width: 100%; border-left: none; border-top: 1px solid #E2E8F0; }
+    .tree-wrap { overflow-x: auto; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+    <div>
+      <h1>进程树与攻击链分析</h1>
+      <div class="sub">主机 WIN-IR-7F3A · 采集 2026-07-12 09:40 · 会话 1</div>
+    </div>
+    <div class="kpis">
+      <div class="kpi crit"><div class="num">12</div><div class="lbl">进程总数</div></div>
+      <div class="kpi high"><div class="num">4</div><div class="lbl">高危</div></div>
+      <div class="kpi chain"><div class="num">1</div><div class="lbl">攻击链</div></div>
+      <div class="kpi crit"><div class="num">1</div><div class="lbl">C2 外连</div></div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <input placeholder="搜索进程名 / PID / 路径" />
+    <button class="btn ghost">全部</button>
+    <button class="btn high">高危及以上</button>
+    <button class="btn chain">仅攻击链</button>
+    <button class="btn ghost" onclick="toggleAll()">展开 / 收起</button>
+  </div>
+
+  <div class="body">
+    <div class="tree-wrap">
+      <div class="tree">
+        <ul>
+          <li>
+            <div class="node sev-low" data-pid="4" data-ppid="0" data-pname="System" data-parent="— (内核)" data-time="09:30:01" data-status="运行中" data-sev="low" data-score="0" data-path="C:\Windows\system32\ntoskrnl.exe" data-rules="" data-conn="" data-chain="" data-type="system" data-sess="0">
+              <button class="toggle" onclick="toggle(this)">−</button>
+              <span class="ic" style="color:#5F5E5A"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg></span>
+              <div style="flex:1;min-width:0">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="nm">System</span><span class="pid">PID 4</span><span class="badge b-sys">系统</span></div>
+                <div class="meta"><span>父: —</span><span>启动 09:30:01</span><span style="color:#639922">运行中</span></div>
+              </div>
+            </div>
+            <ul>
+              <li>
+                <div class="node sev-low" data-pid="1024" data-ppid="4" data-pname="explorer.exe" data-parent="System (4)" data-time="09:31:10" data-status="运行中" data-sev="low" data-score="0" data-path="C:\Windows\explorer.exe" data-rules="" data-conn="" data-chain="" data-type="generic" data-sess="1">
+                  <button class="toggle" onclick="toggle(this)">−</button>
+                  <span class="ic" style="color:#5F5E5A"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg></span>
+                  <div style="flex:1;min-width:0">
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="nm">explorer.exe</span><span class="pid">PID 1024</span></div>
+                    <div class="meta"><span>父: System (4)</span><span>启动 09:31:10</span><span style="color:#639922">运行中</span></div>
+                  </div>
+                </div>
+                <ul>
+                  <li>
+                    <div class="node sev-low" data-pid="3312" data-ppid="1024" data-pname="notepad.exe" data-parent="explorer.exe (1024)" data-time="09:50:22" data-status="运行中" data-sev="low" data-score="0" data-path="C:\Windows\system32\notepad.exe" data-rules="" data-conn="" data-chain="" data-type="doc" data-sess="1">
+                      <span class="ic" style="color:#5F5E5A"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></span>
+                      <div style="flex:1;min-width:0">
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="nm">notepad.exe</span><span class="pid">PID 3312</span></div>
+                        <div class="meta"><span>父: explorer.exe (1024)</span><span>启动 09:50:22</span><span style="color:#639922">运行中</span></div>
+                      </div>
+                    </div>
+                  </li>
+                  <li>
+                    <div class="node sev-high" data-pid="2240" data-ppid="1024" data-pname="WINWORD.EXE" data-parent="explorer.exe (1024)" data-time="09:42:01" data-status="运行中" data-sev="high" data-score="45" data-path="C:\Program Files\Microsoft Office\root\Office16\WINWORD.EXE" data-rules="可疑父启动,宏执行" data-conn="" data-chain="第 1 跳 / 共 4 跳" data-type="doc" data-sess="1">
+                      <button class="toggle" onclick="toggle(this)">−</button>
+                      <span class="ic" style="color:#993C1D"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></span>
+                      <div style="flex:1;min-width:0">
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="nm">WINWORD.EXE</span><span class="pid">PID 2240</span><span class="badge b-sev-high">高</span><span class="badge b-chain">链 1/4</span></div>
+                        <div class="meta"><span>父: explorer.exe (1024)</span><span>启动 09:42:01</span><span style="color:#639922">运行中</span><span style="color:#993C1D">命中: 可疑父启动, 宏执行</span></div>
+                      </div>
+                    </div>
+                    <ul>
+                      <li>
+                        <div class="node sev-high" data-pid="4488" data-ppid="2240" data-pname="powershell.exe" data-parent="WINWORD.EXE (2240)" data-time="09:42:11" data-status="运行中" data-sev="high" data-score="70" data-path="C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" data-rules="powershell_encoded_command,anomalous_network_process" data-conn="45.77.132.9:4444 (TCP) 外连" data-chain="第 2 跳 / 共 4 跳" data-type="terminal" data-sess="1">
+                          <button class="toggle" onclick="toggle(this)">−</button>
+                          <span class="ic" style="color:#993C1D"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17l6-6-6-6M12 19h8"/></svg></span>
+                          <div style="flex:1;min-width:0">
+                            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="nm">powershell.exe</span><span class="pid">PID 4488</span><span class="badge b-sev-high">高</span><span class="badge b-chain">链 2/4</span><span class="badge b-c2">C2 ↗ 45.77.132.9:4444</span></div>
+                            <div class="meta"><span>父: WINWORD.EXE (2240)</span><span>启动 09:42:11</span><span style="color:#639922">运行中</span><span style="color:#993C1D">命中: powershell_encoded_command, anomalous_network_process</span></div>
+                          </div>
+                        </div>
+                        <ul>
+                          <li>
+                            <div class="node sev-high" data-pid="5520" data-ppid="4488" data-pname="cmd.exe" data-parent="powershell.exe (4488)" data-time="09:42:15" data-status="运行中" data-sev="high" data-score="60" data-path="C:\Windows\System32\cmd.exe" data-rules="cmd_powershell_chain" data-conn="" data-chain="第 3 跳 / 共 4 跳" data-type="terminal" data-sess="1">
+                              <button class="toggle" onclick="toggle(this)">−</button>
+                              <span class="ic" style="color:#993C1D"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17l6-6-6-6M12 19h8"/></svg></span>
+                              <div style="flex:1;min-width:0">
+                                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="nm">cmd.exe</span><span class="pid">PID 5520</span><span class="badge b-sev-high">高</span><span class="badge b-chain">链 3/4</span></div>
+                                <div class="meta"><span>父: powershell.exe (4488)</span><span>启动 09:42:15</span><span style="color:#639922">运行中</span><span style="color:#993C1D">命中: cmd_powershell_chain</span></div>
+                              </div>
+                            </div>
+                            <ul>
+                              <li>
+                                <div class="node sev-high selected" data-pid="6172" data-ppid="5520" data-pname="certutil.exe" data-parent="cmd.exe (5520)" data-time="09:42:20" data-status="运行中" data-sev="high" data-score="85" data-path="C:\Windows\System32\certutil.exe" data-rules="certutil_download,anomalous_network_process" data-conn="45.77.132.9:4444 (TCP) 下载载荷" data-chain="第 4 跳 / 共 4 跳" data-type="terminal" data-sess="1">
+                                  <span class="ic" style="color:#993C1D"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17l6-6-6-6M12 19h8"/></svg></span>
+                                  <div style="flex:1;min-width:0">
+                                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="nm">certutil.exe</span><span class="pid">PID 6172</span><span class="badge b-sev-high">高</span><span class="badge b-chain">链 4/4</span><span class="badge b-c2">C2 ↗ 45.77.132.9:4444</span></div>
+                                    <div class="meta"><span>父: cmd.exe (5520)</span><span>启动 09:42:20</span><span style="color:#639922">运行中</span><span style="color:#993C1D">命中: certutil_download, anomalous_network_process</span></div>
+                                  </div>
+                                </div>
+                              </li>
+                            </ul>
+                          </li>
+                        </ul>
+                      </li>
+                    </ul>
+                  </li>
+                </ul>
+              </li>
+              <li>
+                <div class="node sev-critical" data-pid="7781" data-ppid="4" data-pname="svch0st.exe" data-parent="System (4)" data-time="09:43:50" data-status="运行中" data-sev="critical" data-score="90" data-path="C:\Temp\svch0st.exe" data-rules="process_name_spoof,suspicious_process_path" data-conn="" data-chain="" data-type="system" data-sess="0">
+                  <span class="ic" style="color:#A32D2D"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+                  <div style="flex:1;min-width:0">
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="nm">svch0st.exe</span><span class="pid">PID 7781</span><span class="badge b-sev-critical">严重</span><span class="badge b-spoof">伪装</span></div>
+                    <div class="meta"><span>父: System (4)</span><span>启动 09:43:50</span><span style="color:#639922">运行中</span><span style="color:#A32D2D">命中: process_name_spoof, suspicious_process_path</span></div>
+                  </div>
+                </div>
+              </li>
+              <li>
+                <div class="node sev-high" data-pid="6120" data-ppid="1024" data-pname="Updater.exe" data-parent="explorer.exe (1024)" data-time="09:44:05" data-status="运行中" data-sev="high" data-score="55" data-path="C:\Users\admin\AppData\Roaming\Updater\Updater.exe" data-rules="suspicious_process_path" data-conn="" data-chain="" data-type="generic" data-sess="1">
+                  <span class="ic" style="color:#993C1D"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+                  <div style="flex:1;min-width:0">
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="nm">Updater.exe</span><span class="pid">PID 6120</span><span class="badge b-sev-high">高</span></div>
+                    <div class="meta"><span>父: explorer.exe (1024)</span><span>启动 09:44:05</span><span style="color:#639922">运行中</span><span style="color:#993C1D">命中: suspicious_process_path</span></div>
+                  </div>
+                </div>
+              </li>
+              <li>
+                <div class="node sev-high" data-pid="3390" data-ppid="2980" data-pname="wscript.exe" data-parent="AcroRd32.exe (2980)" data-time="09:45:12" data-status="运行中" data-sev="high" data-score="65" data-path="C:\Windows\System32\wscript.exe" data-rules="suspicious_parent" data-conn="" data-chain="" data-type="terminal" data-sess="1">
+                  <span class="ic" style="color:#993C1D"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17l6-6-6-6M12 19h8"/></svg></span>
+                  <div style="flex:1;min-width:0">
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="nm">wscript.exe</span><span class="pid">PID 3390</span><span class="badge b-sev-high">高</span></div>
+                    <div class="meta"><span>父: AcroRd32.exe (2980)</span><span>启动 09:45:12</span><span style="color:#639922">运行中</span><span style="color:#993C1D">命中: suspicious_parent</span></div>
+                  </div>
+                </div>
+              </li>
+              <li>
+                <div class="node sev-high" data-pid="9051" data-ppid="4" data-pname="zombie_svc.exe" data-parent="System (4)" data-time="07-11 23:10" data-status="疑似僵尸" data-sev="high" data-score="60" data-path="C:\Windows\System32\zombie_svc.exe" data-rules="zombie_process" data-conn="" data-chain="" data-type="system" data-sess="0">
+                  <span class="ic" style="color:#993C1D"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+                  <div style="flex:1;min-width:0">
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="nm">zombie_svc.exe</span><span class="pid">PID 9051</span><span class="badge b-sev-high">高</span><span class="badge b-suspect">疑似</span></div>
+                    <div class="meta"><span>父: System (4)</span><span>启动 07-11 23:10</span><span style="color:#BA7517">疑似僵尸 (线程=0)</span><span style="color:#993C1D">命中: zombie_process</span></div>
+                  </div>
+                </div>
+              </li>
+              <li>
+                <div class="node sev-high" data-pid="4410" data-ppid="7799" data-pname="orphan_app.exe" data-parent="未知 (7799)" data-time="09:46:00" data-status="运行中" data-sev="high" data-score="50" data-path="C:\Temp\orphan_app.exe" data-rules="orphan_process" data-conn="" data-chain="" data-type="generic" data-sess="0">
+                  <span class="ic" style="color:#993C1D"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+                  <div style="flex:1;min-width:0">
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="nm">orphan_app.exe</span><span class="pid">PID 4410</span><span class="badge b-sev-high">高</span></div>
+                    <div class="meta"><span>父: 未知 (PID 7799 不在列表)</span><span>启动 09:46:00</span><span style="color:#639922">运行中</span><span style="color:#993C1D">命中: orphan_process</span></div>
+                  </div>
+                </div>
+              </li>
+            </ul>
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <aside class="detail" id="detail">
+      <div class="d-head">
+        <span class="ic" style="color:#993C1D"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17l6-6-6-6M12 19h8"/></svg></span>
+        <div style="flex:1"><div class="d-name">certutil.exe</div><div class="d-sub">PID 6172 · 高危</div></div>
+        <span class="risk" style="border:1px solid #993C1D;background:#FAECE7;color:#993C1D">风险 85</span>
+      </div>
+      <div class="grid">
+        <div><div class="lab">进程 ID</div><div class="val">6172</div></div>
+        <div><div class="lab">父进程 ID</div><div class="val">5520</div></div>
+        <div><div class="lab">父进程</div><div class="val">cmd.exe (5520)</div></div>
+        <div><div class="lab">启动时间</div><div class="val">09:42:20</div></div>
+        <div><div class="lab">状态</div><div class="val" style="color:#639922">运行中</div></div>
+        <div><div class="lab">会话</div><div class="val">1</div></div>
+        <div style="grid-column:1 / span 2"><div class="lab">路径</div><div class="val" style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px">C:\Windows\System32\certutil.exe</div></div>
+      </div>
+      <div class="sec" style="color:#185FA5;font-size:12px">位于攻击链：<b>第 4 跳 / 共 4 跳</b></div>
+      <div class="sec"><div class="lab">命中规则</div><div class="chips"><span class="chip">certutil_download</span><span class="chip">anomalous_network_process</span></div></div>
+      <div class="sec"><div class="lab">外连情报</div><div class="conn"><span class="dot"></span>C2 外连 · 45.77.132.9:4444 (TCP)<br/><span style="color:#791F1F">行为: 下载载荷 / beacon</span></div></div>
+      <div class="actions">
+        <button class="btn ghost">标记误报</button>
+        <button class="btn chain">加入时间线</button>
+      </div>
+    </aside>
+  </div>
+
+  <div class="legend">
+    <span style="font-weight:500;color:#0F172A">图例</span>
+    <span><span class="sw" style="background:#A32D2D"></span>严重</span>
+    <span><span class="sw" style="background:#993C1D"></span>高</span>
+    <span><span class="sw" style="background:#854F0B"></span>中</span>
+    <span><span class="sw" style="background:#5F5E5A"></span>低 / 正常</span>
+    <span><span class="sw" style="background:#185FA5"></span>攻击链节点</span>
+    <span><span class="sw" style="border-radius:50%;background:#A32D2D"></span>C2 外连</span>
+  </div>
+</div>
+
+<script>
+function iconFor(t){
+  var m={
+    system:'<rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/>',
+    doc:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>',
+    terminal:'<path d="M4 17l6-6-6-6M12 19h8"/>',
+    generic:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>'
+  };
+  return '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'+(m[t]||m.generic)+'</svg>';
+}
+function sevColor(s){return s==='critical'?'#A32D2D':s==='high'?'#993C1D':s==='medium'?'#854F0B':'#5F5E5A';}
+function sevLabel(s){return s==='critical'?'严重':s==='high'?'高':s==='medium'?'中':'低';}
+function render(n){
+  var d=n.dataset, sev=d.sev, detail=document.getElementById('detail');
+  var rules=d.rules?d.rules.split(',').map(function(r){return '<span class="chip">'+r+'</span>';}).join(''):'<span style="font-size:11px;color:#94A3B8">无</span>';
+  var conn=d.conn?'<div class="sec"><div class="lab">外连情报</div><div class="conn"><span class="dot"></span>C2 外连 · '+d.conn+'</div></div>':'';
+  var chain=d.chain?'<div class="sec" style="color:#185FA5;font-size:12px">位于攻击链：<b>'+d.chain+'</b></div>':'';
+  detail.innerHTML=
+    '<div class="d-head"><span class="ic" style="color:'+sevColor(sev)+'">'+iconFor(d.type)+'</span>'+
+    '<div style="flex:1"><div class="d-name">'+d.pname+'</div><div class="d-sub">PID '+d.pid+' · '+sevLabel(sev)+'危</div></div>'+
+    '<span class="risk" style="border:1px solid '+sevColor(sev)+';background:#fff;color:'+sevColor(sev)+'">风险 '+d.score+'</span></div>'+
+    '<div class="grid">'+
+      '<div><div class="lab">进程 ID</div><div class="val">'+d.pid+'</div></div>'+
+      '<div><div class="lab">父进程 ID</div><div class="val">'+d.ppid+'</div></div>'+
+      '<div><div class="lab">父进程</div><div class="val">'+d.parent+'</div></div>'+
+      '<div><div class="lab">启动时间</div><div class="val">'+d.time+'</div></div>'+
+      '<div><div class="lab">状态</div><div class="val" style="color:#639922">'+d.status+'</div></div>'+
+      '<div><div class="lab">会话</div><div class="val">'+(d.sess||'—')+'</div></div>'+
+      '<div style="grid-column:1 / span 2"><div class="lab">路径</div><div class="val" style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px">'+d.path+'</div></div>'+
+    '</div>'+chain+
+    '<div class="sec"><div class="lab">命中规则</div><div class="chips">'+rules+'</div></div>'+conn+
+    '<div class="actions"><button class="btn ghost">标记误报</button><button class="btn chain">加入时间线</button></div>';
+}
+document.querySelectorAll('.node').forEach(function(n){
+  n.addEventListener('click',function(e){
+    if(e.target.closest('.toggle'))return;
+    document.querySelectorAll('.node').forEach(function(x){x.classList.remove('selected');});
+    n.classList.add('selected');
+    render(n);
+  });
+});
+function toggle(btn){
+  var li=btn.closest('li'), ul=li.querySelector(':scope > ul');
+  if(!ul)return;
+  var collapsed=ul.style.display==='none';
+  ul.style.display=collapsed?'block':'none';
+  btn.textContent=collapsed?'−':'+';
+}
+function toggleAll(){
+  var anyOpen=true;
+  document.querySelectorAll('.tree ul ul').forEach(function(u){ if(u.style.display!=='none') anyOpen=false; });
+  document.querySelectorAll('.tree ul ul').forEach(function(u){ u.style.display=anyOpen?'none':'block'; });
+  document.querySelectorAll('.toggle').forEach(function(t){ t.textContent=anyOpen?'+':'−'; });
+}
+</script>
+</body>
+</html>

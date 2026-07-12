@@ -1,0 +1,22 @@
+flowchart TD
+    A["build(processes, abnormal_pids, pid_to_info)"] --> B["构建 pid_to_proc 与 pid_to_children 映射"]
+    B --> C["_find_roots: 遍历 processes"]
+    C --> D{"ppid==0 或 ppid 不在 pid_to_proc?"}
+    D -->|是| E["判定为根 / 孤儿"]
+    E --> F{"ppid!=0 且父不在列表?"}
+    F -->|是| G["标记 _is_orphan=True, name 追加 (orphan process)"]
+    F -->|否| H["普通根"]
+    G --> I["加入 roots"]
+    H --> I
+    D -->|否| J["非根, 跳过"]
+    I --> K["对每个 root 调 _build_tree_recursive"]
+    K --> L{"pid 已在 visited?"}
+    L -->|是| M["循环引用: 返回 (circular reference) 标记节点, 停止递归"]
+    L -->|否| N["pid 加入 visited"]
+    N --> O["从 pid_to_info 叠加异常信息: is_abnormal/risk_score/matched_rules/attack_path"]
+    O --> P["递归构建 children_nodes"]
+    P --> Q["组装 node: name/pid/process_name/process_path/command_line/is_abnormal/risk_score/matched_rules/attack_path/children"]
+    Q --> R{"root_nodes 数量?"}
+    R -->|1| S["直接返回该 root"]
+    R -->|>1| T["包裹虚拟根 All Processes"]
+    R -->|0| U["返回 (empty)"]

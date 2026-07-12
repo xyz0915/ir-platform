@@ -1,128 +1,39 @@
 classDiagram
-    %% ── Python 后端类 ──
-    class TimelineEvent {
+    class ProcessesCollector {
+        +collect() list
+        +_build_connection_map(psutil) dict
+        <<现状: 仅 pid/ppid/name/path/cmdline/user/start_time/threads/connections>>
+        <<缺口: 无 session/memory_sections/state, 无事件>>
+    }
+    class ProcessInfo {
+        +int session  «P2新增 agent_data.py:81»
+        +list memory_sections  «P2新增 :82»
+        +str state  «P2新增 :83»
+        +extra="allow"  «向后兼容 :86»
+    }
+    class ProcessEvent {
         +int host_id
-        +str timestamp
-        +str event_type
-        +str source
-        +str description
-        +str severity
-        +dict details
-        +str kill_chain_stage
-        +str mitre_technique_id
-        +str status
-        +str assigned_to
-        +str resolution
-        +int ioc_hit_id
-        +batch_create(host_id, items) int$
-        +list_by_host(host_id, start, end, event_types, severities) list$
-        +update_status(event_id, status, operator, comment) dict$
-        +delete_by_host(host_id)$
+        +str event_type  «start/exit/remote_thread/etw/amsi»
+        +int pid +int ppid +str session
+        +str detail  «JSON: memory/etw/remote_thread»
+        +create() +batch_create()
     }
-
-    class IocHit {
-        +int host_id
-        +str ioc_type
-        +str ioc_value
-        +str matched_in
-        +str context
-        +str severity
-        +batch_create(host_id, items) int$
-        +list_by_host(host_id) list$
+    class ProcessEventConsumer {
+        +ingest(host_id, events) int
+        +normalize(host_id, snapshot) list
+        +evaluate(host_id, rules, snapshot) list
     }
-
-    class AnalysisService {
-        +analyze(host_id) dict$
-        +get_timeline(host_id, start, end, event_types, severities) list$
-        +get_ioc_hits(host_id) list$
-        +update_timeline_event(event_id, data) dict$
-        +compare_timelines(host_ids) list$
-        +export_timeline_csv(host_id, start, end) str$
-        +get_timeline_stats(host_id) dict$
+    class RuleEngine {
+        +_match_memory_injection()  «:2051»
+        +_match_interpreter_mem_pe()  «:2074»
+        +_match_etw_amsi_tamper()  «:2099»
+        +_match_cross_session()  «:2122»
+        +_match_injection_window()  «:2156»
+        +_match_vanished_process()  «:2187»
+        +_match_revoked_sig()  «:2036»
     }
-
-    class TimelineBuilder {
-        +build(raw_data, ioc_hits) list$
-        +inject_mitre_tactic(event) dict$
-        +_extract_from_processes(raw_data) list$
-        +_extract_from_network(raw_data) list$
-        +_extract_from_logs(raw_data) list$
-        +_extract_from_files(raw_data) list$
-        +_extract_from_browser(raw_data) list$
-        +_extract_from_security(raw_data) list$
-        +sort_events(events) list$
-    }
-
-    class ExplainabilityService {
-        +build_coverage_gaps(tiered_data, evidence_items, input_quality) dict$
-        +normalize_key_events(ai_key_events, timeline_events) list$
-    }
-
-    class AiAnalysisReport {
-        +int host_id
-        +int case_id
-        +str source_event_id
-        +str timeline_analysis
-        +create(...) dict$
-        +get_by_host(host_id) dict$
-    }
-
-    class MitreTacticMapper {
-        +str EVENT_TYPE
-        +str SOURCE
-        +str DESCRIPTION_KW
-        +map(event) dict$
-        +_rules list
-    }
-
-    %% ── TypeScript 前端类型 ──
-    class TimelineEventItem {
-        +number id
-        +string timestamp
-        +string event_type
-        +string source
-        +string description
-        +Severity severity
-        +object details
-        +string kill_chain_stage
-        +string mitre_technique_id
-        +EventStatus status
-        +string assigned_to
-        +string resolution
-        +number ioc_hit_id
-    }
-
-    class SummaryStats {
-        +number highCount
-        +number mediumCount
-        +number lowCount
-        +number iocHitCount
-        +number totalHours
-    }
-
-    class DesignTokens {
-        +Record~Severity,string~ severityColor
-        +Record~Severity,number~ severitySymbolSize
-        +Record~EventType,string~ eventTypeColor
-        +Record~EventType,string~ eventTypeIcon
-        +Record~KillChainStage,string~ killChainLabel
-        +Record~string,string~ spacing
-    }
-
-    class EventFilter {
-        +string[] eventTypes
-        +Severity[] severities
-        +string timeStart
-        +string timeEnd
-    }
-
-    %% ── 关系 ──
-    AnalysisService --> TimelineEvent : 调用
-    AnalysisService --> IocHit : 调用
-    AnalysisService --> AiAnalysisReport : 读取
-    TimelineBuilder --> MitreTacticMapper : 使用
-    TimelineBuilder --> IocHit : 关联 ioc_hit_id
-    ExplainabilityService --> TimelineEvent : 匹配 key_events
-    TimelineEvent "1" --> "0..1" IocHit : ioc_hit_id FK
-    TimelineEventItem ..> DesignTokens : 引用常量
-    EventFilter --> DesignTokens : 引用枚举值
+    ProcessesCollector ..> ProcessInfo : 快照增强(Mode A)
+    ProcessEventConsumer ..> ProcessEvent : ingest 落库
+    ProcessEventConsumer ..> RuleEngine : evaluate 复用 P2 规则
+    ProcessInfo ..> RuleEngine : 双模评估(快照)
+    RuleEngine ..> ProcessEvent : 事件归一到 ProcessInfo 形态

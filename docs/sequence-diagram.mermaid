@@ -1,27 +1,26 @@
 sequenceDiagram
-    participant User as 👤 用户
-    participant FilterBar as TimelineFilterBar
-    participant HostView as HostDetailView
-    participant API as /api/analysis.js
-    participant Backend as FastAPI Backend
-    participant DB as SQLite
+    participant A as Agent(采集端)
+    participant Imp as POST /import (Mode A)
+    participant Ev as POST /process-events (Mode B, 待建 T-P2-3)
+    participant AD as AnomalyDetector.detect_processes
+    participant PE as ProcessEventConsumer (T15)
+    participant RE as RuleEngine.evaluate
+    participant DB as process_events 表 / 规则
 
-    User->>FilterBar: 选择时间范围 + 事件类型 + 严重度
-    FilterBar->>HostView: emit('filter-change', {start, end, eventTypes, severities})
-    HostView->>API: getTimeline(hostId, {start, end, event_types, severity})
-    API->>Backend: GET /api/hosts/{host_id}/timeline?start=...&end=...&event_types=process,network&severity=high,medium
-    Backend->>DB: SELECT * FROM timeline_events WHERE host_id=? AND timestamp>=? AND timestamp<=? AND event_type IN (?,?) AND severity IN (?,?) ORDER BY timestamp
-    DB-->>Backend: 过滤后的事件列表
-    Backend-->>API: {code:0, data: [...], message:"success"}
-    API-->>HostView: 返回过滤数据
-    HostView->>HostView: 更新 events ref
-    HostView->>TimelineChart: props.events 变化 → watch 触发 initChart()
-    HostView->>EventTable: props.events 变化 → 表格刷新
-    TimelineChart-->>User: 散点图重渲染(仅显示过滤后事件)
-    EventTable-->>User: 表格更新行数据
+    Note over A,Imp: ── Mode A：快照增强（激活 #1/#2/#4）──
+    A->>A: 采集 processes[] 追加 session/state/memory_sections
+    A->>Imp: POST /api/hosts/{id}/import (复用现有端点)
+    Imp->>AD: detect_processes(raw_data, rules)
+    AD->>RE: evaluate(processes, P2规则, global_context)
+    RE-->>AD: 命中 #1/#2/#4 → abnormal_processes
 
-    User->>EventTable: 点击表格行
-    EventTable->>HostView: emit('row-click', event)
-    HostView->>TimelineChart: dispatchAction({type:'highlight', dataIndex})
-    TimelineChart-->>User: 对应散点高亮
-    HostView->>EventDetailDrawer: open(event) → 展示详情面板
+    Note over A,Ev: ── Mode B：事件流（激活 #3/#5/#6）──
+    A->>A: ETW/eBPF/ES 订阅 进程起止/远线程/AMSI
+    A->>Ev: 批量 POST process-events (detail 含 memory/etw/remote_thread)
+    Ev->>PE: ingest → process_events 表
+    PE->>PE: normalize (提升 detail 字段 + seen_in_events/snapshot)
+    PE->>RE: evaluate(normalized, P2规则, global_context)
+    RE-->>PE: 命中 #3/#5/#6
+
+    Note over DB: ── #7 后端侧数据源（与平台无关）──
+    DB->>RE: revoked_ca.json 填充 → _match_revoked_sig 命中 #7

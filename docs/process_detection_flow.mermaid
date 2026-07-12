@@ -1,0 +1,26 @@
+sequenceDiagram
+    participant A as Agent<br/>(ProcessesCollector)
+    participant DB as 平台<br/>(raw JSON)
+    participant S as AnalysisService
+    participant R as RuleEngine
+    participant D as AnomalyDetector
+    participant P as ProcessTreeBuilder
+    participant RA as RiskAssessor
+    participant F as 前端<br/>HostDetailView
+
+    A->>DB: 采集 processes[](pid/ppid/name/path/cmdline/user/start_time/threads/connections)
+    DB->>S: read_raw_json(host_id)
+    S->>D: detect_processes(raw, rules, whitelist)
+    D->>D: 白名单过滤 → 补 parent_name/connection_count
+    D->>R: evaluate(进程, category∈{process,behavior,execution}, global_ctx)
+    R-->>D: 逐条命中(含 process_chain/time_cluster/... 行为模式)
+    D->>D: 同 PID 累加评分 → AbnormalProcess(含 risk_score/matched_rules/attack_path)
+    D->>DB: AbnormalProcess.batch_create
+    S->>P: get_process_tree(host_id, enrich=1)
+    P->>DB: 读 raw processes + AbnormalProcess
+    P-->>S: 树(异常节点/攻击链跳数/C2 标记)
+    S->>RA: assess(findings)
+    RA-->>DB: AnalysisResult(risk_level/risk_score)
+    F->>S: GET /abnormal-processes + /process-tree?enrich=1
+    S-->>F: 异常进程表 + 进程树
+    F->>F: AbnormalProcessTable / ProcessTreeView / ProcessStatsCards 渲染

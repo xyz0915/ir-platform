@@ -1,0 +1,21 @@
+sequenceDiagram
+    participant H as HostDetailView
+    participant A as analysisApi
+    participant API as GET /process-tree
+    participant S as AnalysisService
+    participant M as AbnormalProcess
+    participant B as ProcessTreeBuilder
+    participant V as ProcessTreeView(新增)
+
+    H->>A: getProcessTree(hostId, {enrich:1}) [增强: 新增可选参数]
+    A->>API: GET /hosts/{id}/process-tree?enrich=1
+    API->>S: get_process_tree(host_id, enrich=True) [增强: 透传 enrich]
+    S->>M: list_by_host(host_id) [不变]
+    M-->>S: 异常进程记录(含 severity/parent_name/attack_path)
+    S->>B: build(processes, abnormal_pids, pid_to_info, enrich=True) [增强: 新增字段]
+    B-->>API: 增强节点(severity/parent_name/parent_pid/start_time/user/threads/status/connections/attack_chain_step/total)
+    API-->>A: {code:0, data: tree, message}
+    A-->>H: tree
+    H->>V: :tree-data="processTree" (替换 ProcessTreeChart) [新增组件]
+    V->>V: 渲染 KPI 条 / 工具栏 / 节点卡片(内联 severity·攻击链·C2)
+    Note over V: 点击节点 -> 内部就地刷新右侧详情面板(进程ID/父进程/启动时间/状态/会话/路径/攻击链位置/外连情报)
