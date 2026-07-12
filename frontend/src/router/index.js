@@ -72,6 +72,11 @@ const routes = [
         path: 'knowledge/detail/:entryRef',
         name: 'KnowledgeDetail',
         component: () => import('@/views/KnowledgeDetailView.vue')
+      },
+      {
+        path: 'alerts',
+        name: 'AlertCenter',
+        component: () => import('@/views/AlertCenterView.vue')
       }
     ]
   }

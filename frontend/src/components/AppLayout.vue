@@ -141,6 +141,7 @@ const isMobile = ref(window.innerWidth < 768)
 // ==================== 导航项配置 ====================
 const navItems = [
   { index: '/', label: '全局态势', icon: Monitor },
+  { index: '/alerts', label: '实时告警', icon: Warning },
   { index: '/cases', label: '案件管理', icon: Folder },
   { index: '/ai', label: 'AI 分析', icon: Cpu },
   { index: '/rules', label: '规则管理', icon: Setting },
@@ -155,6 +156,7 @@ const asideWidth = computed(() => collapsed.value ? 64 : 210)
 
 const activeMenu = computed(() => {
   if (route.path === '/') return '/'
+  if (route.path === '/alerts') return '/alerts'
   if (route.path.startsWith('/cases') || route.path.startsWith('/hosts')) return '/cases'
   if (route.path === '/whitelist') return '/whitelist'
   if (route.path === '/iocs') return '/iocs'
@@ -166,6 +168,7 @@ const activeMenu = computed(() => {
 const routeMeta = computed(() => {
   const names = {
     'Dashboard': { title: '全局态势', subtitle: '应急响应全局态势感知' },
+    'AlertCenter': { title: '实时告警', subtitle: '7×24 实时告警监控与处置' },
     'CaseList': { title: '案件管理', subtitle: '应急响应案件总览与调度' },
     'CaseDetail': { title: '案件详情', subtitle: '' },
     'HostDetail': { title: '主机详情', subtitle: '' },

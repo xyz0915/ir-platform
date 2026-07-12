@@ -118,6 +118,8 @@ from app.api import knowledge_draft  # noqa: E402  # AI 自动知识入库
 from app.api import process_events  # noqa: E402  # T-P2-3 进程事件流入口（PoC）
 from app.api import rule_suppression  # noqa: E402  # #18 规则抑制
 from app.api import dashboard  # noqa: E402  # 全局态势仪表盘
+from app.api import alerts  # noqa: E402  # 实时告警管理
+from app.api import agents  # noqa: E402  # Agent 注册与心跳
 
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(cases.router, prefix="/api/cases", tags=["案件"])
@@ -136,6 +138,8 @@ app.include_router(knowledge_draft.router, prefix="/api/knowledge", tags=["知�
 app.include_router(process_events.router, prefix="/api", tags=["进程事件"])  # T-P2-3 进程事件流入口
 app.include_router(rule_suppression.router, prefix="/api", tags=["规则抑制"])  # #18 规则抑制
 app.include_router(dashboard.router, prefix="/api", tags=["仪表盘"])  # 全局态势仪表盘
+app.include_router(alerts.router, prefix="/api", tags=["告警"])  # 实时告警
+app.include_router(agents.router, prefix="/api", tags=["Agent管理"])  # Agent 管理
 
 
 @app.get("/api/health")

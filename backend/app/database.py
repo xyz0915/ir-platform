@@ -527,6 +527,46 @@ DDL_STATEMENTS = [
         created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
     )
     """,
+    # alerts — 实时告警表
+    """
+    CREATE TABLE IF NOT EXISTS alerts (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        host_id         INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+        case_id         INTEGER REFERENCES cases(id),
+        rule_name       TEXT NOT NULL,
+        rule_label      TEXT,
+        severity        TEXT NOT NULL DEFAULT 'medium',
+        status          TEXT NOT NULL DEFAULT 'open',
+        title           TEXT NOT NULL,
+        detail          TEXT,
+        source_pid      INTEGER,
+        source_process  TEXT,
+        source_path     TEXT,
+        source_ip       TEXT,
+        count           INTEGER DEFAULT 1,
+        first_seen_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        last_seen_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        acknowledged_by TEXT,
+        acknowledged_at TEXT,
+        resolved_at     TEXT,
+        dismissed_reason TEXT
+    )
+    """,
+    # agents — Agent 注册表
+    """
+    CREATE TABLE IF NOT EXISTS agents (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        host_id         INTEGER NOT NULL UNIQUE REFERENCES hosts(id) ON DELETE CASCADE,
+        agent_id        TEXT NOT NULL UNIQUE,
+        agent_version   TEXT,
+        os_type         TEXT,
+        collectors      TEXT,
+        status          TEXT DEFAULT 'offline',
+        last_heartbeat  TEXT,
+        ip_address      TEXT,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
 ]
 
 
@@ -1145,6 +1185,15 @@ def _alter_ai_analysis_reports_table_v2(conn: sqlite3.Connection) -> None:
             logger.warning("Failed to add column 'source_event_id': %s", exc)
 
 
+def _ensure_index(table: str, name: str, column: str) -> None:
+    """安全创建索引（幂等）."""
+    try:
+        with get_connection() as conn:
+            conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {table}({column})")
+    except Exception:
+        logger.debug("Failed to create index %s on %s(%s)", name, table, column)
+
+
 def _init_knowledge_drafts(conn: sqlite3.Connection) -> None:
     """确保 knowledge_drafts 表存在（幂等：DDL 中用 IF NOT EXISTS）.
 
@@ -1241,6 +1290,13 @@ def init_db() -> None:
         # AI 自动知识入库（knowledge_drafts 已通过 DDL 幂等创建）
         _init_knowledge_drafts(conn)
         conn.commit()
+        # 实时告警与 Agent 索引
+        _ensure_index("alerts", "idx_alerts_host", "host_id")
+        _ensure_index("alerts", "idx_alerts_status", "status")
+        _ensure_index("alerts", "idx_alerts_severity", "severity")
+        _ensure_index("alerts", "idx_alerts_last_seen", "last_seen_at")
+        _ensure_index("agents", "idx_agents_host", "host_id")
+        _ensure_index("agents", "idx_agents_agent_id", "agent_id")
         logger.info("Database initialized successfully at %s", settings.DB_PATH)
     except Exception:
         conn.rollback()
