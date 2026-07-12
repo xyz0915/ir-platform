@@ -170,6 +170,30 @@
           </div>
           <IocTable :data="iocHits" />
         </el-tab-pane>
+        <el-tab-pane label="融合检测" name="fusion">
+          <div class="tab-toolbar">
+            <span class="tab-hint">WebShell / 内存码 / 融合事件统一视图</span>
+          </div>
+          <el-empty
+            v-if="!hasFusionData"
+            description="本次分析未产出融合检测结果"
+            :image-size="64"
+          />
+          <template v-else>
+            <div v-if="incidents.length" class="fusion-section">
+              <h4 class="fusion-title">融合事件（关联引擎）</h4>
+              <IncidentPanel :data="incidents" @jump-finding="handleJumpFinding" />
+            </div>
+            <div v-if="webshells.length" class="fusion-section">
+              <h4 class="fusion-title">WebShell 命中（{{ webshells.length }}）</h4>
+              <WebShellPanel :data="webshells" />
+            </div>
+            <div v-if="memoryShells.length" class="fusion-section">
+              <h4 class="fusion-title">内存码命中（{{ memoryShells.length }}）</h4>
+              <MemoryShellPanel :data="memoryShells" @view-tree="handleViewTreeByPid" />
+            </div>
+          </template>
+        </el-tab-pane>
         <el-tab-pane label="时间线" name="timeline">
           <div class="tab-toolbar">
             <span class="tab-hint">共 {{ timelineEvents.length }} 条时间线事件</span>
@@ -340,6 +364,9 @@ import ProcessTreeView from '@/components/ProcessTreeView.vue'
 import ProcessDetailPanel from '@/components/ProcessDetailPanel.vue'
 import ProcessStatsCards from '@/components/ProcessStatsCards.vue'
 import HostKnowledgeTab from '@/components/HostKnowledgeTab.vue'
+import WebShellPanel from '@/components/WebShellPanel.vue'
+import MemoryShellPanel from '@/components/MemoryShellPanel.vue'
+import IncidentPanel from '@/components/ai/IncidentPanel.vue'
 import { getAiConfig } from '@/api/ai'
 
 const route = useRoute()
@@ -639,6 +666,26 @@ function handleViewDetail(row) {
   detailPanelVisible.value = true
 }
 
+/** 内存码面板 PID 点击 → 跳转进程树 Tab（后续可按 pid 高亮节点） */
+function handleViewTreeByPid(_pid) {
+  activeTab.value = 'tree'
+}
+
+/** 融合事件「关联发现」点击 → 按类型跳转到对应面板 */
+function handleJumpFinding(rf) {
+  const label = typeof rf === 'string' ? rf : (rf?.type || rf?.ref || rf?.label || '')
+  const s = String(label).toLowerCase()
+  if (s.includes('webshell') || s.includes('web_shell') || s.includes('memory') || s.includes('内存')) {
+    activeTab.value = 'fusion'
+  } else if (s.includes('ioc')) {
+    activeTab.value = 'ioc'
+  } else if (s.includes('process') || s.includes('进程')) {
+    activeTab.value = 'processes'
+  } else {
+    activeTab.value = 'processes'
+  }
+}
+
 function handleTabChange(_tabName) {
   // v-if 已确保组件仅在 Tab 可见时挂载，ECharts 在 onMounted 中初始化即可获得正确容器尺寸
   // TimelineChart: echarts.init + window.resize listener
@@ -737,6 +784,14 @@ const aiReportAttackChain = computed(() => {
   return null // 从 AI 分析报告中获取，T04 完善
 })
 
+// ── 融合检测（WebShell / 内存码 / 融合事件）：取自 /analysis 响应的增量字段 ──
+const webshells = computed(() => analysis.value?.webshells || [])
+const memoryShells = computed(() => analysis.value?.memory_shells || [])
+const incidents = computed(() => analysis.value?.incidents || [])
+const hasFusionData = computed(
+  () => !!(webshells.value.length || memoryShells.value.length || incidents.value.length)
+)
+
 function statusType(status) {
   const map = { pending: 'info', imported: 'warning', analyzed: 'success' }
   return map[status] || 'info'
@@ -772,5 +827,17 @@ function statusLabel(status) {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+/* ── 融合检测 Tab ── */
+.fusion-section {
+  margin-bottom: 20px;
+}
+.fusion-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 10px;
+  padding-left: 8px;
+  border-left: 3px solid var(--el-color-primary, #409eff);
+  color: var(--color-fg-default, #303133);
 }
 </style>
