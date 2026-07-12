@@ -322,3 +322,12 @@ def export_timeline_pdf(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"PDF 导出失败: {exc}",
         )
+
+
+@router.get("/hosts/{host_id}/service-risk")
+def get_service_risk(host_id: int, current_user: dict = Depends(get_current_user)):
+    """获取主机系统服务风险分析（P0-3）."""
+    result = AnalysisService.get_service_risk(host_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="未找到该主机的采集数据")
+    return {"code": 0, "data": result, "message": "success"}

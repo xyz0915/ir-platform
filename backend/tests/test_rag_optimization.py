@@ -579,5 +579,167 @@ class TestEnrichmentServiceFetchAll(unittest.TestCase):
                          "结果不应有重复的 ioc_value")
 
 
+class TestRAGFalsePositiveRegression(unittest.TestCase):
+    """回归测试：RAG 语义检索误报修复验证."""
+
+    def test_anomalous_network_process_stopword_filtering(self):
+        """anomalous_network_process 不应被通用词 token 误匹配."""
+        from app.services.analysis_service import AnalysisService
+
+        # 模拟正常网络连接场景的异常进程
+        abnormal_processes = [
+            {
+                "process_name": "java.exe",
+                "pid": 8080,
+                "severity": "low",
+                "rule_name": "outbound_connection_detected",
+            },
+        ]
+
+        # 模拟语义检索引擎返回 anomalous_network_process 规则命中
+        semantic_hits = [
+            {
+                "rule_name": "anomalous_network_process",
+                "title": "Anomalous Network Process",
+                "severity": "medium",
+                "category": "connection",
+                "confidence": "medium",
+                "score": 0.72,
+                "description": (
+                    "脚本解释器/无签名进程发起非业务端口外连，"
+                    "或连接常见 C2 端口 (4444/8443/1337/31337/6667/9999/1080/5900)"
+                ),
+                "summary": "异常网络进程外连",
+                "entry_ref": "rule_anomalous_network_process",
+                "entry_type": "rule",
+            },
+        ]
+
+        suspicious_connections = [
+            {
+                "remote": "10.0.0.100",
+                "remote_port": 8080,
+                "protocol": "TCP",
+                "process": "java.exe",
+            },
+        ]
+
+        result = AnalysisService._cross_validate(
+            abnormal_processes, semantic_hits,
+            suspicious_connections=suspicious_connections,
+        )
+
+        # anomalous_network_process 的 rule_name 经停用词过滤后，
+        # hit_tokens 应为空集，不应与 java.exe 产生 token 级误匹配
+        # 同时 score=0.72 < 0.75，在外层会被过滤掉
+        for hit in result:
+            if hit.get("rule_name") == "anomalous_network_process":
+                self.assertEqual(
+                    hit["match_reason"], "仅语义检索命中",
+                    "anomalous_network_process 不应被标记为规则+语义交叉命中",
+                )
+                self.assertTrue(
+                    hit["needs_review"],
+                    "anomalous_network_process 应标记 needs_review",
+                )
+                self.assertEqual(
+                    hit["confidence"], "low",
+                    "anomalous_network_process 无规则佐证时置信度应为 low",
+                )
+
+    def test_cross_validate_respects_top5_limit(self):
+        """_cross_validate 返回结果不应超过 5 条."""
+        from app.services.analysis_service import AnalysisService
+
+        abnormal_processes = [
+            {
+                "process_name": "powershell.exe",
+                "pid": 1234,
+                "severity": "high",
+                "rule_name": "suspicious_powershell",
+            },
+        ]
+
+        # 构造 10 条语义命中，验证只返回 top-5
+        semantic_hits = [
+            {
+                "rule_name": f"rule_{i}",
+                "title": f"Title {i}",
+                "severity": "medium",
+                "category": "process",
+                "confidence": "medium",
+                "score": 0.5 + i * 0.04,  # 0.50 ~ 0.86
+                "description": f"Description for rule_{i}",
+                "summary": f"Summary {i}",
+                "entry_ref": f"ref_{i}",
+                "entry_type": "seed",
+            }
+            for i in range(10)
+        ]
+
+        result = AnalysisService._cross_validate(abnormal_processes, semantic_hits)
+        self.assertLessEqual(
+            len(result), 5,
+            f"_cross_validate 应返回最多 5 条结果，实际返回 {len(result)}",
+        )
+
+        # 验证结果按 score 降序排列
+        if len(result) >= 2:
+            for i in range(len(result) - 1):
+                self.assertGreaterEqual(
+                    result[i]["score"], result[i + 1]["score"],
+                    "结果应按 score 降序排列",
+                )
+
+    def test_low_score_hit_filtered_by_outer_layer(self):
+        """外层过滤：score < 0.75 且 confidence 为 low → 被过滤."""
+        # 模拟 _cross_validate 返回一条低质量命中
+        low_quality_hits = [
+            {
+                "title": "Low Quality Rule",
+                "rule_name": "anomalous_network_process",
+                "description": "Weak match",
+                "severity": "medium",
+                "category": "connection",
+                "confidence": "low",
+                "score": 0.72,
+                "needs_review": True,
+                "source": "semantic",
+                "entry_ref": "rule_anp",
+                "entry_type": "rule",
+                "evidence_type": "connection",
+                "evidence_key": "",
+                "match_reason": "仅语义检索命中",
+            },
+            {
+                "title": "High Quality Rule",
+                "rule_name": "cobalt_strike_beacon",
+                "description": "Strong match",
+                "severity": "critical",
+                "category": "c2",
+                "confidence": "high",
+                "score": 0.88,
+                "needs_review": False,
+                "source": "semantic",
+                "entry_ref": "seed_cs",
+                "entry_type": "seed",
+                "evidence_type": "process",
+                "evidence_key": "beacon.exe",
+                "match_reason": "规则+语义交叉命中",
+            },
+        ]
+
+        # 模拟外层过滤逻辑（与 analysis_service.py 第 273-277 行一致）
+        filtered = [
+            h for h in low_quality_hits
+            if (h.get("score") or 0) >= 0.75 or h.get("confidence") in ("high", "medium")
+        ]
+
+        self.assertEqual(len(filtered), 1,
+                         "score=0.72 + confidence=low 的命中应被过滤")
+        self.assertEqual(filtered[0]["rule_name"], "cobalt_strike_beacon",
+                         "仅保留高质量命中")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

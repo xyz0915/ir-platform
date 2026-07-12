@@ -1,86 +1,81 @@
 classDiagram
-    class ProcessInfo {
-        +int pid
-        +int ppid
-        +str name
-        +str path
-        +str command_line
-        +str user
-        +str start_time
-        +int threads
-        +list connections
-        +int session  «agent_data.py:81»
-        +list memory_sections  «:82 统一区段契约»
-        +str state  «:83»
-        +extra="allow"  «向后兼容 :86»
+    class ServiceRiskAnalyzer {
+        <<static>>
+        +analyze(raw_data: dict, host_id: int) dict
+        -_extract_services(raw_data: dict) list~dict~
+        -_detect_tamper(services: list) list~dict~
+        -_detect_shadow(services: list) list~dict~
+        -_detect_priv_esc(services: list) list~dict~
+        -_calc_edit_distance(a: str, b: str) float
+        -_normalize_path(path: str) str
+        -_calculate_aggregate_score(services: list) tuple
     }
-    class MemorySection {
-        +str base_address
-        +str end_address
-        +int size
-        +str protection  «RWX/...»
-        +str type  «image/heap/pe/jvm_generated»
-        +bool is_non_image
-        +bool pe_in_memory  «B #1»
-        +bool injection  «B #1/#2»
-        +bool is_anonymous_rwx  «A §4.3»
-        +str mapped_path
-        +JvmEvidence jvm  «A 内存马语义»
-        +str evidence
-        +float confidence
+
+    class ServiceRiskItem {
+        +service_name: str
+        +display_name: str
+        +status: str
+        +start_type: str
+        +binary_path: str
+        +user: str
+        +risk_score: int
+        +detections: list~DetectionResult~
     }
-    class JvmEvidence {
-        +list class_signals
-        +list agent_signals
-        +list filter_signals
-        +list thread_signals
+
+    class DetectionResult {
+        +rule_id: str
+        +rule_name: str
+        +triggered: bool
+        +severity: str
+        +weight: int
+        +detail: str
     }
-    class WebShell {
-        +str path +str name +int size
-        +str mtime +str ctime +str owner +str perms
-        +str sha256 +str web_root +str middleware
-        +list suspicious_funcs +float obfuscation_score
-        +bool behinder_godzilla_signal +float risk_score
-        +str scan_engine
+
+    class ServiceRiskReport {
+        +services: list~ServiceRiskItem~
+        +aggregate_score: int
+        +summary: dict
+        +stats: dict
     }
-    class MemoryShell {
-        +int pid +str process_name
-        +str type  «java_filter/java_agent/php»
-        +str evidence +list class_signals
-        +list agent_signals +list conn_signals
-        +list thread_signals +float confidence
-        +str detect_method
+
+    class RiskAssessor {
+        <<static>>
+        +SEVERITY_WEIGHTS: dict
+        +RISK_LEVELS: list
+        +assess(findings: dict) dict
+        +calculate_score(findings: dict) int
+        -_calculate_category_score(items: list) int
+        -_score_to_level(score: int) str
+        -_generate_summary(risk_level: str, score: int, total: int, details: dict) str
     }
-    class ProcessEvent {
-        +int host_id +str event_type
-        +int pid +int ppid +str session
-        +str detail  «JSON: memory/etw/remote_thread/memory_shell_signals»
-        +create() +batch_create() +list_process_starts()
+
+    class AnalysisService {
+        <<static>>
+        +analyze(host_id: int) dict
+        +get_analysis(host_id: int) dict
+        +get_service_risk(host_id: int) dict
+        -_inject_exe_signatures(raw_data: dict) None
+        -_build_tiered_data(raw_data: dict) dict
+        -_cross_validate(abnormal_processes: list, semantic_hits: list, suspicious_connections: list, webshell_hits: list, memory_shell_hits: list, persistence_items: list) list
+        -_aggregate_incidents(incidents: list) list
     }
-    class ProcessEventConsumer {
-        +ingest(host_id, events) int
-        +normalize(host_id, snapshot) list
-        +evaluate(host_id, rules, snapshot) list
+
+    class ServiceConstants {
+        <<constant>>
+        SECURITY_SERVICES: list~str~
+        SCORING_WEIGHTS: dict~str,int~
+        TRUSTED_PATHS: list~str~
+        KNOWN_LEGIT_SERVICES: set~str~
+        START_TYPE_RISK: dict~str,int~
+        SERVICE_NAME_SIMILARITY_THRESHOLD: float
+        SUSPICIOUS_PATH_KEYWORDS: list~str~
     }
-    class CorrelateIncident {
-        +correlate_incident(raw, ws, ms, proc, ev) list
-        +weighted_combine() float  «贝叶斯/加权»
-        +build_attack_path() list
-    }
-    class RuleEngine {
-        +_match_memory_injection()  «:2051»
-        +_match_interpreter_mem_pe()  «:2074»
-        +_match_etw_amsi_tamper()  «:2099»
-        +_match_cross_session()  «:2122»
-        +_match_injection_window()  «:2156»
-        +_match_vanished_process()  «:2187»
-        +_match_revoked_sig()  «:2036»
-    }
-    ProcessInfo *-- "0..*" MemorySection : memory_sections
-    MemorySection *-- JvmEvidence : jvm
-    ProcessEventConsumer ..> ProcessEvent : ingest 落库
-    ProcessEventConsumer ..> RuleEngine : evaluate 复用 P2 规则
-    RuleEngine ..> MemorySection : 读取 injection/pe_in_memory
-    CorrelateIncident ..> WebShell : 消费 ws_hits
-    CorrelateIncident ..> MemoryShell : 消费 ms_hits
-    CorrelateIncident ..> RuleEngine : 消费 abnormal/event hits
+
+    ServiceRiskAnalyzer ..> ServiceRiskItem : produces
+    ServiceRiskItem *-- DetectionResult : contains (1..*)
+    ServiceRiskAnalyzer ..> ServiceRiskReport : produces
+    ServiceRiskReport o-- ServiceRiskItem : aggregates
+    ServiceRiskAnalyzer ..> ServiceConstants : reads
+    AnalysisService --> ServiceRiskAnalyzer : calls analyze()
+    AnalysisService ..> ServiceRiskReport : returns via API
+    RiskAssessor --> ServiceRiskReport : consumes for scoring

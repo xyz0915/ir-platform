@@ -106,7 +106,7 @@
             :content="row.knowledge_hit.title + ' (' + row.knowledge_hit.confidence + ')'"
             placement="top"
           >
-            <span class="knowledge-badge" @click.stop>📚</span>
+            <span class="knowledge-badge" @click.stop="$emit('knowledge-click', row.knowledge_hit?.entry_ref)">📚</span>
           </el-tooltip>
         </template>
       </el-table-column>
@@ -129,7 +129,7 @@ const props = defineProps({
   data: { type: Array, default: () => [] }
 })
 
-defineEmits(['view-detail'])
+defineEmits(['view-detail', 'knowledge-click'])
 
 const searchQuery = ref('')
 const severityFilter = ref([])

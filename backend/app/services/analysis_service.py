@@ -91,6 +91,41 @@ class AnalysisService:
             proc["exe_is_signed"] = info["is_signed"]
             proc["exe_signer"] = info["signer"]
 
+    # SQLite INTEGER 上限 (2^63 - 1)
+    _SQLITE_MAX_INT: int = 9223372036854775807
+
+    @staticmethod
+    def _sanitize_ints(data: Any, max_val: int = None) -> int:
+        """递归裁剪超出 SQLite INTEGER 上限的整数字段，防止 DB batch_create 失败。
+
+        Args:
+            data: 待处理的字典/列表/值（原地修改）。
+            max_val: 上限值，默认使用 _SQLITE_MAX_INT。
+
+        Returns:
+            被裁剪的字段数。
+        """
+        if max_val is None:
+            max_val = AnalysisService._SQLITE_MAX_INT
+        fixed = 0
+
+        if isinstance(data, dict):
+            for key, val in list(data.items()):
+                if isinstance(val, int) and val > max_val:
+                    data[key] = max_val
+                    fixed += 1
+                    logger.warning(
+                        "Clipped oversized int in field=%s: old=%d → new=%d",
+                        key, val, max_val,
+                    )
+                elif isinstance(val, (dict, list)):
+                    fixed += AnalysisService._sanitize_ints(val, max_val)
+        elif isinstance(data, list):
+            for idx, item in enumerate(data):
+                if isinstance(item, (dict, list)):
+                    fixed += AnalysisService._sanitize_ints(item, max_val)
+        return fixed
+
     @staticmethod
     def analyze(host_id: int) -> dict:
         """执行完整分析流程.
@@ -145,6 +180,8 @@ class AnalysisService:
         # 不依赖 DB 时序；无对应 file_hash 时字段为 None 不报错）。供
         # malicious_hash_process（T03 动态 IOC 合并）与 unsigned_executable（T05）使用。
         AnalysisService._inject_exe_signatures(raw_data)
+        # 裁剪超出 SQLite INTEGER 上限的字段（如异常 PID 值）
+        AnalysisService._sanitize_ints(raw_data)
         abnormal_processes = AnomalyDetector.detect_processes(raw_data, rules, whitelist_service=whitelist_service)
         AbnormalProcess.batch_create(host_id, abnormal_processes)
         logger.info("Detected %d abnormal processes", len(abnormal_processes))
@@ -164,6 +201,17 @@ class AnalysisService:
         logger.info("Found %d persistence items (%d suspicious)",
                     len(assessed_persistence),
                     sum(1 for p in assessed_persistence if p.get("is_suspicious")))
+
+        # 5.5 系统服务风险检测
+        try:
+            from app.analysis.service_risk_analyzer import ServiceRiskAnalyzer
+            service_risks = ServiceRiskAnalyzer.analyze(raw_data, host_id)
+            logger.info("Service risk analysis: %d services, %d high-risk",
+                        service_risks["summary"]["total"],
+                        service_risks["summary"]["high_risk_count"])
+        except Exception as exc:
+            logger.warning("服务风险检测失败: %s", exc)
+            service_risks = {"services": [], "aggregate_score": 0, "summary": {"total": 0, "high_risk_count": 0}}
 
         # 6. IOC 检测
         ioc_rules = [r for r in rules if r.get("category") == "ioc"]
@@ -239,29 +287,47 @@ class AnalysisService:
                     )
                     logger.info("Detected %d file-hash (TI_malware_hash) matches", len(hash_matches))
 
-        # ── Phase 1 双路检测：并行向量语义检索（必须在 findings 构建前执行）──
-        # 在规则引擎 detect_processes/detect_connections/detect_startup_items 之后、
-        # correlate_incident 之前，新增并行向量语义检索并做交叉验证。
+        # ── Phase 1 双路检测 ──
         knowledge_hits: list[dict] = []
         try:
-            from app.services.knowledge_retriever import KnowledgeRetriever
+            from app.services.knowledge_retriever import KnowledgeRetriever, _build_dim_query
 
-            retriever = KnowledgeRetriever()
-            semantic_hits = retriever.retrieve(
-                AnalysisService._build_tiered_data(raw_data),
-                limit=5,
-                structured=True,
-            )
-            # 交叉验证：同一进程同时命中规则 + 语义 → 合并，提升置信度
-            knowledge_hits = AnalysisService._cross_validate(
-                abnormal_processes, semantic_hits,
-            )
-            logger.info(
-                "Dual-path: %d semantic hits, %d after cross-validation",
-                len(semantic_hits), len(knowledge_hits),
-            )
+            tiered = AnalysisService._build_tiered_data(raw_data)
+            # 动态构建查询文本，替代硬编码
+            dim_parts: list[str] = []
+            for dim in ("process", "connection", "webshell_ms"):
+                q = _build_dim_query(dim, raw_data)
+                if q:
+                    dim_parts.append(q)
+            dim_summary = " ".join(dim_parts) if dim_parts else "unknown"
+            # 传入 _raw_data 供三维并行检索使用
+            hits = KnowledgeRetriever.retrieve(
+                {"host_basic": tiered.get("host_basic", {}),
+                 "analysis_result": {"summary": dim_summary[:512]},
+                 "abnormal_processes_high": tiered.get("abnormal_processes_high", []),
+                 "suspicious_connections_high": tiered.get("suspicious_connections_high", []),
+                 "webshell_items": tiered.get("webshell_items", []),
+                 "memory_shell_items": tiered.get("memory_shell_items", []),
+                 "persistence_items": tiered.get("persistence_items", []),
+                 "_raw_data": raw_data},
+                limit=10, structured=True)
+            if hits:
+                knowledge_hits = AnalysisService._cross_validate(
+                    abnormal_processes, hits,
+                    suspicious_connections=suspicious_connections,
+                    webshell_hits=[],
+                    memory_shell_hits=[],
+                    persistence_items=assessed_persistence,
+                )
+                # 过滤：只保留 score >= 0.75 或 confidence 为 high/medium 的命中
+                knowledge_hits = [
+                    h for h in knowledge_hits
+                    if (h.get("score") or 0) >= 0.75 or h.get("confidence") in ("high", "medium")
+                ]
+            logger.info("Dual-path: %d hits, %d after xval", len(hits), len(knowledge_hits))
         except Exception as exc:
-            logger.warning("双路语义检索失败（不影响主流程）: %s", exc)
+            logger.warning("RAG-DEBUG-EXC: %s", exc, exc_info=True)
+            logger.warning("双路语义检索失败（不影响主流程）: %s", exc, exc_info=True)
 
         # 8.5 攻击链关联检测（任务①）：主机级跨维度顺序匹配
         # 此时各维度取证数据已落库，_build_host_events 可按 host_id 下钻聚合。
@@ -284,6 +350,7 @@ class AnalysisService:
             "timeline_events": timeline_events,
             "attack_chains": attack_chain_matches,
             "knowledge_hits": knowledge_hits,
+            "service_risks": service_risks,
         }
         risk_result = RiskAssessor.assess(findings)
         # 攻击链关联单独记录到详情（不影响既有风险分数/等级，避免影响历史评估口径）
@@ -325,7 +392,9 @@ class AnalysisService:
             suspicious_connections=suspicious_connections,
         )
         if incidents:
-            risk_result.setdefault("details", {})["fusion_incidents"] = incidents
+            # 聚合：同类别 single_alert 多条 → 聚合为 1 条摘要（P0 噪音过滤）
+            aggregated = AnalysisService._aggregate_incidents(incidents)
+            risk_result.setdefault("details", {})["fusion_incidents"] = aggregated
             logger.info("Correlated %d incident(s)/alert(s)", len(incidents))
 
         # 10. 保存分析结果
@@ -346,6 +415,54 @@ class AnalysisService:
                      risk_result["risk_score"], risk_result["total_findings"])
 
         return result
+
+    @staticmethod
+    def _aggregate_incidents(incidents: list) -> list:
+        """聚合同一类别的 single_alert，减少噪音（P0 优化）.
+
+        - 多信号 incident 保持原样不聚合
+        - 同 type 的 single_alert 聚合为 1 条摘要
+        - 保留 top-3 高置信度单条明细在 details 中
+        """
+        if len(incidents) <= 3:
+            return incidents
+
+        # 分开 incident 和 single_alert
+        real_incidents: list[dict] = []
+        alerts_by_type: dict[str, list[dict]] = {}
+        for inc in incidents:
+            if inc.get("kind") == "incident" or "+" in inc.get("type", ""):
+                real_incidents.append(inc)
+            else:
+                t = inc.get("type", "unknown")
+                alerts_by_type.setdefault(t, []).append(inc)
+
+        # 构建 output
+        output: list[dict] = list(real_incidents)
+        sev_rank = {"critical": 5, "high": 4, "medium": 3, "low": 2, "info": 1}
+        for atype, alerts in alerts_by_type.items():
+            if len(alerts) <= 2:
+                output.extend(alerts)
+                continue
+            # 聚合：取 top-3 按 confidence 降序
+            top3 = sorted(alerts, key=lambda a: a.get("confidence", 0), reverse=True)[:3]
+            sevs = {a.get("severity", "") for a in alerts}
+            max_conf = max(a.get("confidence", 0) for a in alerts)
+            output.append({
+                "incident_id": f"AGG-{atype}",
+                "type": f"{atype} ×{len(alerts)}",
+                "kind": "aggregated_alert",
+                "confidence": max_conf,
+                "severity": max(sevs, key=lambda s: sev_rank.get(s, 0)),
+                "needs_review": True,
+                "attack_path": [a.get("attack_path", [[]])[0] for a in top3 if a.get("attack_path")],
+                "related_findings": [],
+                "attck_techniques": [],
+                "signals": [],
+                "aggregated_count": len(alerts),
+                "aggregated_top": top3,
+            })
+        return output
 
     @staticmethod
     def get_analysis(host_id: int) -> Optional[dict]:
@@ -371,7 +488,7 @@ class AnalysisService:
         result.setdefault("webshells", WebShell.list_by_host(host_id))
         result.setdefault("memory_shells", MemoryShell.list_by_host(host_id))
         result.setdefault("incidents", details.get("fusion_incidents", []) or [])
-        result.setdefault("knowledge_hits", details.get("knowledge_hits", []) or [])
+        result.setdefault("knowledge_hits", (details.get("knowledge_hits") or {}).get("items", []) or [])
 
         # Phase 1 双路检测：将 knowledge_hits 按 process_name 注入到 abnormal_processes
         knowledge_hits = result.get("knowledge_hits", [])
@@ -382,13 +499,21 @@ class AnalysisService:
                 result["abnormal_processes"] = abnormal_procs
             for proc in abnormal_procs:
                 proc_name = (proc.get("process_name") or proc.get("name") or "").lower()
+                # 剥离 .exe/.dll 等扩展名以匹配规则名（对齐 _cross_validate 令牌逻辑）
+                proc_name_clean = proc_name.rsplit(".", 1)[0] if "." in proc_name else proc_name
                 for kh in knowledge_hits:
                     kh_name = (kh.get("rule_name") or kh.get("title") or "").lower()
-                    if proc_name and kh_name and (proc_name in kh_name or kh_name in proc_name):
+                    if proc_name_clean and kh_name and (
+                        proc_name_clean in kh_name or kh_name in proc_name_clean or
+                        proc_name in kh_name or kh_name in proc_name
+                    ):
                         proc["knowledge_hit"] = {
                             "title": kh.get("title", ""),
                             "confidence": kh.get("confidence", "low"),
                             "needs_review": kh.get("needs_review", False),
+                            "entry_ref": kh.get("entry_ref"),
+                            "evidence_type": kh.get("evidence_type", "process"),
+                            "evidence_key": kh.get("evidence_key", ""),
                         }
                         break
 
@@ -536,13 +661,57 @@ class AnalysisService:
 
     @staticmethod
     def get_persistence(host_id: int) -> list:
-        """获取持久化痕迹列表."""
-        return PersistenceItem.list_by_host(host_id)
+        """获取持久化痕迹列表（含 RAG 语义匹配标签）."""
+        items = PersistenceItem.list_by_host(host_id)
+        # 注入 knowledge_hit 标签供前端 📚 badge 渲染
+        result = AnalysisService.get_analysis(host_id)
+        knowledge_hits = (result or {}).get("knowledge_hits", [])
+        if knowledge_hits:
+            for item in items:
+                pname = (item.get("name") or "").lower()
+                if not pname:
+                    continue
+                for kh in knowledge_hits:
+                    ek = (kh.get("evidence_key") or "").lower()
+                    et = kh.get("evidence_type", "")
+                    if et == "persistence" and ek and (pname in ek or ek in pname):
+                        item["knowledge_hit"] = {
+                            "title": kh.get("title", ""),
+                            "confidence": kh.get("confidence", "low"),
+                            "needs_review": kh.get("needs_review", False),
+                            "entry_ref": kh.get("entry_ref"),
+                            "evidence_type": et,
+                            "evidence_key": ek,
+                        }
+                        break
+        return items
 
     @staticmethod
     def get_suspicious_connections(host_id: int) -> list:
-        """获取可疑外连列表."""
-        return SuspiciousConnection.list_by_host(host_id)
+        """获取可疑外连列表（含 RAG 语义匹配标签）."""
+        conns = SuspiciousConnection.list_by_host(host_id)
+        # 注入 knowledge_hit 标签供前端 📚 badge 渲染
+        result = AnalysisService.get_analysis(host_id)
+        knowledge_hits = (result or {}).get("knowledge_hits", [])
+        if knowledge_hits:
+            for conn in conns:
+                remote = (conn.get("remote_address") or conn.get("remote") or "").lower()
+                if not remote:
+                    continue
+                for kh in knowledge_hits:
+                    ek = (kh.get("evidence_key") or "").lower()
+                    et = kh.get("evidence_type", "")
+                    if et == "connection" and ek and (remote in ek or ek in remote):
+                        conn["knowledge_hit"] = {
+                            "title": kh.get("title", ""),
+                            "confidence": kh.get("confidence", "low"),
+                            "needs_review": kh.get("needs_review", False),
+                            "entry_ref": kh.get("entry_ref"),
+                            "evidence_type": et,
+                            "evidence_key": ek,
+                        }
+                        break
+        return conns
     @staticmethod
     def enrich_suspicious_connections(host_id: int) -> dict:
         """对主机所有可疑外连的公网 IP 做一键威胁情报检测.
@@ -663,13 +832,49 @@ class AnalysisService:
 
     @staticmethod
     def get_abnormal_processes(host_id: int) -> list:
-        """获取异常进程列表."""
-        return AbnormalProcess.list_by_host(host_id)
+        """获取异常进程列表（含 RAG 语义匹配标签）."""
+        procs = AbnormalProcess.list_by_host(host_id)
+        # 注入 knowledge_hit 标签供前端 📚 badge 渲染
+        result = AnalysisService.get_analysis(host_id)
+        knowledge_hits = (result or {}).get("knowledge_hits", [])
+        if knowledge_hits:
+            for proc in procs:
+                pn = (proc.get("process_name") or proc.get("name") or "").lower()
+                pc = pn.rsplit(".", 1)[0] if "." in pn else pn
+                for kh in knowledge_hits:
+                    kn = (kh.get("rule_name") or kh.get("title") or "").lower()
+                    if pc and kn and (pc in kn or kn in pc or pn in kn or kn in pn):
+                        proc["knowledge_hit"] = {
+                            "title": kh.get("title", ""),
+                            "confidence": kh.get("confidence", "low"),
+                            "needs_review": kh.get("needs_review", False),
+                            "entry_ref": kh.get("entry_ref"),
+                            "evidence_type": kh.get("evidence_type", "process"),
+                            "evidence_key": kh.get("evidence_key", ""),
+                        }
+                        break
+        return procs
 
     @staticmethod
     def get_startup_items(host_id: int) -> list:
         """获取可疑启动项列表."""
         return SuspiciousStartupItem.list_by_host(host_id)
+
+    @staticmethod
+    def get_service_risk(host_id: int) -> Optional[dict]:
+        """获取主机服务风险分析（实时计算，不落库）.
+
+        Args:
+            host_id: 主机 ID.
+
+        Returns:
+            服务风险分析结果字典，无数据时返回 None.
+        """
+        raw = ImportService.read_raw_json(host_id)
+        if not raw:
+            return None
+        from app.analysis.service_risk_analyzer import ServiceRiskAnalyzer
+        return ServiceRiskAnalyzer.analyze(raw, host_id)
 
     @staticmethod
     def enrich_network_connections(host_id: int) -> dict:
@@ -816,29 +1021,64 @@ class AnalysisService:
                 for c in net[:5]
             ]
 
+        # summary: 为 _build_query_text 提供分析摘要（对齐 validate-retrieval 的工作格式）
+        host = raw_data.get("host_basic", {})
+        summary_parts = [host.get("hostname", "")] if host else []
+        pnames = [p.get("name", "") for p in (processes or [])[:3] if p.get("name")]
+        if pnames:
+            summary_parts.append(", ".join(pnames))
+        tiered["analysis_result"] = {
+            "risk_level": "unknown",
+            "summary": " ".join(summary_parts) if summary_parts else "unknown",
+        }
+
+        # WebShell 相关数据（从 raw_data 提取）
+        ws = raw_data.get("webshell_items") or raw_data.get("webshells", [])
+        if isinstance(ws, list):
+            tiered["webshell_items"] = ws
+
+        # Memory Shell 相关数据
+        ms = raw_data.get("memory_shell_items") or raw_data.get("memory_shells", [])
+        if isinstance(ms, list):
+            tiered["memory_shell_items"] = ms
+
+        # 持久化痕迹
+        persistence_raw = raw_data.get("persistence_items") or raw_data.get("persistence", [])
+        if isinstance(persistence_raw, list):
+            tiered["persistence_items"] = persistence_raw
+
         return tiered
 
     @staticmethod
     def _cross_validate(
         abnormal_processes: list[dict],
         semantic_hits: list[dict],
+        suspicious_connections: Optional[list[dict]] = None,
+        webshell_hits: Optional[list[dict]] = None,
+        memory_shell_hits: Optional[list[dict]] = None,
+        persistence_items: Optional[list[dict]] = None,
     ) -> list[dict]:
-        """交叉验证：规则命中与语义检索结果合并.
+        """交叉验证：规则命中与语义检索结果合并（多模块扩展）.
 
         逻辑：
-        - process_name 相同的命中合并，取最高置信度
+        - process_name/remote_addr/path/class_name/name 相同的命中合并，取最高置信度
         - 规则命中 + 语义命中 → confidence 提升一档（medium→high, low→medium）
         - 仅语义命中无规则 → needs_review=True, confidence="low"
         - 去重后的语义命中追加到结果
+        - 每条命中附带 evidence_type / evidence_key 供前端精准跳转
 
         Args:
             abnormal_processes: 规则引擎检测到的异常进程列表。
             semantic_hits: KnowledgeRetriever.retrieve(structured=True) 的返回结果。
+            suspicious_connections: 可疑外连列表（可选）。
+            webshell_hits: WebShell 命中列表（可选）。
+            memory_shell_hits: Memory Shell 命中列表（可选）。
+            persistence_items: 持久化痕迹列表（可选）。
 
         Returns:
             合并后的 knowledge_hits 列表。
         """
-        # 构建规则进程名集合（同时收集 proc name 和 rule name 的关键词）
+        # 构建规则命中 tokens 集合（进程名 + rule name）
         rule_proc_names: set[str] = set()
         for proc in abnormal_processes:
             name = (proc.get("process_name") or proc.get("name") or "").lower()
@@ -848,6 +1088,40 @@ class AnalysisService:
             if rule_name:
                 rule_proc_names.add(rule_name)
 
+        # 构建多模块匹配键集合
+        conn_remotes: set[str] = set()
+        ws_paths: set[str] = set()
+        ms_classes: set[str] = set()
+        pers_names: set[str] = set()
+
+        for conn in (suspicious_connections or []):
+            remote = (conn.get("remote_address") or conn.get("remote") or "").lower()
+            if remote:
+                conn_remotes.add(remote)
+
+        for ws in (webshell_hits or []):
+            path = (ws.get("path") or "").lower()
+            if path:
+                ws_paths.add(path)
+
+        for ms in (memory_shell_hits or []):
+            cname = (ms.get("class_name") or "").lower()
+            if cname:
+                ms_classes.add(cname)
+
+        for pers in (persistence_items or []):
+            name = (pers.get("name") or "").lower()
+            if name:
+                pers_names.add(name)
+
+        # 构建所有维度的统一匹配键
+        all_match_keys: set[str] = set()
+        all_match_keys.update(rule_proc_names)
+        all_match_keys.update(conn_remotes)
+        all_match_keys.update(ws_paths)
+        all_match_keys.update(ms_classes)
+        all_match_keys.update(pers_names)
+
         merged: list[dict] = []
         seen_names: set[str] = set()
 
@@ -855,7 +1129,7 @@ class AnalysisService:
             if not isinstance(hit, dict):
                 continue
             rule_name = (hit.get("rule_name") or hit.get("title") or "").lower()
-            title = hit.get("title", "").lower()
+            title = (hit.get("title") or "").lower()
             if not rule_name and not title:
                 continue
 
@@ -868,20 +1142,92 @@ class AnalysisService:
             confidence = hit.get("confidence", "low")
             needs_review = False
 
-            # 检查是否与规则引擎命中交叉：匹配 process name、rule name 关键词
+            # ── 确定 evidence_type 和 evidence_key ──
+            evidence_type = hit.get("evidence_type", "process")
+            evidence_key = ""
+
+            # 检查是否与规则引擎命中交叉
             rule_matched = False
+
+            # 停用词：避免通用词 token 造成误匹配（如 anomalous/network/process）
+            _STOPWORDS = {
+                "anomalous", "network", "process", "suspicious", "abnormal",
+                "malicious", "unknown", "default", "system", "service", "exe",
+            }
+            hit_tokens = set(
+                t for t in rule_name.replace("_", " ").replace("-", " ").replace(".", " ").split()
+                if t and t not in _STOPWORDS
+            )
+
+            # 匹配进程名
             for pn in rule_proc_names:
-                # 模糊匹配：包含子串即可（如 "powershell" 匹配 "powershell.exe" 和 "powershell_无文件攻击"）
-                # 提取关键 token（不含下划线分隔符）
-                hit_tokens = set(rule_name.replace("_", " ").split())
-                pn_tokens = set(pn.replace("_", " ").split())
-                if hit_tokens & pn_tokens:  # 任意 token 交集非空
+                pn_tokens = set(
+                    t for t in pn.replace("_", " ").replace("-", " ").replace(".", " ").split()
+                    if t and t not in _STOPWORDS
+                )
+                if hit_tokens and hit_tokens & pn_tokens:
                     rule_matched = True
+                    evidence_type = "process"
+                    evidence_key = pn
                     break
-                # 直接子串匹配
                 if rule_name in pn or pn in rule_name or title in pn or pn in title:
                     rule_matched = True
+                    evidence_type = "process"
+                    evidence_key = pn
                     break
+
+            # 匹配外连地址
+            if not rule_matched:
+                description = (hit.get("description") or "").lower()
+                for remote in conn_remotes:
+                    if remote and (remote in rule_name or remote in title or remote in description):
+                        rule_matched = True
+                        evidence_type = "connection"
+                        evidence_key = remote
+                        break
+
+            # 匹配 WebShell 路径
+            if not rule_matched:
+                for path in ws_paths:
+                    if path and (path in rule_name or any(tok in path for tok in hit_tokens)):
+                        rule_matched = True
+                        evidence_type = "webshell"
+                        evidence_key = path
+                        break
+
+            # 匹配 Memory Shell class_name
+            if not rule_matched:
+                for cname in ms_classes:
+                    if cname and (cname in rule_name or any(tok in cname for tok in hit_tokens)):
+                        rule_matched = True
+                        evidence_type = "memory_shell"
+                        evidence_key = cname
+                        break
+
+            # 匹配持久化 name
+            if not rule_matched:
+                for pname in pers_names:
+                    if pname and (pname in rule_name or any(tok in pname for tok in hit_tokens)):
+                        rule_matched = True
+                        evidence_type = "persistence"
+                        evidence_key = pname
+                        break
+
+            # ── 兜底：无匹配时做 best-effort 关联 ──
+            if not rule_matched and not evidence_key:
+                # 优先从异常进程列表取第一个非系统进程名作为上下文锚点
+                for proc in abnormal_processes:
+                    pn = (proc.get("process_name") or proc.get("name") or "").lower()
+                    # 跳过系统进程（process_name_spoof 等的 known system）
+                    if not pn or pn in ("system", "secure system", "registry", "memory compression",
+                                         "smss.exe", "csrss.exe", "wininit.exe", "winlogon.exe",
+                                         "services.exe", "lsass.exe", "svchost.exe"):
+                        continue
+                    evidence_key = pn
+                    evidence_type = "process"
+                    break
+                if not evidence_key and abnormal_processes:
+                    evidence_key = abnormal_processes[0].get("process_name", "unknown")
 
             if rule_matched:
                 # 规则命中 + 语义命中 → 置信度提升一档
@@ -906,9 +1252,13 @@ class AnalysisService:
                 "source": "semantic",
                 "entry_ref": hit.get("entry_ref"),
                 "entry_type": hit.get("entry_type", "unknown"),
+                "evidence_type": evidence_type,
+                "evidence_key": evidence_key,
                 "match_reason": (
                     "规则+语义交叉命中" if rule_matched else "仅语义检索命中"
                 ),
             })
 
-        return merged
+        # 按 score 降序排序，取 top-5 高质量命中
+        merged.sort(key=lambda h: h.get("score", 0.0), reverse=True)
+        return merged[:5]

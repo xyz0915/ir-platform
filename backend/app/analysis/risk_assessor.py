@@ -99,6 +99,21 @@ class RiskAssessor:
         score += ioc_score
         details["ioc_hits"] = {"count": ioc_count, "score": ioc_score}
 
+        # RAG 语义命中（透传到 details 供前端渲染，对齐其他 category 的 {count, score} 格式）
+        knowledge_hits = findings.get("knowledge_hits", [])
+        if knowledge_hits:
+            details["knowledge_hits"] = {"count": len(knowledge_hits), "score": 0, "items": knowledge_hits}
+
+        # 服务风险维度
+        service_risks = findings.get("service_risks", {})
+        if service_risks:
+            svc_score = int(service_risks.get("aggregate_score", 0) * 0.15)
+            score += svc_score
+            details["service_risks"] = {
+                "count": service_risks.get("summary", {}).get("high_risk_count", 0),
+                "score": svc_score,
+            }
+
         # 限制分数在 0-100
         score = min(score, 100)
 

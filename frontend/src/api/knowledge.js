@@ -31,6 +31,11 @@ export default {
     return request.post(`/knowledge/drafts/${id}/recall`)
   },
 
+  /** 永久删除知识草稿 */
+  deleteDraft(id) {
+    return request.delete(`/knowledge/drafts/${id}`)
+  },
+
   /** 批量操作 */
   batchAction(ids, action) {
     return request.post('/knowledge/drafts/batch', { ids, action })
@@ -44,5 +49,10 @@ export default {
   /** 第三方同步 */
   syncProvider(provider, limit) {
     return request.post(`/knowledge/sync/${provider}`, { limit: limit || 50 })
+  },
+
+  /** 根据 entry_ref 获取知识条目详情 */
+  getEntry(ref) {
+    return request.get('/knowledge/entry', { params: { ref } })
   }
 }

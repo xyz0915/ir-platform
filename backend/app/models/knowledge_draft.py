@@ -232,6 +232,20 @@ class KnowledgeDraft:
         return KnowledgeDraft.get_by_id(draft_id)
 
     @staticmethod
+    def delete(draft_id: int) -> bool:
+        """永久删除知识草稿（任何状态均可删除）.
+
+        返回 True 表示删除成功，False 表示草稿不存在。
+        """
+        draft = KnowledgeDraft.get_by_id(draft_id)
+        if draft is None:
+            return False
+        with get_connection() as conn:
+            conn.execute("DELETE FROM knowledge_drafts WHERE id = ?", (draft_id,))
+        logger.info("Knowledge draft %d permanently deleted: %s", draft_id, draft.get("title"))
+        return True
+
+    @staticmethod
     def batch_action(draft_ids: list[int], action: str) -> dict:
         """批量批准或拒绝草稿.
 

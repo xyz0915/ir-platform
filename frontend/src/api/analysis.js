@@ -45,6 +45,9 @@ export default {
   getServices(hostId) {
     return request.get(`/hosts/${hostId}/services`)
   },
+  getServiceRisk(hostId) {
+    return request.get(`/hosts/${hostId}/service-risk`)
+  },
   getUsb(hostId) {
     return request.get(`/hosts/${hostId}/usb`)
   },

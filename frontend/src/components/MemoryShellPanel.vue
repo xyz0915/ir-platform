@@ -88,6 +88,17 @@
           <el-tag :type="severityType(row.severity)" size="small">{{ row.severity || 'info' }}</el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="知识匹配" width="70" v-if="hasKnowledgeHits">
+        <template #default="{ row }">
+          <el-tooltip
+            v-if="row.knowledge_hit"
+            :content="row.knowledge_hit.title + ' (' + row.knowledge_hit.confidence + ')'"
+            placement="top"
+          >
+            <span class="knowledge-badge" @click.stop="$emit('knowledge-click', row.knowledge_hit.entry_ref)">📚</span>
+          </el-tooltip>
+        </template>
+      </el-table-column>
     </el-table>
   </div>
 </template>
@@ -95,7 +106,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 
-defineEmits(['view-tree'])
+defineEmits(['view-tree', 'knowledge-click'])
 
 const props = defineProps({
   data: { type: Array, default: () => [] }
@@ -112,6 +123,10 @@ const filteredData = computed(() => {
     const type = (row.type || '').toLowerCase()
     return pid.includes(q) || name.includes(q) || type.includes(q)
   })
+})
+
+const hasKnowledgeHits = computed(() => {
+  return props.data.some(row => row.knowledge_hit)
 })
 
 /** details 里存放了 class_signals/agent_signals/conn_signals/thread_signals */
@@ -194,4 +209,5 @@ function riskColor(score) {
 }
 .signal-badge strong { margin-left: 2px; }
 .text-muted { color: var(--color-fg-muted, #909399); }
+.knowledge-badge { cursor: pointer; font-size: 16px; }
 </style>

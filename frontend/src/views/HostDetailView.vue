@@ -49,6 +49,38 @@
       </el-alert>
     </div>
 
+    <!-- 知识匹配（RAG 语义检索结果） -->
+    <div v-if="knowledgeHits.length" class="card-box">
+      <h3 class="mb-10" style="display:flex;align-items:center;gap:8px">
+        📚 知识匹配
+        <el-tag size="small" type="warning">RAG 语义检索</el-tag>
+        <span style="font-size:13px;color:#909399;font-weight:normal">共 {{ knowledgeHits.length }} 条语义命中</span>
+      </h3>
+      <div class="kh-grid">
+        <div
+          v-for="(kh, i) in knowledgeHits"
+          :key="i"
+          class="kh-card"
+          :class="{ 'kh-needs-review': kh.needs_review }"
+          @click="showKnowledgePopup(kh)"
+        >
+          <div class="kh-header">
+            <el-tag :type="kh.confidence === 'high' ? 'danger' : kh.confidence === 'medium' ? 'warning' : 'info'" size="small">
+              {{ kh.confidence === 'high' ? '高置信' : kh.confidence === 'medium' ? '中置信' : '低置信' }}
+            </el-tag>
+            <el-tag v-if="kh.severity" size="small" style="margin-left:4px">{{ kh.severity }}</el-tag>
+            <el-tag v-if="kh.needs_review" type="warning" size="small" style="margin-left:4px">⚠ 需复核</el-tag>
+            <span class="kh-title">{{ kh.title }}</span>
+          </div>
+          <div class="kh-desc" v-if="kh.description">{{ kh.description }}</div>
+          <div class="kh-meta" v-if="kh.match_reason">
+            <span>匹配原因：{{ kh.match_reason }}</span>
+            <span v-if="kh.semantic_score !== undefined" style="margin-left:12px">相似度：{{ (kh.semantic_score * 100).toFixed(1) }}%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Tab 页签 -->
     <div class="card-box">
       <el-tabs v-model="activeTab" @tab-change="handleTabChange">
@@ -97,6 +129,7 @@
           <AbnormalProcessTable
             :data="abnormalProcesses"
             @view-detail="handleViewDetail"
+            @knowledge-click="showKnowledgePopup"
             style="margin-top: 16px"
           />
         </el-tab-pane>
@@ -120,7 +153,7 @@
               </el-button>
             </div>
           </div>
-          <SuspiciousConnTable :data="suspiciousConnections" />
+          <SuspiciousConnTable :data="suspiciousConnections" @knowledge-click="showKnowledgePopup" />
         </el-tab-pane>
         <el-tab-pane label="网络连接" name="network">
           <NetworkConnectionTable :host-id="Number(hostId)" :data="networkConnections" @refresh="loadAllResults" />
@@ -172,26 +205,104 @@
         </el-tab-pane>
         <el-tab-pane label="融合检测" name="fusion">
           <div class="tab-toolbar">
-            <span class="tab-hint">WebShell / 内存码 / 融合事件统一视图</span>
+            <span class="tab-hint">跨维度融合检测统一视图</span>
+            <div class="toolbar-right">
+              <el-input v-model="fusionSearch" placeholder="搜索关键字..." size="small" clearable style="width:200px" :prefix-icon="Search" />
+              <el-select v-model="fusionFilter" size="small" style="width:120px;margin-left:8px" clearable placeholder="严重度">
+                <el-option label="全部" value="" />
+                <el-option label="Critical" value="critical" />
+                <el-option label="High" value="high" />
+                <el-option label="Medium" value="medium" />
+                <el-option label="Low" value="low" />
+              </el-select>
+              <el-select v-model="fusionTypeFilter" size="small" style="width:120px;margin-left:8px" clearable placeholder="类型">
+                <el-option label="全部" value="" />
+                <el-option label="融合事件" value="incident" />
+                <el-option label="WebShell" value="webshell" />
+                <el-option label="内存码" value="memory_shell" />
+                <el-option label="语义检测" value="knowledge" />
+              </el-select>
+              <span class="fusion-stats" style="margin-left:12px;color:#909399;font-size:12px">
+                共 {{ filteredFusionItems.length }} 条
+              </span>
+            </div>
           </div>
           <el-empty
             v-if="!hasFusionData"
             description="本次分析未产出融合检测结果"
-            :image-size="64"
+            :image-size="48"
           />
           <template v-else>
-            <div v-if="incidents.length" class="fusion-section">
-              <h4 class="fusion-title">融合事件（关联引擎）</h4>
-              <IncidentPanel :data="incidents" @jump-finding="handleJumpFinding" />
-            </div>
-            <div v-if="webshells.length" class="fusion-section">
-              <h4 class="fusion-title">WebShell 命中（{{ webshells.length }}）</h4>
-              <WebShellPanel :data="webshells" />
-            </div>
-            <div v-if="memoryShells.length" class="fusion-section">
-              <h4 class="fusion-title">内存码命中（{{ memoryShells.length }}）</h4>
-              <MemoryShellPanel :data="memoryShells" @view-tree="handleViewTreeByPid" />
-            </div>
+            <el-collapse v-model="fusionActiveNames" class="fusion-collapse">
+              <!-- 融合事件 -->
+              <el-collapse-item v-if="filteredIncidents.length" name="incidents">
+                <template #title>
+                  <div class="collapse-title">
+                    <el-tag type="danger" size="small">融合事件</el-tag>
+                    <span>{{ filteredIncidents.length }} 条</span>
+                  </div>
+                </template>
+                <IncidentPanel :data="filteredIncidents" @jump-finding="handleJumpFinding" />
+              </el-collapse-item>
+
+              <!-- WebShell -->
+              <el-collapse-item v-if="filteredWebshells.length" name="webshells">
+                <template #title>
+                  <div class="collapse-title">
+                    <el-tag type="warning" size="small">WebShell</el-tag>
+                    <span>{{ filteredWebshells.length }} 条</span>
+                  </div>
+                </template>
+                <WebShellPanel :data="filteredWebshells" @knowledge-click="showKnowledgePopup" />
+              </el-collapse-item>
+
+              <!-- 内存码 -->
+              <el-collapse-item v-if="filteredMemoryShells.length" name="memory_shells">
+                <template #title>
+                  <div class="collapse-title">
+                    <el-tag type="warning" size="small">内存码</el-tag>
+                    <span>{{ filteredMemoryShells.length }} 条</span>
+                  </div>
+                </template>
+                <MemoryShellPanel :data="filteredMemoryShells" @view-tree="handleViewTreeByPid" @knowledge-click="showKnowledgePopup" />
+              </el-collapse-item>
+
+              <!-- 语义检测 — 带点击交互 -->
+              <el-collapse-item v-if="filteredKnowledgeHits.length" name="knowledge_hits">
+                <template #title>
+                  <div class="collapse-title">
+                    <el-tag type="primary" size="small">语义检测</el-tag>
+                    <span>{{ filteredKnowledgeHits.length }} 条</span>
+                  </div>
+                </template>
+                <el-table :data="filteredKnowledgeHits" size="small" stripe @row-click="(row) => showKnowledgePopup(row)">
+                  <el-table-column prop="title" label="命中规则" min-width="180" />
+                  <el-table-column prop="evidence_type" label="证据类型" width="100">
+                    <template #default="{ row }">
+                      <el-tag size="small">{{ evidenceTypeLabel(row.evidence_type) }}</el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="evidence_key" label="证据标识" width="140" show-overflow-tooltip />
+                  <el-table-column prop="confidence" label="置信度" width="90">
+                    <template #default="{ row }">
+                      <el-tag :type="confTag(row.confidence)" size="small">{{ row.confidence }}</el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="severity" label="严重度" width="80">
+                    <template #default="{ row }">
+                      <el-tag :type="sevTag(row.severity)" size="small">{{ row.severity }}</el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="需复核" width="70">
+                    <template #default="{ row }">
+                      <span v-if="row.needs_review" style="color:#e6a23c">⚠</span>
+                      <span v-else style="color:#67c23a">✓</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
+                </el-table>
+              </el-collapse-item>
+            </el-collapse>
           </template>
         </el-tab-pane>
         <el-tab-pane label="时间线" name="timeline">
@@ -272,7 +383,12 @@
         </el-tab-pane>
         <el-tab-pane label="系统服务" name="services">
           <div class="tab-toolbar">
-            <span class="tab-hint">共 {{ services.length }} 个系统服务</span>
+            <span class="tab-hint">
+              共 {{ services.length }} 个服务
+              <el-tag v-if="serviceRisk && serviceRisk.summary" type="danger" size="small" style="margin-left:8px">
+                {{ serviceRisk.summary.high_risk_count }} 个高风险
+              </el-tag>
+            </span>
             <el-button
               type="warning"
               :disabled="!aiEnabled || host?.status === 'pending'"
@@ -281,7 +397,7 @@
               🤖 AI 分析
             </el-button>
           </div>
-          <ServicesTable :data="services" />
+          <ServicesTable :data="services" :service-risk="serviceRisk" />
         </el-tab-pane>
         <el-tab-pane label="USB 记录" name="usb">
           <div class="tab-toolbar">
@@ -325,11 +441,13 @@
     <HostImportDialog ref="importDialogRef" :host-id="Number(hostId)" @success="onImportSuccess" />
     <AgentDownloadDialog ref="agentDialogRef" />
     <AiAnalysisDialog ref="aiDialogRef" />
+    <KnowledgeDetailPopup v-model:visible="knowledgePopupVisible" :entry-ref="knowledgePopupRef" :hit-meta="knowledgePopupMeta" />
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { Search } from '@element-plus/icons-vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import hostsApi from '@/api/hosts'
@@ -367,6 +485,7 @@ import HostKnowledgeTab from '@/components/HostKnowledgeTab.vue'
 import WebShellPanel from '@/components/WebShellPanel.vue'
 import MemoryShellPanel from '@/components/MemoryShellPanel.vue'
 import IncidentPanel from '@/components/ai/IncidentPanel.vue'
+import KnowledgeDetailPopup from '@/components/KnowledgeDetailPopup.vue'
 import { getAiConfig } from '@/api/ai'
 
 const route = useRoute()
@@ -394,6 +513,7 @@ const networkConnections = ref([])
 const fileHashes = ref([])
 const wmiSubscriptions = ref([])
 const registryKeys = ref([])
+const serviceRisk = ref(null)
 
 const timelineStats = ref(null)
 const timelineLoading = ref(false)
@@ -415,6 +535,28 @@ const importDialogRef = ref(null)
 const agentDialogRef = ref(null)
 const aiDialogRef = ref(null)
 const aiEnabled = ref(null) // null=未加载, true=开启, false=关闭
+
+// ── 知识详情弹窗 ──
+const knowledgePopupVisible = ref(false)
+const knowledgePopupRef = ref('')
+const knowledgePopupMeta = ref({})
+
+function showKnowledgePopup(kh) {
+  // 支持两种调用方式：
+  // 1. 从知识匹配卡片传入完整 kh 对象
+  // 2. 从子组件 @knowledge-click 事件传入 entryRef 字符串
+  if (typeof kh === 'object' && kh !== null) {
+    if (!kh.entry_ref || kh.entry_ref === 'unknown') return
+    knowledgePopupRef.value = kh.entry_ref
+    knowledgePopupMeta.value = kh
+  } else {
+    const entryRef = kh
+    if (!entryRef || entryRef === 'unknown') return
+    knowledgePopupRef.value = entryRef
+    knowledgePopupMeta.value = {}
+  }
+  knowledgePopupVisible.value = true
+}
 
 // ── 模块 AI 分析映射 ──
 const MODULE_TAB_MAP = {
@@ -538,6 +680,7 @@ async function loadAllResults() {
   // Phase 3: Collection data tabs — tolerate 404, show empty lists on failure
   try { users.value = (await analysisApi.getUsers(hostId)).data } catch (e) { users.value = [] }
   try { services.value = (await analysisApi.getServices(hostId)).data } catch (e) { services.value = [] }
+  try { serviceRisk.value = (await analysisApi.getServiceRisk(hostId)).data } catch (e) { serviceRisk.value = null }
   try { usb.value = (await analysisApi.getUsb(hostId)).data } catch (e) { usb.value = [] }
   try { remoteControl.value = (await analysisApi.getRemoteControl(hostId)).data } catch (e) { remoteControl.value = [] }
 
@@ -788,9 +931,78 @@ const aiReportAttackChain = computed(() => {
 const webshells = computed(() => analysis.value?.webshells || [])
 const memoryShells = computed(() => analysis.value?.memory_shells || [])
 const incidents = computed(() => analysis.value?.incidents || [])
+const knowledgeHits = computed(() => analysis.value?.knowledge_hits || [])
 const hasFusionData = computed(
-  () => !!(webshells.value.length || memoryShells.value.length || incidents.value.length)
+  () => !!(webshells.value.length || memoryShells.value.length || incidents.value.length || knowledgeHits.value.length)
 )
+
+// ── 融合检测筛选 ──
+const fusionSearch = ref('')
+const fusionFilter = ref('')
+const fusionTypeFilter = ref('')
+const fusionActiveNames = ref(['incidents', 'knowledge_hits'])  // 默认展开
+
+function confTag(c) {
+  return c === 'high' ? 'danger' : c === 'medium' ? 'warning' : 'info'
+}
+function sevTag(s) {
+  const map = { critical: 'danger', high: 'danger', medium: 'warning', low: 'primary' }
+  return map[s] || 'info'
+}
+function evidenceTypeLabel(t) {
+  const map = { process: '进程', connection: '外连', webshell_ms: 'WebShell', memory_shell: '内存码', persistence: '持久化' }
+  return map[t] || t
+}
+
+const filteredKnowledgeHits = computed(() => {
+  let items = knowledgeHits.value
+  const kw = fusionSearch.value.trim().toLowerCase()
+  const sev = fusionFilter.value
+  const type = fusionTypeFilter.value
+
+  if (type && type !== 'knowledge') return []
+
+  if (sev) {
+    items = items.filter(h => (h.severity || '').toLowerCase() === sev)
+  }
+  if (kw) {
+    items = items.filter(h =>
+      (h.title || '').toLowerCase().includes(kw) ||
+      (h.description || '').toLowerCase().includes(kw) ||
+      (h.evidence_key || '').toLowerCase().includes(kw) ||
+      (h.evidence_type || '').toLowerCase().includes(kw)
+    )
+  }
+  return items
+})
+
+const filteredIncidents = computed(() => {
+  const type = fusionTypeFilter.value
+  if (type && type !== 'incident') return []
+  return incidents.value
+})
+
+const filteredWebshells = computed(() => {
+  const type = fusionTypeFilter.value
+  if (type && type !== 'webshell') return []
+  return webshells.value
+})
+
+const filteredMemoryShells = computed(() => {
+  const type = fusionTypeFilter.value
+  if (type && type !== 'memory_shell') return []
+  return memoryShells.value
+})
+
+const filteredFusionItems = computed(() => {
+  let count = 0
+  const type = fusionTypeFilter.value
+  if (!type || type === 'incident') count += incidents.value.length
+  if (!type || type === 'webshell') count += webshells.value.length
+  if (!type || type === 'memory_shell') count += memoryShells.value.length
+  if (!type || type === 'knowledge') count += filteredKnowledgeHits.value.length
+  return Array(count).fill(null)  // 只用作 count
+})
 
 function statusType(status) {
   const map = { pending: 'info', imported: 'warning', analyzed: 'success' }
@@ -829,15 +1041,38 @@ function statusLabel(status) {
   align-items: center;
 }
 /* ── 融合检测 Tab ── */
-.fusion-section {
-  margin-bottom: 20px;
+.toolbar-right { display: flex; align-items: center; }
+.fusion-collapse { border: none; }
+.fusion-collapse :deep(.el-collapse-item__header) {
+  font-weight: 500;
+  font-size: 14px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 6px;
+  margin-bottom: 8px;
+  background: var(--color-canvas-subtle);
 }
-.fusion-title {
-  font-size: 15px;
-  font-weight: 600;
-  margin: 0 0 10px;
-  padding-left: 8px;
-  border-left: 3px solid var(--el-color-primary, #409eff);
-  color: var(--color-fg-default, #303133);
+.fusion-collapse :deep(.el-collapse-item__wrap) { border: none; padding: 0; }
+.collapse-title { display: flex; align-items: center; gap: 10px; }
+
+/* ── 知识匹配卡片 ── */
+.kh-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
 }
+.kh-card {
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  padding: 12px;
+  background: #fafafa;
+  transition: box-shadow 0.2s;
+  cursor: pointer;
+}
+.kh-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+.kh-card.kh-needs-review { border-color: var(--el-color-warning); background: #fef7e8; }
+.kh-header { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.kh-title { font-weight: 600; font-size: 14px; margin-left: 4px; }
+.kh-desc { color: #606266; font-size: 12px; margin-top: 6px; }
+.kh-meta { color: #909399; font-size: 11px; margin-top: 4px; }
 </style>

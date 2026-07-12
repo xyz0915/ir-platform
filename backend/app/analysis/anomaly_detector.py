@@ -426,6 +426,15 @@ class AnomalyDetector:
     # 组合 incident 关联增益（命中「WebShell 落盘 + 同主机内存马」攻击链时提权）
     _COMBO_BOOST = 25
 
+    # 已知安全进程白名单（P0 噪音过滤）
+    _SAFE_PROCESS_NAMES: set[str] = {
+        "sqlservr", "vmtoolsd", "vgauthservice", "fdlauncher", "fdhost",
+        "msdtssrvr", "msmdsrv", "reportingservicesservice", "sqlwriter",
+        "conhost", "svchost", "csrss", "wininit", "services", "lsass",
+        "smss", "winlogon", "runtimebroker", "taskhostw", "spoolsv",
+        "dllhost", "sihost", "ctfmon", "searchindexer", "wlms",
+    }
+
     # 内存注入相关规则名（用于把 abnormal_processes/event_hits 归类为 process_injection）
     _INJECTION_RULE_NAMES = (
         "memory_injection",
@@ -590,6 +599,14 @@ class AnomalyDetector:
             prob_product *= (1.0 - p)
         confidence = (1.0 - prob_product) * 100.0
 
+        # 单信号告警：低置信度不产出（P0 噪音过滤）
+        if not is_incident and confidence < 60:
+            logger.info(
+                "Single-alert suppressed: confidence=%.1f < threshold(60), categories=%s",
+                confidence, categories,
+            )
+            return []
+
         # 关联增益：WebShell 落盘 + 同主机内存马 构成核心攻击链 → 提权
         has_ws = "webshell" in categories
         has_ms = "memory_shell" in categories
@@ -721,6 +738,10 @@ class AnomalyDetector:
                 continue
             rules = proc.get("matched_rules") or []
             rule_names = {r.get("name") for r in rules if isinstance(r, dict)}
+            # 白名单跳过：已知安全进程不产出告警
+            pname = (proc.get("process_name") or "").lower().removesuffix(".exe")
+            if pname in AnomalyDetector._SAFE_PROCESS_NAMES:
+                continue
             if rule_names & set(AnomalyDetector._INJECTION_RULE_NAMES):
                 category = "process_injection"
             else:

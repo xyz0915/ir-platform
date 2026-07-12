@@ -49,11 +49,23 @@ except ImportError:
 
 EMBEDDING_MODEL_NAME: str = "BAAI/bge-base-zh-v1.5"  # 768 维，中英双语优化，安全领域预训练
 COLLECTION_NAME: str = "ir_rules"
+COLLECTION_NAMES: dict[str, str] = {
+    "seed": "ir_seed",
+    "rule": "ir_rules",
+    "draft": "ir_draft",
+}
 CHROMA_PERSIST_DIR: str = str(settings.DATA_DIR / "chroma")
 
 # 向量检索相似度阈值（cosine distance，越小越相似）
 # 经验值：distance < 0.7 → similarity > 0.3，能覆盖语义相近的情况
 VECTOR_DISTANCE_THRESHOLD: float = 0.7
+
+# 分模块差异化阈值（优化 4）
+DIM_THRESHOLDS: dict[str, float] = {
+    "process": 0.75,
+    "connection": 0.78,
+    "webshell_ms": 0.65,
+}
 
 # ---------------------------------------------------------------------------
 # 进程级缓存
@@ -132,6 +144,38 @@ def _get_collection() -> Optional[Any]:
         logger.error("Failed to initialize ChromaDB: %s", exc)
         _COLLECTION = None
     return _COLLECTION
+
+
+def _get_collection_by_name(name: str) -> Optional[Any]:
+    """获取或创建指定名称的 ChromaDB collection（进程级单例，按名称缓存）.
+
+    与 _get_collection() 不同，此函数按 name 参数获取独立 collection，
+    支持多 collection 架构（ir_seed / ir_rules / ir_draft）。
+
+    Args:
+        name: collection 名称（如 "ir_seed", "ir_rules", "ir_draft"）。
+
+    Returns:
+        ChromaDB collection 对象，不可用时返回 None。
+    """
+    if not _CHROMA_AVAILABLE:
+        return None
+    try:
+        persist_dir = Path(CHROMA_PERSIST_DIR)
+        persist_dir.mkdir(parents=True, exist_ok=True)
+        client = chromadb.PersistentClient(
+            path=str(persist_dir),
+            settings=chromadb.Settings(anonymized_telemetry=False),
+        )
+        coll = client.get_or_create_collection(
+            name=name,
+            metadata={"hnsw:space": "cosine"},
+        )
+        logger.debug("ChromaDB collection '%s' ready (count=%d)", name, coll.count())
+        return coll
+    except Exception as exc:
+        logger.error("Failed to get ChromaDB collection '%s': %s", name, exc)
+        return None
 
 
 def _load_rules() -> list[dict]:
@@ -232,7 +276,7 @@ def _build_index() -> bool:
     Returns:
         True 表示索引可用（已构建或已存在），False 表示构建失败。
     """
-    collection = _get_collection()
+    collection = _get_collection_by_name(COLLECTION_NAMES["rule"])
     model = _get_embedding_model()
 
     if collection is None or model is None:
@@ -246,7 +290,7 @@ def _build_index() -> bool:
     # ---------- 幂等检查 ----------
     if collection.count() > 0:
         logger.info("Index already built: %d records exist in '%s'",
-                     collection.count(), COLLECTION_NAME)
+                     collection.count(), COLLECTION_NAMES["rule"])
         return True
 
     rules = _load_rules()
@@ -304,7 +348,7 @@ def _build_index() -> bool:
             metadatas=metadatas,
         )
         logger.info("Built vector index: %d rules indexed into '%s'",
-                     len(ids), COLLECTION_NAME)
+                     len(ids), COLLECTION_NAMES["rule"])
         return True
     except Exception as exc:
         logger.error("ChromaDB add failed: %s", exc)
@@ -343,7 +387,7 @@ def _build_seed_index() -> bool:
     """
     global _SEED_INDEXED
 
-    collection = _get_collection()
+    collection = _get_collection_by_name(COLLECTION_NAMES["seed"])
     model = _get_embedding_model()
 
     if collection is None or model is None:
@@ -457,7 +501,7 @@ def _build_seed_index() -> bool:
         _SEED_INDEXED = True
         logger.info(
             "Built seed index: %d knowledge items indexed into '%s'",
-            len(ids), COLLECTION_NAME,
+            len(ids), COLLECTION_NAMES["seed"],
         )
         return True
     except Exception as exc:
@@ -587,7 +631,78 @@ def _build_query_text(analysis_data: dict) -> str:
             if event_type or desc:
                 parts.append(f"时间线事件: {event_type} {desc}".strip())
 
-    # ---- 去重后拼接 ----
+    # ---- WebShell 文本 ----
+    for w in analysis_data.get("webshell_items", []):
+        if not isinstance(w, dict):
+            continue
+        wpath = w.get("path", "")
+        funcs = w.get("funcs", []) or w.get("suspicious_funcs", [])
+        if wpath:
+            parts.append(f"WebShell: {wpath}")
+        if funcs:
+            parts.append(f"WebShell函数: {','.join(str(f) for f in funcs[:10])}")
+
+    # ---- Memory Shell 文本 ----
+    for m in analysis_data.get("memory_shell_items", []):
+        if not isinstance(m, dict):
+            continue
+        mtype = m.get("type", "")
+        cname = m.get("class_name", "")
+        pid = m.get("pid", "")
+        agent = m.get("agent_jar", "")
+        items = [s for s in (mtype, cname, agent) if s]
+        if items:
+            parts.append(f"内存码: {' '.join(items)} PID={pid}")
+
+    # ---- 持久化文本 ----
+    for p in analysis_data.get("persistence_items", []):
+        if not isinstance(p, dict):
+            continue
+        ptype = p.get("type", "")
+        pname = p.get("name", "")
+        if ptype or pname:
+            parts.append(f"持久化: {ptype} {pname}".strip())
+
+    # ---- 去重：进程名 ----
+    seen_proc: set[str] = set()
+    proc_indices: list[int] = []
+    for i, part in enumerate(parts):
+        if part.startswith("异常进程:"):
+            pname = part.replace("异常进程:", "").strip()
+            if pname in seen_proc:
+                proc_indices.append(i)
+            else:
+                seen_proc.add(pname)
+    for i in reversed(proc_indices):
+        parts.pop(i)
+
+    # ---- 去重：外连 IP ----
+    seen_conn: set[str] = set()
+    conn_indices: list[int] = []
+    for i, part in enumerate(parts):
+        if part.startswith("可疑外连:"):
+            remote = part.replace("可疑外连:", "").split("(")[0].strip()
+            if remote in seen_conn:
+                conn_indices.append(i)
+            else:
+                seen_conn.add(remote)
+    for i in reversed(conn_indices):
+        parts.pop(i)
+
+    # ---- 去重：WebShell 路径 ----
+    seen_ws: set[str] = set()
+    ws_indices: list[int] = []
+    for i, part in enumerate(parts):
+        if part.startswith("WebShell:"):
+            wpath = part.replace("WebShell:", "").strip()
+            if wpath in seen_ws:
+                ws_indices.append(i)
+            else:
+                seen_ws.add(wpath)
+    for i in reversed(ws_indices):
+        parts.pop(i)
+
+    # ---- 最终去重拼接 ----
     seen: set[str] = set()
     deduped: list[str] = []
     for p in parts:
@@ -649,6 +764,101 @@ def _extract_keywords(data: dict) -> set[str]:
     return keywords
 
 
+def _build_dim_query(dim: str, raw_data: dict) -> str:
+    """按维度构建语义查询文本（优化 3：三维并行检索）.
+
+    Args:
+        dim: 维度名 — "process" / "connection" / "webshell_ms".
+        raw_data: Agent 原始 JSON 字典。
+
+    Returns:
+        查询文本字符串，无有效数据时返回空字符串。
+    """
+    parts: list[str] = []
+
+    if dim == "process":
+        # 进程名 + 命令行（top-10 distinct）
+        processes = raw_data.get("processes", [])
+        if not isinstance(processes, list):
+            return ""
+        names: list[str] = []
+        seen_names: set[str] = set()
+        for proc in processes:
+            if not isinstance(proc, dict):
+                continue
+            name = (proc.get("name") or proc.get("process_name") or "").strip()
+            if name and name not in seen_names:
+                seen_names.add(name)
+                names.append(name)
+                if len(names) >= 10:
+                    break
+        if names:
+            parts.append(f"进程: {', '.join(names)}")
+        cmds: list[str] = []
+        for proc in processes[:10]:
+            if not isinstance(proc, dict):
+                continue
+            cmd = (proc.get("cmd") or proc.get("command_line") or "").strip()
+            if cmd:
+                cmds.append(cmd[:200])
+        if cmds:
+            parts.append(f"命令行: {'; '.join(cmds)}")
+
+    elif dim == "connection":
+        # 远程 IP + 端口（top-10 distinct IPs）
+        conns = raw_data.get("network_connections", [])
+        if not isinstance(conns, list):
+            return ""
+        ips: list[str] = []
+        seen_ips: set[str] = set()
+        for conn in conns:
+            if not isinstance(conn, dict):
+                continue
+            remote = (conn.get("remote_addr") or conn.get("remote") or "").strip()
+            if remote and remote not in seen_ips:
+                seen_ips.add(remote)
+                ips.append(remote)
+                if len(ips) >= 10:
+                    break
+        if ips:
+            parts.append(f"外连IP: {', '.join(ips)}")
+        # 协议
+        protos: set[str] = set()
+        for conn in conns[:20]:
+            proto = (conn.get("protocol") or "").strip().upper()
+            if proto:
+                protos.add(proto)
+        if protos:
+            parts.append(f"协议: {', '.join(sorted(protos))}")
+
+    elif dim == "webshell_ms":
+        # path + funcs + class_name + agent_jar
+        ws_items = raw_data.get("webshell_items", [])
+        if isinstance(ws_items, list):
+            for w in ws_items[:5]:
+                if not isinstance(w, dict):
+                    continue
+                wpath = (w.get("path") or "").strip()
+                funcs = w.get("funcs", []) or w.get("suspicious_funcs", [])
+                if wpath:
+                    fstr = ",".join(str(f) for f in funcs[:5]) if funcs else ""
+                    parts.append(f"WebShell路径: {wpath}" + (f" 函数: {fstr}" if fstr else ""))
+        ms_items = raw_data.get("memory_shell_items", [])
+        if isinstance(ms_items, list):
+            for m in ms_items[:5]:
+                if not isinstance(m, dict):
+                    continue
+                mtype = (m.get("type") or "").strip()
+                cname = (m.get("class_name") or "").strip()
+                agent = (m.get("agent_jar") or "").strip()
+                pid = m.get("pid", "")
+                items = [s for s in (mtype, cname, agent) if s]
+                if items:
+                    parts.append(f"内存码: {' '.join(items)} PID={pid}")
+
+    return "。".join(parts)
+
+
 def _derive_entry_type(entry_ref: Optional[str]) -> str:
     """根据 entry_ref 前缀派生 entry_type（与前端 parseEntryRef 逻辑一致）.
 
@@ -693,8 +903,8 @@ class KnowledgeRetriever:
 
     @classmethod
     def _ensure_index(cls) -> None:
-        """延迟初始化向量索引（仅执行一次）."""
-        if cls._index_initialized:
+        """延迟初始化向量索引（幂等）."""
+        if cls._index_initialized and _get_collection() is not None:
             return
         cls._index_initialized = True
 
@@ -736,7 +946,7 @@ class KnowledgeRetriever:
         _load_seed_data()
 
         # 如果 ChromaDB 可用，删除旧种子条目并重建
-        collection = _get_collection()
+        collection = _get_collection_by_name(COLLECTION_NAMES["seed"])
         if collection is not None and _EMBEDDING_AVAILABLE:
             try:
                 # 删除所有 seed_ 前缀的旧条目
@@ -774,7 +984,7 @@ class KnowledgeRetriever:
         limit: int = 5,
         structured: bool = False,
     ) -> list[Any]:
-        """检索匹配的规则描述.
+        """检索匹配的规则描述 — 三维并行检索 + 加权合并（优化 3+6）.
 
         Args:
             analysis_data: 主机分析数据字典（PromptBuilder 组装的结构化数据）。
@@ -790,8 +1000,10 @@ class KnowledgeRetriever:
         model = _get_embedding_model()
 
         if collection is not None and model is not None and collection.count() > 0:
-            results = KnowledgeRetriever._vector_retrieve(
-                analysis_data, limit, collection, model, structured=structured
+            # ── 三维并行检索 ──
+            raw_data = analysis_data.get("_raw_data", analysis_data)
+            results = KnowledgeRetriever._vector_retrieve_3d(
+                analysis_data, raw_data, limit, model, structured=structured
             )
         else:
             logger.info(
@@ -808,6 +1020,310 @@ class KnowledgeRetriever:
         if structured:
             return results
         return [item if isinstance(item, str) else item.get("formatted_text", "") for item in results]
+
+    # ========================================================================
+    # 三维并行检索（优化 3）
+    # ========================================================================
+
+    @staticmethod
+    def retrieve_dim(raw_data: dict, dim: str, limit: int = 3) -> list[dict]:
+        """按维度独立检索（优化 3）.
+
+        Args:
+            raw_data: Agent 原始 JSON 字典。
+            dim: 维度名 — "process" / "connection" / "webshell_ms".
+            limit: 最大返回数。
+
+        Returns:
+            结构化命中列表。
+        """
+        query = _build_dim_query(dim, raw_data)
+        if not query:
+            return []
+        return KnowledgeRetriever._single_retrieve(query, DIM_THRESHOLDS.get(dim, 0.7), limit)
+
+    @staticmethod
+    def _single_retrieve(query_text: str, threshold: float, limit: int) -> list[dict]:
+        """单次向量检索（供 retrieve_dim 和三维并行使用）.
+
+        Args:
+            query_text: 查询文本。
+            threshold: 相似度阈值（distance）。
+            limit: 最大返回数。
+
+        Returns:
+            结构化命中列表。
+        """
+        model = _get_embedding_model()
+        collection = _get_collection()
+        if model is None or collection is None or collection.count() == 0:
+            return []
+
+        try:
+            query_embedding = model.encode(
+                [query_text],
+                show_progress_bar=False,
+                normalize_embeddings=True,
+            ).tolist()
+        except Exception as exc:
+            logger.warning("_single_retrieve encode failed: %s", exc)
+            return []
+
+        n_fetch = min(limit * 3, collection.count())
+        try:
+            results = collection.query(
+                query_embeddings=query_embedding,
+                n_results=n_fetch,
+                include=["documents", "metadatas", "distances"],
+            )
+        except Exception as exc:
+            logger.warning("_single_retrieve query failed: %s", exc)
+            return []
+
+        if not results or not results.get("ids") or not results["ids"][0]:
+            return []
+
+        ids_list: list[str] = results["ids"][0]
+        metadatas_list: list[dict] = results.get("metadatas", [[]])[0]
+        distances_list: list[float] = results.get("distances", [[]])[0]
+
+        rules = _load_rules()
+        rules_by_name: dict[str, dict] = {r.get("name", ""): r for r in rules}
+
+        formatted: list[dict] = []
+        seen: set[str] = set()
+
+        for i, doc_id in enumerate(ids_list):
+            meta = metadatas_list[i] if i < len(metadatas_list) else {}
+            distance = distances_list[i] if i < len(distances_list) else 1.0
+
+            if distance > threshold:
+                continue
+
+            rule_name = meta.get("rule_name", "")
+            severity = meta.get("severity", "medium")
+            category = meta.get("category", "")
+            source = meta.get("source", "rule")
+
+            rule = rules_by_name.get(rule_name, {})
+            rule_desc = rule.get("description", "")
+            formatted_text = f"[{category}/{severity}] {rule_name}: {rule_desc}"
+            if formatted_text in seen:
+                continue
+            seen.add(formatted_text)
+
+            confidence = "high" if distance <= 0.35 else "medium"
+            formatted.append({
+                "source": "vector",
+                "rule_name": rule_name,
+                "title": rule_name,
+                "severity": severity,
+                "category": category,
+                "description": rule_desc,
+                "summary": rule_desc,
+                "formatted_text": formatted_text,
+                "score": round(max(0.0, 1.0 - distance), 4),
+                "confidence": confidence,
+                "match_reason": "语义相似检索命中",
+                "tags": [category, severity],
+                "evidence_text": formatted_text,
+                "entry_ref": doc_id,
+                "entry_type": _derive_entry_type(doc_id),
+                "_source_collection": source,
+            })
+
+            if len(formatted) >= limit:
+                break
+
+        return formatted
+
+    # ========================================================================
+    # 三维加权向量检索（优化 6：三 collection 并行）
+    # ========================================================================
+
+    @staticmethod
+    def _vector_retrieve_3d(
+        analysis_data: dict,
+        raw_data: dict,
+        limit: int,
+        model: Any,
+        structured: bool = False,
+    ) -> list[Any]:
+        """三维并行检索 + 三 collection 加权合并.
+
+        1. 三个维度分别 query（进程 / 外连 / webshell_ms）
+        2. 每个维度查询三 collection（seed ×1.5 / rule ×1.0 / draft ×0.5）
+        3. 结果 interleave + entry_ref 去重，按 score 降序取 top-5
+        4. 如果 ir_seed collection 不存在，回退到单 collection 模式
+        """
+        seed_collection = _get_collection_by_name(COLLECTION_NAMES["seed"])
+        # 向后兼容：ir_seed 不存在时回退到单 collection
+        if seed_collection is None or seed_collection.count() == 0:
+            logger.info("ir_seed collection not available, falling back to single-collection mode")
+            return KnowledgeRetriever._vector_retrieve(
+                analysis_data, limit, _get_collection(), model, structured=structured
+            )
+
+        rule_collection = _get_collection_by_name(COLLECTION_NAMES["rule"])
+        draft_collection = _get_collection_by_name(COLLECTION_NAMES["draft"])
+
+        # 三维并行检索，每维从三 collection 取结果
+        all_hits: list[dict] = []
+        seen_refs: set[str] = set()
+
+        dimensions = [
+            ("process", 3),
+            ("connection", 2),
+            ("webshell_ms", 2),
+        ]
+
+        for dim, dim_limit in dimensions:
+            query = _build_dim_query(dim, raw_data)
+            if not query:
+                continue
+            threshold = DIM_THRESHOLDS.get(dim, 0.7)
+            dim_hits = KnowledgeRetriever._query_collections_weighted(
+                query, threshold, dim_limit,
+                seed_collection, rule_collection, draft_collection, model,
+            )
+            for hit in dim_hits:
+                ref = hit.get("entry_ref", "")
+                if ref and ref in seen_refs:
+                    continue
+                if ref:
+                    seen_refs.add(ref)
+                # 注入 evidence 字段
+                hit["evidence_type"] = dim
+                all_hits.append(hit)
+
+        # 按 score 降序排序，取 top-limit
+        all_hits.sort(key=lambda h: h.get("score", 0.0), reverse=True)
+
+        if structured:
+            return all_hits[:limit]
+        return [h.get("formatted_text", "") for h in all_hits[:limit]]
+
+    @staticmethod
+    def _query_collections_weighted(
+        query_text: str,
+        threshold: float,
+        limit: int,
+        seed_coll: Any,
+        rule_coll: Any,
+        draft_coll: Any,
+        model: Any,
+    ) -> list[dict]:
+        """三 collection 并行查询 + 加权合并.
+
+        权重：seed ×1.5, rule ×1.0, draft ×0.5
+        """
+        all_hits: list[dict] = []
+
+        collection_weights = [
+            (seed_coll, 1.5, "seed"),
+            (rule_coll, 1.0, "rule"),
+            (draft_coll, 0.5, "draft"),
+        ]
+
+        for coll, weight, src_label in collection_weights:
+            if coll is None or coll.count() == 0:
+                continue
+            hits = KnowledgeRetriever._query_single_collection(
+                query_text, threshold, limit, coll, model,
+            )
+            for h in hits:
+                h["score"] = round(h.get("score", 0.0) * weight, 4)
+                h["_source_collection"] = src_label
+                all_hits.append(h)
+
+        # 按加权 score 降序
+        all_hits.sort(key=lambda h: h.get("score", 0.0), reverse=True)
+        return all_hits[:limit]
+
+    @staticmethod
+    def _query_single_collection(
+        query_text: str,
+        threshold: float,
+        limit: int,
+        collection: Any,
+        model: Any,
+    ) -> list[dict]:
+        """对单个 collection 执行向量检索."""
+        try:
+            query_embedding = model.encode(
+                [query_text],
+                show_progress_bar=False,
+                normalize_embeddings=True,
+            ).tolist()
+        except Exception as exc:
+            logger.warning("_query_single_collection encode failed: %s", exc)
+            return []
+
+        n_fetch = min(limit * 3, collection.count())
+        try:
+            results = collection.query(
+                query_embeddings=query_embedding,
+                n_results=n_fetch,
+                include=["documents", "metadatas", "distances"],
+            )
+        except Exception as exc:
+            logger.warning("_query_single_collection query failed: %s", exc)
+            return []
+
+        if not results or not results.get("ids") or not results["ids"][0]:
+            return []
+
+        ids_list: list[str] = results["ids"][0]
+        metadatas_list: list[dict] = results.get("metadatas", [[]])[0]
+        distances_list: list[float] = results.get("distances", [[]])[0]
+
+        rules = _load_rules()
+        rules_by_name: dict[str, dict] = {r.get("name", ""): r for r in rules}
+
+        formatted: list[dict] = []
+        seen: set[str] = set()
+
+        for i, doc_id in enumerate(ids_list):
+            meta = metadatas_list[i] if i < len(metadatas_list) else {}
+            distance = distances_list[i] if i < len(distances_list) else 1.0
+
+            if distance > threshold:
+                continue
+
+            rule_name = meta.get("rule_name", "")
+            severity = meta.get("severity", "medium")
+            category = meta.get("category", "")
+
+            rule = rules_by_name.get(rule_name, {})
+            rule_desc = rule.get("description", "")
+            formatted_text = f"[{category}/{severity}] {rule_name}: {rule_desc}"
+            if formatted_text in seen:
+                continue
+            seen.add(formatted_text)
+
+            confidence = "high" if distance <= 0.35 else "medium"
+            formatted.append({
+                "source": "vector",
+                "rule_name": rule_name,
+                "title": rule_name,
+                "severity": severity,
+                "category": category,
+                "description": rule_desc,
+                "summary": rule_desc,
+                "formatted_text": formatted_text,
+                "score": round(max(0.0, 1.0 - distance), 4),
+                "confidence": confidence,
+                "match_reason": "语义相似检索命中",
+                "tags": [category, severity],
+                "evidence_text": formatted_text,
+                "entry_ref": doc_id,
+                "entry_type": _derive_entry_type(doc_id),
+            })
+
+            if len(formatted) >= limit:
+                break
+
+        return formatted
 
     # ========================================================================
     # 向量检索

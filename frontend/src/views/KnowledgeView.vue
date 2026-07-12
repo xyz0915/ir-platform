@@ -51,9 +51,10 @@
               <template #default="{ row }"><el-tag size="small" :type="sourceTagType(row.source)">{{ sourceLabel(row.source) }}</el-tag></template>
             </el-table-column>
             <el-table-column prop="reviewed_at" label="审核时间" width="150" />
-            <el-table-column label="操作" width="80" fixed="right">
+            <el-table-column label="操作" width="130" fixed="right">
               <template #default="{ row }">
                 <el-button type="warning" size="small" link @click="handleRecall(row)">撤回</el-button>
+                <el-button type="danger" size="small" link @click="handleDelete(row)">删除</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -95,10 +96,11 @@
               <template #default="{ row }"><el-tag size="small" :type="sourceTagType(row.source)">{{ sourceLabel(row.source) }}</el-tag></template>
             </el-table-column>
             <el-table-column prop="created_at" label="创建时间" width="150" />
-            <el-table-column label="操作" width="160" fixed="right">
+            <el-table-column label="操作" width="210" fixed="right">
               <template #default="{ row }">
                 <el-button type="success" size="small" @click="handleSingleAction(row, 'approve')">批准</el-button>
                 <el-button type="danger" size="small" @click="handleSingleAction(row, 'reject')">拒绝</el-button>
+                <el-button type="danger" size="small" link @click="handleDelete(row)">删除</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -125,9 +127,10 @@
               <template #default="{ row }"><el-tag size="small" :type="sourceTagType(row.source)">{{ sourceLabel(row.source) }}</el-tag></template>
             </el-table-column>
             <el-table-column prop="reviewed_at" label="拒绝时间" width="150" />
-            <el-table-column label="操作" width="80" fixed="right">
+            <el-table-column label="操作" width="130" fixed="right">
               <template #default="{ row }">
                 <el-button type="warning" size="small" link @click="handleRecall(row)">撤回</el-button>
+                <el-button type="danger" size="small" link @click="handleDelete(row)">删除</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -318,6 +321,22 @@ async function handleRecall(row) {
   try {
     await knowledgeApi.recallDraft(row.id)
     ElMessage.success('已撤回至待审核')
+    await loadAll()
+  } catch (error) { /* handled */ }
+}
+
+// ── 删除 ──
+async function handleDelete(row) {
+  try {
+    await ElMessageBox.confirm(
+      `确认永久删除「${row.title}」？删除后不可恢复。`,
+      '删除确认',
+      { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch { return }
+  try {
+    await knowledgeApi.deleteDraft(row.id)
+    ElMessage.success('已永久删除')
     await loadAll()
   } catch (error) { /* handled */ }
 }

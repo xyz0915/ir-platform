@@ -28,12 +28,31 @@
         </el-tag>
       </template>
     </el-table-column>
+    <el-table-column label="知识匹配" width="70" v-if="hasKnowledgeHits">
+      <template #default="{ row }">
+        <el-tooltip
+          v-if="row.knowledge_hit"
+          :content="row.knowledge_hit.title + ' (' + row.knowledge_hit.confidence + ')'"
+          placement="top"
+        >
+          <span class="knowledge-badge" @click.stop="$emit('knowledge-click', row.knowledge_hit.entry_ref)">📚</span>
+        </el-tooltip>
+      </template>
+    </el-table-column>
   </el-table>
 </template>
 
 <script setup>
-defineProps({
+import { computed } from 'vue'
+
+const props = defineProps({
   data: { type: Array, default: () => [] }
+})
+
+defineEmits(['knowledge-click'])
+
+const hasKnowledgeHits = computed(() => {
+  return props.data.some(row => row.knowledge_hit)
 })
 
 function severityType(severity) {
@@ -95,3 +114,6 @@ function isPrivateAddress(addr) {
   return false
 }
 </script>
+<style scoped>
+.knowledge-badge { cursor: pointer; font-size: 16px; }
+</style>

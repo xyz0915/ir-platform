@@ -86,6 +86,15 @@ _SYSTEM_PROC_WHITELIST: set[str] = {
     "taskmgr", "cmd", "powershell", "rundll32", "spoolsv", "msdtc",
     "lsaiso", "fontdrvhost", "smss", "wininit", "lsm",
 }
+# 已知系统进程（不含 .exe，小写）：孤儿/重生检测中排除，避免海量误报
+_SYSTEM_PROCESS_NAMES: set[str] = {
+    "system", "secure system", "registry", "system idle process",
+    "smss.exe", "csrss.exe", "wininit.exe", "winlogon.exe",
+    "services.exe", "lsass.exe", "svchost.exe", "spoolsv.exe",
+    "fontdrvhost.exe", "lsaiso.exe", "dwm.exe", "audiodg.exe",
+    "memory compression", "conhost.exe", "sihost.exe", "taskhostw.exe",
+    "wlms.exe", "logonui.exe", "runtimebroker.exe", "shellexperiencehost.exe",
+}
 # 双扩展名：可执行/脚本扩展名叠加可执行/脚本
 _SPOOF_EXEC_EXTS = (
     "exe", "scr", "bat", "cmd", "pif", "com", "dll",
@@ -942,6 +951,10 @@ class RuleEngine:
             #   视为孤儿，其余正常数值 PID 均不误报。
             # - 有进程树上下文：父 PID 不在本机进程列表（父已退出/伪造）→ 孤儿；
             #   系统/空闲父（0/1/4）与缺失父统一排除，避免海量误报（§2.1/决策2）。
+            #   已知 Windows 系统进程（csrss/wininit/winlogon/services/smss）排除。
+            proc_name = str(data_item.get("name", "")).lower()
+            if proc_name in _SYSTEM_PROCESS_NAMES:
+                return False
             ppid = data_item.get("ppid", 0)
             process_map = (global_context or {}).get("process_map", {})
             if ppid is None or ppid in (0, 1, 4):
@@ -2004,7 +2017,12 @@ class RuleEngine:
 
         退化：精确计数依赖事件流；快照下按同指纹（path+command_line）在 all_items 中
         出现次数近似（若均提供可解析 start_time，则仅统计窗口内的重复）。
+
+        已知系统进程（System/Registry/svchost 等）正常多实例，直接排除。
         """
+        proc_name = str(data_item.get("name", "")).lower()
+        if proc_name in _SYSTEM_PROCESS_NAMES:
+            return False
         if not global_context:
             return False
         all_items = global_context.get("all_items")

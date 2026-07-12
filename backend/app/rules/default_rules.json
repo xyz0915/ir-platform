@@ -262,7 +262,7 @@
         "mitre_attack": "T1059"
       }
     },
-    "severity": "high",
+    "severity": "medium",
     "enabled": true,
     "label": "孤立进程（无父进程）"
   },

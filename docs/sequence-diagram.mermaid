@@ -1,26 +1,76 @@
 sequenceDiagram
-    participant A as Agent(采集端)
-    participant Imp as POST /import (Mode A, 已鉴权)
-    participant PE as POST /process-events (Mode B, 待补鉴权)
-    participant AD as detect_processes/detect_webshells/detect_memory_shells
-    participant PEC as ProcessEventConsumer
-    participant COR as correlate_incident (统一引擎)
-    participant DB as 各结果表 / Incident 视图
+    participant FE as 前端 HostDetailView
+    participant API as FastAPI Router
+    participant AS as AnalysisService
+    participant SRA as ServiceRiskAnalyzer
+    participant RA as RiskAssessor
+    participant RD as raw_data (JSON)
 
-    Note over A,Imp: ── Mode A：快照 + webshells + memory_shells + 进程富化 ──
-    A->>A: WebShellCollector / MemoryShellCollector / ProcessesCollector(+session/state/memory_sections)
-    A->>Imp: POST /import (复用现有端点)
-    Imp->>AD: detect_webshells / detect_memory_shells / detect_processes
-    AD-->>DB: WebShell / MemoryShell / AbnormalProcess 表
+    Note over FE,RD: ── 触发分析流程 ──
+    FE->>API: POST /hosts/{id}/analyze
+    API->>AS: analyze(host_id)
+    AS->>RD: ImportService.read_raw_json(host_id)
 
-    Note over A,PE: ── Mode B：事件流（激活 #3/#5/#6 + 内存马关联）──
-    A->>A: ProcessEventsCollector (ETW/eBPF/ES) 批量 5s/500条
-    A->>PE: POST /process-events (detail 含 memory/etw/remote_thread/memory_shell_signals)
-    PE->>PEC: ingest → process_events 表
-    PEC->>PEC: normalize (提升 detail 字段)
-    PEC-->>DB: event_hits
+    Note over AS: 步骤 1: clear_analysis_by_host()
+    Note over AS: 步骤 2: RuleEngine.load_rules()
+    Note over AS: 步骤 3: ProfileBuilder.build() → HostProfile
+    Note over AS: 步骤 4: AnomalyDetector (进程/外连/启动项)
 
-    Note over AD,COR: ── 统一关联引擎 ──
-    DB->>COR: webshell_hits + memory_shell_hits + abnormal_processes + event_hits + 基线偏离
-    COR->>COR: 加权组合 + 贝叶斯更新 + attack_path 回溯
-    COR-->>DB: incident(single_alert | incident) → 统一 Incident 视图 + ATT&CK + 取证链 + Playbook
+    AS->>AS: 步骤 5: PersistenceFinder.find_all()<br/>+ assess_suspicious()
+
+    Note over AS: ═══ 步骤 5.5: 新增服务风险检测 ═══
+    AS->>SRA: ServiceRiskAnalyzer.analyze(raw_data, host_id)
+
+    activate SRA
+    SRA->>SRA: _extract_services(raw_data)
+    Note over SRA: 从 raw_data.persistence.services<br/>提取服务列表 (200-500条)
+
+    SRA->>SRA: _detect_tamper(services)
+    Note over SRA: 遍历服务 × SECURITY_SERVICES白名单<br/>检查 status≠running 或 start_type异常<br/>→ DetectionResult(P0-1-TAMPER)
+
+    SRA->>SRA: _detect_shadow(services)
+    Note over SRA: 编辑距离名称伪装检测<br/>路径异常检测 (Temp/AppData)<br/>幽灵服务检测<br/>→ DetectionResult(P0-2-SHADOW)
+
+    SRA->>SRA: _detect_priv_esc(services)
+    Note over SRA: 检查 LocalSystem + 可疑路径<br/>→ DetectionResult(P1-PRIVESC)
+
+    SRA->>SRA: _calculate_aggregate_score(services)
+    Note over SRA: SUM(weight × triggered) / max<br/>归一化 → 0-100
+
+    SRA-->>AS: ServiceRiskReport
+    deactivate SRA
+
+    AS->>AS: findings["service_risks"] = report
+
+    Note over AS: 步骤 6: IocChecker.check()
+    Note over AS: 步骤 7: TimelineBuilder.build()
+    Note over AS: 步骤 8: 数据采集增强 (网络/哈希/WMI/注册表)
+    Note over AS: 步骤 8.6: 文件哈希情报匹配
+    Note over AS: 步骤 8.5: 攻击链关联检测
+
+    AS->>RA: RiskAssessor.assess(findings)
+
+    activate RA
+    RA->>RA: 计算 service_risks 维度
+    Note over RA: svc_score = aggregate_score × 0.15<br/>合并到总风险分
+    RA-->>AS: risk_result
+    deactivate RA
+
+    Note over AS: 步骤 10: AnalysisResult.create_or_replace()
+    AS-->>API: result dict
+    API-->>FE: { code:0, data: result }
+
+    Note over FE,RD: ── 查询服务风险 (独立调用) ──
+    FE->>API: GET /hosts/{id}/service-risk
+    API->>AS: get_service_risk(host_id)
+    AS->>RD: ImportService.read_raw_json(host_id)
+    AS->>SRA: ServiceRiskAnalyzer.analyze(raw_data, host_id)
+
+    activate SRA
+    Note over SRA: 实时执行全部4个检测规则<br/>纯内存计算 (<100ms for 500 services)
+    SRA-->>AS: ServiceRiskReport
+    deactivate SRA
+
+    AS-->>API: report dict
+    API-->>FE: { code:0, data: report }
+    Note over FE: ServicesTable 渲染<br/>风险评分列 + 检测标签 + 行展开详情

@@ -244,6 +244,28 @@ def recall_draft(draft_id: int, current_user: dict = Depends(get_current_user)):
     return {"code": 0, "data": draft, "message": "草稿已撤回至待审核"}
 
 
+@router.delete("/drafts/{draft_id}")
+def delete_draft(draft_id: int, current_user: dict = Depends(get_current_user)):
+    """永久删除知识草稿.
+
+    任何状态的草稿均可删除。
+    删除后触发种子索引重建，清除 ChromaDB 中的对应向量。
+    """
+    success = KnowledgeDraft.delete(draft_id)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"知识草稿 {draft_id} 不存在")
+
+    # 删除后重建种子索引，确保向量从 ChromaDB 移除
+    try:
+        from app.services.knowledge_retriever import KnowledgeRetriever
+
+        KnowledgeRetriever.rebuild_seed_index()
+    except Exception as exc:
+        logger.warning("删除后重建种子索引失败（不影响删除操作）: %s", exc)
+
+    return {"code": 0, "data": None, "message": "草稿已永久删除"}
+
+
 @router.post("/drafts/batch")
 def batch_action(body: BatchRequest, current_user: dict = Depends(get_current_user)):
     """批量批准或拒绝知识草稿.
@@ -382,6 +404,130 @@ def import_knowledge(body: ImportRequest, current_user: dict = Depends(get_curre
 class ValidateRetrievalRequest(BaseModel):
     """向量检索质量自检请求体."""
     queries: list[str] = Field(..., min_length=1, description="待验证的攻击描述列表")
+
+
+@router.get("/entry")
+def get_entry(ref: str = Query(..., description="知识条目引用 ref（如 rule_5_cmd_powershell_chain）"),
+              current_user: dict = Depends(get_current_user)):
+    """根据 entry_ref 查找知识条目详情.
+
+    查找顺序：
+    1. rules 缓存（rule_* 前缀）
+    2. 种子知识缓存（seed_* 前缀）
+    3. 知识草稿 DB（draft_* 前缀）
+
+    Returns:
+        {name, description, severity, category, mitre_attack, source, entry_type}
+    """
+    if not ref:
+        raise HTTPException(status_code=400, detail="ref 参数不能为空")
+
+    prefix = ref.split("_", 1)[0] if "_" in ref else ""
+
+    # 1) rule_* — 从 rules 缓存查找
+    if prefix == "rule":
+        try:
+            from app.rules.loader import load_default_rules
+            rules = load_default_rules()
+            # ref 格式: rule_{i}_{name}
+            parts = ref.split("_", 2)
+            if len(parts) >= 3:
+                rule_i = parts[1]
+                rule_name_key = parts[2]
+                # 先按索引查找
+                try:
+                    idx = int(rule_i)
+                    if 0 <= idx < len(rules):
+                        rule = rules[idx]
+                        return {
+                            "code": 0,
+                            "data": {
+                                "name": rule.get("name", ""),
+                                "description": rule.get("description", ""),
+                                "severity": rule.get("severity", "medium"),
+                                "category": rule.get("category", ""),
+                                "mitre_attack": rule.get("mitre_attack", rule.get("mitre", "")),
+                                "source": "rule",
+                                "entry_type": "rule",
+                            },
+                            "message": "success",
+                        }
+                except ValueError:
+                    pass
+                # 按名称查找
+                for rule in rules:
+                    if (rule.get("name") or "").strip() == rule_name_key:
+                        return {
+                            "code": 0,
+                            "data": {
+                                "name": rule.get("name", ""),
+                                "description": rule.get("description", ""),
+                                "severity": rule.get("severity", "medium"),
+                                "category": rule.get("category", ""),
+                                "mitre_attack": rule.get("mitre_attack", rule.get("mitre", "")),
+                                "source": "rule",
+                                "entry_type": "rule",
+                            },
+                            "message": "success",
+                        }
+        except Exception as exc:
+            logger.warning("Lookup rule entry '%s' failed: %s", ref, exc)
+
+    # 2) seed_* — 从种子知识缓存查找
+    if prefix == "seed":
+        try:
+            from app.data.knowledge_seed import ALL_SEED_KNOWLEDGE
+            # ref 格式: seed_{i}_{mitre_id}
+            parts = ref.split("_", 2)
+            if len(parts) >= 3:
+                seed_i = parts[1]
+                try:
+                    idx = int(seed_i)
+                    seeds = list(ALL_SEED_KNOWLEDGE)
+                    if 0 <= idx < len(seeds):
+                        seed = seeds[idx]
+                        return {
+                            "code": 0,
+                            "data": {
+                                "name": seed.get("name", ""),
+                                "description": seed.get("description", ""),
+                                "severity": seed.get("severity", "medium"),
+                                "category": seed.get("category", ""),
+                                "mitre_attack": seed.get("mitre_attack", seed.get("id", "")),
+                                "source": "seed",
+                                "entry_type": "seed",
+                            },
+                            "message": "success",
+                        }
+                except ValueError:
+                    pass
+        except Exception as exc:
+            logger.warning("Lookup seed entry '%s' failed: %s", ref, exc)
+
+    # 3) draft_* — 从 knowledge_drafts DB 查找
+    if prefix == "draft":
+        try:
+            draft_id_str = ref[len("draft_"):]
+            draft_id = int(draft_id_str)
+            draft = KnowledgeDraft.get_by_id(draft_id)
+            if draft:
+                return {
+                    "code": 0,
+                    "data": {
+                        "name": draft.get("title", ""),
+                        "description": draft.get("description", ""),
+                        "severity": draft.get("severity", "medium"),
+                        "category": draft.get("category", ""),
+                        "mitre_attack": draft.get("mitre_attack", ""),
+                        "source": draft.get("source", "draft"),
+                        "entry_type": "draft",
+                    },
+                    "message": "success",
+                }
+        except (ValueError, Exception) as exc:
+            logger.warning("Lookup draft entry '%s' failed: %s", ref, exc)
+
+    raise HTTPException(status_code=404, detail=f"知识条目 '{ref}' 不存在")
 
 
 @router.post("/validate-retrieval")

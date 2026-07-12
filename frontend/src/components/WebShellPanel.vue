@@ -106,6 +106,17 @@
           <el-tag :type="severityType(row.severity)" size="small">{{ row.severity || 'info' }}</el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="知识匹配" width="70" v-if="hasKnowledgeHits">
+        <template #default="{ row }">
+          <el-tooltip
+            v-if="row.knowledge_hit"
+            :content="row.knowledge_hit.title + ' (' + row.knowledge_hit.confidence + ')'"
+            placement="top"
+          >
+            <span class="knowledge-badge" @click.stop="$emit('knowledge-click', row.knowledge_hit.entry_ref)">📚</span>
+          </el-tooltip>
+        </template>
+      </el-table-column>
     </el-table>
   </div>
 </template>
@@ -116,6 +127,8 @@ import { ref, computed } from 'vue'
 const props = defineProps({
   data: { type: Array, default: () => [] }
 })
+
+defineEmits(['knowledge-click'])
 
 const searchQuery = ref('')
 
@@ -128,6 +141,10 @@ const filteredData = computed(() => {
     const sha = (row.sha256 || '').toLowerCase()
     return path.includes(q) || name.includes(q) || sha.includes(q)
   })
+})
+
+const hasKnowledgeHits = computed(() => {
+  return props.data.some(row => row.knowledge_hit)
 })
 
 /** matched_rules 兼容字符串/对象 */
@@ -231,4 +248,5 @@ function formatJson(obj) {
 }
 .mono { font-family: Consolas, 'Courier New', monospace; font-size: 12px; }
 .text-muted { color: var(--color-fg-muted, #909399); }
+.knowledge-badge { cursor: pointer; font-size: 16px; }
 </style>
