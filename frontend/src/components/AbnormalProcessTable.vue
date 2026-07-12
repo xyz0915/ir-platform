@@ -99,6 +99,17 @@
         </template>
       </el-table-column>
       <el-table-column prop="reason" label="原因" min-width="180" show-overflow-tooltip />
+      <el-table-column label="知识匹配" width="80" v-if="hasKnowledgeHits">
+        <template #default="{ row }">
+          <el-tooltip
+            v-if="row.knowledge_hit"
+            :content="row.knowledge_hit.title + ' (' + row.knowledge_hit.confidence + ')'"
+            placement="top"
+          >
+            <span class="knowledge-badge" @click.stop>📚</span>
+          </el-tooltip>
+        </template>
+      </el-table-column>
       <el-table-column label="操作" width="80" fixed="right">
         <template #default="{ row }">
           <el-button type="primary" link size="small" @click="$emit('view-detail', row)">
@@ -123,6 +134,11 @@ defineEmits(['view-detail'])
 const searchQuery = ref('')
 const severityFilter = ref([])
 const ruleNameFilter = ref([])
+
+/** 判断是否有知识匹配的条目 */
+const hasKnowledgeHits = computed(() => {
+  return props.data.some(row => row.knowledge_hit)
+})
 
 /** 从 data 中提取所有规则：{name(稳定 ID), label(中文展示)} */
 const allRuleNames = computed(() => {
@@ -232,5 +248,9 @@ function exportCSV() {
 }
 .expand-rules {
   padding: 8px 12px;
+}
+.knowledge-badge {
+  cursor: pointer;
+  font-size: 16px;
 }
 </style>
