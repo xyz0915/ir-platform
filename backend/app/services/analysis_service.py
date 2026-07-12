@@ -18,11 +18,13 @@ from app.models.analysis import (
     SuspiciousStartupItem, PersistenceItem, TimelineEvent, IocHit,
     clear_analysis_by_host,
     NetworkConnection, FileHash, WmiSubscription, RegistryKey,
+    WebShell, MemoryShell,
 )
 from app.models.host import Host
 from app.rules.rule_engine import RuleEngine
 from app.services.import_service import ImportService
 from app.services.whitelist_service import WhitelistService
+from app.analysis.process_event_consumer import ProcessEventConsumer
 from app.services.enrichment_service import (
     get_enrichment_service,
     ThreatIntelQueryError,
@@ -271,6 +273,36 @@ class AnalysisService:
                 for m in attack_chain_matches
             ]
 
+        # 8.7 融合检测（WebShell 文件型 + 内存码 + 统一关联引擎，A §三/§五）
+        # 仅新增分支：既有 detect_processes/detect_connections 调用链完全保留（§三.2）。
+        webshell_hits = AnomalyDetector.detect_webshells(raw_data, rules)
+        if webshell_hits:
+            WebShell.batch_create(host_id, webshell_hits)
+            logger.info("Detected %d webshells", len(webshell_hits))
+
+        memory_shell_hits = AnomalyDetector.detect_memory_shells(raw_data, rules)
+        if memory_shell_hits:
+            MemoryShell.batch_create(host_id, memory_shell_hits)
+            logger.info("Detected %d memory shells", len(memory_shell_hits))
+
+        # 事件流（B，已建 ProcessEventConsumer）：与快照并行，激活 P2 #3/#5/#6
+        event_hits = ProcessEventConsumer.evaluate(
+            host_id, rules, raw_data.get("processes")
+        )
+
+        # 统一关联引擎（合并 A correlate_webshell_memory + B 链路评分 / ancestor_map 回溯）
+        incidents = AnomalyDetector.correlate_incident(
+            raw_data,
+            webshell_hits,
+            memory_shell_hits,
+            abnormal_processes,
+            event_hits,
+            suspicious_connections=suspicious_connections,
+        )
+        if incidents:
+            risk_result.setdefault("details", {})["fusion_incidents"] = incidents
+            logger.info("Correlated %d incident(s)/alert(s)", len(incidents))
+
         # 10. 保存分析结果
         result = AnalysisResult.create_or_replace(
             host_id=host_id,
@@ -299,8 +331,22 @@ class AnalysisService:
 
         Returns:
             分析结果字典，不存在时返回 None.
+
+        Note:
+            融合检测（A §三/§五）透传：在既有响应基础上**增量**追加
+            ``webshells`` / ``memory_shells`` / ``incidents`` 三个顶层字段，
+            供前端融合面板直接消费；既有字段（risk_level/risk_score/summary/
+            details 等）保持不变，向后兼容。
         """
-        return AnalysisResult.get_by_host(host_id)
+        result = AnalysisResult.get_by_host(host_id)
+        if result is None:
+            return None
+        details = result.get("details") if isinstance(result.get("details"), dict) else {}
+        # 仅新增字段，不覆盖既有键
+        result.setdefault("webshells", WebShell.list_by_host(host_id))
+        result.setdefault("memory_shells", MemoryShell.list_by_host(host_id))
+        result.setdefault("incidents", details.get("fusion_incidents", []) or [])
+        return result
 
     @staticmethod
     def get_profile(host_id: int) -> Optional[dict]:

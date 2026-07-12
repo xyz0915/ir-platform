@@ -215,5 +215,165 @@
       "description": "仅见于事件流/外连但不在快照（反取证/短时驻留）",
       "_meta": { "mitre_attack": "T1059" }
     }
+  },
+  {
+    "name": "ws_file_name",
+    "description": "WebShell 文件名特征检测（shell/cmd/c99/godzilla/behinder 等常见 WebShell 文件名）",
+    "category": "webshell",
+    "rule_type": "regex",
+    "condition": {
+      "field": "name",
+      "pattern": "(shell|cmd|uploader|b374k|c99|r57|weevely|chopper|antsword|godzilla|behinder)\\.(php|jsp|asp|aspx|war|jspx)",
+      "flags": "ignorecase",
+      "_meta": { "mitre_attack": "T1505.003" }
+    },
+    "severity": "high",
+    "enabled": true,
+    "label": "WebShell 文件名检测",
+    "source": "default"
+  },
+  {
+    "name": "ws_webdir_activity",
+    "description": "WebShell Web 目录活动检测（上传/临时/缓存目录下的可执行脚本）",
+    "category": "webshell",
+    "rule_type": "regex",
+    "condition": {
+      "field": "path",
+      "pattern": "(upload|tmp|temp|cache|avatar|images|static|public|webapps).*\\.(php|jsp|asp|aspx|war|jspx)",
+      "flags": "ignorecase",
+      "_meta": { "mitre_attack": "T1505.003" }
+    },
+    "severity": "high",
+    "enabled": true,
+    "label": "WebShell Web 目录活动",
+    "source": "default"
+  },
+  {
+    "name": "ws_suspicious_funcs",
+    "description": "WebShell 危险函数检测（eval/base64_decode/system/exec 等）",
+    "category": "webshell",
+    "rule_type": "regex",
+    "condition": {
+      "field": "suspicious_funcs",
+      "pattern": "(eval|base64_decode|base64_encode|system|exec|passthru|shell_exec|assert|create_function|preg_replace|proc_open|popen)",
+      "flags": "ignorecase",
+      "_meta": { "mitre_attack": "T1505.003" }
+    },
+    "severity": "high",
+    "enabled": true,
+    "label": "WebShell 危险函数",
+    "source": "default"
+  },
+  {
+    "name": "ws_obfuscation",
+    "description": "WebShell 混淆度检测（obfuscation_score 偏高）",
+    "category": "webshell",
+    "rule_type": "threshold",
+    "condition": {
+      "field": "obfuscation_score",
+      "operator": ">",
+      "value": 0.6,
+      "_meta": { "mitre_attack": "T1027" }
+    },
+    "severity": "medium",
+    "enabled": true,
+    "label": "WebShell 高混淆",
+    "source": "default"
+  },
+  {
+    "name": "ws_behinder_godzilla",
+    "description": "WebShell 哥斯拉/冰蝎信号检测（behinder_godzilla_signal）",
+    "category": "webshell",
+    "rule_type": "regex",
+    "condition": {
+      "field": "behinder_godzilla_signal",
+      "pattern": "(true|1)",
+      "flags": "ignorecase",
+      "_meta": { "mitre_attack": "T1505.003" }
+    },
+    "severity": "high",
+    "enabled": true,
+    "label": "哥斯拉/冰蝎信号",
+    "source": "default"
+  },
+  {
+    "name": "ms_anomaly_class",
+    "description": "内存马异常类检测（class_signals 含 MemShell/Filter/Servlet 等）",
+    "category": "memory_shell",
+    "rule_type": "regex",
+    "condition": {
+      "field": "class_signals",
+      "pattern": "(MemShell|Filter|Servlet|ClassLoader|Spring|StandardContext|EventHandler|Agent)",
+      "flags": "ignorecase",
+      "_meta": { "mitre_attack": "T1055" }
+    },
+    "severity": "high",
+    "enabled": true,
+    "label": "内存马异常类",
+    "source": "default"
+  },
+  {
+    "name": "ms_agent_signal",
+    "description": "内存马 Agent 探针信号（-javaagent/Instrumentation/ClassFileTransformer）",
+    "category": "memory_shell",
+    "rule_type": "regex",
+    "condition": {
+      "field": "agent_signals",
+      "pattern": "(-javaagent|agent\\.jar|Instrumentation|ByteBuddy|ClassFileTransformer)",
+      "flags": "ignorecase",
+      "_meta": { "mitre_attack": "T1055" }
+    },
+    "severity": "high",
+    "enabled": true,
+    "label": "内存马 Agent 信号",
+    "source": "default"
+  },
+  {
+    "name": "ms_filter_signal",
+    "description": "内存马 Filter 注入证据（evidence 含 Filter/addFilter/StandardContext）",
+    "category": "memory_shell",
+    "rule_type": "regex",
+    "condition": {
+      "field": "evidence",
+      "pattern": "(Filter|addFilter|StandardContext|priority|servlet)",
+      "flags": "ignorecase",
+      "_meta": { "mitre_attack": "T1055" }
+    },
+    "severity": "medium",
+    "enabled": true,
+    "label": "内存马 Filter 信号",
+    "source": "default"
+  },
+  {
+    "name": "ms_thread_signal",
+    "description": "内存马异常线程信号（thread_signals 含 Transformer/non-daemon）",
+    "category": "memory_shell",
+    "rule_type": "regex",
+    "condition": {
+      "field": "thread_signals",
+      "pattern": "(ClassFileTransformer|non-daemon|Transformer)",
+      "flags": "ignorecase",
+      "_meta": { "mitre_attack": "T1055" }
+    },
+    "severity": "medium",
+    "enabled": true,
+    "label": "内存马线程信号",
+    "source": "default"
+  },
+  {
+    "name": "ms_conn_signal",
+    "description": "内存马外连信号（conn_signals 含可疑 IP:port）",
+    "category": "memory_shell",
+    "rule_type": "regex",
+    "condition": {
+      "field": "conn_signals",
+      "pattern": "(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}:\\d+)",
+      "flags": "ignorecase",
+      "_meta": { "mitre_attack": "T1071" }
+    },
+    "severity": "high",
+    "enabled": true,
+    "label": "内存马外连信号",
+    "source": "default"
   }
 ]

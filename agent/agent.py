@@ -44,6 +44,11 @@ COLLECTOR_MAP = {
     "persistence": "collectors.persistence.PersistenceCollector",
     "ioc": "collectors.ioc.IocCollector",
     "timeline": "collectors.timeline.TimelineCollector",
+    # ── 融合扩充（A §三.1，只增不改；ProcessesCollector 就地增强，不新增 key）──
+    "webshells": "collectors.webshell.WebShellCollector",
+    "memory_shells": "collectors.memory.MemoryShellCollector",
+    "linux_baseline": "collectors.linux.LinuxBaselineCollector",
+    "process_events": "collectors.process_events.ProcessEventsCollector",
 }
 
 
@@ -67,12 +72,23 @@ def load_collector(name: str, log_days: int = 7) -> BaseCollector:
     return cls(log_days=log_days)
 
 
-def run_collectors(collect_names: list, log_days: int = 7) -> dict:
+# 返回 list 的采集器名集合：异常时降级为空 list（而非 {"error":...}），
+# 便于下游统一按 list 处理。linux_baseline 返回 dict，不纳入。
+_LIST_COLLECTORS: set = {
+    "users", "processes", "network", "registry", "files",
+    "persistence", "ioc", "timeline", "webshells",
+    "memory_shells", "process_events",
+}
+
+
+def run_collectors(collect_names: list, log_days: int = 7, health=None) -> dict:
     """依次执行指定采集器.
 
     Args:
         collect_names: 要执行的采集器名称列表.
         log_days: 采集最近 N 天的数据，传递给各采集器.
+        health: 可选 CollectorHealth 累加器；传入时逐个记录采集器状态/数量/告警，
+            不传时行为与历史一致（向后兼容，既有调用方零影响）。
 
     Returns:
         各采集器结果的字典 {collector_name: result}.
@@ -92,9 +108,24 @@ def run_collectors(collect_names: list, log_days: int = 7) -> dict:
             result = collector.collect()
             results[name] = result
             logger.info("Collector %s completed", name)
+            if health is not None:
+                count = len(result) if isinstance(result, list) else 0
+                warnings = []
+                if name == "processes" and isinstance(result, list) and len(result) == 0:
+                    status = "degraded"
+                    warnings = ["进程列表为空，可能影响关联分析"]
+                else:
+                    status = "ok"
+                health.record(name, status, count, warnings)
         except Exception as exc:
             logger.exception("Collector %s failed: %s", name, exc)
-            results[name] = {"error": str(exc), "collector": name}
+            if name in _LIST_COLLECTORS:
+                # list 型采集器异常 → 降级为空结构（下游统一按 list 处理）
+                results[name] = []
+            else:
+                results[name] = {"error": str(exc), "collector": name}
+            if health is not None:
+                health.record(name, "failed", 0, [str(exc)])
     return results
 
 

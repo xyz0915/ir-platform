@@ -910,3 +910,197 @@ class RegistryKey:
         """删除主机的所有注册表键值记录."""
         with get_connection() as conn:
             conn.execute("DELETE FROM registry_keys WHERE host_id = ?", (host_id,))
+
+
+class WebShell:
+    """WebShell 文件型检测命中模型（融合扩充 A §2.2）.
+
+    落库 detect_webshells 的聚合结果（与 abnormal_processes 同风格）。
+    """
+
+    @staticmethod
+    def batch_create(host_id: int, items: list) -> int:
+        """批量创建 WebShell 命中记录.
+
+        Args:
+            host_id: 主机 ID.
+            items: detect_webshells 聚合后的命中列表（dict）.
+
+        Returns:
+            插入的记录数.
+        """
+        if not items:
+            return 0
+        with get_connection() as conn:
+            conn.execute("DELETE FROM webshells WHERE host_id = ?", (host_id,))
+            count = 0
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    matched_rules = json.dumps(
+                        item.get("matched_rules", []), ensure_ascii=False
+                    )
+                except (TypeError, ValueError):
+                    matched_rules = "[]"
+                try:
+                    suspicious_funcs = json.dumps(
+                        item.get("suspicious_funcs", []), ensure_ascii=False
+                    )
+                except (TypeError, ValueError):
+                    suspicious_funcs = "[]"
+                try:
+                    details = json.dumps(item, ensure_ascii=False)
+                except (TypeError, ValueError):
+                    details = "{}"
+                conn.execute(
+                    """
+                    INSERT INTO webshells
+                    (host_id, path, name, sha256, severity, risk_score,
+                     matched_rules, suspicious_funcs, obfuscation_score,
+                     behinder_godzilla_signal, details)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        host_id,
+                        item.get("path"),
+                        item.get("name"),
+                        item.get("sha256"),
+                        item.get("severity"),
+                        int(item.get("risk_score", 0) or 0),
+                        matched_rules,
+                        suspicious_funcs,
+                        item.get("obfuscation_score"),
+                        1 if item.get("behinder_godzilla_signal") else 0,
+                        details,
+                    ),
+                )
+                count += 1
+            return count
+
+    @staticmethod
+    def list_by_host(host_id: int) -> list:
+        """获取主机的 WebShell 命中列表.
+
+        matched_rules / suspicious_funcs / details 字段自动 json.loads() 反序列化，
+        便于前端直接消费（与 AbnormalProcess.list_by_host 风格一致）。
+        """
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM webshells WHERE host_id = ? ORDER BY id",
+                (host_id,),
+            ).fetchall()
+            result_list = []
+            for r in rows:
+                item = dict(r)
+                for field in ("matched_rules", "suspicious_funcs", "details"):
+                    val = item.get(field)
+                    if isinstance(val, str):
+                        try:
+                            item[field] = json.loads(val)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                # 兜底：matched_rules / suspicious_funcs 为 None 时给空数组
+                if item.get("matched_rules") is None:
+                    item["matched_rules"] = []
+                if item.get("suspicious_funcs") is None:
+                    item["suspicious_funcs"] = []
+                result_list.append(item)
+            return result_list
+
+    @staticmethod
+    def delete_by_host(host_id: int) -> None:
+        """删除主机的所有 WebShell 命中记录."""
+        with get_connection() as conn:
+            conn.execute("DELETE FROM webshells WHERE host_id = ?", (host_id,))
+
+
+class MemoryShell:
+    """内存码（Java 内存马 / PHP 扩展）检测命中模型（融合扩充 A §2.2）.
+
+    落库 detect_memory_shells 的聚合结果（与 abnormal_processes 同风格）。
+    """
+
+    @staticmethod
+    def batch_create(host_id: int, items: list) -> int:
+        """批量创建内存码命中记录.
+
+        Args:
+            host_id: 主机 ID.
+            items: detect_memory_shells 聚合后的命中列表（dict）.
+
+        Returns:
+            插入的记录数.
+        """
+        if not items:
+            return 0
+        with get_connection() as conn:
+            conn.execute("DELETE FROM memory_shells WHERE host_id = ?", (host_id,))
+            count = 0
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    matched_rules = json.dumps(
+                        item.get("matched_rules", []), ensure_ascii=False
+                    )
+                except (TypeError, ValueError):
+                    matched_rules = "[]"
+                try:
+                    details = json.dumps(item, ensure_ascii=False)
+                except (TypeError, ValueError):
+                    details = "{}"
+                conn.execute(
+                    """
+                    INSERT INTO memory_shells
+                    (host_id, pid, process_name, type, evidence, severity,
+                     risk_score, matched_rules, details)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        host_id,
+                        item.get("pid"),
+                        item.get("process_name"),
+                        item.get("type"),
+                        item.get("evidence"),
+                        item.get("severity"),
+                        int(item.get("risk_score", 0) or 0),
+                        matched_rules,
+                        details,
+                    ),
+                )
+                count += 1
+            return count
+
+    @staticmethod
+    def list_by_host(host_id: int) -> list:
+        """获取主机的内存码命中列表.
+
+        matched_rules / details 字段自动 json.loads() 反序列化，
+        便于前端直接消费（与 AbnormalProcess.list_by_host 风格一致）。
+        """
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM memory_shells WHERE host_id = ? ORDER BY id",
+                (host_id,),
+            ).fetchall()
+            result_list = []
+            for r in rows:
+                item = dict(r)
+                for field in ("matched_rules", "details"):
+                    val = item.get(field)
+                    if isinstance(val, str):
+                        try:
+                            item[field] = json.loads(val)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                if item.get("matched_rules") is None:
+                    item["matched_rules"] = []
+                result_list.append(item)
+            return result_list
+
+    @staticmethod
+    def delete_by_host(host_id: int) -> None:
+        """删除主机的所有内存码命中记录."""
+        with get_connection() as conn:
+            conn.execute("DELETE FROM memory_shells WHERE host_id = ?", (host_id,))

@@ -169,6 +169,83 @@ class AgentData(BaseModel):
     file_hashes: list[Any] = Field(default_factory=list)
     wmi_subscriptions: list[Any] = Field(default_factory=list)
     registry_keys: list[Any] = Field(default_factory=list)
+    # 融合扩充（A §2.2）：WebShell 文件型检测与内存码（Java 内存马 / PHP 扩展）检测。
+    # 使用宽松模型（list[Any] + extra="allow"），老 Agent 不产出这些键时照常入库，
+    # 新字段缺失时规则优雅降级（与 processes 同风格）。
+    webshells: list[Any] = Field(default_factory=list)
+    memory_shells: list[Any] = Field(default_factory=list)
+
+    class Config:
+        extra = "allow"
+
+
+class MemorySection(BaseModel):
+    """进程内存区段（融合统一契约 §2.1）.
+
+    合并 B 注入/PE 痕迹 + A 内存马/JVM 语义。宽松模型（``extra="allow"``）：
+    Agent 端新增的区段子字段不报错，下游规则缺字段时由各自 ``_match_*`` 降级返回 False。
+    """
+
+    base_address: Optional[str] = None
+    end_address: Optional[str] = None
+    size: Optional[int] = None
+    protection: Optional[str] = None          # R / RW / RX / RWX / ...
+    type: Optional[str] = None                # mem_image | image | heap | stack | mapped | pe | jvm_generated
+    is_non_image: Optional[bool] = None       # 非镜像映射（无文件背景）
+    pe_in_memory: Optional[bool] = None        # 内存中 PE（无文件落盘）
+    injection: Optional[bool] = None           # 注入标志（RWX 匿名 / 反射加载）
+    is_anonymous_rwx: Optional[bool] = None    # 匿名可执行映射（shellcode 启发式）
+    mapped_path: Optional[str] = None          # 有文件背景时；匿名时为 null
+    jvm: Optional[Any] = None                  # JVM 层语义（class_signals/agent_signals/...）
+    evidence: Optional[str] = None
+    confidence: Optional[float] = None
+
+    class Config:
+        extra = "allow"
+
+
+class WebShell(BaseModel):
+    """WebShell 文件型证据（融合契约 §2.2）.
+
+    宽松模型（``extra="allow"``）兼容老 Agent / 不同采集端拓展字段。
+    """
+
+    path: Optional[str] = None
+    name: Optional[str] = None
+    size: Optional[int] = None
+    mtime: Optional[str] = None
+    ctime: Optional[str] = None
+    owner: Optional[str] = None
+    perms: Optional[str] = None
+    sha256: Optional[str] = None
+    web_root: Optional[str] = None
+    middleware: Optional[str] = None
+    suspicious_funcs: Optional[list] = None
+    obfuscation_score: Optional[float] = None
+    behinder_godzilla_signal: Optional[bool] = None
+    risk_score: Optional[float] = None
+    scan_engine: Optional[str] = None
+
+    class Config:
+        extra = "allow"
+
+
+class MemoryShell(BaseModel):
+    """内存码证据（Java 内存马 / PHP 扩展，融合契约 §2.2）.
+
+    ``pid`` 为与进程富化的关联锚点；宽松模型（``extra="allow"``）兼容拓展字段。
+    """
+
+    pid: Optional[int] = None
+    process_name: Optional[str] = None
+    type: Optional[str] = None                 # java_filter | java_agent | php | unknown
+    evidence: Optional[str] = None
+    class_signals: Optional[list] = None
+    agent_signals: Optional[list] = None
+    conn_signals: Optional[list] = None
+    thread_signals: Optional[list] = None
+    confidence: Optional[float] = None
+    detect_method: Optional[str] = None
 
     class Config:
         extra = "allow"

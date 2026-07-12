@@ -1,4 +1,12 @@
 {
-  "_comment": "离线 CRL/OCSP 缓存导出的被吊销/过期签名者标识集合。为空表示吊销库不可用（规则优雅降级不触发）。",
-  "revoked_signers": []
+  "_comment": "离线 CRL/OCSP 缓存导出的被吊销/过期签名者标识集合。为空表示吊销库不可用（规则优雅降级不触发）。样例数据用于激活 #7 revoked_expired_signature 规则（与进程采集的 exe_signer 匹配，小写归一）。",
+  "revoked_signers": [
+    "doomed code ca",
+    "fake signing llc",
+    "test malware signer",
+    "revoked-root-cn",
+    "ou=blacklisted-software",
+    "trivial ca (untrusted)",
+    "encrypted virus distributor"
+  ]
 }

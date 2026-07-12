@@ -5,6 +5,8 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
+from collectors.resource_budget import MAX_REPORT_BYTES
+
 logger = logging.getLogger(__name__)
 
 # Agent 输出 JSON 的固定顶层 key（21个）
@@ -88,7 +90,89 @@ def build_output(metadata: dict, raw_results: dict, collection_health: Optional[
         if new_key not in output:
             output[new_key] = []
 
+    # 融合扩充（A §三.1）：聚合 webshells / memory_shells / linux_baseline 顶层键。
+    # 仅聚合顶层键（与既有采集器同风格）；process_events 走独立 /process-events
+    # 事件管线，不并入 /import 输出。
+    for fusion_key in ["webshells", "memory_shells", "linux_baseline"]:
+        result = raw_results.get(fusion_key)
+        if result is not None and not (isinstance(result, dict) and "error" in result):
+            output[fusion_key] = result
+        elif fusion_key not in output:
+            output[fusion_key] = []
+
+    # 资源预算闭环：超 MAX_REPORT_BYTES 时按优先级丢弃最重载荷
+    _enforce_report_budget(output)
     return output
+
+
+def _enforce_report_budget(output: dict) -> None:
+    """估算序列化体积，超 MAX_REPORT_BYTES 时按优先级丢弃最重载荷.
+
+    丢弃顺序（逐级，每级后重新估算，回到预算内即停）：
+      1. ``processes[].memory_sections``（置空，保留键）
+      2. ``process_events``（置空，保留键）
+      3. ``linux_baseline``（置空，保留键）
+      4. ``webshells`` / ``memory_shells`` 明细 → 仅留摘要（count + truncated 标记）
+
+    所有丢弃均 ``logger.info`` 记录；超限本身 ``logger.warning``。
+    顶层键一律保留（可置空），向后兼容。
+    """
+    def _serialized_bytes() -> int:
+        return len(json.dumps(output, ensure_ascii=False, default=str).encode("utf-8"))
+
+    if _serialized_bytes() <= MAX_REPORT_BYTES:
+        return
+
+    logger.warning(
+        "Agent report exceeds budget (%d bytes > %d); trimming heavy payloads",
+        _serialized_bytes(), MAX_REPORT_BYTES,
+    )
+
+    # 1. processes[].memory_sections
+    procs = output.get("processes")
+    if isinstance(procs, list):
+        dropped = 0
+        for p in procs:
+            if isinstance(p, dict) and p.get("memory_sections"):
+                p["memory_sections"] = []
+                dropped += 1
+        if dropped:
+            logger.info("budget trim: cleared memory_sections from %d process(es)", dropped)
+
+    if _serialized_bytes() <= MAX_REPORT_BYTES:
+        return
+
+    # 2. process_events
+    pe = output.get("process_events")
+    if pe:
+        n = len(pe) if isinstance(pe, list) else 1
+        output["process_events"] = [] if isinstance(pe, list) else {}
+        logger.info("budget trim: cleared process_events (%d entry/ies)", n)
+
+    if _serialized_bytes() <= MAX_REPORT_BYTES:
+        return
+
+    # 3. linux_baseline
+    lb = output.get("linux_baseline")
+    if lb:
+        output["linux_baseline"] = {}
+        logger.info("budget trim: cleared linux_baseline")
+
+    if _serialized_bytes() <= MAX_REPORT_BYTES:
+        return
+
+    # 4. webshells / memory_shells 明细 → 仅留摘要
+    for k in ("webshells", "memory_shells"):
+        val = output.get(k)
+        if isinstance(val, list) and val:
+            n = len(val)
+            output[k] = [{"_summary": True, "count": n, "truncated": True}]
+            logger.info("budget trim: truncated %s detail to summary (was %d entries)", k, n)
+
+    if _serialized_bytes() > MAX_REPORT_BYTES:
+        logger.warning(
+            "report still over budget after trimming: %d bytes", _serialized_bytes()
+        )
 
 
 def write_output(data: dict, output_path: str) -> None:

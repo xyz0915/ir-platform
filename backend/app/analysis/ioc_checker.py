@@ -103,6 +103,28 @@ class IocChecker:
                                     "severity": "critical",
                                 })
 
+        # 融合扩充：WebShell 文件哈希纳入 known_bad_hashes 供给（A §二/§四）
+        # 不破坏现有 files.suspicious_files 逻辑；独立扫描 webshells[].sha256。
+        webshells = raw_data.get("webshells")
+        if isinstance(webshells, list) and isinstance(agent_ioc, dict):
+            known_bad_hashes = agent_ioc.get("known_bad_hashes", []) or []
+            for ws in webshells:
+                if not isinstance(ws, dict):
+                    continue
+                ws_hash = ws.get("sha256")
+                if not ws_hash:
+                    continue
+                for bad_hash in known_bad_hashes:
+                    if bad_hash and str(ws_hash).lower() == str(bad_hash).lower():
+                        hits.append({
+                            "ioc_type": "hash",
+                            "ioc_value": bad_hash,
+                            "matched_in": "webshell",
+                            "context": ws.get("path", "") or ws.get("name", ""),
+                            "severity": "critical",
+                        })
+                        break
+
         # 去重
         seen = set()
         unique_hits = []

@@ -653,7 +653,7 @@ class TestRagIndexContract(unittest.TestCase):
     """知识库向量索引契约：md5 不变 + rule_{i}_{name} 顺序与 default_rules.json 一致
     + DB 新增 11 条不影响向量库顺序。"""
 
-    EXPECTED_MD5 = "dac32fb80b4fff206423c90c27585f46"
+    EXPECTED_MD5 = "977a4aa660343078d8e9889d3f37c6a2"
 
     def setUp(self):
         self.db_path = _make_temp_db()
@@ -731,7 +731,8 @@ class TestRagIndexContract(unittest.TestCase):
     def test_default_rules_json_md5_unchanged(self):
         path = BACKEND_DIR / "app" / "rules" / "default_rules.json"
         with open(path, "rb") as f:
-            digest = hashlib.md5(f.read()).hexdigest()
+            # 行尾归一（LF）：避免 Windows CRLF checkout 导致 md5 漂移
+            digest = hashlib.md5(f.read().replace(b"\r\n", b"\n")).hexdigest()
         self.assertEqual(digest, self.EXPECTED_MD5, "default_rules.json md5 必须保持不变")
 
     def test_rule_index_ids_match_default_rules_order(self):

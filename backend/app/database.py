@@ -451,6 +451,40 @@ DDL_STATEMENTS = [
         collected_at    TEXT
     )
     """,
+    # webshells — WebShell 文件型检测命中表（融合扩充 A §2.2）
+    """
+    CREATE TABLE IF NOT EXISTS webshells (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        host_id         INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+        path            TEXT,
+        name            TEXT,
+        sha256          TEXT,
+        severity        TEXT,
+        risk_score      INTEGER DEFAULT 0,
+        matched_rules   TEXT,        -- JSON：命中规则列表
+        suspicious_funcs TEXT,       -- JSON：危险函数列表
+        obfuscation_score REAL,
+        behinder_godzilla_signal INTEGER,
+        details         TEXT,        -- JSON：完整 webshell 证据（audit/取证）
+        created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    # memory_shells — 内存码（Java 内存马 / PHP 扩展）检测命中表（融合扩充 A §2.2）
+    """
+    CREATE TABLE IF NOT EXISTS memory_shells (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        host_id         INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+        pid             INTEGER,
+        process_name    TEXT,
+        type            TEXT,        -- java_filter | java_agent | php | unknown
+        evidence        TEXT,
+        severity        TEXT,
+        risk_score      INTEGER DEFAULT 0,
+        matched_rules   TEXT,        -- JSON：命中规则列表
+        details         TEXT,        -- JSON：完整内存马证据（audit/取证）
+        created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
     # remediation_checklist — 处置清单（任务⑤ 处置闭环）
     """
     CREATE TABLE IF NOT EXISTS remediation_checklist (
