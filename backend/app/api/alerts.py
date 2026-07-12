@@ -18,13 +18,19 @@ def list_alerts(
     severity: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     rule_name: Optional[str] = Query(None),
+    case_id: Optional[int] = Query(None),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
     limit: int = Query(100),
     offset: int = Query(0),
     current_user: dict = Depends(get_current_user),
 ):
     """列出告警（支持多条件筛选）. """
     items = Alert.list(host_id=host_id, severity=severity, status=status,
-                       rule_name=rule_name, limit=limit, offset=offset)
+                       rule_name=rule_name, case_id=case_id,
+                       date_from=date_from, date_to=date_to, search=search,
+                       limit=limit, offset=offset)
     return {"success": True, "data": items}
 
 
@@ -55,8 +61,22 @@ def dismiss_alert(alert_id: int, reason: str = "", current_user: dict = Depends(
 
 
 @router.get("/alerts/stats/summary")
-def alert_stats(current_user: dict = Depends(get_current_user)):
-    return {"success": True, "data": Alert.get_stats()}
+def alert_stats(
+    host_id: Optional[int] = Query(None),
+    severity: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    rule_name: Optional[str] = Query(None),
+    case_id: Optional[int] = Query(None),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
+):
+    return {"success": True, "data": Alert.get_stats(
+        host_id=host_id, severity=severity, status=status,
+        rule_name=rule_name, case_id=case_id,
+        date_from=date_from, date_to=date_to, search=search,
+    )}
 
 
 @router.get("/alerts/stats/trend")

@@ -42,23 +42,72 @@
     <!-- 筛选工具栏 -->
     <el-card shadow="never" class="filter-bar">
       <div class="filter-row">
-        <el-select v-model="filterSeverity" placeholder="严重度" clearable size="small" style="width:110px" @change="fetchData">
+        <el-select v-model="filterSeverity" placeholder="严重度" clearable size="small" style="width:100px" @change="fetchData">
           <el-option label="严重" value="critical" />
           <el-option label="高危" value="high" />
           <el-option label="中危" value="medium" />
           <el-option label="低危" value="low" />
         </el-select>
-        <el-select v-model="filterStatus" placeholder="状态" clearable size="small" style="width:110px" @change="fetchData">
+        <el-select v-model="filterStatus" placeholder="状态" clearable size="small" style="width:100px" @change="fetchData">
           <el-option label="未处理" value="open" />
           <el-option label="已确认" value="acknowledged" />
           <el-option label="已解决" value="resolved" />
           <el-option label="已忽略" value="dismissed" />
         </el-select>
-        <el-select v-model="filterHost" placeholder="主机" clearable size="small" style="width:150px" @change="fetchData">
-          <el-option v-for="h in hostOptions" :key="h.value" :label="h.label" :value="h.value" />
-        </el-select>
+        <el-date-picker
+          v-model="dateRange"
+          type="datetimerange"
+          range-separator="至"
+          start-placeholder="开始日期"
+          end-placeholder="结束日期"
+          size="small"
+          style="width:260px"
+          :shortcuts="dateShortcuts"
+          @change="fetchData"
+        />
+        <el-cascader
+          v-model="caseHostValue"
+          :options="caseHostOptions"
+          :props="{ expandTrigger: 'hover', label: 'label', value: 'value', children: 'children' }"
+          placeholder="案件 → 主机"
+          clearable
+          size="small"
+          style="width:200px"
+          @change="onCaseHostChange"
+        />
+        <el-input
+          v-model="searchKeyword"
+          placeholder="搜索告警标题/详情/进程"
+          size="small"
+          style="width:180px"
+          clearable
+          @keyup.enter="fetchData"
+          @clear="fetchData"
+        />
+        <el-button size="small" type="primary" @click="fetchData">搜索</el-button>
+        <el-button size="small" @click="resetAllFilters" :disabled="!hasAnyFilter">重置</el-button>
+        <div style="flex:1" />
         <el-button size="small" type="primary" plain @click="batchAck" :disabled="selected.length === 0">✅ 批量确认</el-button>
         <el-button size="small" type="success" plain @click="batchResolve" :disabled="selected.length === 0">✅ 批量解决</el-button>
+      </div>
+      <!-- 已选条件标签 -->
+      <div v-if="hasAnyFilter" class="filter-tags">
+        <el-tag v-if="filterSeverity" closable size="small" @close="filterSeverity='';fetchData()">
+          严重度: {{ sevLabel(filterSeverity) }}
+        </el-tag>
+        <el-tag v-if="filterStatus" closable size="small" @close="filterStatus='';fetchData()">
+          状态: {{ statusLabel(filterStatus) }}
+        </el-tag>
+        <el-tag v-if="dateRange" closable size="small" @close="dateRange=null;fetchData()">
+          日期: {{ formatDateRange(dateRange) }}
+        </el-tag>
+        <el-tag v-if="caseHostLabel" closable size="small" @close="caseHostValue=[];caseHostLabel='';fetchData()">
+          范围: {{ caseHostLabel }}
+        </el-tag>
+        <el-tag v-if="searchKeyword" closable size="small" @close="searchKeyword='';fetchData()">
+          搜索: {{ searchKeyword }}
+        </el-tag>
+        <el-button size="small" text type="primary" @click="resetAllFilters">清除全部</el-button>
       </div>
     </el-card>
 
@@ -149,8 +198,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import axios from 'axios'
 import {
   getAlerts, getAlertStats, acknowledgeAlert, resolveAlert, dismissAlert
 } from '@/api/alerts'
@@ -170,6 +220,55 @@ const filterSeverity = ref('')
 const filterStatus = ref('')
 const filterHost = ref('')
 const hostOptions = ref([])
+const dateRange = ref(null)
+const caseHostValue = ref([])
+const caseHostLabel = ref('')
+const caseHostOptions = ref([])
+const searchKeyword = ref('')
+
+const dateShortcuts = [
+  { text: '最近 1 小时', value: () => [new Date(Date.now() - 3600000), new Date()] },
+  { text: '最近 24 小时', value: () => [new Date(Date.now() - 86400000), new Date()] },
+  { text: '最近 7 天', value: () => [new Date(Date.now() - 604800000), new Date()] },
+  { text: '最近 30 天', value: () => [new Date(Date.now() - 2592000000), new Date()] },
+  { text: '今天', value: () => { const d = new Date(); d.setHours(0,0,0,0); return [d, new Date()] } },
+]
+
+const hasAnyFilter = computed(() =>
+  filterSeverity.value || filterStatus.value || dateRange.value ||
+  caseHostValue.value.length > 0 || searchKeyword.value
+)
+
+function formatDateRange(range) {
+  if (!range) return ''
+  const d1 = range[0], d2 = range[1]
+  const fmt = (d) => `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`
+  return `${fmt(d1)} - ${fmt(d2)}`
+}
+
+function resetAllFilters() {
+  filterSeverity.value = ''
+  filterStatus.value = ''
+  dateRange.value = null
+  caseHostValue.value = []
+  caseHostLabel.value = ''
+  searchKeyword.value = ''
+  fetchData()
+}
+
+function onCaseHostChange(val) {
+  if (val.length === 0) {
+    caseHostLabel.value = ''
+    filterHost.value = ''
+  } else if (val.length === 1) {
+    caseHostLabel.value = `案件 #${val[0]}`
+    filterHost.value = ''
+  } else if (val.length === 2) {
+    caseHostLabel.value = `主机 #${val[1]}`
+    filterHost.value = val[1]
+  }
+  fetchData()
+}
 
 function sevType(s) {
   return { critical: 'danger', high: 'warning', medium: 'primary', low: 'info' }[s] || 'info'
@@ -197,9 +296,20 @@ function formatTime(iso) {
 async function fetchData() {
   loading.value = true
   try {
-    const params = {}
+    const params = { limit: 100 }
     if (filterSeverity.value) params.severity = filterSeverity.value
     if (filterStatus.value) params.status = filterStatus.value
+    if (filterHost.value) params.host_id = filterHost.value
+    if (dateRange.value) {
+      params.date_from = dateRange.value[0].toISOString()
+      params.date_to = dateRange.value[1].toISOString()
+    }
+    if (caseHostValue.value.length === 1) {
+      params.case_id = caseHostValue.value[0]
+    } else if (caseHostValue.value.length === 2) {
+      params.host_id = caseHostValue.value[1]
+    }
+    if (searchKeyword.value) params.search = searchKeyword.value
     const res = await getAlerts(params)
     alerts.value = res.data || []
   } catch (e) {
@@ -211,18 +321,35 @@ async function fetchData() {
 
 async function fetchStats() {
   try {
-    const res = await getAlertStats()
+    const params = {}
+    if (filterSeverity.value) params.severity = filterSeverity.value
+    if (filterStatus.value) params.status = filterStatus.value
+    if (filterHost.value) params.host_id = filterHost.value
+    if (dateRange.value) {
+      params.date_from = dateRange.value[0].toISOString()
+      params.date_to = dateRange.value[1].toISOString()
+    }
+    if (caseHostValue.value.length === 1) {
+      params.case_id = caseHostValue.value[0]
+    } else if (caseHostValue.value.length === 2) {
+      params.host_id = caseHostValue.value[1]
+    }
+    if (searchKeyword.value) params.search = searchKeyword.value
+    const res = await getAlertStats(params)
     stats.value = res.data || {}
   } catch (e) { console.error(e) }
 }
 
 async function fetchHosts() {
   try {
-    const res = await getHostsStatus()
-    const hosts = res.data || []
+    const [res1, res2] = await Promise.all([
+      getHostsStatus(),
+      axios.get('/api/cases/with-hosts'),
+    ])
+    const hosts = res1.data || []
     onlineCount.value = hosts.filter(h => h.status === 'online').length
     totalHosts.value = hosts.length
-    hostOptions.value = hosts.map(h => ({ label: `${h.hostname} (${h.ip_address})`, value: h.id }))
+    caseHostOptions.value = res2.data?.data || []
   } catch (e) { console.error(e) }
 }
 
@@ -313,6 +440,7 @@ onUnmounted(() => {
 
 .filter-bar { margin-bottom: 0; }
 .filter-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.filter-tags { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 8px; padding-top: 8px; border-top: 1px solid #f3f4f6; }
 
 .alert-title { font-weight: 500; color: #1f2937; }
 .alert-detail { font-size: 11px; color: #9ca3af; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 300px; }

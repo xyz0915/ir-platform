@@ -68,7 +68,9 @@ class Alert:
 
     @staticmethod
     def list(host_id: int = None, severity: str = None, status: str = None,
-             rule_name: str = None, limit: int = 100, offset: int = 0) -> list:
+             rule_name: str = None, case_id: int = None,
+             date_from: str = None, date_to: str = None, search: str = None,
+             limit: int = 100, offset: int = 0) -> list:
         """列出告警（支持多条件筛选）. """
         try:
             conditions = ["1=1"]
@@ -85,6 +87,18 @@ class Alert:
             if rule_name:
                 conditions.append("rule_name=?")
                 params.append(rule_name)
+            if case_id is not None:
+                conditions.append("host_id IN (SELECT id FROM hosts WHERE case_id=?)")
+                params.append(case_id)
+            if date_from:
+                conditions.append("first_seen_at >= ?")
+                params.append(date_from)
+            if date_to:
+                conditions.append("first_seen_at <= ?")
+                params.append(date_to)
+            if search:
+                conditions.append("(title LIKE ? OR detail LIKE ? OR source_process LIKE ? OR rule_name LIKE ?)")
+                params.extend([f"%{search}%"] * 4)
             sql = f"SELECT * FROM alerts WHERE {' AND '.join(conditions)} ORDER BY last_seen_at DESC LIMIT ? OFFSET ?"
             params.extend([limit, offset])
             with get_connection() as conn:
@@ -143,14 +157,46 @@ class Alert:
             return False
 
     @staticmethod
-    def get_stats() -> dict:
-        """获取告警统计数据."""
+    def get_stats(host_id: int = None, severity: str = None, status: str = None,
+                  rule_name: str = None, case_id: int = None,
+                  date_from: str = None, date_to: str = None,
+                  search: str = None) -> dict:
+        """获取告警统计数据（支持筛选范围）. """
         try:
+            conditions = ["1=1"]
+            params = []
+            if host_id is not None:
+                conditions.append("host_id=?")
+                params.append(host_id)
+            if severity:
+                conditions.append("severity=?")
+                params.append(severity)
+            if status:
+                conditions.append("status=?")
+                params.append(status)
+            if rule_name:
+                conditions.append("rule_name=?")
+                params.append(rule_name)
+            if case_id is not None:
+                conditions.append("host_id IN (SELECT id FROM hosts WHERE case_id=?)")
+                params.append(case_id)
+            if date_from:
+                conditions.append("first_seen_at >= ?")
+                params.append(date_from)
+            if date_to:
+                conditions.append("first_seen_at <= ?")
+                params.append(date_to)
+            if search:
+                conditions.append("(title LIKE ? OR detail LIKE ? OR source_process LIKE ? OR rule_name LIKE ?)")
+                params.extend([f"%{search}%"] * 4)
+            where_clause = " AND ".join(conditions)
             with get_connection() as conn:
-                total = conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0]
-                open_count = conn.execute("SELECT COUNT(*) FROM alerts WHERE status='open'").fetchone()[0]
-                critical = conn.execute("SELECT COUNT(*) FROM alerts WHERE severity='critical' AND status='open'").fetchone()[0]
-                today = conn.execute("SELECT COUNT(*) FROM alerts WHERE first_seen_at >= datetime('now', '-1 day')").fetchone()[0]
+                total = conn.execute(f"SELECT COUNT(*) FROM alerts WHERE {where_clause}", params).fetchone()[0]
+                open_count = conn.execute(f"SELECT COUNT(*) FROM alerts WHERE status='open' AND {where_clause}", params).fetchone()[0]
+                critical = conn.execute(f"SELECT COUNT(*) FROM alerts WHERE severity='critical' AND status='open' AND {where_clause}", params).fetchone()[0]
+                today_start = datetime.now().strftime("%Y-%m-%d 00:00:00")
+                today = conn.execute(f"SELECT COUNT(*) FROM alerts WHERE first_seen_at >= ? AND {where_clause}",
+                                     [today_start] + params).fetchone()[0]
                 return {"total": total, "open": open_count, "critical": critical, "today": today}
         except Exception:
             return {"total": 0, "open": 0, "critical": 0, "today": 0}
