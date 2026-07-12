@@ -9,8 +9,9 @@ if __name__ == "__main__":
     init_db()
     from app.database import get_connection
     with get_connection() as conn:
-        conn.execute("INSERT OR IGNORE INTO cases (id, name) VALUES (1, 'test-case')")
-        conn.execute("INSERT OR IGNORE INTO hosts (id, case_id, hostname) VALUES (1, 1, 'test-host')")
+        for hid in range(1, 5):
+            conn.execute("INSERT OR IGNORE INTO cases (id, name) VALUES (?, ?)", [hid, f'test-case-{hid}'])
+            conn.execute("INSERT OR IGNORE INTO hosts (id, case_id, hostname) VALUES (?, ?, ?)", [hid, hid, f'test-host-{hid}'])
         conn.commit()
         tables = [r[0] for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
@@ -42,10 +43,14 @@ if __name__ == "__main__":
     assert len(lst) > 0
     print("  List OK:", len(lst), "items")
 
-    agg_id, is_new = Alert.create_or_aggregate(
-        host_id=1, rule_name="TEST-RULE", severity="high", title="Test Agg")
-    assert not is_new
-    print("  Aggregate OK: id=", agg_id)
+    # Aggregation test - create two alerts with same rule_name in quick succession
+    agg_id1, is_new1 = Alert.create_or_aggregate(
+        host_id=2, rule_name="AGG-TEST", severity="high", title="Agg Test 1")
+    assert is_new1, "First should be new"
+    agg_id2, is_new2 = Alert.create_or_aggregate(
+        host_id=2, rule_name="AGG-TEST", severity="high", title="Agg Test 2")
+    assert not is_new2, "Second should aggregate"
+    print("  Aggregate OK: id1=", agg_id1, "id2=", agg_id2)
 
     print("\n=== 3. Agent model ===")
     from app.models.agent_model import AgentModel

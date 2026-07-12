@@ -29,9 +29,9 @@ export function getAlertTrend(hours = 24) {
 }
 
 export function getOnlineHosts() {
-  return request.get('/hosts/online')
+  return request.get('/agents/online')
 }
 
 export function getHostsStatus() {
-  return request.get('/hosts/online-status')
+  return request.get('/agents/online-status')
 }

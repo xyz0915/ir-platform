@@ -57,14 +57,14 @@ def agent_disconnect(host_id: int, current_user: dict = Depends(get_current_user
     return {"success": ok}
 
 
-@router.get("/hosts/online")
+@router.get("/agents/online")
 def online_hosts(timeout: int = Query(90), current_user: dict = Depends(get_current_user)):
     """获取在线主机列表."""
     hosts = AgentModel.get_online_hosts(timeout_seconds=timeout)
     return {"success": True, "data": hosts}
 
 
-@router.get("/hosts/online-status")
+@router.get("/agents/online-status")
 def all_hosts_status(timeout: int = Query(90), current_user: dict = Depends(get_current_user)):
     """获取所有主机的在线/离线状态."""
     hosts = AgentModel.get_all_with_status(timeout_seconds=timeout)
