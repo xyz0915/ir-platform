@@ -304,6 +304,9 @@ function renderCharts(data) {
     })
     trendChart.resize()
   }
+  } catch (e) {
+    console.error('Dashboard trend chart error:', e)
+  }
 
   try {
     if (categoryChartRef.value && riskDist.types && riskDist.types.length > 0) {
