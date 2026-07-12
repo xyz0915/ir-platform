@@ -109,7 +109,10 @@ DDL_STATEMENTS = [
         reason          TEXT,
         rule_name       TEXT,
         severity        TEXT,
-        details         TEXT
+        details         TEXT,
+        risk_score      INTEGER DEFAULT 0,
+        matched_rules   TEXT,
+        attack_path     TEXT
     )
     """,
     # suspicious_connections — 可疑外连表
@@ -426,6 +429,25 @@ DDL_STATEMENTS = [
         value_type      TEXT,
         value_data      TEXT,
         last_write_time TEXT,
+        collected_at    TEXT
+    )
+    """,
+    # process_events — 进程实时事件表（T15 实时事件管道，快照并行检测）
+    """
+    CREATE TABLE IF NOT EXISTS process_events (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        host_id         INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+        event_type      TEXT,        -- process_start / process_exit / remote_thread / etw / amsi ...
+        pid             INTEGER,
+        ppid            INTEGER,
+        process_name    TEXT,
+        process_path    TEXT,
+        command_line    TEXT,
+        parent_name     TEXT,
+        session         INTEGER,
+        start_time      TEXT,
+        event_time      TEXT,        -- 事件时间戳（用于注入窗口/快照间消失判定）
+        detail          TEXT,         -- JSON：memory_sections / etw_events / remote_thread_events 等
         collected_at    TEXT
     )
     """,

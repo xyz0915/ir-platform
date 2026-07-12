@@ -35,7 +35,7 @@ class TestAccumulatedScoring(unittest.TestCase):
     def test_severity_scores_mapping(self):
         """验证 SEVERITY_SCORES 权重映射正确."""
         from app.analysis.anomaly_detector import SEVERITY_SCORES
-        expected = {"critical": 40, "high": 25, "medium": 10, "low": 5, "info": 2}
+        expected = {"critical": 35, "high": 20, "medium": 10, "low": 5, "info": 1}
         self.assertEqual(SEVERITY_SCORES, expected)
 
     def test_severity_order_mapping(self):
@@ -58,9 +58,13 @@ class TestAccumulatedScoring(unittest.TestCase):
         ]
         result = AnomalyDetector._apply_accumulated_scoring(matches)
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["risk_score"], 25)  # high=25
+        self.assertEqual(result[0]["risk_score"], 20)  # high=20
         self.assertEqual(result[0]["severity"], "high")
-        self.assertEqual(result[0]["matched_rules"], [{"name": "test_rule", "severity": "high", "reason": "Test reason"}])
+        # matched_rules 增量携带中文 label（此处无 rule/映射，兜底为 name）
+        self.assertEqual(
+            result[0]["matched_rules"],
+            [{"name": "test_rule", "label": "test_rule", "severity": "high", "reason": "Test reason"}],
+        )
 
     def test_accumulated_scoring_multiple_matches(self):
         """多条规则命中同一 PID，累加 risk_score."""
@@ -90,8 +94,8 @@ class TestAccumulatedScoring(unittest.TestCase):
         ]
         result = AnomalyDetector._apply_accumulated_scoring(matches)
         self.assertEqual(len(result), 1)
-        # critical(40) + high(25) + medium(10) = 75
-        self.assertEqual(result[0]["risk_score"], 75)
+        # critical(35) + high(20) + medium(10) = 65
+        self.assertEqual(result[0]["risk_score"], 65)
         # 最高严重程度应为 critical
         self.assertEqual(result[0]["severity"], "critical")
         # 应有 3 条 matched_rules
@@ -100,7 +104,7 @@ class TestAccumulatedScoring(unittest.TestCase):
     def test_accumulated_scoring_cap_at_100(self):
         """risk_score 上限为 100."""
         from app.analysis.anomaly_detector import AnomalyDetector
-        # 构造 3 条 critical 规则命中同一 PID → 40+40+40=120，应 cap 为 100
+        # 构造 3 条 critical 规则命中同一 PID → 35+35+35=105，应 cap 为 100
         matches = [
             {
                 "item": {"pid": 1234, "name": "malware.exe", "path": "", "command_line": "",
@@ -169,7 +173,7 @@ class TestAccumulatedScoring(unittest.TestCase):
         # 按 PID 排序查找
         pid_100_result = [r for r in result if r["pid"] == 100][0]
         pid_200_result = [r for r in result if r["pid"] == 200][0]
-        self.assertEqual(pid_100_result["risk_score"], 25)  # high=25
+        self.assertEqual(pid_100_result["risk_score"], 20)  # high=20
         self.assertEqual(pid_200_result["risk_score"], 10)  # medium=10
 
 
@@ -257,7 +261,7 @@ class TestProcessTreeBuilder(unittest.TestCase):
             {"pid": 200, "ppid": 100, "name": "csrss.exe"},
         ]
         abnormal_pids = {200}
-        pid_to_info = {200: {"risk_score": 25, "matched_rules": [{"name": "test", "severity": "high"}], "attack_path": None}}
+        pid_to_info = {200: {"risk_score": 20, "matched_rules": [{"name": "test", "severity": "high"}], "attack_path": None}}
 
         result = ProcessTreeBuilder.build(processes, abnormal_pids, pid_to_info)
         # 根节点应为 System
@@ -271,7 +275,7 @@ class TestProcessTreeBuilder(unittest.TestCase):
         self.assertEqual(smss_children[0]["name"], "csrss.exe")
         # csrss.exe 是异常进程
         self.assertTrue(smss_children[0]["is_abnormal"])
-        self.assertEqual(smss_children[0]["risk_score"], 25)
+        self.assertEqual(smss_children[0]["risk_score"], 20)
 
     def test_build_tree_marks_abnormal(self):
         """异常进程节点标记正确."""
@@ -282,7 +286,7 @@ class TestProcessTreeBuilder(unittest.TestCase):
             {"pid": 20, "ppid": 1, "name": "abnormal_proc"},
         ]
         abnormal_pids = {20}
-        pid_to_info = {20: {"risk_score": 40, "matched_rules": [{"name": "critical_rule", "severity": "critical"}], "attack_path": "root -> abnormal_proc"}}
+        pid_to_info = {20: {"risk_score": 35, "matched_rules": [{"name": "critical_rule", "severity": "critical"}], "attack_path": "root -> abnormal_proc"}}
 
         result = ProcessTreeBuilder.build(processes, abnormal_pids, pid_to_info)
         # 检查子节点
@@ -293,7 +297,7 @@ class TestProcessTreeBuilder(unittest.TestCase):
         self.assertEqual(normal_child["risk_score"], 0)
 
         self.assertTrue(abnormal_child["is_abnormal"])
-        self.assertEqual(abnormal_child["risk_score"], 40)
+        self.assertEqual(abnormal_child["risk_score"], 35)
         self.assertEqual(abnormal_child["attack_path"], "root -> abnormal_proc")
 
     def test_build_tree_orphan_process(self):
@@ -717,13 +721,13 @@ class TestAnomalyDetectorIntegration(unittest.TestCase):
         self.assertTrue(hasattr(AnomalyDetector, '_apply_accumulated_scoring'))
 
     def test_accumulated_scoring_weights_correct(self):
-        """累加评分权重正确: critical=40, high=25, medium=10, low=5, info=2."""
+        """累加评分权重正确（统一后）: critical=35, high=20, medium=10, low=5, info=1."""
         from app.analysis.anomaly_detector import SEVERITY_SCORES
-        self.assertEqual(SEVERITY_SCORES["critical"], 40)
-        self.assertEqual(SEVERITY_SCORES["high"], 25)
+        self.assertEqual(SEVERITY_SCORES["critical"], 35)
+        self.assertEqual(SEVERITY_SCORES["high"], 20)
         self.assertEqual(SEVERITY_SCORES["medium"], 10)
         self.assertEqual(SEVERITY_SCORES["low"], 5)
-        self.assertEqual(SEVERITY_SCORES["info"], 2)
+        self.assertEqual(SEVERITY_SCORES["info"], 1)
 
     def test_risk_score_capped_at_100(self):
         """risk_score = min(sum, 100)."""

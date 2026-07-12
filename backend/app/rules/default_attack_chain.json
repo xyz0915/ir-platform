@@ -46,5 +46,52 @@
         }
       ]
     }
+  },
+  {
+    "name": "lotl_chain_combo",
+    "label": "LOTL 链式组合：压缩→解码→执行",
+    "description": "Living-off-the-land 组合技：certutil 压缩/下载 → powershell 解码/执行 → 落盘 exe 运行。复用 attack_chain 主机级顺序关联框架（含 process 维 step）。",
+    "category": "attack_chain",
+    "rule_type": "attack_chain",
+    "severity": "critical",
+    "enabled": true,
+    "source": "default",
+    "mitre_attack": "T1105/T1059",
+    "condition": {
+      "_meta": {
+        "mitre_attack": "T1105/T1059"
+      },
+      "window_minutes": 120,
+      "host_scope": "single",
+      "ordered_steps": [
+        {
+          "step": 1,
+          "dimension": "process",
+          "match": {
+            "type": "regex",
+            "field": "command_line",
+            "pattern": "(?i)(certutil.*(-encode|-decode|-urlcache|-verify|-decodehex)|expand.*-r)"
+          }
+        },
+        {
+          "step": 2,
+          "dimension": "process",
+          "match": {
+            "type": "regex",
+            "field": "command_line",
+            "pattern": "(?i)(powershell.*(-enc|-encodedcommand|-decode|-command)|cmd.*/c.*(echo|certutil))"
+          }
+        },
+        {
+          "step": 3,
+          "dimension": "process",
+          "match": {
+            "type": "regex",
+            "field": "command_line",
+            "pattern": "(?i)(\\\\(temp|users\\\\|appdata).*\\.exe|rundll32|regsvr32|mshta)"
+          }
+        }
+      ]
+    }
   }
 ]

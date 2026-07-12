@@ -1,0 +1,219 @@
+[
+  {
+    "name": "malicious_hash_process",
+    "description": "进程 exe 的 sha256 命中主机恶意哈希黑名单（进程按 path JOIN 已采集的 file_hashes 注入 exe_sha256）",
+    "category": "process",
+    "rule_type": "list",
+    "severity": "critical",
+    "enabled": true,
+    "label": "进程 exe 命中恶意哈希黑名单",
+    "source": "default",
+    "condition": {
+      "field": "exe_sha256",
+      "match_mode": "exact",
+      "values": [],
+      "description": "进程 exe_sha256 经 FIELD_TO_IOC_TYPE 动态并入主机 iocs.hash；命中即 known-malware exe",
+      "_meta": { "mitre_attack": "T1059" }
+    }
+  },
+  {
+    "name": "unsigned_executable",
+    "description": "非系统目录 exe 且无数字签名（JOIN file_hashes 注入的 exe_is_signed==0 / exe_signer 空）",
+    "category": "behavior",
+    "rule_type": "behavior",
+    "severity": "high",
+    "enabled": true,
+    "label": "进程 exe 无数字签名",
+    "source": "default",
+    "condition": {
+      "pattern": "unsigned_exe",
+      "description": "非系统目录且无签名的 exe（exe_is_signed==0 或 exe_signer 空）",
+      "_meta": { "mitre_attack": "T1059" }
+    }
+  },
+  {
+    "name": "whitelist_derived_chain",
+    "description": "白名单进程（标记为 whitelisted）派生的可疑子链：白名单父进程拉起脚本解释器/LOLBin 子进程",
+    "category": "behavior",
+    "rule_type": "behavior",
+    "severity": "high",
+    "enabled": true,
+    "label": "白名单进程派生的可疑子链",
+    "source": "default",
+    "condition": {
+      "pattern": "whitelist_derived_chain",
+      "description": "白名单进程派生 script/LOLBin 子进程（衍生链漏检根因修复）",
+      "_meta": { "mitre_attack": "T1059" }
+    }
+  },
+  {
+    "name": "grandparent_chain_anomaly",
+    "description": "祖辈（祖父）链异常：白名单/script 父的父为可疑系统服务/异常服务，且本进程为脚本解释器",
+    "category": "behavior",
+    "rule_type": "behavior",
+    "severity": "high",
+    "enabled": true,
+    "label": "祖辈(祖父)链异常",
+    "source": "default",
+    "condition": {
+      "pattern": "ancestry_chain",
+      "description": "多级祖先回溯：祖父为可疑服务/异常",
+      "suspicious_grandparents": ["svchost", "services", "lsass", "winlogon", "spoolsv", "msdtc"],
+      "suspicious_children": ["powershell", "cmd", "wscript", "cscript", "rundll32", "mshta", "certutil", "bitsadmin", "wmic", "regsvr32", "python", "perl", "pwsh"],
+      "_meta": { "mitre_attack": "T1059" }
+    }
+  },
+  {
+    "name": "fabricated_parent_pid",
+    "description": "伪造/不可能父 PID：ppid==pid 自指，或父子互指环（字段级校验，升级原 parent_pid_spoofing 命令行规则）",
+    "category": "behavior",
+    "rule_type": "behavior",
+    "severity": "high",
+    "enabled": true,
+    "label": "伪造/不可能父PID",
+    "source": "default",
+    "condition": {
+      "pattern": "parent_pid_spoof",
+      "description": "ppid==pid 或父子互指环（PPID spoofing）",
+      "_meta": { "mitre_attack": "T1055" }
+    }
+  },
+  {
+    "name": "fileless_memory_residency",
+    "description": "fileless 内存驻留：进程 path 为空/UNC/内存伪路径，但存在活跃连接或线程（无磁盘落地的内存驻留进程）",
+    "category": "behavior",
+    "rule_type": "behavior",
+    "severity": "high",
+    "enabled": true,
+    "label": "fileless 内存驻留",
+    "source": "default",
+    "condition": {
+      "pattern": "fileless_residency",
+      "description": "无磁盘 exe 但有连接/线程（path 为空/UNC/内存）",
+      "_meta": { "mitre_attack": "T1055" }
+    }
+  },
+  {
+    "name": "process_respawn_loop",
+    "description": "短时间窗口内同 path/command_line 重复出现 ≥K 次（快照近似爆发；精确计数依赖事件流）",
+    "category": "behavior",
+    "rule_type": "behavior",
+    "severity": "high",
+    "enabled": true,
+    "label": "短时间重复进程重生",
+    "source": "default",
+    "condition": {
+      "pattern": "process_respawn",
+      "min_count": 3,
+      "window_minutes": 60,
+      "description": "同 path/cmdline 窗口内重复 ≥3 次（驻留守护/木马反复拉起）",
+      "_meta": { "mitre_attack": "T1059" }
+    }
+  },
+  {
+    "name": "revoked_expired_signature",
+    "description": "进程 exe 签名有效但签发 CA 已被吊销/过期（离线 CRL/OCSP 缓存校验，吊销库为空时降级不触发）",
+    "category": "behavior",
+    "rule_type": "behavior",
+    "severity": "high",
+    "enabled": true,
+    "label": "签名被吊销/过期",
+    "source": "default",
+    "condition": {
+      "pattern": "revoked_sig",
+      "description": "exe_signer 命中吊销库（CRL/OCSP 离线缓存）",
+      "_meta": { "mitre_attack": "T1059" }
+    }
+  },
+  {
+    "name": "fileless_reflective_injection",
+    "description": "无文件内存注入（reflective/hollowing/远线程）：进程 memory_sections 含内存中 PE 镜像/非映像基址注入痕迹（缺内存采集时优雅降级）",
+    "category": "behavior",
+    "rule_type": "behavior",
+    "severity": "critical",
+    "enabled": true,
+    "label": "无文件内存注入（reflective/hollowing/远线程）",
+    "source": "default",
+    "condition": {
+      "pattern": "memory_injection",
+      "description": "内存区段含 PE 镜像/远线程注入痕迹（需 memory_sections）",
+      "_meta": { "mitre_attack": "T1055/012" }
+    }
+  },
+  {
+    "name": "script_interpreter_memory_pe",
+    "description": "脚本解释器（powershell/python）在内存加载异常 PE 且无磁盘文件（缺 ETW ImageLoad/内存采集时优雅降级）",
+    "category": "behavior",
+    "rule_type": "behavior",
+    "severity": "high",
+    "enabled": true,
+    "label": "脚本解释器内存加载异常PE",
+    "source": "default",
+    "condition": {
+      "pattern": "interpreter_mem_pe",
+      "description": "解释器内存加载 PE（需 memory_sections / ETW 事件）",
+      "_meta": { "mitre_attack": "T1055" }
+    }
+  },
+  {
+    "name": "amsi_etw_tamper",
+    "description": "ETW/AMSI 旁路（事件级）：订阅 ETW provider 禁用或 amsi.dll 内存修补事件（缺事件流时优雅降级）",
+    "category": "behavior",
+    "rule_type": "behavior",
+    "severity": "high",
+    "enabled": true,
+    "label": "ETW/AMSI 旁路",
+    "source": "default",
+    "condition": {
+      "pattern": "etw_amsi_tamper",
+      "description": "ETW provider 禁用 / AMSI 内存修补（需事件流）",
+      "_meta": { "mitre_attack": "T1562/001" }
+    }
+  },
+  {
+    "name": "cross_session_parent_child",
+    "description": "跨会话/跨用户父子：父 session==0 系统进程但子交互会话 GUI/脚本，或父子 user 不同（需 session 字段，缺失时优雅降级）",
+    "category": "behavior",
+    "rule_type": "behavior",
+    "severity": "medium",
+    "enabled": true,
+    "label": "跨会话/跨用户父子",
+    "source": "default",
+    "condition": {
+      "pattern": "cross_session",
+      "description": "父系统会话但子交互会话 / 父子 user 不同（需 session）",
+      "_meta": { "mitre_attack": "T1059" }
+    }
+  },
+  {
+    "name": "injection_window_anomaly",
+    "description": "注入行为窗口异常：进程启动后极短时间（<2s）向其它进程建远线程（需事件流，缺失时优雅降级）",
+    "category": "behavior",
+    "rule_type": "behavior",
+    "severity": "critical",
+    "enabled": true,
+    "label": "注入行为窗口异常",
+    "source": "default",
+    "condition": {
+      "pattern": "injection_window",
+      "max_alive_seconds": 2,
+      "description": "启动后极短窗口内建远线程（需事件流）",
+      "_meta": { "mitre_attack": "T1055" }
+    }
+  },
+  {
+    "name": "process_vanished_between_snapshots",
+    "description": "快照间出现又消失的进程：仅见于 process_events/network_connections 但不在任一完整快照（需 process_events 表，缺失时优雅降级）",
+    "category": "behavior",
+    "rule_type": "behavior",
+    "severity": "high",
+    "enabled": true,
+    "label": "快照间出现又消失的进程",
+    "source": "default",
+    "condition": {
+      "pattern": "vanished_process",
+      "description": "仅见于事件流/外连但不在快照（反取证/短时驻留）",
+      "_meta": { "mitre_attack": "T1059" }
+    }
+  }
+]

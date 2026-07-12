@@ -93,7 +93,7 @@
         "mitre_attack": "T1059/001"
       }
     },
-    "severity": "medium",
+    "severity": "high",
     "enabled": true,
     "label": "PowerShell 编码命令执行"
   },
@@ -110,7 +110,7 @@
         "mitre_attack": "T1059/001"
       }
     },
-    "severity": "medium",
+    "severity": "high",
     "enabled": true,
     "label": "PowerShell 绕过执行策略"
   },
@@ -127,7 +127,7 @@
         "mitre_attack": "T1105"
       }
     },
-    "severity": "medium",
+    "severity": "high",
     "enabled": true,
     "label": "Certutil 下载文件"
   },
@@ -195,7 +195,7 @@
         "mitre_attack": "T1047"
       }
     },
-    "severity": "medium",
+    "severity": "high",
     "enabled": true,
     "label": "WMIC 远程进程创建"
   },
@@ -212,7 +212,7 @@
         "mitre_attack": "T1218/011"
       }
     },
-    "severity": "medium",
+    "severity": "high",
     "enabled": true,
     "label": "Rundll32 加载可疑模块"
   },
@@ -229,7 +229,7 @@
         "mitre_attack": "T1059/001"
       }
     },
-    "severity": "medium",
+    "severity": "high",
     "enabled": true,
     "label": "CMD 启动 PowerShell 链"
   },
@@ -246,7 +246,7 @@
         "mitre_attack": "T1571"
       }
     },
-    "severity": "medium",
+    "severity": "critical",
     "enabled": true,
     "label": "Netcat 监听后门"
   },
@@ -262,7 +262,7 @@
         "mitre_attack": "T1059"
       }
     },
-    "severity": "medium",
+    "severity": "high",
     "enabled": true,
     "label": "孤立进程（无父进程）"
   },
@@ -294,7 +294,7 @@
         "mitre_attack": "T1036"
       }
     },
-    "severity": "low",
+    "severity": "medium",
     "enabled": true,
     "label": "非系统目录进程"
   },

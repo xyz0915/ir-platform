@@ -37,6 +37,59 @@ class AnalysisService:
     """分析编排服务."""
 
     @staticmethod
+    def _inject_exe_signatures(raw_data: dict) -> None:
+        """将 file_hashes 的哈希/签名信息按 path JOIN 注入进程 dict（T02）.
+
+        纯内存操作：遍历 raw_data["file_hashes"] 构建 ``file_path(小写) -> {sha256,
+        is_signed, signer}`` 映射，再为 raw_data["processes"] 中 path 命中的进程注入
+        ``exe_sha256`` / ``exe_is_signed`` / ``exe_signer`` 三个字段。
+        无对应 file_hash 的进程字段保持缺失（None），下游规则据此优雅降级。
+
+        Args:
+            raw_data: Agent 原始 JSON（原地修改 processes 列表中的 dict）。
+        """
+        if not isinstance(raw_data, dict):
+            return
+        file_hashes = raw_data.get("file_hashes")
+        if not isinstance(file_hashes, list):
+            return
+
+        # 构建 path -> 哈希信息 映射（小写归一，兼容 / 与 \\ 分隔符）
+        hash_by_path: dict = {}
+        for fh in file_hashes:
+            if not isinstance(fh, dict):
+                continue
+            fp = fh.get("file_path") or fh.get("path")
+            if not fp:
+                continue
+            key = str(fp).strip().lower().replace("/", "\\")
+            hash_by_path[key] = {
+                "sha256": fh.get("sha256") or fh.get("hash"),
+                "is_signed": fh.get("is_signed"),
+                "signer": fh.get("signer"),
+            }
+
+        if not hash_by_path:
+            return
+
+        processes = raw_data.get("processes")
+        if not isinstance(processes, list):
+            return
+        for proc in processes:
+            if not isinstance(proc, dict):
+                continue
+            ppath = proc.get("path")
+            if not ppath:
+                continue
+            key = str(ppath).strip().lower().replace("/", "\\")
+            info = hash_by_path.get(key)
+            if not info:
+                continue
+            proc["exe_sha256"] = info["sha256"]
+            proc["exe_is_signed"] = info["is_signed"]
+            proc["exe_signer"] = info["signer"]
+
+    @staticmethod
     def analyze(host_id: int) -> dict:
         """执行完整分析流程.
 
@@ -85,6 +138,11 @@ class AnalysisService:
 
         # 4. 异常检测（含白名单过滤）
         whitelist_service = WhitelistService()
+        # T02：进程 exe 哈希/签名 JOIN 注入 —— 按 process.path 关联已采集的
+        # file_hashes，注入 exe_sha256 / exe_is_signed / exe_signer（纯内存 JOIN，
+        # 不依赖 DB 时序；无对应 file_hash 时字段为 None 不报错）。供
+        # malicious_hash_process（T03 动态 IOC 合并）与 unsigned_executable（T05）使用。
+        AnalysisService._inject_exe_signatures(raw_data)
         abnormal_processes = AnomalyDetector.detect_processes(raw_data, rules, whitelist_service=whitelist_service)
         AbnormalProcess.batch_create(host_id, abnormal_processes)
         logger.info("Detected %d abnormal processes", len(abnormal_processes))
@@ -604,14 +662,16 @@ class AnalysisService:
         return RegistryKey.list_by_host(host_id)
 
     @staticmethod
-    def get_process_tree(host_id: int) -> dict:
+    def get_process_tree(host_id: int, enrich: bool = False) -> dict:
         """获取进程树结构用于可视化.
 
         Args:
             host_id: 主机 ID.
+            enrich: 是否返回增强字段（severity/parent_name/connections/...）。
+                默认 False → 响应与历史版本逐字段一致，旧前端（ProcessTreeChart）可继续工作。
 
         Returns:
-            进程树字典，用于 ECharts tree series 渲染.
+            进程树字典，用于 ECharts tree series 渲染（enrich=True 时增量追加增强字段）.
         """
         raw_data = ImportService.read_raw_json(host_id)
         if not raw_data:
@@ -633,6 +693,6 @@ class AnalysisService:
                 abnormal_pids.add(pid)
                 pid_to_info[pid] = proc
 
-        # 构建进程树
-        tree = ProcessTreeBuilder.build(processes, abnormal_pids, pid_to_info)
+        # 构建进程树（enrich 缺省时行为与历史一致）
+        tree = ProcessTreeBuilder.build(processes, abnormal_pids, pid_to_info, enrich=enrich)
         return tree

@@ -1,0 +1,78 @@
+[
+  {
+    "name": "process_name_spoof",
+    "description": "进程名伪装：双扩展名 / 大小写混淆 / 相似名（编辑距离==1）/ Unicode 同形，仿冒系统进程",
+    "category": "behavior",
+    "rule_type": "behavior",
+    "severity": "high",
+    "enabled": true,
+    "label": "进程名伪装（仿冒系统进程）",
+    "source": "default",
+    "condition": {
+      "pattern": "process_name_spoof",
+      "description": "进程名仿冒系统进程（双扩展名/大小写/相似名/同形）",
+      "_meta": { "mitre_attack": "T1036/005" }
+    }
+  },
+  {
+    "name": "suspicious_process_path",
+    "description": "进程路径位于临时/下载/AppData/ProgramData 或伪装系统目录/ADS 备用数据流/异常 UNC",
+    "category": "behavior",
+    "rule_type": "behavior",
+    "severity": "high",
+    "enabled": true,
+    "label": "可疑进程路径",
+    "source": "default",
+    "condition": {
+      "pattern": "suspicious_path",
+      "description": "可疑进程路径（temp/appdata/伪装system32/ADS/UNC）",
+      "_meta": { "mitre_attack": "T1036/004" }
+    }
+  },
+  {
+    "name": "hidden_or_spoofed_service_process",
+    "description": "进程名与系统服务同名但路径不在 system32/syswow64，疑似仿冒服务进程；或交互式进程无窗口隐藏",
+    "category": "behavior",
+    "rule_type": "behavior",
+    "severity": "high",
+    "enabled": true,
+    "label": "隐蔽/仿冒服务进程",
+    "source": "default",
+    "condition": {
+      "pattern": "hidden_process",
+      "description": "隐蔽/仿冒服务进程（同名不同路径 或 无窗口隐藏）",
+      "_meta": { "mitre_attack": "T1564/001" }
+    }
+  },
+  {
+    "name": "anomalous_network_process",
+    "description": "脚本解释器/无签名进程发起非业务端口外连，或连接常见 C2 端口（4444/8443/1337/31337/6667/9999/1080/5900）",
+    "category": "behavior",
+    "rule_type": "behavior",
+    "severity": "high",
+    "enabled": true,
+    "label": "异常网络连接进程",
+    "source": "default",
+    "condition": {
+      "pattern": "anomalous_net_process",
+      "description": "异常网络连接进程（脚本解释器/无签名外连/C2端口）",
+      "_meta": { "mitre_attack": "T1071" }
+    }
+  },
+  {
+    "name": "zombie_process_suspect",
+    "description": "疑似僵尸/残留进程（数据受限启发式：线程数为0或完全孤立且启动超阈值，需人工确认）",
+    "category": "behavior",
+    "rule_type": "behavior",
+    "severity": "high",
+    "enabled": true,
+    "label": "疑似僵尸/残留进程（待确认）",
+    "source": "default",
+    "condition": {
+      "pattern": "zombie_process",
+      "threshold_days": 7,
+      "description": "疑似僵尸/残留进程（启发式，待人工确认）",
+      "_meta": { "mitre_attack": "T1059" }
+    }
+  }
+]

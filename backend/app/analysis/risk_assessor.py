@@ -12,13 +12,13 @@ class RiskAssessor:
     根据所有发现（findings）评估整体风险，计算 0-100 分数.
     """
 
-    # 严重程度权重
+    # 严重程度权重（与 anomaly_detector.SEVERITY_SCORES 统一，决策4/§4.1）
     SEVERITY_WEIGHTS = {
-        "critical": 25,
-        "high": 15,
-        "medium": 8,
-        "low": 3,
-        "info": 0,
+        "critical": 35,
+        "high": 20,
+        "medium": 10,
+        "low": 5,
+        "info": 1,
     }
 
     # 风险等级映射

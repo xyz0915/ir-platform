@@ -35,17 +35,23 @@ TEST_DB_PATH = str(BACKEND_DIR / "data" / "test_rules_import.db")
 DEFAULT_RULES_PATH = BACKEND_DIR / "app" / "rules" / "default_rules.json"
 # 攻击链默认规则文件（v1.2.0 新增，load_default_rules() 会一并注入）
 DEFAULT_ATTACK_CHAIN_PATH = BACKEND_DIR / "app" / "rules" / "default_attack_chain.json"
+# 进程检测加强规则（本次特性新增，随 loader 一并注入）
+PROCESS_ENHANCEMENT_PATH = BACKEND_DIR / "app" / "rules" / "process_enhancement_rules.json"
+SEED_RULES_PROCESS_PATH = BACKEND_DIR / "app" / "rules" / "seed_rules_process.json"
 
 
 class TestRulesImportFix(unittest.TestCase):
     """测试 _import_default_rules() upsert-by-name 修复."""
 
     # ── 预期常量 ──────────────────────────────────────────────
-    # 动态推导：default_rules.json + default_attack_chain.json 实际条数之和
-    # （load_default_rules() 会一并注入攻击链默认规则），避免与硬编码值漂移
+    # 动态推导：所有随 loader 自动注入的规则文件条数之和
+    # （default_rules + default_attack_chain + 进程检测加强规则 + seed 进程规则），
+    # 避免与硬编码值漂移（T-P0-1）
     EXPECTED_RULE_COUNT = (
         len(json.load(open(DEFAULT_RULES_PATH, "r", encoding="utf-8")))
         + len(json.load(open(DEFAULT_ATTACK_CHAIN_PATH, "r", encoding="utf-8")))
+        + len(json.load(open(PROCESS_ENHANCEMENT_PATH, "r", encoding="utf-8")))
+        + len(json.load(open(SEED_RULES_PROCESS_PATH, "r", encoding="utf-8")))
     )
     EXPECTED_CATEGORIES = {
         "process", "network", "startup", "persistence", "ioc",

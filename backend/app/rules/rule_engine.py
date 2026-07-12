@@ -3,6 +3,9 @@
 import json
 import logging
 import re
+import unicodedata
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Optional
 
 from app.config import settings
@@ -54,7 +57,249 @@ BEHAVIOR_PATTERNS: set[str] = {
     "process_chain",
     "time_cluster",
     "short_lived",
+    # ── T1 新增：进程树/异常进程检测增强（5 个行为模式）──────────────
+    "zombie_process",          # 疑似僵尸/残留进程（数据受限启发式，需人工确认）
+    "process_name_spoof",      # 进程名伪装（双扩展名/大小写混淆/相似名/Unicode 同形）
+    "suspicious_path",         # 可疑进程路径（temp/appdata/伪装 system32/ADS/UNC）
+    "hidden_process",          # 隐蔽/仿冒服务进程（同名不同路径 或 无窗口隐藏）
+    "anomalous_net_process",   # 异常网络连接进程（脚本解释器/无签名外连/C2 端口）
+    # ── 进程检测加强规则集（P0/P1/P2，T02–T17）────────────────────
+    "unsigned_exe",            # 无数字签名 exe（JOIN file_hashes 注入 exe_is_signed）
+    "whitelist_derived_chain", # 白名单进程派生的可疑子链（衍生链漏检根因修复）
+    "ancestry_chain",          # 多级祖先回溯：祖父为可疑服务/异常
+    "parent_pid_spoof",        # 伪造/不可能父 PID（字段级，升级原 parent_pid_spoofing）
+    "fileless_residency",      # fileless 内存驻留（path 空/UNC/内存 + 连接/线程）
+    "process_respawn",         # 短时间窗口内同 path/cmdline 重复 ≥K（快照近似）
+    "revoked_sig",             # 签名被吊销/过期（CRL/OCSP 离线缓存，空库降级）
+    "memory_injection",        # 无文件内存注入（reflective/hollowing/远线程）
+    "interpreter_mem_pe",      # 脚本解释器内存加载异常 PE（ETW/内存采集）
+    "etw_amsi_tamper",         # ETW/AMSI 旁路（事件级）
+    "cross_session",           # 跨会话/跨用户父子（需 session 字段）
+    "injection_window",        # 注入行为窗口异常（需事件流）
+    "vanished_process",        # 快照间出现又消失的进程（需 process_events 表）
 }
+
+# ── 进程名伪装检测（process_name_spoof）相关常量 ────────────────────────
+# 系统进程白名单（不含扩展名，小写），作为大小写/相似名/同形判定的基准
+_SYSTEM_PROC_WHITELIST: set[str] = {
+    "svchost", "lsass", "services", "csrss", "winlogon", "explorer",
+    "taskmgr", "cmd", "powershell", "rundll32", "spoolsv", "msdtc",
+    "lsaiso", "fontdrvhost", "smss", "wininit", "lsm",
+}
+# 双扩展名：可执行/脚本扩展名叠加可执行/脚本
+_SPOOF_EXEC_EXTS = (
+    "exe", "scr", "bat", "cmd", "pif", "com", "dll",
+    "ps1", "vbs", "js", "jar", "msi", "lnk",
+)
+# 双扩展名：良性文档扩展名叠加可执行（如 evil.jpg.exe）
+_SPOOF_BENIGN_EXTS = (
+    "jpg", "jpeg", "png", "gif", "bmp", "pdf", "doc", "docx",
+    "txt", "xls", "xlsx", "ppt", "pptx", "html", "htm", "zip",
+    "rar", "mp3", "mp4",
+)
+_SPOOF_DOUBLE_EXEC_RE = re.compile(
+    r"\.(?:" + "|".join(_SPOOF_EXEC_EXTS) + r")\.(?:" + "|".join(_SPOOF_EXEC_EXTS) + r")$"
+)
+_SPOOF_BENIGN_EXE_RE = re.compile(
+    r"\.(?:" + "|".join(_SPOOF_BENIGN_EXTS) + r")\.(?:" + "|".join(_SPOOF_EXEC_EXTS) + r")$"
+)
+# 常见 Unicode 同形字符（Cyrillic/Greek 等）→ Latin 映射，辅助识别同形混淆名
+_CONFUSABLE_MAP = {
+    "а": "a", "е": "e", "о": "o", "с": "c", "р": "p", "х": "x",
+    "у": "y", "і": "i", "ѕ": "s", "ԁ": "d", "ԍ": "g", "ո": "n",
+    "ї": "i", "ӏ": "l", "ɡ": "g", "ԉ": "n",
+}
+
+# ── 可疑路径检测（suspicious_path）相关常量 ────────────────────────────
+_SUSPICIOUS_PATH_MARKERS = (
+    "\\temp\\", "\\tmp\\", "downloads", "appdata\\roaming", "appdata\\local",
+    "programdata", "desktop", "\\public\\", "users\\public",
+)
+_SUSPICIOUS_PATH_WHITELIST = (
+    "c:\\windows\\system32\\",
+    "c:\\windows\\syswow64\\",
+    "c:\\program files\\",
+    "c:\\program files (x86)\\",
+)
+
+# ── 可疑父进程（suspicious_parent）默认清单（condition 未配置时回退）──
+# 决策3：默认保留原 office 父，新增浏览器/PDF/压缩/IM 父 + 脚本解释器子
+_DEFAULT_SUSPICIOUS_PARENTS = [
+    "winword", "excel", "powerpnt", "outlook",
+    "chrome", "edge", "firefox", "iexplore",
+    "acrord32", "foxitreader",
+    "winrar", "7z", "bandizip",
+    "wechat", "qq", "teamviewer",
+]
+_DEFAULT_SUSPICIOUS_CHILDREN = ["powershell", "cmd", "wscript", "cscript"]
+
+# ── 异常网络进程（anomalous_net_process）相关常量 ──────────────────────
+_ANOMALOUS_NET_INTERPRETERS = {
+    "powershell", "cmd", "wscript", "cscript", "certutil", "bitsadmin",
+    "mshta", "rundll32", "wmic", "nc", "netcat", "curl", "wget",
+    "python", "perl", "ruby",
+}
+# 业务端口白名单（降低误报）：浏览器/更新/常见服务端口
+_BUSINESS_PORTS = {
+    80, 443, 53, 22, 3389, 445, 8080, 25, 587, 993, 143, 110, 21, 23,
+    3306, 5432, 6379, 27017,
+}
+# 常见 C2/代理/反弹端口（文档 §3.4；8443 同列于业务与 C2 清单，优先按 C2 判定）
+_C2_PORTS = {4444, 8443, 1337, 31337, 6667, 9999, 1080, 5900}
+
+# ── 可疑祖父/父 默认清单（ancestry_chain；T07）────────────────────
+# 当进程（脚本解释器/LOLBin）的祖父（或更早祖先）为下列服务进程时，判定链路异常。
+_DEFAULT_SUSPICIOUS_GRANDPARENTS = [
+    "svchost", "services", "lsass", "winlogon", "spoolsv", "msdtc",
+    "smss", "csrss", "wininit", "lsaiso", "fontdrvhost",
+]
+
+# ── 吊销/过期签名库（离线 CRL/OCSP 缓存；T17）────────────────────
+# 数据来源：CRL/OCSP 离线缓存导出的被吊销/过期 CA 或签名者标识集合。
+# 默认从同目录 revoked_ca.json 读取；文件缺失或为空列表时不触发任何命中
+# （优雅降级，绝不因缺数据抛异常）。结构：{"revoked_signers": ["CN=...", "..."]}。
+_REVOKED_CA_CACHE: Optional[set] = None
+
+
+def _load_revoked_signers() -> set:
+    """加载被吊销/过期的签名者标识集合（CRL/OCSP 离线缓存）.
+
+    从 ``backend/app/rules/revoked_ca.json`` 读取 ``revoked_signers`` 列表。
+    任何异常（文件缺失/格式错误）均降级为空集合，保证引擎在缺数据环境下可运行。
+
+    Returns:
+        被吊销签名者标识（小写）集合；空集合表示吊销库不可用/为空。
+    """
+    global _REVOKED_CA_CACHE
+    if _REVOKED_CA_CACHE is not None:
+        return _REVOKED_CA_CACHE
+    revoked: set = set()
+    try:
+        ca_path = Path(__file__).resolve().parent / "revoked_ca.json"
+        if ca_path.exists():
+            with open(ca_path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            for s in (data.get("revoked_signers") or []):
+                if s:
+                    revoked.add(str(s).lower())
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("跳过吊销库加载（revoked_ca.json 不可用）: %s", exc)
+        revoked = set()
+    _REVOKED_CA_CACHE = revoked
+    return revoked
+
+
+def _reset_revoked_cache() -> None:
+    """清空吊销库缓存（仅供测试重新加载/降级验证使用）."""
+    global _REVOKED_CA_CACHE
+    _REVOKED_CA_CACHE = None
+
+
+# ── 进程名/字符串辅助函数 ───────────────────────────────────────────────
+
+def _norm_proc_name(name: str) -> str:
+    """进程名归一化：去常见扩展名并小写，用于白名单/相似名比对.
+
+    Args:
+        name: 原始进程名（可能含 .exe 等扩展名与大小写）.
+
+    Returns:
+        小写且无扩展名的进程基名；空串返回空串。
+    """
+    n = (name or "").strip().lower()
+    for ext in (".exe", ".scr", ".bat", ".cmd", ".pif", ".com", ".dll",
+                ".ps1", ".vbs", ".js", ".sys", ".lnk"):
+        if n.endswith(ext):
+            n = n[: -len(ext)]
+            break
+    return n
+
+
+def _levenshtein(a: str, b: str) -> int:
+    """计算两字符串编辑距离（DP，O(n*m)）.
+
+    Args:
+        a: 字符串 A.
+        b: 字符串 B.
+
+    Returns:
+        编辑距离（插入/删除/替换计 1）。
+    """
+    if a == b:
+        return 0
+    la, lb = len(a), len(b)
+    if la == 0:
+        return lb
+    if lb == 0:
+        return la
+    prev = list(range(lb + 1))
+    for ca in a:
+        cur = [prev[0] + 1]
+        for j, cb in enumerate(b, 1):
+            cost = 0 if ca == cb else 1
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost))
+        prev = cur
+    return prev[lb]
+
+
+def _normalize_confusable(text: str) -> str:
+    """将常见 Unicode 同形字符替换为对应 Latin 字符（辅助同形混淆识别）.
+
+    Args:
+        text: 含可能同形字符的文本.
+
+    Returns:
+        同形字符被 Latin 化后的文本（无法映射者保持不变）。
+    """
+    if not text:
+        return text
+    return "".join(_CONFUSABLE_MAP.get(ch, ch) for ch in text)
+
+
+def _name_matches(norm_name: str, configured: set) -> bool:
+    """判断归一化进程名是否命中配置清单（支持 python3/pwsh 等版本/变体后缀）.
+
+    Args:
+        norm_name: 归一化进程名（小写、无扩展名）。
+        configured: 配置的归一化名称集合。
+
+    Returns:
+        命中返回 True。
+    """
+    if norm_name in configured:
+        return True
+    # 版本/变体后缀：python3 / python3.11 视为 python；剩余部分须全为数字或点
+    for c in configured:
+        if norm_name.startswith(c) and norm_name[len(c):].replace(".", "").isdigit():
+            return True
+    return False
+
+
+def _parse_datetime(value: str) -> Optional["datetime"]:
+    """解析常见时间字符串为 datetime，失败返回 None.
+
+    Args:
+        value: 时间字符串（支持多种常见格式）.
+
+    Returns:
+        datetime 对象，解析失败返回 None。
+    """
+    if not value:
+        return None
+    s = str(value).split("+")[0].split("Z")[0]
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S.%f",
+        "%Y-%m-%dT%H:%M:%S.%f",
+        "%Y/%m/%d %H:%M:%S",
+    ):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    return None
+
 
 # ── 正则编译缓存（T-P2-4 性能优化）────────────────────────────────────
 # 同一 pattern+flags 只编译一次，避免热路径重复 re.compile。
@@ -84,6 +329,9 @@ FIELD_TO_IOC_TYPE: dict = {
     "file_hash": "hash",
     "sha256": "hash",
     "hash": "hash",
+    # 进程 exe 哈希（T03：按 path JOIN 已采集的 file_hashes 注入 exe_sha256，
+    # 经 FIELD_TO_IOC_TYPE 动态并入主机 iocs.hash，复用 _match_list 既有机制）
+    "exe_sha256": "hash",
     # 证书类
     "cert": "cert",
     "certificate": "cert",
@@ -677,27 +925,56 @@ class RuleEngine:
         process_chain           进程链攻击路径
         time_cluster            时间聚类异常
         short_lived             短存活 Shell 进程
+        zombie_process          疑似僵尸/残留进程（启发式，需人工确认）
+        process_name_spoof      进程名伪装（双扩展名/大小写/相似名/同形）
+        suspicious_path         可疑进程路径（temp/appdata/伪装system32/ADS）
+        hidden_process          隐蔽/仿冒服务进程
+        anomalous_net_process   异常网络连接进程（脚本解释器/无签名外连/C2端口）
         ======================= ==========================================
         """
         pattern: str = condition.get("pattern", "")
 
         # ── 原有 4 个模式 ──────────────────────────────────────────
         if pattern == "orphan_process":
+            # 上下文敏感孤儿判定（兼容新旧两套测试契约）：
+            # - 无进程树上下文（global_context 未提供 / process_map 为空，如旧版
+            #   单独 match_rule 调用）：沿用旧启发式 —— 仅 ppid==0（System Idle）
+            #   视为孤儿，其余正常数值 PID 均不误报。
+            # - 有进程树上下文：父 PID 不在本机进程列表（父已退出/伪造）→ 孤儿；
+            #   系统/空闲父（0/1/4）与缺失父统一排除，避免海量误报（§2.1/决策2）。
             ppid = data_item.get("ppid", 0)
-            return ppid == 0 or ppid is None
+            process_map = (global_context or {}).get("process_map", {})
+            if ppid is None or ppid in (0, 1, 4):
+                if not process_map:
+                    return ppid == 0
+                return False
+            if not process_map:
+                return False
+            return ppid not in process_map
 
         elif pattern == "suspicious_parent":
-            parent_name = str(data_item.get("parent_name", "")).lower()
-            child_name = str(data_item.get("name", "")).lower()
-            suspicious_parents = [
-                "winword.exe", "excel.exe", "powerpnt.exe", "outlook.exe",
-            ]
-            suspicious_children = [
-                "powershell.exe", "cmd.exe", "wscript.exe", "cscript.exe",
-            ]
+            # 改造（决策3）：condition 驱动。
+            # 若规则 condition 配置 parents/children 则使用，否则回退扩展默认清单
+            # （office + 浏览器 + PDF + 压缩 + IM 父，脚本解释器子）。
+            parent_name = str(data_item.get("parent_name", ""))
+            child_name = str(data_item.get("name", ""))
+            cond_parents = condition.get("parents")
+            cond_children = condition.get("children")
+            if cond_parents:
+                suspicious_parents = {_norm_proc_name(p) for p in cond_parents}
+            else:
+                suspicious_parents = {
+                    _norm_proc_name(p) for p in _DEFAULT_SUSPICIOUS_PARENTS
+                }
+            if cond_children:
+                suspicious_children = {_norm_proc_name(c) for c in cond_children}
+            else:
+                suspicious_children = {
+                    _norm_proc_name(c) for c in _DEFAULT_SUSPICIOUS_CHILDREN
+                }
             return (
-                parent_name in suspicious_parents
-                and child_name in suspicious_children
+                _name_matches(_norm_proc_name(parent_name), suspicious_parents)
+                and _name_matches(_norm_proc_name(child_name), suspicious_children)
             )
 
         elif pattern == "unsigned_process":
@@ -1061,6 +1338,50 @@ class RuleEngine:
         elif pattern == "short_lived":
             return RuleEngine._match_short_lived(data_item, condition)
 
+        # ── T1 新增 5 个行为模式 ────────────────────────────────
+        elif pattern == "process_name_spoof":
+            return RuleEngine._match_process_name_spoof(data_item, condition)
+
+        elif pattern == "suspicious_path":
+            return RuleEngine._match_suspicious_path(data_item, condition)
+
+        elif pattern == "hidden_process":
+            return RuleEngine._match_hidden_process(data_item, condition)
+
+        elif pattern == "anomalous_net_process":
+            return RuleEngine._match_anomalous_net_process(data_item, condition, global_context)
+
+        elif pattern == "zombie_process":
+            return RuleEngine._match_zombie_process(data_item, condition, global_context)
+
+        # ── 进程检测加强规则集（P0/P1/P2，T02–T17）─────────────────
+        elif pattern == "unsigned_exe":
+            return RuleEngine._match_unsigned_exe(data_item, condition)
+        elif pattern == "whitelist_derived_chain":
+            return RuleEngine._match_whitelist_derived_chain(data_item, condition, global_context)
+        elif pattern == "ancestry_chain":
+            return RuleEngine._match_ancestry_chain(data_item, condition, global_context)
+        elif pattern == "parent_pid_spoof":
+            return RuleEngine._match_parent_pid_spoof(data_item, condition, global_context)
+        elif pattern == "fileless_residency":
+            return RuleEngine._match_fileless_residency(data_item, condition)
+        elif pattern == "process_respawn":
+            return RuleEngine._match_process_respawn(data_item, condition, global_context)
+        elif pattern == "revoked_sig":
+            return RuleEngine._match_revoked_sig(data_item, condition)
+        elif pattern == "memory_injection":
+            return RuleEngine._match_memory_injection(data_item, condition)
+        elif pattern == "interpreter_mem_pe":
+            return RuleEngine._match_interpreter_mem_pe(data_item, condition)
+        elif pattern == "etw_amsi_tamper":
+            return RuleEngine._match_etw_amsi_tamper(data_item, condition)
+        elif pattern == "cross_session":
+            return RuleEngine._match_cross_session(data_item, condition, global_context)
+        elif pattern == "injection_window":
+            return RuleEngine._match_injection_window(data_item, condition, global_context)
+        elif pattern == "vanished_process":
+            return RuleEngine._match_vanished_process(data_item, condition, global_context)
+
         # ── 未知模式 ──────────────────────────────────────────────
         logger.warning("Unknown behavior pattern: %s", pattern)
         return False
@@ -1284,6 +1605,594 @@ class RuleEngine:
             except Exception:
                 pass
 
+        return False
+
+    # ── 进程名伪装检测（process_name_spoof）─────────────────────────────
+
+    @staticmethod
+    def _match_process_name_spoof(data_item: dict, condition: dict) -> bool:
+        """进程名伪装检测：双扩展名 / 大小写混淆 / 相似名 / Unicode 同形.
+
+        任一命中即报（三重判定，阈值严格，避免正常短名误报）：
+          1. 双扩展名：可执行叠加可执行（evil.exe.exe）或良性文档叠加可执行（evil.jpg.exe）；
+          2. 大小写混淆：归一化名命中系统进程白名单但原始名含大写（如 PowerShell.exe）；
+          3. 相似名：与白名单编辑距离 == 1（如 svch0st → svchost、cxmd → cmd）；
+          4. Unicode 同形：含非 ASCII 且 NFKC/同形归一后命中白名单（如 ｓｖｃｈｏｓｔ）。
+
+        Args:
+            data_item: 进程数据项（读 name）。
+            condition: 规则条件。
+
+        Returns:
+            是否命中进程名伪装。
+        """
+        name = str(data_item.get("name", ""))
+        if not name:
+            return False
+        base_norm = _norm_proc_name(name)
+
+        # 1) 双扩展名
+        if _SPOOF_DOUBLE_EXEC_RE.search(name) or _SPOOF_BENIGN_EXE_RE.search(name):
+            return True
+
+        # 2) 大小写混淆：归一化名命中白名单，但原始名非全小写
+        if base_norm in _SYSTEM_PROC_WHITELIST and name.strip() != name.strip().lower():
+            return True
+
+        # 3) 相似名（编辑距离 == 1）
+        for w in _SYSTEM_PROC_WHITELIST:
+            if _levenshtein(base_norm, w) == 1:
+                return True
+
+        # 4) Unicode 同形：含非 ASCII 字符且归一后命中白名单
+        if any(ord(ch) > 127 for ch in name):
+            folded = unicodedata.normalize("NFKC", name)
+            folded = _normalize_confusable(folded)
+            if _norm_proc_name(folded) in _SYSTEM_PROC_WHITELIST:
+                return True
+
+        return False
+
+    # ── 可疑进程路径检测（suspicious_path）──────────────────────────────
+
+    @staticmethod
+    def _match_suspicious_path(data_item: dict, condition: dict) -> bool:
+        """可疑进程路径检测：临时/下载/AppData/伪装 system32/ADS/UNC.
+
+        触发条件（任一，且不在白名单）：
+          - 用户可写/临时目录（temp/tmp/downloads/appdata/programdata/desktop/public/users）；
+          - 伪装 system32：含 system32 但前缀非 c:\\windows\\system32；
+          - 用户目录下的 exe（非 AppData\\Local\\Programs）；
+          - ADS 备用数据流（basename 含冒号）或异常 UNC（以 \\\\ 开头）。
+        白名单（误报控制，附录B）：Program Files / Windows\\system32 / Windows\\SysWOW64 /
+        ProgramData 下 *.install 安装器目录。
+
+        Args:
+            data_item: 进程数据项（读 path）。
+            condition: 规则条件。
+
+        Returns:
+            是否命中可疑路径。
+        """
+        path = str(data_item.get("path", "")).lower()
+        if not path:
+            return False
+
+        # 白名单：合法系统/程序目录
+        for w in _SUSPICIOUS_PATH_WHITELIST:
+            if w in path:
+                return False
+        # ProgramData 下 *.install 安装器目录白名单（避免合法更新程序误报）
+        if "programdata" in path:
+            tail = path.split("programdata", 1)[1]
+            if ".install" in tail:
+                return False
+        # AppData\Local\Programs 下为合法用户安装程序（Teams/Discord/Slack/Python
+        # launcher 等），豁免误报（§3.2：用户目录 exe 且非该目录才命中）。
+        # 必须在下方标记检查之前排除，否则 "appdata\local" 标记会先 return True。
+        if "appdata\\local\\programs" in path:
+            return False
+
+        # 1) 用户可写/临时目录
+        if any(m in path for m in _SUSPICIOUS_PATH_MARKERS):
+            return True
+        # 2) 伪装 system32（盘符仿冒 / system32.exe 伪装）
+        if "system32" in path and not re.search(r"c:\\windows\\system32(\\|$)", path):
+            return True
+        # 3) 用户目录下的 exe（非 AppData\\Local\\Programs）
+        if "users\\" in path and "appdata\\local\\programs" not in path:
+            return True
+        # 4) ADS 备用数据流 或 异常 UNC
+        if path.startswith("\\\\"):
+            return True
+        if re.search(r"\\[^\\/:]*:[^\\/:]+", path):
+            return True
+        return False
+
+    # ── 隐蔽/仿冒服务进程检测（hidden_process）──────────────────────────
+
+    @staticmethod
+    def _match_hidden_process(data_item: dict, condition: dict) -> bool:
+        """隐蔽/仿冒服务进程检测.
+
+        退化判定（决策5，数据无 window_title/session 时）：
+          进程名与系统服务同名但路径不在 system32/syswow64（仿冒服务进程，如 svchost.exe 在 C:\\Temp\\）。
+        增强判定（数据含 window_title/session 时）：
+          交互式进程（powershell/cmd/rundll32/wscript/cscript）无窗口标题且 session>0 → 疑似隐藏。
+
+        Args:
+            data_item: 进程数据项（读 name/path/window_title/session）。
+            condition: 规则条件。
+
+        Returns:
+            是否命中隐蔽/仿冒服务进程。
+        """
+        name = str(data_item.get("name", ""))
+        base = _norm_proc_name(name)
+        path = str(data_item.get("path", "")).lower()
+        service_names = _SYSTEM_PROC_WHITELIST
+
+        # 退化判定：同名不同路径（仿冒系统服务）
+        if base in service_names and path:
+            if "windows\\system32" not in path and "windows\\syswow64" not in path:
+                return True
+
+        # 增强判定：无窗口隐藏（需数据含 window_title/session 字段）
+        if "window_title" in data_item and "session" in data_item:
+            wt = data_item.get("window_title")
+            session = data_item.get("session", 0)
+            interactive = {"powershell", "cmd", "rundll32", "wscript", "cscript"}
+            try:
+                session_int = int(session)
+            except (ValueError, TypeError):
+                session_int = 0
+            if wt == "" and session_int > 0 and base in interactive:
+                return True
+
+        return False
+
+    # ── 异常网络连接进程检测（anomalous_net_process）────────────────────
+
+    @staticmethod
+    def _match_anomalous_net_process(data_item: dict, condition: dict,
+                                     global_context: Optional[dict] = None) -> bool:
+        """异常网络连接进程检测（跨维度）.
+
+        从 data_item.connections（detect_processes 已补全）或 global_context["connections"]
+        取该 pid 的外连，触发条件（任一）：
+          - 脚本解释器/无签名进程发起非业务端口外连；
+          - 进程连接常见 C2/代理端口（4444/8443/1337/31337/6667/9999/1080/5900）。
+
+        Args:
+            data_item: 进程数据项（读 name/path/pid/connections）。
+            condition: 规则条件。
+            global_context: 全局上下文，需含 connections（T3 补充）。
+
+        Returns:
+            是否命中异常网络连接进程。
+        """
+        pid = data_item.get("pid")
+        # 优先 data_item.connections，回退 global_context["connections"]（按 pid 过滤）
+        conns = data_item.get("connections")
+        if not isinstance(conns, list):
+            conns = []
+        if not conns and global_context:
+            all_conns = global_context.get("connections") or []
+            if isinstance(all_conns, list):
+                conns = [c for c in all_conns if c.get("pid") == pid]
+        if not conns:
+            return False
+
+        name = _norm_proc_name(str(data_item.get("name", "")))
+        path = str(data_item.get("path", "")).lower()
+        # 非系统目录：排除 system32/syswow64 与 Program Files（含 x86）。
+        # 避免 C:\Program Files\SomeApp\updater.exe 连非业务端口被误报（附录B 误报控制）。
+        non_system = (
+            bool(path)
+            and "windows\\system32" not in path
+            and "windows\\syswow64" not in path
+            and "program files" not in path
+        )
+
+        for c in conns:
+            remote_port = c.get("remote_port", c.get("dst_port", 0))
+            try:
+                remote_port = int(remote_port)
+            except (ValueError, TypeError):
+                remote_port = 0
+            # 脚本解释器/无签名进程的非业务端口外连
+            if name in _ANOMALOUS_NET_INTERPRETERS and remote_port not in _BUSINESS_PORTS:
+                return True
+            if non_system and remote_port not in _BUSINESS_PORTS:
+                return True
+            # 常见 C2/代理端口
+            if remote_port in _C2_PORTS:
+                return True
+        return False
+
+    # ── 疑似僵尸/残留进程检测（zombie_process，启发式）──────────────────
+
+    @staticmethod
+    def _match_zombie_process(data_item: dict, condition: dict,
+                              global_context: Optional[dict] = None) -> bool:
+        """疑似僵尸/残留进程检测（数据受限启发式，需人工确认）.
+
+        Windows 离线取证通常无 zombie 状态字段，本启发式（降级为"疑似"）：
+          进程线程数为 0（残留句柄）或完全孤立（无任何外连），且启动时间距今
+          超过阈值（默认 7 天）→ 疑似僵尸/残留进程。命中仅作"疑似"，severity 由
+          规则定为 high 且 reason 明示"待人工确认"。
+
+        Args:
+            data_item: 进程数据项（读 pid/threads/start_time/connections）。
+            condition: 规则条件（threshold_days，默认 7）。
+            global_context: 全局上下文（预留，当前未使用）。
+
+        Returns:
+            是否疑似僵尸/残留进程。
+        """
+        threshold_days = int(condition.get("threshold_days", 7) or 7)
+        threads = data_item.get("threads", 1)
+        start_time = data_item.get("start_time", "")
+        ts = _parse_datetime(start_time)
+        if ts is None:
+            return False
+        try:
+            old = (datetime.now() - ts) > timedelta(days=threshold_days)
+        except Exception:
+            return False
+        if not old:
+            return False
+        # 线程数为 0（残留句柄）或完全孤立（无外连）→ 疑似残留
+        conns = data_item.get("connections")
+        conn_count = len(conns) if isinstance(conns, list) else 0
+        return threads == 0 or conn_count == 0
+
+    # ── 无签名 exe（unsigned_exe，T05）────────────────────────────────
+    @staticmethod
+    def _match_unsigned_exe(data_item: dict, condition: dict) -> bool:
+        """无数字签名的非系统目录 exe（JOIN file_hashes 注入 exe_is_signed/exe_signer）.
+
+        触发：exe_is_signed 为 0/空/缺失（或 exe_signer 空而标记为已签名），
+        且进程路径不在系统目录（视为无签名的可疑 exe）。
+        """
+        path = str(data_item.get("path", "")).lower()
+        if not path:
+            # 无路径进程（fileless）由 fileless_residency 评估，此处不误报
+            return False
+        system_dirs = [
+            "c:\\windows\\system32",
+            "c:\\windows\\syswow64",
+            "c:\\program files",
+            "c:\\program files (x86)",
+            "/usr/bin",
+            "/usr/sbin",
+            "/bin",
+            "/sbin",
+        ]
+        if any(d in path for d in system_dirs):
+            return False
+        exe_is_signed = data_item.get("exe_is_signed")
+        exe_signer = data_item.get("exe_signer")
+        if exe_is_signed in (0, None, "", False):
+            return True
+        # 标记为已签名但签名为空 → 异常，按无签名处理
+        if exe_is_signed == 1 and exe_signer in (None, ""):
+            return True
+        return False
+
+    # ── 白名单派生链（whitelist_derived_chain，T04 根因修复）────────────
+    @staticmethod
+    def _match_whitelist_derived_chain(data_item: dict, condition: dict,
+                                       global_context: Optional[dict] = None) -> bool:
+        """白名单进程派生的可疑子链.
+
+        触发：当前进程的父进程被标记为 whitelisted（命中白名单、保留建树），
+        且当前进程为脚本解释器/LOLBin 或其命令行含可疑解码/下载参数。
+        """
+        if not global_context:
+            return False
+        process_map = global_context.get("process_map", {})
+        ppid = data_item.get("ppid")
+        if ppid is None:
+            return False
+        parent = process_map.get(ppid)
+        if not parent or not parent.get("whitelisted"):
+            return False
+        name = _norm_proc_name(str(data_item.get("name", "")))
+        derived_children = {
+            "powershell", "cmd", "wscript", "cscript", "rundll32", "mshta",
+            "certutil", "bitsadmin", "wmic", "regsvr32", "javaw", "python",
+            "perl", "ruby", "pwsh", "iexplore",
+        }
+        if name in derived_children:
+            return True
+        cmd = str(data_item.get("command_line", "")).lower()
+        if any(k in cmd for k in (
+            "-enc", "-encodedcommand", "-decode", "-decodehex",
+            "-urlcache", "iex", "downloadstring", "frombase64",
+        )):
+            return True
+        return False
+
+    # ── 祖辈链异常（ancestry_chain，T07）──────────────────────────────
+    @staticmethod
+    def _match_ancestry_chain(data_item: dict, condition: dict,
+                              global_context: Optional[dict] = None) -> bool:
+        """祖辈（祖父）链异常.
+
+        触发：本进程为脚本解释器/LOLBin，且其多级祖先链（ancestor_map）中存在
+        可疑系统服务/异常服务祖父。沿 global_context["ancestor_map"] 回溯。
+        """
+        if not global_context:
+            return False
+        process_map = global_context.get("process_map", {})
+        ancestor_map = global_context.get("ancestor_map", {})
+        suspicious_grandparents = condition.get("suspicious_grandparents") or _DEFAULT_SUSPICIOUS_GRANDPARENTS
+        suspicious_grandparents = {_norm_proc_name(p) for p in suspicious_grandparents}
+        suspicious_children = condition.get("suspicious_children") or _DEFAULT_SUSPICIOUS_CHILDREN
+        suspicious_children = {_norm_proc_name(c) for c in suspicious_children}
+
+        name = _norm_proc_name(str(data_item.get("name", "")))
+        if name not in suspicious_children:
+            return False
+        anc_pids = ancestor_map.get(data_item.get("pid"))
+        if not anc_pids:
+            return False
+        for apid in anc_pids:
+            aproc = process_map.get(apid)
+            if not aproc:
+                continue
+            aname = _norm_proc_name(str(aproc.get("name", "")))
+            if aname in suspicious_grandparents:
+                return True
+        return False
+
+    # ── 伪造/不可能父 PID（parent_pid_spoof，T10 字段级）────────────────
+    @staticmethod
+    def _match_parent_pid_spoof(data_item: dict, condition: dict,
+                                global_context: Optional[dict] = None) -> bool:
+        """伪造/不可能父 PID（字段级，升级原 parent_pid_spoofing 命令行规则）.
+
+        触发：ppid == pid（自指）或 父子互指环（父的 ppid 指向子本身）。
+        """
+        pid = data_item.get("pid")
+        ppid = data_item.get("ppid")
+        if pid is None or ppid is None:
+            return False
+        if ppid == pid:
+            return True
+        process_map = (global_context or {}).get("process_map", {})
+        parent = process_map.get(ppid)
+        if parent is not None and parent.get("ppid") == pid:
+            # 互指父子环：不可能
+            return True
+        return False
+
+    # ── fileless 内存驻留（fileless_residency，T11 快照版）──────────────
+    @staticmethod
+    def _match_fileless_residency(data_item: dict, condition: dict) -> bool:
+        """fileless 内存驻留（快照可部分实现）.
+
+        触发：path 为空 / UNC / 内存伪路径，但存在活跃连接或线程
+        （无磁盘落地的内存驻留进程，基于现有 path/connections 字段）。
+        """
+        path = str(data_item.get("path", "")).strip()
+        if not path:
+            is_fileless = True
+        else:
+            low = path.lower()
+            is_fileless = (
+                low.startswith("\\\\")
+                or "memory" in low
+                or "memfd:" in low
+                or low.startswith("/proc/")
+                or low.startswith("\\??\\")
+                or ("lsass" in low and "mem" in low)
+            )
+        if not is_fileless:
+            return False
+        connections = data_item.get("connections") or []
+        conn_count = len(connections) if isinstance(connections, list) else 0
+        threads = data_item.get("threads", 0) or 0
+        return conn_count > 0 or threads > 0
+
+    # ── 短时间重复进程重生（process_respawn，T12 快照近似）──────────────
+    @staticmethod
+    def _match_process_respawn(data_item: dict, condition: dict,
+                               global_context: Optional[dict] = None) -> bool:
+        """短时间窗口内同 path/command_line 重复 ≥K 次（快照近似爆发）.
+
+        退化：精确计数依赖事件流；快照下按同指纹（path+command_line）在 all_items 中
+        出现次数近似（若均提供可解析 start_time，则仅统计窗口内的重复）。
+        """
+        if not global_context:
+            return False
+        all_items = global_context.get("all_items")
+        if not isinstance(all_items, list) or not all_items:
+            return False
+        min_count = int(condition.get("min_count", 3) or 3)
+        window_min = int(condition.get("window_minutes", 60) or 60)
+        fp = (str(data_item.get("path", "")) + "|" + str(data_item.get("command_line", ""))).lower()
+        base_ts = data_item.get("start_time", "")
+        count = 0
+        for it in all_items:
+            if not isinstance(it, dict):
+                continue
+            it_fp = (str(it.get("path", "")) + "|" + str(it.get("command_line", ""))).lower()
+            if it_fp != fp:
+                continue
+            it_ts = it.get("start_time", "")
+            if base_ts and it_ts:
+                bt = _parse_datetime(base_ts)
+                it_t = _parse_datetime(it_ts)
+                if bt and it_t:
+                    if abs((bt - it_t).total_seconds()) / 60.0 > window_min:
+                        continue
+            count += 1
+        return count >= min_count
+
+    # ── 签名被吊销/过期（revoked_sig，T17 离线缓存）───────────────────
+    @staticmethod
+    def _match_revoked_sig(data_item: dict, condition: dict) -> bool:
+        """签名被吊销/过期（离线 CRL/OCSP 缓存）.
+
+        触发：exe_signer 命中吊销库（revoked_ca.json）。吊销库为空时降级返回 False。
+        """
+        signer = data_item.get("exe_signer")
+        if not signer:
+            return False
+        revoked = _load_revoked_signers()
+        if not revoked:
+            return False
+        return str(signer).lower() in revoked
+
+    # ── 无文件内存注入（memory_injection，T16 需 memory_sections）──────
+    @staticmethod
+    def _match_memory_injection(data_item: dict, condition: dict) -> bool:
+        """无文件内存注入（reflective/hollowing/远线程）.
+
+        触发：进程 memory_sections 含「内存中 PE 镜像 / 非映像基址注入痕迹」。
+        缺 memory_sections 字段时优雅降级返回 False。
+        """
+        sections = data_item.get("memory_sections")
+        if not isinstance(sections, list) or not sections:
+            return False
+        for sec in sections:
+            if not isinstance(sec, dict):
+                continue
+            if sec.get("injection") or sec.get("pe_in_memory") or sec.get("reflective"):
+                return True
+            stype = str(sec.get("type", "")).lower()
+            if "mem_image" in stype or "memory_pe" in stype or stype == "pe":
+                return True
+            if sec.get("base_address") and sec.get("is_non_image"):
+                return True
+        return False
+
+    # ── 脚本解释器内存加载异常 PE（interpreter_mem_pe，T16）────────────
+    @staticmethod
+    def _match_interpreter_mem_pe(data_item: dict, condition: dict) -> bool:
+        """脚本解释器内存加载异常 PE（需 memory_sections / ETW ImageLoad）.
+
+        触发：进程为脚本解释器（powershell/python 等）且 memory_sections 含内存 PE 痕迹。
+        缺内存采集时优雅降级返回 False。
+        """
+        name = _norm_proc_name(str(data_item.get("name", "")))
+        interpreters = {"powershell", "pwsh", "python", "python3", "perl", "ruby", "node", "java"}
+        if name not in interpreters:
+            return False
+        sections = data_item.get("memory_sections")
+        if not isinstance(sections, list) or not sections:
+            return False
+        for sec in sections:
+            if not isinstance(sec, dict):
+                continue
+            if sec.get("injection") or sec.get("pe_in_memory") or sec.get("reflective"):
+                return True
+            stype = str(sec.get("type", "")).lower()
+            if "mem_image" in stype or "memory_pe" in stype or stype == "pe":
+                return True
+        return False
+
+    # ── ETW/AMSI 旁路（etw_amsi_tamper，T16 事件级）────────────────────
+    @staticmethod
+    def _match_etw_amsi_tamper(data_item: dict, condition: dict) -> bool:
+        """ETW/AMSI 旁路（事件级，需 ETW 事件流）.
+
+        触发：进程携带 etw_events（由 process_event_consumer 归一化注入），
+        且含 ETW provider 禁用 / AMSI 内存修补事件。缺事件流时优雅降级返回 False。
+        """
+        events = data_item.get("etw_events")
+        if not isinstance(events, list) or not events:
+            return False
+        for ev in events:
+            if not isinstance(ev, dict):
+                continue
+            etype = str(ev.get("event_type", "")).lower()
+            detail = str(ev.get("detail", "")).lower()
+            if "etw" in etype and ("disable" in detail or "stop" in detail or "unregister" in detail):
+                return True
+            if "amsi" in etype or "amsi" in detail:
+                if "patch" in detail or "tamper" in detail or "bypass" in detail:
+                    return True
+        return False
+
+    # ── 跨会话/跨用户父子（cross_session，T16 需 session）──────────────
+    @staticmethod
+    def _match_cross_session(data_item: dict, condition: dict,
+                             global_context: Optional[dict] = None) -> bool:
+        """跨会话/跨用户父子（需 session 字段）.
+
+        触发：父 session==0（系统会话）但子为交互会话（session>0），
+        或父子 user 不同。缺 session 字段时优雅降级返回 False。
+        """
+        if "session" not in data_item:
+            return False
+        try:
+            session = int(data_item.get("session"))
+        except (ValueError, TypeError):
+            return False
+        if not global_context:
+            return False
+        process_map = global_context.get("process_map", {})
+        ppid = data_item.get("ppid")
+        parent = process_map.get(ppid) if ppid is not None else None
+        if parent is None or "session" not in parent:
+            return False
+        try:
+            parent_session = int(parent.get("session"))
+        except (ValueError, TypeError):
+            return False
+        if parent_session == 0 and session > 0:
+            return True
+        parent_user = parent.get("user")
+        child_user = data_item.get("user")
+        if parent_user and child_user and parent_user != child_user:
+            return True
+        return False
+
+    # ── 注入行为窗口异常（injection_window，T16 需事件流）──────────────
+    @staticmethod
+    def _match_injection_window(data_item: dict, condition: dict,
+                                global_context: Optional[dict] = None) -> bool:
+        """注入行为窗口异常（需事件流：启动后极短窗口内建远线程）.
+
+        触发：进程携带 remote_thread_events，且首条远线程事件距 start_time < max_alive_seconds。
+        缺事件流时优雅降级返回 False。
+        """
+        events = data_item.get("remote_thread_events")
+        if not isinstance(events, list) or not events:
+            return False
+        start_time = data_item.get("start_time", "")
+        ts = _parse_datetime(start_time)
+        if ts is None:
+            return False
+        from datetime import datetime
+        elapsed = (datetime.now() - ts).total_seconds()
+        if elapsed < 0 or elapsed > 3600:
+            return False
+        max_alive = int(condition.get("max_alive_seconds", 2) or 2)
+        for ev in events:
+            if not isinstance(ev, dict):
+                continue
+            ets = _parse_datetime(ev.get("timestamp", ""))
+            if ets is None:
+                continue
+            if 0 <= (ets - ts).total_seconds() <= max_alive:
+                return True
+        return False
+
+    # ── 快照间消失进程（vanished_process，T16 需 process_events）────────
+    @staticmethod
+    def _match_vanished_process(data_item: dict, condition: dict,
+                                global_context: Optional[dict] = None) -> bool:
+        """快照间出现又消失的进程（需 process_events 表）.
+
+        触发：本进程仅见于事件流（seen_in_events）但不在完整快照（seen_in_snapshot 缺失）。
+        由 process_event_consumer 归一化时标注。缺事件标注时优雅降级返回 False。
+        """
+        if data_item.get("seen_in_events") and not data_item.get("seen_in_snapshot"):
+            return True
         return False
 
     # ── 攻击链关联检测（主机级）─────────────────────────────────────────

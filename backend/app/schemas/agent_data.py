@@ -77,6 +77,13 @@ class ProcessInfo(BaseModel):
     start_time: Optional[str] = None
     threads: Optional[int] = None
     connections: list = Field(default_factory=list)
+    # T14/P2 扩展字段（均 Optional，向后兼容；配合 extra="allow" 可承载更多 Agent 端数据）
+    session: Optional[int] = None          # 会话 ID（跨会话父子检测 cross_session 使用）
+    memory_sections: Optional[list] = None  # 内存节区（fileless/反射注入检测 memory_injection 使用）
+    state: Optional[str] = None            # 进程状态（如 Running/Suspended，可选）
+
+    class Config:
+        extra = "allow"  # 向后兼容：Agent 端新增字段（whitelisted/parent_name/...）不报错
 
 
 class ServiceInfo(BaseModel):

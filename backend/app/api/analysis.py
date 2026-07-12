@@ -138,9 +138,17 @@ def get_abnormal_processes(host_id: int, current_user: dict = Depends(get_curren
 
 
 @router.get("/hosts/{host_id}/process-tree")
-def get_process_tree(host_id: int, current_user: dict = Depends(get_current_user)):
-    """获取进程树结构."""
-    result = AnalysisService.get_process_tree(host_id)
+def get_process_tree(
+    host_id: int,
+    enrich: bool = Query(False, description="是否返回增强字段（severity/parent_name/connections/攻击链等）。缺省为 False，响应与历史版本逐字段一致"),
+    current_user: dict = Depends(get_current_user),
+):
+    """获取进程树结构.
+
+    - ``enrich`` 缺省 / 为 0 / false → 响应与历史版本逐字段一致，旧前端兼容。
+    - ``enrich=1`` / ``enrich=true`` → 节点 dict 增量追加增强字段（旧字段不变）。
+    """
+    result = AnalysisService.get_process_tree(host_id, enrich=enrich)
     return {"code": 0, "data": result, "message": "success"}
 
 
