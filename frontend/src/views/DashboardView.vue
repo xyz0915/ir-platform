@@ -223,13 +223,17 @@ async function fetchData() {
       params: { range: activeRange.value }
     })
     const data = res.data
+    if (data.error) {
+      throw new Error(data.error)
+    }
     stats.value = data.metrics || {}
     recentAlerts.value = (data.recent_alerts || []).slice(0, 6)
     recentHosts.value = (data.recent_hosts || []).slice(0, 8)
     ruleTop.value = (data.rule_top || []).slice(0, 8)
     trendData.value = data.trend || {}
+    // 等待 DOM 完全渲染后再初始化图表
     await nextTick()
-    renderCharts(data)
+    setTimeout(() => renderCharts(data), 100)
   } catch (e) {
     error.value = e.response?.data?.detail || e.message || '请求失败'
   } finally {
@@ -241,10 +245,11 @@ function renderCharts(data) {
   const trend = data.trend || {}
   const riskDist = data.risk_distribution || {}
 
-  if (trendChartRef.value) {
-    trendChart?.dispose()
-    trendChart = echarts.init(trendChartRef.value)
-    trendChart.setOption({
+  try {
+    if (trendChartRef.value && trend.labels && trend.labels.length > 0) {
+      trendChart?.dispose()
+      trendChart = echarts.init(trendChartRef.value)
+      trendChart.setOption({
       tooltip: {
         trigger: 'axis',
         axisPointer: { type: 'cross' },
@@ -297,39 +302,45 @@ function renderCharts(data) {
         },
       ],
     })
+    trendChart.resize()
   }
 
-  if (categoryChartRef.value) {
-    categoryChart?.dispose()
-    categoryChart = echarts.init(categoryChartRef.value)
-    categoryChart.setOption({
-      tooltip: {
-        trigger: 'item',
-        backgroundColor: '#fff',
-        borderColor: '#e5e7eb', borderWidth: 1,
-        textStyle: { fontSize: 12, color: '#1f2937' },
-        formatter: '{b}: {c} 条 ({d}%)',
-      },
-      series: [{
-        type: 'pie',
-        radius: ['40%', '68%'],
-        center: ['50%', '48%'],
-        avoidLabelOverlap: true,
-        itemStyle: { borderRadius: 4, borderColor: '#fff', borderWidth: 2 },
-        label: {
-          show: true, formatter: '{b}', fontSize: 11, color: '#374151', lineHeight: 16,
+  try {
+    if (categoryChartRef.value && riskDist.types && riskDist.types.length > 0) {
+      categoryChart?.dispose()
+      categoryChart = echarts.init(categoryChartRef.value)
+      categoryChart.setOption({
+        tooltip: {
+          trigger: 'item',
+          backgroundColor: '#fff',
+          borderColor: '#e5e7eb', borderWidth: 1,
+          textStyle: { fontSize: 12, color: '#1f2937' },
+          formatter: '{b}: {c} 条 ({d}%)',
         },
-        emphasis: {
-          label: { show: true, fontSize: 13, fontWeight: 'bold' },
-          itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.15)' },
-        },
-        data: (riskDist.types || []).map((d, i) => ({
-          name: d.name,
-          value: d.value,
-          itemStyle: { color: BAR_COLORS[i % BAR_COLORS.length] },
-        })),
-      }],
-    })
+        series: [{
+          type: 'pie',
+          radius: ['40%', '68%'],
+          center: ['50%', '48%'],
+          avoidLabelOverlap: true,
+          itemStyle: { borderRadius: 4, borderColor: '#fff', borderWidth: 2 },
+          label: {
+            show: true, formatter: '{b}', fontSize: 11, color: '#374151', lineHeight: 16,
+          },
+          emphasis: {
+            label: { show: true, fontSize: 13, fontWeight: 'bold' },
+            itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.15)' },
+          },
+          data: (riskDist.types || []).map((d, i) => ({
+            name: d.name,
+            value: d.value,
+            itemStyle: { color: BAR_COLORS[i % BAR_COLORS.length] },
+          })),
+        }],
+      })
+      categoryChart.resize()
+    }
+  } catch (e) {
+    console.error('Dashboard chart render error:', e)
   }
 }
 
