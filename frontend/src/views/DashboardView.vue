@@ -1,11 +1,9 @@
 <template>
   <div class="dashboard-page">
-    <!-- 加载状态 -->
     <div v-if="loading" class="loading-overlay">
       <el-skeleton :rows="10" animated />
     </div>
 
-    <!-- 错误状态 -->
     <div v-else-if="error" class="error-box">
       <el-result icon="error" title="加载失败" :sub-title="error">
         <template #extra>
@@ -14,9 +12,7 @@
       </el-result>
     </div>
 
-    <!-- 仪表盘内容 -->
     <template v-else>
-
       <!-- 时间选择器 -->
       <div class="time-range">
         <span
@@ -31,19 +27,28 @@
         <div class="kpi-card critical" @click="$router.push('/iocs')">
           <div class="kpi-label">待处理告警</div>
           <div class="kpi-value">{{ stats.pending_alerts }}</div>
-          <div class="kpi-sub">需立即处置 <strong>{{ stats.critical_alerts }}</strong> 条</div>
+          <div class="kpi-sub">
+            需立即处置 <strong>{{ stats.critical_alerts }}</strong> 条
+            <span v-if="stats.alert_trend_dir === 'up'" class="trend-up">↑ {{ Math.abs(stats.alert_trend || 0) }}</span>
+            <span v-else-if="stats.alert_trend_dir === 'down'" class="trend-down">↓ {{ Math.abs(stats.alert_trend || 0) }}</span>
+          </div>
           <div class="kpi-icon" style="background:#ffebe9;">⚡</div>
         </div>
         <div class="kpi-card high">
           <div class="kpi-label">活跃案件</div>
           <div class="kpi-value">{{ stats.active_cases }}</div>
-          <div class="kpi-sub">今日新增 <strong>{{ stats.new_cases_today }}</strong> 件</div>
+          <div class="kpi-sub">
+            今日新增 <strong>{{ stats.new_cases_today }}</strong> 件
+            <span v-if="stats.cases_trend > 0" class="trend-up">↑ {{ stats.cases_trend }}</span>
+          </div>
           <div class="kpi-icon" style="background:#fff8c5;">📋</div>
         </div>
         <div class="kpi-card medium">
           <div class="kpi-label">已采集主机</div>
           <div class="kpi-value">{{ stats.total_hosts }}</div>
-          <div class="kpi-sub">待分析 <strong>{{ stats.pending_hosts }}</strong> 台</div>
+          <div class="kpi-sub">
+            待分析 <strong>{{ stats.pending_hosts }}</strong> 台 · 最近 24h <strong>{{ stats.recent_hosts_24h || 0 }}</strong>
+          </div>
           <div class="kpi-icon" style="background:#ddf4ff;">🖥</div>
         </div>
         <div class="kpi-card purple">
@@ -54,14 +59,22 @@
         </div>
         <div class="kpi-card green">
           <div class="kpi-label">知识库命中</div>
-          <div class="kpi-value kpi-green">{{ stats.kb_hits || 0 }}</div>
-          <div class="kpi-sub">语义匹配 <strong>{{ stats.kb_coverage || 'N/A' }}%</strong></div>
+          <div class="kpi-value kpi-green">{{ stats.kb_hits }}</div>
+          <div class="kpi-sub">
+            覆盖率 <strong>{{ stats.kb_coverage }}%</strong>
+            <span v-if="stats.kb_coverage > 0 && stats.kb_coverage < 30" style="color:#d4a72c;">（偏低）</span>
+            <span v-else-if="stats.kb_coverage >= 50" style="color:#2da44e;">（良好）</span>
+          </div>
           <div class="kpi-icon" style="background:#e6f6e8;">📚</div>
         </div>
         <div class="kpi-card teal">
           <div class="kpi-label">AI 分析</div>
           <div class="kpi-value kpi-teal">{{ stats.ai_analyses_recent || 0 }}</div>
-          <div class="kpi-sub">最近 24h 可用率 <strong>99.5%</strong></div>
+          <div class="kpi-sub">
+            可用率 <strong :style="{ color: aiAvailColor }">{{ stats.ai_availability || 0 }}%</strong>
+            <span v-if="stats.ai_trend > 0" class="trend-up">↑ {{ stats.ai_trend }}</span>
+            <span v-else-if="stats.ai_trend < 0" class="trend-down">↓ {{ Math.abs(stats.ai_trend) }}</span>
+          </div>
           <div class="kpi-icon" style="background:#e6fffa;">🤖</div>
         </div>
       </div>
@@ -72,7 +85,7 @@
           <div class="chart-header">
             <div>
               <div class="chart-title">案件与规则命中趋势</div>
-              <div class="chart-subtitle">最近 7 天 · 含告警量与规则命中数</div>
+              <div class="chart-subtitle">最近 {{ trendDays }} 天 · 含告警量与规则命中数</div>
             </div>
           </div>
           <div ref="trendChartRef" class="chart-box" />
@@ -81,7 +94,7 @@
           <div class="chart-header">
             <div>
               <div class="chart-title">告警类别分布</div>
-              <div class="chart-subtitle">按规则名聚合 top 8</div>
+              <div class="chart-subtitle">按规则聚合 top 8</div>
             </div>
           </div>
           <div ref="categoryChartRef" class="chart-box" />
@@ -94,14 +107,14 @@
         <div class="panel">
           <div class="panel-header">
             <span class="panel-title">🔔 待处理告警</span>
-            <router-link to="/iocs" class="panel-link">查看全部 →</router-link>
+            <router-link to="/cases" class="panel-link">查看全部 →</router-link>
           </div>
           <div v-if="recentAlerts.length === 0" class="empty-state">暂无待处理告警</div>
           <div v-for="(alert, i) in recentAlerts" :key="i" class="alert-item">
             <span :class="['alert-severity-dot', `dot-${alert.severity}`]" />
             <div class="alert-body">
               <div class="alert-title">{{ alert.title }}</div>
-              <div class="alert-meta">{{ alert.host }} · PID {{ alert.pid }} · {{ alert.detail }}</div>
+              <div class="alert-meta">{{ alert.host }} · PID {{ alert.pid }} · {{ alert.detail || 'N/A' }}</div>
             </div>
             <span :class="['alert-badge', `badge-${alert.severity}`]">{{ alert.severity.toUpperCase() }}</span>
           </div>
@@ -111,11 +124,11 @@
         <div class="panel">
           <div class="panel-header">
             <span class="panel-title">🖥 最近主机</span>
-            <router-link to="/" class="panel-link">主机列表 →</router-link>
+            <router-link to="/cases" class="panel-link">主机列表 →</router-link>
           </div>
           <div v-if="recentHosts.length === 0" class="empty-state">暂未采集主机</div>
           <div class="host-grid">
-            <div v-for="(h, i) in recentHosts" :key="i" class="host-item" @click="$router.push(`/hosts/${h.id || i}`)">
+            <div v-for="(h, i) in recentHosts" :key="i" class="host-item" @click="$router.push(`/hosts/${h.id}`)">
               <span :class="['host-risk-dot', h.risk_level === 'pending' ? 'low' : h.risk_level]" />
               <div>
                 <div class="host-name">{{ h.hostname }}</div>
@@ -149,18 +162,18 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import axios from 'axios'
 
-// ── 状态 ──
 const loading = ref(true)
 const error = ref('')
 const stats = ref({})
 const recentAlerts = ref([])
 const recentHosts = ref([])
 const ruleTop = ref([])
-const activeRange = ref('24h')
+const activeRange = ref('7d')
+const trendData = ref({})
 
 const timeRanges = [
   { key: '24h', label: '最近 24 小时' },
@@ -169,6 +182,18 @@ const timeRanges = [
   { key: 'all', label: '全部' },
 ]
 
+const trendDays = computed(() => {
+  const m = { '24h': 1, '7d': 7, '30d': 30, 'all': 14 }
+  return m[activeRange.value] || 7
+})
+
+const aiAvailColor = computed(() => {
+  const v = stats.value.ai_availability || 0
+  if (v >= 95) return '#2da44e'
+  if (v >= 80) return '#d4a72c'
+  return '#cf222e'
+})
+
 const trendChartRef = ref(null)
 const categoryChartRef = ref(null)
 let trendChart = null
@@ -176,9 +201,8 @@ let categoryChart = null
 
 const BAR_COLORS = ['#cf222e', '#d4a72c', '#0969da', '#8250df', '#0d9488', '#e94e4e', '#c4801a', '#2da44e']
 
-// ── 工具函数 ──
 function formatNum(n) {
-  if (!n) return '0'
+  if (!n && n !== 0) return '0'
   if (n >= 10000) return (n / 10000).toFixed(1) + 'w'
   if (n >= 1000) return (n / 1000).toFixed(1) + 'k'
   return String(n)
@@ -191,18 +215,21 @@ function riskColor(level) {
 
 function barColor(i) { return BAR_COLORS[i % BAR_COLORS.length] }
 
-// ── 数据获取 ──
 async function fetchData() {
   loading.value = true
   error.value = ''
   try {
-    const res = await axios.get('/api/dashboard/stats')
-    stats.value = res.data.metrics || {}
-    recentAlerts.value = (res.data.recent_alerts || []).slice(0, 6)
-    recentHosts.value = (res.data.recent_hosts || []).slice(0, 8)
-    ruleTop.value = (res.data.rule_top || []).slice(0, 8)
+    const res = await axios.get('/api/dashboard/stats', {
+      params: { range: activeRange.value }
+    })
+    const data = res.data
+    stats.value = data.metrics || {}
+    recentAlerts.value = (data.recent_alerts || []).slice(0, 6)
+    recentHosts.value = (data.recent_hosts || []).slice(0, 8)
+    ruleTop.value = (data.rule_top || []).slice(0, 8)
+    trendData.value = data.trend || {}
     await nextTick()
-    renderCharts(res.data)
+    renderCharts(data)
   } catch (e) {
     error.value = e.response?.data?.detail || e.message || '请求失败'
   } finally {
@@ -210,12 +237,10 @@ async function fetchData() {
   }
 }
 
-// ── 图表渲染 ──
 function renderCharts(data) {
   const trend = data.trend || {}
   const riskDist = data.risk_distribution || {}
 
-  // 趋势图
   if (trendChartRef.value) {
     trendChart?.dispose()
     trendChart = echarts.init(trendChartRef.value)
@@ -274,7 +299,6 @@ function renderCharts(data) {
     })
   }
 
-  // 告警类别饼图
   if (categoryChartRef.value) {
     categoryChart?.dispose()
     categoryChart = echarts.init(categoryChartRef.value)
@@ -300,7 +324,8 @@ function renderCharts(data) {
           itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.15)' },
         },
         data: (riskDist.types || []).map((d, i) => ({
-          ...d,
+          name: d.name,
+          value: d.value,
           itemStyle: { color: BAR_COLORS[i % BAR_COLORS.length] },
         })),
       }],
@@ -308,13 +333,11 @@ function renderCharts(data) {
   }
 }
 
-// ── 窗口 resize ──
 function onResize() {
   trendChart?.resize()
   categoryChart?.resize()
 }
 
-// ── 生命周期 ──
 onMounted(() => {
   fetchData()
   window.addEventListener('resize', onResize)
@@ -334,11 +357,9 @@ watch(activeRange, () => fetchData())
   padding: 20px;
   min-height: calc(100vh - 100px);
 }
-
 .loading-overlay { padding: 40px; }
 .error-box { max-width: 500px; margin: 80px auto; }
 
-/* 时间选择器 */
 .time-range { display: flex; gap: 4px; margin-bottom: 20px; }
 .pill {
   padding: 4px 14px; border-radius: 16px; font-size: 12px;
@@ -348,7 +369,6 @@ watch(activeRange, () => fetchData())
 .pill.active { background: #409eff; color: #fff; border-color: #409eff; }
 .pill:hover:not(.active) { background: #f3f4f6; }
 
-/* KPI 卡片 */
 .kpi-row {
   display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px;
   margin-bottom: 20px;
@@ -363,6 +383,8 @@ watch(activeRange, () => fetchData())
 .kpi-value { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; line-height: 1.1; }
 .kpi-sub { font-size: 11px; color: #9ca3af; margin-top: 6px; }
 .kpi-sub strong { font-weight: 600; }
+.trend-up { color: #cf222e; margin-left: 4px; font-weight: 500; }
+.trend-down { color: #2da44e; margin-left: 4px; font-weight: 500; }
 .kpi-icon {
   position: absolute; right: 14px; top: 14px;
   width: 36px; height: 36px; border-radius: 8px;
@@ -376,7 +398,6 @@ watch(activeRange, () => fetchData())
 .kpi-value.kpi-green { color: #2da44e; }
 .kpi-value.kpi-teal { color: #0d9488; }
 
-/* 图表行 */
 .charts-row {
   display: grid; grid-template-columns: 2fr 1fr; gap: 12px;
   margin-bottom: 20px;
@@ -390,7 +411,6 @@ watch(activeRange, () => fetchData())
 .chart-subtitle { font-size: 11px; color: #9ca3af; margin-top: 2px; }
 .chart-box { width: 100%; height: 280px; }
 
-/* 底部三列 */
 .bottom-row {
   display: grid; grid-template-columns: 1.5fr 1fr 1fr; gap: 12px;
 }
@@ -406,20 +426,14 @@ watch(activeRange, () => fetchData())
 .panel-link { font-size: 12px; color: #409eff; text-decoration: none; }
 .panel-link:hover { text-decoration: underline; }
 
-.empty-state {
-  text-align: center; color: #9ca3af; font-size: 13px;
-  padding: 30px 0;
-}
+.empty-state { text-align: center; color: #9ca3af; font-size: 13px; padding: 30px 0; }
 
-/* 告警列表 */
 .alert-item {
   display: flex; align-items: flex-start; gap: 10px;
   padding: 10px 0; border-bottom: 1px solid #f3f4f6;
 }
 .alert-item:last-child { border-bottom: none; }
-.alert-severity-dot {
-  flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; margin-top: 5px;
-}
+.alert-severity-dot { flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; }
 .dot-critical { background: #cf222e; }
 .dot-high { background: #d4a72c; }
 .dot-medium { background: #0969da; }
@@ -435,10 +449,7 @@ watch(activeRange, () => fetchData())
 .badge-high { background: #fff8c5; color: #9a6700; }
 .badge-medium { background: #ddf4ff; color: #0969da; }
 
-/* 主机网格 */
-.host-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
-}
+.host-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .host-item {
   display: flex; align-items: center; gap: 8px;
   padding: 8px 10px; border-radius: 6px; border: 1px solid #f3f4f6;
@@ -447,15 +458,12 @@ watch(activeRange, () => fetchData())
 .host-item:hover { background: #f9fafb; }
 .host-name { font-weight: 500; color: #1f2937; }
 .host-ip { font-size: 10px; color: #9ca3af; margin-top: 1px; }
-.host-risk-dot {
-  width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
-}
+.host-risk-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 .host-risk-dot.critical { background: #cf222e; }
 .host-risk-dot.high { background: #d4a72c; }
 .host-risk-dot.medium { background: #0969da; }
 .host-risk-dot.low { background: #2da44e; }
 
-/* 规则效能 */
 .eff-item {
   display: flex; align-items: center; padding: 8px 0;
   border-bottom: 1px solid #f3f4f6; font-size: 12px;
@@ -463,13 +471,8 @@ watch(activeRange, () => fetchData())
 .eff-item:last-child { border-bottom: none; }
 .eff-name { flex: 1; font-weight: 500; color: #1f2937; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .eff-count { font-size: 11px; color: #6b7280; width: 40px; text-align: right; flex-shrink: 0; }
-.eff-bar-bg {
-  width: 80px; height: 6px; background: #f3f4f6; border-radius: 3px;
-  margin: 0 10px; overflow: hidden; flex-shrink: 0;
-}
-.eff-bar-fill {
-  height: 100%; border-radius: 3px; transition: width 1s ease;
-}
+.eff-bar-bg { width: 80px; height: 6px; background: #f3f4f6; border-radius: 3px; margin: 0 10px; overflow: hidden; flex-shrink: 0; }
+.eff-bar-fill { height: 100%; border-radius: 3px; transition: width 1s ease; }
 
 @media (max-width: 1100px) {
   .kpi-row { grid-template-columns: repeat(3, 1fr); }
