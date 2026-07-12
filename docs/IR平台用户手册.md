@@ -26,6 +26,12 @@
 15. [前端功能面板](#15-前端功能面板)
 16. [AI 分析模块](#16-ai-分析模块)
 17. [知识库系统](#17-知识库系统)
+    - [17.3A 向量检索质量自检](#173a-向量检索质量自检)
+    - [17.4.1 自动审核规则](#1741-自动审核规则)
+    - [17.9A RAG 与异常检测集成（双路检测）](#179a-rag-与异常检测集成双路检测)
+    - [17.9B 规则→知识批量导入](#179b-规则知识批量导入)
+    - [17.9C 第三方威胁情报同步增强](#179c-第三方威胁情报同步增强)
+    - [17.11 模型下载指南](#1711-模型下载指南)
 18. [系统配置与管理](#18-系统配置与管理)
 19. [API 参考](#19-api-参考)
 20. [技术架构与数据流](#20-技术架构与数据流)
@@ -1464,6 +1470,45 @@ C2 框架和恶意软件条目额外包含 `pattern` 字段（空格分隔的检
 
 **结构化证据输出**: `retrieve(structured=True)` 返回带 `entry_ref` / `entry_type` / `confidence` / `match_reason` 字段的字典列表，前端可点击溯源跳转到知识详情页。
 
+#### 17.3.4 模型升级 (v1.0 修订)
+
+自 v1.0 发布后，嵌入模型已从 `all-MiniLM-L6-v2`（384维/80MB）升级为 **`BAAI/bge-base-zh-v1.5`**（768维/420MB），针对性优化中英混合安全知识库场景：
+- BGE 系列在中文安全术语（如"PowerShell 无文件攻击""编码命令执行""Cobalt Strike Beacon"）的语义区分能力优于通用多语言模型
+- 768维向量提供更高的语义精度，余弦距离阈值保持 <0.7
+- 模型名定义：`knowledge_retriever.py:50` `EMBEDDING_MODEL_NAME = "BAAI/bge-base-zh-v1.5"`
+- 模型需手动下载（见 17.11 模型下载指南）
+
+#### 17.3.5 规则全量索引修复
+
+当前 `_load_rules()` 已从仅加载 `default_rules.json`（102条）改为调用 `rules/loader.py::load_default_rules()`，遍历全部 5 个 JSON 规则文件，共索引 **133 条**规则（含 `process_enhancement_rules.json` 的 webshell/memory_shell 规则、`seed_rules_process.json`、`default_attack_chain.json`、`revoked_ca.json`）。代码位置：`knowledge_retriever.py:137-157`。
+
+#### 17.3.6 查询截断
+
+向量检索前自动对查询文本和规则描述做截断处理：超过 512 字符时截断（与 sentence-transformers max_seq_length=256 tokens 匹配）。代码位置：`knowledge_retriever.py:598-607` `_build_query_text()`。
+
+> **面向角色**: 💻开发
+
+### 17.3A 向量检索质量自检
+
+**功能描述**：提供 `POST /api/knowledge/validate-retrieval` 端点，支持输入测试查询列表，返回 Top-3 语义匹配结果及置信度。用于在模型部署后验证向量检索召回质量。
+
+**使用场景**：
+- 部署新模型后验证检索是否可用
+- 知识库内容更新后检查召回率
+- 排查"检索无结果"问题时快速定位
+
+**操作流程**：
+1. 确保嵌入模型已下载并重启服务
+2. POST `/api/knowledge/validate-retrieval`（需认证），请求体：`{"queries": ["Cobalt Strike Beacon HTTP 心跳", "PowerShell base64 编码执行", "勒索软件 vssadmin 删除卷影"]}`
+3. 响应返回每条 query 的 top3 匹配结果及 score
+
+**预期结果**：每个 query 返回 1-3 条语义相关条目，score > 0.5 视为有效召回。
+
+**技术实现**：
+- API 端点：`knowledge_draft.py`（`POST /api/knowledge/validate-retrieval`）
+- 逻辑：遍历 queries → 逐条调用 `KnowledgeRetriever.retrieve({"query": q}, limit=3, structured=True)` → 聚合返回
+- **嵌入模型未下载时**：返回 `{"error": "embedding_not_available", "message": "嵌入模型未下载，无法运行向量检索质量自检"}`（不抛异常）
+
 > **面向角色**: 💻开发
 
 ### 17.4 知识草稿管理
@@ -1506,6 +1551,19 @@ AI 分析发现未知威胁
 **批准自动入库**（`backend/app/api/knowledge_draft.py:144-165`）: 批准 API 调用 `approve()` 后，自动触发 `KnowledgeRetriever.rebuild_seed_index()`（`knowledge_retriever.py:706-751`），先删除 ChromaDB 中旧 seed/draft 条目，再重新加载已批准草稿并向量化写入。拒绝和撤回操作同样触发索引重建。
 
 **三元组去重**: `is_duplicate(title, category, mitre_attack)` 确保同一标题+分类+MITRE 技术的草稿不会重复创建。
+
+#### 17.4.1 自动审核规则 (v1.0 修订)
+
+导入知识草稿时，系统自动判断是否可自动批准，减少人工审核负担：
+
+| 条件 | 行为 |
+|------|------|
+| source="rule_import" 且 severity∈{"critical","high"} | 自动批准 → 触发 ChromaDB 索引重建 |
+| source∈{"virustotal","abuseipdb","alienvault_otx"} 且 IOC 恶意数 > 5 | 自动批准 → 触发 ChromaDB 索引重建 |
+| source="rule_import" 且 severity="medium" | status=pending（需人工审核） |
+| 其余 | status=pending |
+
+代码位置：`knowledge_draft.py` `_auto_approve()` 函数。
 
 > **面向角色**: 👤用户 🔧运维 💻开发
 
@@ -1617,7 +1675,7 @@ Malicious IP: Known C2 server IP address
 
 ### 17.8 API 参考
 
-知识库 API 由 `backend/app/api/knowledge_draft.py` 提供，全部 10 个端点均需 JWT 认证（`Depends(get_current_user)`）。
+知识库 API 由 `backend/app/api/knowledge_draft.py` 提供，全部 11 个端点均需 JWT 认证（`Depends(get_current_user)`）。
 
 | # | 路径 | 方法 | 说明 |
 |---|------|------|------|
@@ -1631,6 +1689,7 @@ Malicious IP: Known C2 server IP address
 | 8 | `/api/knowledge/import` | POST | 手动导入 `{items:[...], text:"..."}` |
 | 9 | `/api/knowledge/sync/virustotal` | POST | VirusTotal 同步 `{limit:50}` |
 | 10 | `/api/knowledge/sync/{provider}` | POST | 通用同步（abuseipdb / alienvault_otx） |
+| 11 | `/api/knowledge/validate-retrieval` | POST | 向量检索质量自检 `{"queries":["..."]}` |
 
 **curl 示例**:
 
@@ -1664,6 +1723,12 @@ curl -s -X POST "$BASE/sync/virustotal" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"limit":30}'
+
+# 向量检索质量自检
+curl -s -X POST "$BASE/validate-retrieval" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"queries":["Cobalt Strike Beacon HTTP 心跳","PowerShell base64 编码执行"]}'
 ```
 
 **统一响应格式**: `{"code":0,"data":{...},"message":"..."}`
@@ -1676,6 +1741,75 @@ curl -s -X POST "$BASE/sync/virustotal" \
 | 非 pending 状态操作 | 400 | — |
 | 无效 provider | 400 | — |
 | 同步 upstream 失败 | 502 | 1 |
+
+> **面向角色**: 💻开发
+
+### 17.9A RAG 与异常检测集成 — 双路检测 (v1.0 修订)
+
+**功能描述**：分析阶段（`analysis_service.analyze()`）同时运行规则引擎和向量语义检索，两者结果做交叉验证合并，弥补传统规则引擎对"变种攻击"的盲区。
+
+**架构**：
+```
+raw_data → 规则引擎(正则匹配) ─┐
+                              ├→ 交叉验证 → 合并结果
+raw_data → 向量语义检索 ──────┘
+```
+
+**交叉验证逻辑**（`analysis_service.py` `_cross_validate()`）：
+- `process_name` 相同的规则命中和语义命中 → 合并为一条，取最高置信度
+- 规则命中 + 语义命中同时存在 → confidence 提升一档（medium→high, low→medium）
+- 仅语义命中无规则命中 → `needs_review=True`, `confidence="low"`
+- 合并后的 `knowledge_hits` 写入分析结果的 `findings` 字段
+
+**前端展示**：`AbnormalProcessTable.vue` 中，有语义匹配标签的进程行后方显示 "📚" badge（clickable，el-tooltip 显示匹配到的知识条目名称和 confidence）。
+
+**性能考量**：
+- 模型推理：CPU ~150-400ms/次（768维 BGE 模型）
+- ChromaDB 查询：<10ms
+- 全流程增加约 1-3s（取决于命中进程数）
+
+> **面向角色**: 💻开发
+
+### 17.9B 规则→知识批量导入 (v1.0 修订)
+
+**功能描述**：提供独立脚本 `backend/scripts/import_rules_to_knowledge.py`，将全部 135 条检测规则批量导入知识库草稿，用于初始化向量索引的数据基础。
+
+**使用场景**：
+- 首次部署嵌入模型后，快速填充 ChromaDB 索引
+- 规则更新后重新同步到知识库
+
+**操作流程**：
+1. 预览模式：`python scripts/import_rules_to_knowledge.py --dry-run`（输出映射预览，不实际提交）
+2. 正式导入：`python scripts/import_rules_to_knowledge.py`（调用 POST /api/knowledge/import 批量提交）
+3. 登录前端审核 pending 状态的草稿（或自动审核通过 critical/high 规则）
+
+**字段映射**：`name→title, description→description, category→category, severity→severity, _meta.mitre_attack→mitre_attack, label→pattern, source="rule_import"`
+
+**技术实现**：
+- 读取：`rules/loader.py::load_default_rules()` 获取全部规则
+- 导入：HTTP 调 POST /api/knowledge/import
+- 去重：复用 `KnowledgeDraft.is_duplicate(title, category, mitre_attack)`
+- 自动审核：critical/high 规则导入后自动批准 + 触发 ChromaDB 索引重建
+
+> **面向角色**: 💻开发
+
+### 17.9C 第三方威胁情报同步增强 (v1.0 修订)
+
+**功能描述**：三个威胁情报 provider 新增 `fetch_list()` 方法，支持拉取最新 IOC 列表并自动导入知识草稿。
+
+**Provider 实现**（代码位置）：
+
+| Provider | 方法 | API 端点 | 文件 |
+|----------|------|---------|------|
+| VirusTotal | `fetch_list(limit=20)` | /api/v3/intelligence/search | `virustotal_provider.py` |
+| AbuseIPDB | `fetch_list(limit=20)` | /api/v2/blacklist | `abuseipdb_provider.py` |
+| AlienVault OTX | `fetch_list(limit=20)` | /api/v1/pulses/subscribed | `alienvault_otx_provider.py` |
+
+**统一聚合**：`EnrichmentService.fetch_all_ioc_lists(limit=20)` → 并行调用三个 provider → 按 ioc_value 去重 → 汇聚返回统一格式：`[{"ioc_type":"ip"/"domain"/"hash","ioc_value":"...","description":"...","severity":"high"/"medium"/"low","source":"virustotal"/"abuseipdb"/"alienvault_otx"}]`
+
+**定时同步**（`main.py` `_register_scheduled_tasks()`）：使用 apscheduler，每天凌晨 03:00 自动调用 `fetch_all_ioc_lists(limit=100)` → 批量导入知识草稿 → 自动审核。同步失败仅记录日志，不影响服务。
+
+**容错**：API key 未配置时 `fetch_list()` 返回 `[]` 不抛异常。
 
 > **面向角色**: 💻开发
 
@@ -1754,6 +1888,54 @@ curl -s -X POST "$BASE/sync/virustotal" \
 | ChromaDB 数据损坏 | 持久化文件异常 | 删除 `backend/data/chroma/` 目录，重启后自动重建 |
 | 批准后检索未生效 | `_SEED_CACHE` 进程级缓存未刷新 | 调用 `rebuild_seed_index()` 或重启后端 |
 | 种子数据未被索引 | `collection.count()>0` 导致 _build_seed_index 被跳过 | 检查是否有 rule_* 条目占位，调用 rebuild_seed_index 强制重建 |
+
+> **面向角色**: 🔧运维 💻开发
+
+### 17.11 模型下载指南
+
+**模型信息**：
+- 名称：`BAAI/bge-base-zh-v1.5`
+- 大小：约 420MB
+- 维度：768 维
+- 用途：中英混合安全知识库语义检索
+
+**方式一：Python 脚本预下载（推荐）**
+
+在项目根目录创建并运行以下 Python 脚本：
+
+```python
+# download_embedding_model.py
+from sentence_transformers import SentenceTransformer
+
+model_name = "BAAI/bge-base-zh-v1.5"
+print(f"正在下载 {model_name} ...")
+model = SentenceTransformer(model_name)
+print(f"下载完成，缓存路径：{model._modules['0'].auto_model.config._name_or_path}")
+
+# 验证模型可用
+emb = model.encode(["测试文本"], normalize_embeddings=True)
+print(f"编码测试通过，向量维度：{emb.shape[1]}")
+```
+
+运行：`cd backend && backend/venv/Scripts/python.exe download_embedding_model.py`
+
+首次运行会自动从 HuggingFace Hub 下载模型文件到本地缓存：
+- Windows: `C:\Users\<用户名>\.cache\torch\sentence_transformers\BAAI_bge-base-zh-v1.5\`
+- Linux/macOS: `~/.cache/torch/sentence_transformers/BAAI_bge-base-zh-v1.5/`
+
+**方式二：修改 local_files_only 为 False（首次部署）**
+
+将 `backend/app/services/knowledge_retriever.py:91` 的 `local_files_only=True` 临时改为 `local_files_only=False`，重启服务后首次调用向量检索时会自动下载模型。下载完成后**务必改回 `True`**（生产环境不应每次启动都检查远程）。
+
+**下载后验证**：
+1. 重启后端服务
+2. 调用 `POST /api/knowledge/validate-retrieval` 质量自检端点
+3. 确认每个 query 返回有效的 Top-3 结果且 score > 0.5
+
+**常见问题**：
+- **下载超时**：HuggingFace Hub 国内访问可能较慢，可设置镜像：`export HF_ENDPOINT=https://hf-mirror.com`
+- **磁盘空间不足**：模型约 420MB + sentence-transformers 依赖约 500MB，确保至少 1GB 可用空间
+- **模型加载失败**：检查 `~/.cache/torch/sentence_transformers/` 目录下是否存在 `BAAI_bge-base-zh-v1.5/` 文件夹
 
 > **面向角色**: 🔧运维 💻开发
 
@@ -2026,7 +2208,7 @@ curl -X POST http://localhost:8000/api/auth/login \
 
 | 路径 | 方法 | 说明 |
 |------|------|------|
-| `/api/knowledge/drafts` | GET | 知识草稿列表（完整 10 个端点见第 17.8 节） |
+| `/api/knowledge/drafts` | GET | 知识草稿列表（完整 11 个端点见第 17.8 节） |
 | `/api/knowledge/seeds` | GET | 内置种子知识数据 |
 | `/api/knowledge/drafts/{id}` | GET | 草稿详情 |
 | `/api/knowledge/drafts/{id}/approve` | POST | 批准草稿 → 自动入库 |
@@ -2035,6 +2217,7 @@ curl -X POST http://localhost:8000/api/auth/login \
 | `/api/knowledge/drafts/batch` | POST | 批量操作 |
 | `/api/knowledge/import` | POST | 手动导入 |
 | `/api/knowledge/sync/{provider}` | POST | 第三方同步 |
+| `/api/knowledge/validate-retrieval` | POST | 向量检索质量自检 |
 
 #### 健康检查
 
@@ -2537,6 +2720,15 @@ CMD ["python", "run.py"]
 | 43 | `frontend/src/views/KnowledgeDetailView.vue` | 15, 17 | 知识条目详情页 |
 | 44 | `frontend/src/components/HostKnowledgeTab.vue` | 15, 17 | 主机关联知识审核 |
 | 45 | `frontend/src/api/knowledge.js` | 17 | 知识库 API 客户端 |
+| 46 | `backend/app/services/analysis_service.py` | 17.9A | 双路检测交叉验证 `_cross_validate()` |
+| 47 | `backend/scripts/import_rules_to_knowledge.py` | 17.9B | 规则→知识批量导入脚本 |
+| 48 | `backend/app/services/virustotal_provider.py` | 17.9C | VirusTotal `fetch_list()` |
+| 49 | `backend/app/services/abuseipdb_provider.py` | 17.9C | AbuseIPDB `fetch_list()` |
+| 50 | `backend/app/services/alienvault_otx_provider.py` | 17.9C | AlienVault OTX `fetch_list()` |
+| 51 | `backend/app/services/enrichment_service.py` | 17.9C | `fetch_all_ioc_lists()` 统一聚合 |
+| 52 | `backend/app/main.py` | 17.9C | `_register_scheduled_tasks()` 定时同步 |
+| 53 | `frontend/src/components/AbnormalProcessTable.vue` | 17.9A | 语义匹配 📚 badge 展示 |
+| 54 | `backend/app/rules/loader.py` | 17.3.5 | `load_default_rules()` 全量规则加载 |
 
 ---
 
