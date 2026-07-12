@@ -8,6 +8,7 @@
 """
 
 import json
+import logging
 
 import httpx
 
@@ -102,3 +103,70 @@ class AbuseIPDBProvider(BaseThreatIntelProvider):
                 f"whitelisted={is_whitelisted}"
             ),
         )
+
+    def fetch_list(self, limit: int = 20) -> list[dict]:
+        """获取 AbuseIPDB 黑名单 IOC 列表（Phase 2 — 任务8）.
+
+        调用 /api/v2/blacklist 获取近期恶意 IP 列表。
+
+        Args:
+            limit: 最大返回条数（默认 20）。
+
+        Returns:
+            统一格式列表：
+            [{"ioc_type": "ip", "ioc_value": "...",
+              "description": "...", "severity": "high"/"medium"/"low",
+              "source": "abuseipdb"}]
+            API key 未配置或请求失败返回 []。
+        """
+        api_key = self.expand_api_key()
+        if not api_key:
+            logger = logging.getLogger(__name__)
+            logger.warning("AbuseIPDB fetch_list: api_key 未配置，返回空列表")
+            return []
+
+        url = f"{self.BASE_URL}/blacklist"
+        params = {
+            "confidenceMinimum": 90,
+            "limit": min(limit, 100),
+        }
+        try:
+            with httpx.Client(
+                timeout=httpx.Timeout(30.0), follow_redirects=True
+            ) as client:
+                resp = client.get(
+                    url,
+                    params=params,
+                    headers={"Key": api_key, "Accept": "application/json"},
+                )
+                resp.raise_for_status()
+                payload = resp.json()
+
+            results: list[dict] = []
+            data_list = (payload.get("data") or [])
+            if not isinstance(data_list, list):
+                return []
+
+            for item in data_list[:limit]:
+                if not isinstance(item, dict):
+                    continue
+                ip = item.get("ipAddress", "")
+                score = int(item.get("abuseConfidenceScore", 0) or 0)
+                count = int(item.get("totalReports", 0) or 0)
+
+                sev = "high" if score >= 80 else "medium" if score >= 50 else "low"
+                desc = f"AbuseIPDB: {ip} (score={score}, reports={count})"
+
+                results.append({
+                    "ioc_type": "ip",
+                    "ioc_value": ip,
+                    "description": desc,
+                    "severity": sev,
+                    "source": "abuseipdb",
+                    "malicious_count": count if score >= 50 else 0,
+                })
+            return results
+        except Exception as exc:
+            logger = logging.getLogger(__name__)
+            logger.warning("AbuseIPDB fetch_list 失败: %s", exc)
+            return []

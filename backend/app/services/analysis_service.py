@@ -239,6 +239,30 @@ class AnalysisService:
                     )
                     logger.info("Detected %d file-hash (TI_malware_hash) matches", len(hash_matches))
 
+        # ── Phase 1 双路检测：并行向量语义检索（必须在 findings 构建前执行）──
+        # 在规则引擎 detect_processes/detect_connections/detect_startup_items 之后、
+        # correlate_incident 之前，新增并行向量语义检索并做交叉验证。
+        knowledge_hits: list[dict] = []
+        try:
+            from app.services.knowledge_retriever import KnowledgeRetriever
+
+            retriever = KnowledgeRetriever()
+            semantic_hits = retriever.retrieve(
+                AnalysisService._build_tiered_data(raw_data),
+                limit=5,
+                structured=True,
+            )
+            # 交叉验证：同一进程同时命中规则 + 语义 → 合并，提升置信度
+            knowledge_hits = AnalysisService._cross_validate(
+                abnormal_processes, semantic_hits,
+            )
+            logger.info(
+                "Dual-path: %d semantic hits, %d after cross-validation",
+                len(semantic_hits), len(knowledge_hits),
+            )
+        except Exception as exc:
+            logger.warning("双路语义检索失败（不影响主流程）: %s", exc)
+
         # 8.5 攻击链关联检测（任务①）：主机级跨维度顺序匹配
         # 此时各维度取证数据已落库，_build_host_events 可按 host_id 下钻聚合。
         # 命中强制 severity=critical，reason 含攻击链步骤明细（见 rule_engine._match_attack_chain）。
@@ -259,6 +283,7 @@ class AnalysisService:
             "ioc_hits": ioc_hits,
             "timeline_events": timeline_events,
             "attack_chains": attack_chain_matches,
+            "knowledge_hits": knowledge_hits,
         }
         risk_result = RiskAssessor.assess(findings)
         # 攻击链关联单独记录到详情（不影响既有风险分数/等级，避免影响历史评估口径）
@@ -346,6 +371,27 @@ class AnalysisService:
         result.setdefault("webshells", WebShell.list_by_host(host_id))
         result.setdefault("memory_shells", MemoryShell.list_by_host(host_id))
         result.setdefault("incidents", details.get("fusion_incidents", []) or [])
+        result.setdefault("knowledge_hits", details.get("knowledge_hits", []) or [])
+
+        # Phase 1 双路检测：将 knowledge_hits 按 process_name 注入到 abnormal_processes
+        knowledge_hits = result.get("knowledge_hits", [])
+        if knowledge_hits:
+            abnormal_procs = result.get("abnormal_processes", [])
+            if not abnormal_procs:
+                abnormal_procs = AbnormalProcess.list_by_host(host_id)
+                result["abnormal_processes"] = abnormal_procs
+            for proc in abnormal_procs:
+                proc_name = (proc.get("process_name") or proc.get("name") or "").lower()
+                for kh in knowledge_hits:
+                    kh_name = (kh.get("rule_name") or kh.get("title") or "").lower()
+                    if proc_name and kh_name and (proc_name in kh_name or kh_name in proc_name):
+                        proc["knowledge_hit"] = {
+                            "title": kh.get("title", ""),
+                            "confidence": kh.get("confidence", "low"),
+                            "needs_review": kh.get("needs_review", False),
+                        }
+                        break
+
         return result
 
     @staticmethod
@@ -742,3 +788,127 @@ class AnalysisService:
         # 构建进程树（enrich 缺省时行为与历史一致）
         tree = ProcessTreeBuilder.build(processes, abnormal_pids, pid_to_info, enrich=enrich)
         return tree
+
+    @staticmethod
+    def _build_tiered_data(raw_data: dict) -> dict:
+        """从 raw_data 构建知识检索用的 tiered_data（不依赖 risk_result）.
+
+        提取进程名、外连地址等关键字段供 KnowledgeRetriever 使用。
+        """
+        tiered: dict = {
+            "host_basic": raw_data.get("host_basic", {}),
+        }
+
+        # 异常进程（从 raw_data 的 processes 中提取）
+        processes = raw_data.get("processes", [])
+        if isinstance(processes, list):
+            tiered["abnormal_processes_high"] = processes[:10]
+
+        # 网络连接
+        net = raw_data.get("network_connections", [])
+        if isinstance(net, list):
+            tiered["suspicious_connections_high"] = [
+                {
+                    "remote": c.get("remote_addr", ""),
+                    "protocol": c.get("protocol", ""),
+                    "process": c.get("process_name", ""),
+                }
+                for c in net[:5]
+            ]
+
+        return tiered
+
+    @staticmethod
+    def _cross_validate(
+        abnormal_processes: list[dict],
+        semantic_hits: list[dict],
+    ) -> list[dict]:
+        """交叉验证：规则命中与语义检索结果合并.
+
+        逻辑：
+        - process_name 相同的命中合并，取最高置信度
+        - 规则命中 + 语义命中 → confidence 提升一档（medium→high, low→medium）
+        - 仅语义命中无规则 → needs_review=True, confidence="low"
+        - 去重后的语义命中追加到结果
+
+        Args:
+            abnormal_processes: 规则引擎检测到的异常进程列表。
+            semantic_hits: KnowledgeRetriever.retrieve(structured=True) 的返回结果。
+
+        Returns:
+            合并后的 knowledge_hits 列表。
+        """
+        # 构建规则进程名集合（同时收集 proc name 和 rule name 的关键词）
+        rule_proc_names: set[str] = set()
+        for proc in abnormal_processes:
+            name = (proc.get("process_name") or proc.get("name") or "").lower()
+            rule_name = (proc.get("rule_name") or "").lower()
+            if name:
+                rule_proc_names.add(name)
+            if rule_name:
+                rule_proc_names.add(rule_name)
+
+        merged: list[dict] = []
+        seen_names: set[str] = set()
+
+        for hit in semantic_hits:
+            if not isinstance(hit, dict):
+                continue
+            rule_name = (hit.get("rule_name") or hit.get("title") or "").lower()
+            title = hit.get("title", "").lower()
+            if not rule_name and not title:
+                continue
+
+            # 去重
+            dedup_key = rule_name or title
+            if dedup_key in seen_names:
+                continue
+            seen_names.add(dedup_key)
+
+            confidence = hit.get("confidence", "low")
+            needs_review = False
+
+            # 检查是否与规则引擎命中交叉：匹配 process name、rule name 关键词
+            rule_matched = False
+            for pn in rule_proc_names:
+                # 模糊匹配：包含子串即可（如 "powershell" 匹配 "powershell.exe" 和 "powershell_无文件攻击"）
+                # 提取关键 token（不含下划线分隔符）
+                hit_tokens = set(rule_name.replace("_", " ").split())
+                pn_tokens = set(pn.replace("_", " ").split())
+                if hit_tokens & pn_tokens:  # 任意 token 交集非空
+                    rule_matched = True
+                    break
+                # 直接子串匹配
+                if rule_name in pn or pn in rule_name or title in pn or pn in title:
+                    rule_matched = True
+                    break
+
+            if rule_matched:
+                # 规则命中 + 语义命中 → 置信度提升一档
+                if confidence == "medium":
+                    confidence = "high"
+                elif confidence == "low":
+                    confidence = "medium"
+            else:
+                # 仅语义命中无规则佐证
+                needs_review = True
+                confidence = "low"
+
+            merged.append({
+                "title": hit.get("title", rule_name),
+                "rule_name": hit.get("rule_name", rule_name),
+                "description": hit.get("description", hit.get("summary", "")),
+                "severity": hit.get("severity", "medium"),
+                "category": hit.get("category", ""),
+                "confidence": confidence,
+                "score": hit.get("score", 0.0),
+                "needs_review": needs_review,
+                "source": "semantic",
+                "entry_ref": hit.get("entry_ref"),
+                "entry_type": hit.get("entry_type", "unknown"),
+                "match_reason": (
+                    "规则+语义交叉命中" if rule_matched else "仅语义检索命中"
+                ),
+            })
+
+        return merged

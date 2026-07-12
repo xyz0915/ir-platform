@@ -85,6 +85,39 @@ def _parse_text_items(text: str) -> list[dict]:
     return items
 
 
+def _auto_approve(draft: dict) -> bool:
+    """自动审核规则（Phase 2 — 任务10）.
+
+    判定逻辑：
+    - source="rule_import" AND severity in ("critical","high") → 自动批准
+    - source in ("virustotal","abuseipdb","alienvault_otx") AND ioc 恶意数 > 5 → 自动批准
+    - source="rule_import" AND severity="medium" → status=pending（需人工）
+    - 其余：status=pending
+    """
+    source = (draft.get("source") or "").lower()
+    severity = (draft.get("severity") or "medium").lower()
+
+    # 条件1：规则导入且高危/严重 → 自动批准
+    if source == "rule_import" and severity in ("critical", "high"):
+        return True
+
+    # 条件2：第三方 provider IOC 且恶意数 > 5（raw_ioc 含恶意判定信息）
+    if source in ("virustotal", "abuseipdb", "alienvault_otx"):
+        raw_ioc = draft.get("raw_ioc")
+        if raw_ioc:
+            try:
+                ioc_data = json.loads(raw_ioc) if isinstance(raw_ioc, str) else raw_ioc
+                malicious_count = ioc_data.get("malicious_count", 0)
+                if malicious_count > 5:
+                    return True
+            except (json.JSONDecodeError, TypeError, AttributeError):
+                pass
+
+    # 条件3：rule_import + medium → 需人工审核
+    # 其余：status=pending
+    return False
+
+
 # ── 端点 ────────────────────────────────────────────────────────────
 
 @router.get("/drafts")
@@ -311,15 +344,107 @@ def import_knowledge(body: ImportRequest, current_user: dict = Depends(get_curre
             skipped_reasons.append(f"写入失败: {title} — {exc}")
 
     logger.info("Import result: total=%d, imported=%d, skipped=%d", total, imported, skipped)
+
+    # ── 自动审核（Phase 2）──
+    auto_approved = 0
+    if imported > 0:
+        all_drafts = KnowledgeDraft.get_all(status="pending")
+        for draft in all_drafts:
+            if _auto_approve(draft):
+                try:
+                    KnowledgeDraft.approve(draft["id"])
+                    auto_approved += 1
+                except Exception as exc:
+                    logger.warning("自动批准草稿 %d 失败: %s", draft["id"], exc)
+
+    # 自动批准后触发一次种子索引重建
+    if auto_approved > 0:
+        try:
+            from app.services.knowledge_retriever import KnowledgeRetriever
+
+            KnowledgeRetriever.rebuild_seed_index()
+        except Exception as exc:
+            logger.warning("自动批准后重建种子索引失败: %s", exc)
+
     return {
         "code": 0,
         "data": {
             "total": total,
             "imported": imported,
             "skipped": skipped,
+            "auto_approved": auto_approved,
             "skipped_reasons": skipped_reasons,
         },
-        "message": f"导入 {imported} 条待审核知识条目，{skipped} 条跳过",
+        "message": f"导入 {imported} 条待审核知识条目，{skipped} 条跳过，{auto_approved} 条自动批准",
+    }
+
+
+class ValidateRetrievalRequest(BaseModel):
+    """向量检索质量自检请求体."""
+    queries: list[str] = Field(..., min_length=1, description="待验证的攻击描述列表")
+
+
+@router.post("/validate-retrieval")
+def validate_retrieval(
+    body: ValidateRetrievalRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """向量检索质量自检端点（Phase 0 — 新增-①）.
+
+    对每项 query 调用 KnowledgeRetriever.retrieve() 返回 top3 匹配结果及 score，
+    用于在模型部署后验证检索质量（人工抽查 10 个典型攻击模式）。
+
+    请求体：
+        {"queries": ["Cobalt Strike Beacon HTTP 心跳", "勒索软件 vssadmin 删除卷影", ...]}
+
+    响应：
+        {"results": [{"query": "...", "top3": [{"name": "...", "score": 0.85, "confidence": "high"}, ...]}, ...]}
+
+    无向量模型时返回 error=embedding_not_available。
+    """
+    from app.services.knowledge_retriever import (
+        KnowledgeRetriever,
+        _get_embedding_model,
+    )
+
+    # 检查嵌入模型是否可用
+    model = _get_embedding_model()
+    if model is None:
+        return {
+            "code": 1,
+            "error": "embedding_not_available",
+            "message": "嵌入模型未下载，无法运行向量检索质量自检",
+        }
+
+    results: list[dict] = []
+    for query in body.queries:
+        analysis_data = {
+            "host_basic": {},
+            "analysis_result": {"risk_level": "medium", "summary": query},
+        }
+        try:
+            hits = KnowledgeRetriever.retrieve(
+                analysis_data, limit=3, structured=True
+            )
+            top3 = []
+            for hit in hits[:3]:
+                top3.append({
+                    "name": hit.get("title", hit.get("rule_name", "")),
+                    "score": hit.get("score", 0.0),
+                    "confidence": hit.get("confidence", "low"),
+                    "category": hit.get("category", ""),
+                    "severity": hit.get("severity", ""),
+                    "entry_type": hit.get("entry_type", "unknown"),
+                })
+            results.append({"query": query, "top3": top3})
+        except Exception as exc:
+            logger.warning("validate-retrieval query '%s' failed: %s", query, exc)
+            results.append({"query": query, "top3": [], "error": str(exc)})
+
+    return {
+        "code": 0,
+        "data": {"results": results},
+        "message": f"已验证 {len(body.queries)} 个查询",
     }
 
 

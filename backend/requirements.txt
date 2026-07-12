@@ -35,3 +35,6 @@ sentence-transformers>=3.0.0
 
 # Markdown渲染（报告导出）
 markdown>=3.4
+
+# 定时任务调度（Phase 2 — IOC 列表每日同步）
+apscheduler>=3.10.0

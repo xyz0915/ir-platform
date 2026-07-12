@@ -8,6 +8,7 @@
 """
 
 import json
+import logging
 
 import httpx
 
@@ -125,3 +126,74 @@ class VirusTotalProvider(BaseThreatIntelProvider):
         if cls and cls not in tags:
             tags.append(cls)
         return tags[:20]
+
+    def fetch_list(self, limit: int = 20) -> list[dict]:
+        """获取 VirusTotal 最新 IOC 列表（Phase 2 — 任务8）.
+
+        调用 /api/v3/intelligence/search 获取近期高置信度恶意 IOC。
+
+        Args:
+            limit: 最大返回条数（默认 20）。
+
+        Returns:
+            统一格式列表：
+            [{"ioc_type": "ip"/"domain"/"hash", "ioc_value": "...",
+              "description": "...", "severity": "high"/"medium"/"low",
+              "source": "virustotal"}]
+            API key 未配置或请求失败返回 []。
+        """
+        api_key = self.expand_api_key()
+        if not api_key:
+            logger = logging.getLogger(__name__)
+            logger.warning("VirusTotal fetch_list: api_key 未配置，返回空列表")
+            return []
+
+        url = f"{self.BASE_URL}/intelligence/search"
+        params = {
+            "query": "p:5+ fs:2025-01-01+",
+            "limit": min(limit, 100),
+            "order": "malicious",
+            "descriptors_only": "true",
+        }
+        try:
+            with httpx.Client(
+                timeout=httpx.Timeout(30.0), follow_redirects=True
+            ) as client:
+                resp = client.get(
+                    url,
+                    params=params,
+                    headers={"x-apikey": api_key},
+                )
+                resp.raise_for_status()
+                payload = resp.json()
+
+            results: list[dict] = []
+            data_list = (payload.get("data") or [])
+            if not isinstance(data_list, list):
+                return []
+
+            for item in data_list[:limit]:
+                if not isinstance(item, dict):
+                    continue
+                attrs = item.get("attributes") or {}
+                ioc_type = (item.get("type") or "").replace("file", "hash")
+                ioc_value = item.get("id", "")
+                stats = attrs.get("last_analysis_stats") or {}
+                malicious = int(stats.get("malicious", 0) or 0)
+
+                sev = "high" if malicious >= 10 else "medium" if malicious >= 3 else "low"
+                desc = attrs.get("meaningful_name") or attrs.get("md5") or ioc_value
+
+                results.append({
+                    "ioc_type": ioc_type,
+                    "ioc_value": ioc_value,
+                    "description": f"VT: {desc} (malicious={malicious})",
+                    "severity": sev,
+                    "source": "virustotal",
+                    "malicious_count": malicious,
+                })
+            return results
+        except Exception as exc:
+            logger = logging.getLogger(__name__)
+            logger.warning("VirusTotal fetch_list 失败: %s", exc)
+            return []

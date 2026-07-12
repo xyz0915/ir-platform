@@ -8,6 +8,7 @@
 """
 
 import json
+import logging
 
 import httpx
 
@@ -118,3 +119,86 @@ class AlienVaultOTXProvider(BaseThreatIntelProvider):
             if name and f"pulse:{name}" not in tags:
                 tags.append(f"pulse:{name}")
         return tags[:20]
+
+    def fetch_list(self, limit: int = 20) -> list[dict]:
+        """获取 AlienVault OTX 订阅脉冲 IOC 列表（Phase 2 — 任务8）.
+
+        调用 /api/v1/pulses/subscribed 获取近期订阅脉冲中的 IOC。
+
+        Args:
+            limit: 最大返回条数（默认 20）。
+
+        Returns:
+            统一格式列表：
+            [{"ioc_type": "ip"/"domain"/"hash", "ioc_value": "...",
+              "description": "...", "severity": "high"/"medium"/"low",
+              "source": "alienvault_otx"}]
+            API key 未配置或请求失败返回 []。
+        """
+        api_key = self.expand_api_key()
+        if not api_key:
+            logger = logging.getLogger(__name__)
+            logger.warning("AlienVault OTX fetch_list: api_key 未配置，返回空列表")
+            return []
+
+        url = "https://otx.alienvault.com/api/v1/pulses/subscribed"
+        try:
+            with httpx.Client(
+                timeout=httpx.Timeout(30.0), follow_redirects=True
+            ) as client:
+                resp = client.get(
+                    url,
+                    headers={"X-OTX-API-KEY": api_key},
+                    params={"limit": min(limit, 50), "sort": "-modified"},
+                )
+                resp.raise_for_status()
+                payload = resp.json()
+
+            results: list[dict] = []
+            pulses = (payload.get("results") or [])
+            if not isinstance(pulses, list):
+                return []
+
+            for pulse in pulses[:limit]:
+                if not isinstance(pulse, dict):
+                    continue
+                pulse_name = pulse.get("name", "")
+                pulse_severity = pulse.get("severity", "medium")
+                indicators = pulse.get("indicators") or []
+                malicious_count = 0
+
+                for ind in indicators[:5]:
+                    if not isinstance(ind, dict):
+                        continue
+                    ioc_type = ind.get("type", "")
+                    ioc_value = ind.get("indicator", "")
+                    if not ioc_type or not ioc_value:
+                        continue
+
+                    # 标准化 ioc_type
+                    type_map = {
+                        "IPv4": "ip", "IPv6": "ip",
+                        "domain": "domain", "hostname": "domain",
+                        "FileHash-SHA256": "hash", "FileHash-MD5": "hash",
+                        "FileHash-SHA1": "hash",
+                    }
+                    normalized_type = type_map.get(ioc_type, ioc_type.lower())
+
+                    desc = f"OTX: {pulse_name} — {ind.get('title', ioc_value)}"
+                    if pulse_severity in ("high", "medium"):
+                        malicious_count += 1
+
+                    results.append({
+                        "ioc_type": normalized_type,
+                        "ioc_value": ioc_value,
+                        "description": desc,
+                        "severity": pulse_severity if pulse_severity in ("high", "medium", "low") else "medium",
+                        "source": "alienvault_otx",
+                        "malicious_count": malicious_count,
+                    })
+
+            return results[:limit]
+        except Exception as exc:
+            logger = logging.getLogger(__name__)
+            logger.warning("AlienVault OTX fetch_list 失败: %s", exc)
+            return []

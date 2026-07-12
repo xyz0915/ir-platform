@@ -1059,6 +1059,71 @@ class EnrichmentService:
             "details": details,
         }
 
+    # ── 第三方 IOC 列表聚合（Phase 2 — 任务9）───────────────────
+
+    def fetch_all_ioc_lists(self, limit: int = 20) -> list[dict]:
+        """并行调用三个 provider 的 ``fetch_list()``，去重后汇聚返回.
+
+        每个 provider 的 ``fetch_list()`` 在 API key 未配置或请求失败时返回 []，
+        不会抛异常。
+
+        Args:
+            limit: 每个 provider 的最大返回条数。
+
+        Returns:
+            去重后的 IOC 列表（按 ioc_value 去重）。
+        """
+        import concurrent.futures
+
+        all_results: list[dict] = []
+        provider_names = ["virustotal", "abuseipdb", "alienvault_otx"]
+
+        def _fetch_one(name: str) -> list[dict]:
+            try:
+                p = self.get_provider(name)
+                if p is None:
+                    logger.warning("fetch_all_ioc_lists: provider '%s' 不可用", name)
+                    return []
+                if not hasattr(p, "fetch_list"):
+                    logger.warning(
+                        "fetch_all_ioc_lists: provider '%s' 不支持 fetch_list", name
+                    )
+                    return []
+                return p.fetch_list(limit=limit)
+            except Exception as exc:
+                logger.warning("fetch_all_ioc_lists: provider '%s' 失败: %s", name, exc)
+                return []
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {
+                executor.submit(_fetch_one, name): name
+                for name in provider_names
+            }
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    results = future.result()
+                    all_results.extend(results)
+                except Exception as exc:
+                    name = futures[future]
+                    logger.warning(
+                        "fetch_all_ioc_lists: provider '%s' 线程异常: %s", name, exc
+                    )
+
+        # 按 ioc_value 去重（保留首次出现）
+        seen: set[str] = set()
+        deduped: list[dict] = []
+        for item in all_results:
+            val = (item.get("ioc_value") or "").lower()
+            if val and val not in seen:
+                seen.add(val)
+                deduped.append(item)
+
+        logger.info(
+            "fetch_all_ioc_lists: total=%d, deduped=%d",
+            len(all_results), len(deduped),
+        )
+        return deduped
+
     # ── 调度扫描 ───────────────────────────────────────────────────
     def scan_pending_iocs(
         self,

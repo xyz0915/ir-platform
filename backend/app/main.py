@@ -40,10 +40,74 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup_event() -> None:
-    """应用启动时初始化数据库."""
+    """应用启动时初始化数据库并注册定时任务."""
     logger.info("Starting IR Platform backend...")
     init_db()
+
+    # ── Phase 2 定时同步调度（任务11）──
+    _register_scheduled_tasks()
+
     logger.info("IR Platform backend started successfully")
+
+
+def _register_scheduled_tasks() -> None:
+    """注册 apscheduler 定时任务：每天凌晨 3:00 同步第三方 IOC 列表.
+
+    同步失败仅记录日志，不影响服务。
+    """
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+
+        scheduler = BackgroundScheduler(daemon=True)
+
+        @scheduler.scheduled_job("cron", hour=3, minute=0, id="sync_ioc_lists")
+        def _sync_ioc_lists_job() -> None:
+            """定时同步第三方 IOC 列表 → 知识草稿 → 自动审核."""
+            try:
+                from app.services.enrichment_service import get_enrichment_service
+                from app.models.knowledge_draft import KnowledgeDraft
+                import json as _json
+
+                svc = get_enrichment_service()
+                iocs = svc.fetch_all_ioc_lists(limit=100)
+
+                if not iocs:
+                    logger.info("定时同步：未获取到 IOC 数据")
+                    return
+
+                synced = 0
+                for item in iocs:
+                    title = f"{item['ioc_type'].upper()} IOC: {item['ioc_value']}"
+                    description = item.get("description", "")
+                    source = item.get("source", "external")
+                    severity = item.get("severity", "medium")
+
+                    if KnowledgeDraft.is_duplicate(title, "auto", None):
+                        continue
+
+                    try:
+                        KnowledgeDraft.create(
+                            title=title,
+                            description=description,
+                            category="auto",
+                            severity=severity,
+                            source=source,
+                            raw_ioc=_json.dumps(item, ensure_ascii=False),
+                        )
+                        synced += 1
+                    except Exception as exc:
+                        logger.debug("定时同步写入失败: %s — %s", title, exc)
+
+                logger.info("定时同步完成: synced=%d/%d", synced, len(iocs))
+            except Exception as exc:
+                logger.warning("定时同步 IOC 列表失败: %s", exc)
+
+        scheduler.start()
+        logger.info("已注册定时同步任务（每天 03:00）")
+    except ImportError:
+        logger.info("apscheduler 未安装，跳过定时任务注册")
+    except Exception as exc:
+        logger.warning("注册定时同步任务失败: %s", exc)
 
 
 # 注册 API 路由

@@ -47,7 +47,7 @@ except ImportError:
 # 常量
 # ---------------------------------------------------------------------------
 
-EMBEDDING_MODEL_NAME: str = "all-MiniLM-L6-v2"  # 384 维，轻量快速
+EMBEDDING_MODEL_NAME: str = "BAAI/bge-base-zh-v1.5"  # 768 维，中英双语优化，安全领域预训练
 COLLECTION_NAME: str = "ir_rules"
 CHROMA_PERSIST_DIR: str = str(settings.DATA_DIR / "chroma")
 
@@ -135,19 +135,25 @@ def _get_collection() -> Optional[Any]:
 
 
 def _load_rules() -> list[dict]:
-    """加载默认规则（进程级缓存）."""
+    """加载所有默认规则（进程级缓存）.
+
+    改用 ``rules/loader.py::load_default_rules()`` 遍历 rules/ 目录下
+    所有 ``*.json`` 文件（default_rules.json + process_enhancement_rules.json
+    + seed_rules_process.json + default_attack_chain.json + revoked_ca.json），
+    解决此前仅加载 default_rules.json（102条）遗漏 33 条的问题。
+    """
     global _RULES_CACHE
     if _RULES_CACHE:
         return _RULES_CACHE
 
-    rules_path = Path(settings.BACKEND_DIR) / "app" / "rules" / "default_rules.json"
-    if not rules_path.exists():
-        logger.warning("default_rules.json not found at %s", rules_path)
-        return []
+    try:
+        from app.rules.loader import load_default_rules
 
-    with open(rules_path, "r", encoding="utf-8") as f:
-        _RULES_CACHE = json.load(f)
-    logger.info("Loaded %d rules from default_rules.json", len(_RULES_CACHE))
+        _RULES_CACHE = load_default_rules()
+        logger.info("Loaded %d rules from all rules/*.json files", len(_RULES_CACHE))
+    except Exception as exc:
+        logger.warning("Failed to load rules via loader.load_default_rules(): %s", exc)
+        _RULES_CACHE = []
     return _RULES_CACHE
 
 
@@ -592,6 +598,14 @@ def _build_query_text(analysis_data: dict) -> str:
     query = "。".join(deduped)
     if not query:
         query = "无异常数据"
+
+    # 查询文本截断：sentence-transformers 的 max_seq_length 默认 256 tokens，
+    # 512 字符是保守上限，超长查询文本不仅浪费编码资源还会降低检索精度。
+    MAX_QUERY_CHARS: int = 512
+    if len(query) > MAX_QUERY_CHARS:
+        query = query[:MAX_QUERY_CHARS]
+        logger.debug("Query text truncated to %d chars", MAX_QUERY_CHARS)
+
     logger.debug("Query text: %d chars", len(query))
     return query
 
