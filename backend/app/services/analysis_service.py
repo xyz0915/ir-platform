@@ -394,6 +394,36 @@ class AnalysisService:
             "service_risks": service_risks,
         }
         risk_result = RiskAssessor.assess(findings)
+
+        # ── 分析结果同步到实时告警 ──
+        try:
+            from app.services.alert_engine import AlertEngine
+            from app.services.alert_ws import alert_ws_manager
+            from app.models.alert import Alert
+            _alert_engine = AlertEngine(ws_manager=alert_ws_manager)
+            alert_count = 0
+            for proc in (abnormal_processes or []):
+                sev = proc.get("severity", "")
+                if sev not in ("critical", "high"):
+                    continue
+                alert_id, is_new = Alert.create_or_aggregate(
+                    host_id=host_id, rule_name=proc.get("rule_name", "ANALYSIS-HIGH"),
+                    severity=sev, title=proc.get("reason", "") or f"[分析发现] {proc.get('process_name', '')}",
+                    detail=proc.get("command_line", ""),
+                    source_pid=proc.get("pid"), source_process=proc.get("process_name"),
+                    source_path=proc.get("process_path"),
+                    rule_label="分析发现-高风险",
+                )
+                if is_new and alert_id:
+                    import asyncio
+                    alert_data = Alert.get_by_id(alert_id)
+                    if alert_data:
+                        asyncio.create_task(alert_ws_manager.broadcast({"type": "new_alert", "alert": alert_data}))
+                    alert_count += 1
+            if alert_count:
+                logger.info("Synced %d high-risk findings to alert center", alert_count)
+        except Exception as exc:
+            logger.warning("分析结果同步告警失败（不影响主流程）: %s", exc)
         # 攻击链关联单独记录到详情（不影响既有风险分数/等级，避免影响历史评估口径）
         if attack_chain_matches:
             risk_result.setdefault("details", {})["attack_chains"] = [
