@@ -31,8 +31,10 @@ export default {
   getAbnormalProcesses(hostId) {
     return request.get(`/hosts/${hostId}/abnormal-processes`)
   },
-  getProcessTree(hostId) {
-    return request.get(`/hosts/${hostId}/process-tree`)
+  getProcessTree(hostId, params = {}) {
+    // params 可携带 { enrich: 1 } 以请求增强字段（severity/parent_name/connections/攻击链等）。
+    // 缺省（无 params）时返回与历史版本逐字段一致的数据，旧组件兼容。
+    return request.get(`/hosts/${hostId}/process-tree`, { params })
   },
   getStartupItems(hostId) {
     return request.get(`/hosts/${hostId}/startup-items`)

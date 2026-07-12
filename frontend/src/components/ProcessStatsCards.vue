@@ -95,20 +95,29 @@ const pieOption = computed(() => ({
   ]
 }))
 
-/** 规则类别分布条形图（按 matched_rules 的 name 统计） */
+/** 规则类别分布条形图（按 matched_rules 的 name 统计，展示用 label） */
 const ruleDistribution = computed(() => {
   const map = {}
+  const labelOf = {} // name -> label 映射（中文展示）
   for (const row of props.data) {
     if (row.matched_rules && Array.isArray(row.matched_rules)) {
       for (const rule of row.matched_rules) {
-        map[rule.name] = (map[rule.name] || 0) + 1
+        const name = rule && rule.name
+        if (!name) continue
+        // 分组 key 仍用 name（稳定 ID，兼容历史数据分布）
+        map[name] = (map[name] || 0) + 1
+        labelOf[name] = (rule && (rule.label || rule.name)) || name
       }
     } else if (row.rule_name) {
       map[row.rule_name] = (map[row.rule_name] || 0) + 1
+      labelOf[row.rule_name] = row.rule_name
     }
   }
-  // 按数量排序取前15
-  return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 15)
+  // 每项 [name, value, label]，按数量排序取前15
+  return Object.entries(map)
+    .map(([name, value]) => [name, value, labelOf[name] || name])
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 15)
 })
 
 const barOption = computed(() => ({
@@ -117,13 +126,14 @@ const barOption = computed(() => ({
   xAxis: { type: 'value' },
   yAxis: {
     type: 'category',
-    data: ruleDistribution.value.map(([name]) => name),
+    // y 轴显示中文 label（name 作稳定 key 不展示）
+    data: ruleDistribution.value.map((entry) => entry[2]),
     axisLabel: { width: 100, overflow: 'truncate' }
   },
   series: [
     {
       type: 'bar',
-      data: ruleDistribution.value.map(([_, value]) => value),
+      data: ruleDistribution.value.map((entry) => entry[1]),
       itemStyle: { color: '#409EFF' },
       barMaxWidth: 20,
       label: { show: true, position: 'right' }

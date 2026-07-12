@@ -32,10 +32,10 @@
         style="width: 240px; margin-left: 8px"
       >
         <el-option
-          v-for="name in allRuleNames"
-          :key="name"
-          :label="name"
-          :value="name"
+          v-for="opt in allRuleNames"
+          :key="opt.name"
+          :label="opt.label"
+          :value="opt.name"
         />
       </el-select>
       <el-button
@@ -90,7 +90,7 @@
               size="small"
               style="margin: 2px 4px"
             >
-              {{ rule.name }} [{{ rule.severity }}]: {{ rule.reason }}
+              {{ rule.label || rule.name }} [{{ rule.severity }}]: {{ rule.reason }}
             </el-tag>
           </div>
           <div v-else class="expand-rules">
@@ -124,19 +124,24 @@ const searchQuery = ref('')
 const severityFilter = ref([])
 const ruleNameFilter = ref([])
 
-/** 从 data 中提取所有规则名 */
+/** 从 data 中提取所有规则：{name(稳定 ID), label(中文展示)} */
 const allRuleNames = computed(() => {
-  const names = new Set()
+  const map = new Map()
   for (const row of props.data) {
     if (row.matched_rules && Array.isArray(row.matched_rules)) {
       for (const rule of row.matched_rules) {
-        names.add(rule.name)
+        if (rule && rule.name) {
+          // value 用 name（稳定 ID，筛选/历史兼容）；展示用 label || name
+          map.set(rule.name, rule.label || rule.name)
+        }
       }
     } else if (row.rule_name) {
-      names.add(row.rule_name)
+      map.set(row.rule_name, row.rule_name)
     }
   }
-  return Array.from(names).sort()
+  return Array.from(map.entries())
+    .map(([name, label]) => ({ name, label }))
+    .sort((a, b) => a.name.localeCompare(b.name))
 })
 
 /** 搜索+筛选逻辑 */
@@ -200,7 +205,7 @@ function exportCSV() {
     严重程度: row.severity,
     风险评分: row.risk_score,
     命中规则: row.matched_rules
-      ? row.matched_rules.map(r => `${r.name}[${r.severity}]`).join('; ')
+      ? row.matched_rules.map(r => `${(r.label || r.name)}[${r.severity}]`).join('; ')
       : row.rule_name,
     原因: row.reason,
     攻击路径: row.attack_path || '',

@@ -76,11 +76,10 @@
               🤖 AI 分析
             </el-button>
           </div>
-          <ProcessTreeChart
+          <ProcessTreeView
             v-if="activeTab === 'tree'"
             :tree-data="processTree"
             :abnormal-pids="abnormalPidsForTree"
-            @node-click="handleNodeClick"
           />
         </el-tab-pane>
         <el-tab-pane label="异常进程" name="processes">
@@ -337,6 +336,7 @@ import HostImportDialog from '@/components/HostImportDialog.vue'
 import AgentDownloadDialog from '@/components/AgentDownloadDialog.vue'
 import AiAnalysisDialog from '@/components/AiAnalysisDialog.vue'
 import ProcessTreeChart from '@/components/ProcessTreeChart.vue'
+import ProcessTreeView from '@/components/ProcessTreeView.vue'
 import ProcessDetailPanel from '@/components/ProcessDetailPanel.vue'
 import ProcessStatsCards from '@/components/ProcessStatsCards.vue'
 import HostKnowledgeTab from '@/components/HostKnowledgeTab.vue'
@@ -499,9 +499,9 @@ async function loadAllResults() {
     // handled by axios interceptor
   }
 
-  // Phase 2: Process tree data
+  // Phase 2: Process tree data（请求增强字段 enrich=1，向后兼容旧组件/旧 API）
   try {
-    const treeRes = await analysisApi.getProcessTree(hostId)
+    const treeRes = await analysisApi.getProcessTree(hostId, { enrich: 1 })
     processTree.value = treeRes.data
   } catch (error) {
     processTree.value = {}
@@ -633,20 +633,7 @@ function onImportSuccess() {
   loadHost()
 }
 
-/** 进程树节点点击事件 */
-function handleNodeClick(nodeData) {
-  selectedProcess.value = nodeData
-  // 如果节点是异常进程，尝试从 abnormalProcesses 中获取更完整的信息
-  if (nodeData.is_abnormal) {
-    const matchedProc = abnormalProcesses.value.find(p => p.pid === nodeData.pid)
-    if (matchedProc) {
-      selectedProcess.value = matchedProc
-    }
-  }
-  detailPanelVisible.value = true
-}
-
-/** 异常进程表格查看详情事件 */
+/** 异常进程表格查看详情事件（进程树改用 ProcessTreeView 内部详情面板，不再联动此处） */
 function handleViewDetail(row) {
   selectedProcess.value = row
   detailPanelVisible.value = true
