@@ -1,0 +1,13 @@
+flowchart TB
+    WS["webshell_hits<br/>(category=webshell)"] --> COR["correlate_incident"]
+    MS["memory_shell_hits<br/>(category=memory_shell)"] --> COR
+    PC["abnormal_processes<br/>(含 P2 #1/#2/#4/#7)"] --> COR
+    EV["event_hits<br/>(ProcessEventConsumer)"] --> COR
+    BASE["基线偏离评分<br/>(§5.2)"] --> COR
+    COR -->|"加权组合 + 贝叶斯更新"| SINGLE["单点告警 single_alert<br/>needs_review=true"]
+    COR -->|"≥2 类信号构成攻击链"| INC["组合 incident<br/>confidence↑ + attack_path"]
+    SINGLE --> UI["统一 Incident 视图"]
+    INC --> UI
+    INC -->|"ATT&CK 映射"| ATTCK["T1505.003 / T1609 / T1055 / T1547 / T1059 / T1564"]
+    INC -->|"取证链"| FOREN["时间线重建 + Chain of Custody"]
+    INC -->|"处置"| PB["Playbook → remediation_checklist"]

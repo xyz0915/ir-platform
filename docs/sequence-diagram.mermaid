@@ -1,26 +1,26 @@
 sequenceDiagram
     participant A as Agent(采集端)
-    participant Imp as POST /import (Mode A)
-    participant Ev as POST /process-events (Mode B, 待建 T-P2-3)
-    participant AD as AnomalyDetector.detect_processes
-    participant PE as ProcessEventConsumer (T15)
-    participant RE as RuleEngine.evaluate
-    participant DB as process_events 表 / 规则
+    participant Imp as POST /import (Mode A, 已鉴权)
+    participant PE as POST /process-events (Mode B, 待补鉴权)
+    participant AD as detect_processes/detect_webshells/detect_memory_shells
+    participant PEC as ProcessEventConsumer
+    participant COR as correlate_incident (统一引擎)
+    participant DB as 各结果表 / Incident 视图
 
-    Note over A,Imp: ── Mode A：快照增强（激活 #1/#2/#4）──
-    A->>A: 采集 processes[] 追加 session/state/memory_sections
-    A->>Imp: POST /api/hosts/{id}/import (复用现有端点)
-    Imp->>AD: detect_processes(raw_data, rules)
-    AD->>RE: evaluate(processes, P2规则, global_context)
-    RE-->>AD: 命中 #1/#2/#4 → abnormal_processes
+    Note over A,Imp: ── Mode A：快照 + webshells + memory_shells + 进程富化 ──
+    A->>A: WebShellCollector / MemoryShellCollector / ProcessesCollector(+session/state/memory_sections)
+    A->>Imp: POST /import (复用现有端点)
+    Imp->>AD: detect_webshells / detect_memory_shells / detect_processes
+    AD-->>DB: WebShell / MemoryShell / AbnormalProcess 表
 
-    Note over A,Ev: ── Mode B：事件流（激活 #3/#5/#6）──
-    A->>A: ETW/eBPF/ES 订阅 进程起止/远线程/AMSI
-    A->>Ev: 批量 POST process-events (detail 含 memory/etw/remote_thread)
-    Ev->>PE: ingest → process_events 表
-    PE->>PE: normalize (提升 detail 字段 + seen_in_events/snapshot)
-    PE->>RE: evaluate(normalized, P2规则, global_context)
-    RE-->>PE: 命中 #3/#5/#6
+    Note over A,PE: ── Mode B：事件流（激活 #3/#5/#6 + 内存马关联）──
+    A->>A: ProcessEventsCollector (ETW/eBPF/ES) 批量 5s/500条
+    A->>PE: POST /process-events (detail 含 memory/etw/remote_thread/memory_shell_signals)
+    PE->>PEC: ingest → process_events 表
+    PEC->>PEC: normalize (提升 detail 字段)
+    PEC-->>DB: event_hits
 
-    Note over DB: ── #7 后端侧数据源（与平台无关）──
-    DB->>RE: revoked_ca.json 填充 → _match_revoked_sig 命中 #7
+    Note over AD,COR: ── 统一关联引擎 ──
+    DB->>COR: webshell_hits + memory_shell_hits + abnormal_processes + event_hits + 基线偏离
+    COR->>COR: 加权组合 + 贝叶斯更新 + attack_path 回溯
+    COR-->>DB: incident(single_alert | incident) → 统一 Incident 视图 + ATT&CK + 取证链 + Playbook

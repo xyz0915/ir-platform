@@ -1,0 +1,40 @@
+flowchart TB
+    subgraph Agent["Agent 采集层（跨平台，只增不改）"]
+        WS["WebShellCollector<br/>webshells[]"]
+        MS["MemoryShellCollector<br/>memory_shells[] + JVM探针(jcmd/jstack/JMX/attach)"]
+        PC["ProcessesCollector (Mode A 富化)<br/>+session/+state/+memory_sections(统一区段)"]
+        LB["LinuxBaselineCollector<br/>cron/systemd/ssh/bash_history/web_dirs"]
+        PEC["ProcessEventsCollector (Mode B 事件流)<br/>ETW / auditd+eBPF / ES"]
+    end
+    subgraph Report["上报层（双端点）"]
+        IMP["POST /import (已有, 已鉴权 import_data.py:20)<br/>快照+webshells+memory_shells"]
+        PE["POST /process-events (已建, 待补鉴权 process_events.py:43)<br/>事件流"]
+    end
+    subgraph Backend["后端分析层"]
+        DWS["detect_webshells (新增)"]
+        DMS["detect_memory_shells (新增)"]
+        DPC["detect_processes (富化复用, 激活#1/#2/#4)"]
+        PEC2["ProcessEventConsumer.evaluate (事件, 激活#3/#5/#6)"]
+        COR["correlate_incident 统一关联引擎 (新增)<br/>合并 A correlate + B 链路评分"]
+        IOC["统一 IOC: known_bad_hashes + revoked_ca.json + file_hashes JOIN"]
+    end
+    subgraph UI["展示层"]
+        WSP["WebShellPanel (新增)"]
+        MSP["MemoryShellPanel (新增)"]
+        PTV["ProcessTreeView / ProcessTreeChart (现有)"]
+        INC["统一 Incident 视图 + ATT&CK 矩阵统一映射"]
+    end
+    WS --> IMP
+    MS --> IMP
+    PC --> IMP
+    LB --> IMP
+    PEC --> PE
+    IMP --> DWS & DMS & DPC
+    PE --> PEC2
+    DWS & DMS & DPC & PEC2 --> COR
+    IOC --> COR
+    IOC --> DPC
+    COR --> INC
+    WSP --> INC
+    MSP --> INC
+    PTV --> INC
