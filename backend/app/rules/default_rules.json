@@ -3,11 +3,13 @@
     "name": "dotnet_inline_compilation",
     "description": "检测 DotNet/csc 内联编译执行（无文件落地的内存加载，常见于无文件攻击）",
     "category": "execution",
-    "rule_type": "regex",
+    "rule_type": "composite",
     "condition": {
-      "field": "command_line",
-      "pattern": "(csc\\.exe|dotnet\\.exe).*(CSharpCodeProvider|CodeDOM|\\.cs\\b|Inline|CompileAssemblyFromSource)",
-      "flags": "ignorecase",
+      "logic": "AND",
+      "sub_rules": [
+        {"type": "regex", "field": "name", "pattern": "(csc|dotnet)\\.exe", "flags": "ignorecase"},
+        {"type": "regex", "field": "command_line", "pattern": "(CSharpCodeProvider|CodeDOM|\\.cs\\b|Inline|CompileAssemblyFromSource)", "flags": "ignorecase"}
+      ],
       "_meta": {
         "mitre_attack": "T1059/001"
       }
@@ -22,8 +24,8 @@
     "category": "execution",
     "rule_type": "regex",
     "condition": {
-      "field": "command_line",
-      "pattern": "msbuild.*(InlineTasks|UsingTask|CodeTaskFactory|TaskFactory)",
+      "field": "name",
+      "pattern": "msbuild\\.exe",
       "flags": "ignorecase",
       "_meta": {
         "mitre_attack": "T1127/001"
@@ -39,8 +41,8 @@
     "category": "execution",
     "rule_type": "regex",
     "condition": {
-      "field": "command_line",
-      "pattern": "msiexec.*(/i|/package|/a)\\s+https?://",
+      "field": "name",
+      "pattern": "msiexec\\.exe",
       "flags": "ignorecase",
       "_meta": {
         "mitre_attack": "T1218/007"
@@ -84,11 +86,13 @@
     "name": "powershell_encoded_command",
     "description": "检测 PowerShell 编码命令执行（常见于恶意脚本）",
     "category": "process",
-    "rule_type": "regex",
+    "rule_type": "composite",
     "condition": {
-      "field": "command_line",
-      "pattern": "powershell.*(-enc|-encodedcommand)\\s+",
-      "flags": "ignorecase",
+      "logic": "AND",
+      "sub_rules": [
+        {"type": "regex", "field": "name", "pattern": "powershell\\.exe", "flags": "ignorecase"},
+        {"type": "regex", "field": "command_line", "pattern": "(-enc|-encodedcommand)\\s+", "flags": "ignorecase"}
+      ],
       "_meta": {
         "mitre_attack": "T1059/001"
       }
@@ -118,11 +122,13 @@
     "name": "certutil_download",
     "description": "certutil 用于下载文件（常见于恶意下载行为）",
     "category": "process",
-    "rule_type": "regex",
+    "rule_type": "composite",
     "condition": {
-      "field": "command_line",
-      "pattern": "certutil.*-urlcache.*-split",
-      "flags": "ignorecase",
+      "logic": "AND",
+      "sub_rules": [
+        {"type": "regex", "field": "name", "pattern": "certutil\\.exe", "flags": "ignorecase"},
+        {"type": "regex", "field": "command_line", "pattern": "-urlcache.*-split", "flags": "ignorecase"}
+      ],
       "_meta": {
         "mitre_attack": "T1105"
       }
@@ -137,8 +143,8 @@
     "category": "process",
     "rule_type": "regex",
     "condition": {
-      "field": "command_line",
-      "pattern": "bitsadmin.*/transfer",
+      "field": "name",
+      "pattern": "bitsadmin\\.exe",
       "flags": "ignorecase",
       "_meta": {
         "mitre_attack": "T1197"
@@ -169,11 +175,13 @@
     "name": "regsvr32_squiblydoo",
     "description": "regsvr32 执行远程脚本（Squiblydoo 技术）",
     "category": "process",
-    "rule_type": "regex",
+    "rule_type": "composite",
     "condition": {
-      "field": "command_line",
-      "pattern": "regsvr32.*/s.*/u.*(http|https|scrobi)",
-      "flags": "ignorecase",
+      "logic": "AND",
+      "sub_rules": [
+        {"type": "regex", "field": "name", "pattern": "regsvr32\\.exe", "flags": "ignorecase"},
+        {"type": "regex", "field": "command_line", "pattern": "/s.*/u.*(http|https|scrobi)", "flags": "ignorecase"}
+      ],
       "_meta": {
         "mitre_attack": "T1218/011"
       }
@@ -186,11 +194,13 @@
     "name": "wmic_process_create",
     "description": "WMIC 远程进程创建",
     "category": "process",
-    "rule_type": "regex",
+    "rule_type": "composite",
     "condition": {
-      "field": "command_line",
-      "pattern": "wmic.*process.*call.*create",
-      "flags": "ignorecase",
+      "logic": "AND",
+      "sub_rules": [
+        {"type": "regex", "field": "name", "pattern": "wmic\\.exe", "flags": "ignorecase"},
+        {"type": "regex", "field": "command_line", "pattern": "process.*call.*create", "flags": "ignorecase"}
+      ],
       "_meta": {
         "mitre_attack": "T1047"
       }
@@ -203,11 +213,13 @@
     "name": "rundll32_suspicious",
     "description": "rundll32 加载可疑模块",
     "category": "process",
-    "rule_type": "regex",
+    "rule_type": "composite",
     "condition": {
-      "field": "command_line",
-      "pattern": "rundll32.*(shell32|javascript|http)",
-      "flags": "ignorecase",
+      "logic": "AND",
+      "sub_rules": [
+        {"type": "regex", "field": "name", "pattern": "rundll32\\.exe", "flags": "ignorecase"},
+        {"type": "regex", "field": "command_line", "pattern": "(shell32|javascript|http)", "flags": "ignorecase"}
+      ],
       "_meta": {
         "mitre_attack": "T1218/011"
       }
@@ -222,8 +234,8 @@
     "category": "process",
     "rule_type": "regex",
     "condition": {
-      "field": "command_line",
-      "pattern": "cmd.*/c.*powershell",
+      "field": "name",
+      "pattern": "cmd\\.exe",
       "flags": "ignorecase",
       "_meta": {
         "mitre_attack": "T1059/001"
@@ -262,7 +274,7 @@
         "mitre_attack": "T1059"
       }
     },
-    "severity": "medium",
+    "severity": "high",
     "enabled": true,
     "label": "孤立进程（无父进程）"
   },
@@ -714,11 +726,13 @@
     "name": "wmic_lolbin_execution",
     "description": "WMIC 作为 LOLBin 执行（间接命令执行）",
     "category": "execution",
-    "rule_type": "regex",
+    "rule_type": "composite",
     "condition": {
-      "field": "command_line",
-      "pattern": "wmic.*/format:",
-      "flags": "ignorecase",
+      "logic": "AND",
+      "sub_rules": [
+        {"type": "regex", "field": "name", "pattern": "wmic\\.exe", "flags": "ignorecase"},
+        {"type": "regex", "field": "command_line", "pattern": "/format:", "flags": "ignorecase"}
+      ],
       "_meta": {
         "mitre_attack": "T1047"
       }
@@ -748,11 +762,13 @@
     "name": "powershell_download_cradle",
     "description": "PowerShell 下载 cradle（IEX/Invoke-Expression 远程加载）",
     "category": "execution",
-    "rule_type": "regex",
+    "rule_type": "composite",
     "condition": {
-      "field": "command_line",
-      "pattern": "(iex|Invoke-Expression|Invoke-WebRequest|Net\\.WebClient).*(http|https)",
-      "flags": "ignorecase",
+      "logic": "AND",
+      "sub_rules": [
+        {"type": "regex", "field": "name", "pattern": "powershell\\.exe", "flags": "ignorecase"},
+        {"type": "regex", "field": "command_line", "pattern": "(iex|Invoke-Expression|Invoke-WebRequest|Net\\.WebClient).*(http|https)", "flags": "ignorecase"}
+      ],
       "_meta": {
         "mitre_attack": "T1059/001"
       }
@@ -765,11 +781,13 @@
     "name": "mshta_inline_script",
     "description": "MSHTA 内联脚本执行",
     "category": "execution",
-    "rule_type": "regex",
+    "rule_type": "composite",
     "condition": {
-      "field": "command_line",
-      "pattern": "mshta.*(javascript|vbscript):",
-      "flags": "ignorecase",
+      "logic": "AND",
+      "sub_rules": [
+        {"type": "regex", "field": "name", "pattern": "mshta\\.exe", "flags": "ignorecase"},
+        {"type": "regex", "field": "command_line", "pattern": "(javascript|vbscript):", "flags": "ignorecase"}
+      ],
       "_meta": {
         "mitre_attack": "T1218/005"
       }
@@ -782,11 +800,13 @@
     "name": "cscript_wscript_download",
     "description": "CScript/WScript 下载并执行远程脚本",
     "category": "execution",
-    "rule_type": "regex",
+    "rule_type": "composite",
     "condition": {
-      "field": "command_line",
-      "pattern": "(cscript|wscript).*(http|https).*\\.(vbs|js|vbe|jse|wsf|hta)",
-      "flags": "ignorecase",
+      "logic": "AND",
+      "sub_rules": [
+        {"type": "regex", "field": "name", "pattern": "(cscript|wscript)\\.exe", "flags": "ignorecase"},
+        {"type": "regex", "field": "command_line", "pattern": "(http|https).*\\.(vbs|js|vbe|jse|wsf|hta)", "flags": "ignorecase"}
+      ],
       "_meta": {
         "mitre_attack": "T1059/005"
       }

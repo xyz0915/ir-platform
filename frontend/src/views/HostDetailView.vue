@@ -446,7 +446,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, watch, nextTick, defineAsyncComponent } from 'vue'
 import { Search } from '@element-plus/icons-vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -478,12 +478,13 @@ import HostImportDialog from '@/components/HostImportDialog.vue'
 import AgentDownloadDialog from '@/components/AgentDownloadDialog.vue'
 import AiAnalysisDialog from '@/components/AiAnalysisDialog.vue'
 import ProcessTreeChart from '@/components/ProcessTreeChart.vue'
-import ProcessTreeView from '@/components/ProcessTreeView.vue'
 import ProcessDetailPanel from '@/components/ProcessDetailPanel.vue'
 import ProcessStatsCards from '@/components/ProcessStatsCards.vue'
 import HostKnowledgeTab from '@/components/HostKnowledgeTab.vue'
-import WebShellPanel from '@/components/WebShellPanel.vue'
-import MemoryShellPanel from '@/components/MemoryShellPanel.vue'
+// #20: 大型面板改为懒加载
+const WebShellPanel = defineAsyncComponent(() => import('@/components/WebShellPanel.vue'))
+const MemoryShellPanel = defineAsyncComponent(() => import('@/components/MemoryShellPanel.vue'))
+const ProcessTreeView = defineAsyncComponent(() => import('@/components/ProcessTreeView.vue'))
 import IncidentPanel from '@/components/ai/IncidentPanel.vue'
 import KnowledgeDetailPopup from '@/components/KnowledgeDetailPopup.vue'
 import { getAiConfig } from '@/api/ai'

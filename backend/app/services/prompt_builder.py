@@ -483,7 +483,10 @@ SYSTEM_PROMPT_TEMPLATE: str = """你是一个专业的网络安全应急响应�
       }
     ]
     ```
-    每条 suggestion 包含 title（标题）、description（详细描述）、category（mitre_attack/c2_framework/malware/auto）、severity（low/medium/high/critical）、mitre_attack（MITRE 技术编号，可选）、pattern（检测关键词，逗号分隔）、raw_ioc（原始 IOC 数据 JSON string，可选）。若无需新增知识条目，则省略此字段。"""
+    每条 suggestion 包含 title（标题）、description（详细描述）、category（mitre_attack/c2_framework/malware/auto）、severity（low/medium/high/critical）、mitre_attack（MITRE 技术编号，可选）、pattern（检测关键词，逗号分隔）、raw_ioc（原始 IOC 数据 JSON string，可选）。若无需新增知识条目，则省略此字段。
+
+【证据链要求】
+malicious_behaviors[].evidence_refs 必须包含 {pid, process_name, file_path, command_line} 数组，每项引用必须对应真实的分析数据。"""
 
 
 # ── 全貌分析（overview）系统提示 ──────────────────────────────────────────

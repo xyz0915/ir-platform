@@ -503,7 +503,13 @@ class ServiceRiskAnalyzer:
         if not path:
             return path
 
-        # 1. 展开 %ENV_VAR% 环境变量（systemroot / windir / programdata / programfiles 等）
+        # 1. NT 设备路径 \??\ 前缀剥离（必须在别名展开之前，否则正则无法匹配）
+        if path.startswith('\\??\\'):
+            path = path[4:]
+            # NT 前缀后可能残留引号（如 \??\"%SystemRoot%...）
+            path = path.strip('"').strip("'")
+
+        # 2. 展开 %ENV_VAR% 环境变量（systemroot / windir / programdata / programfiles 等）
         m = re.match(r'^%([^%]+)%[\\/]?(.*)$', path, re.IGNORECASE)
         if m:
             var_name = m.group(1).lower()
@@ -527,10 +533,6 @@ class ServiceRiskAnalyzer:
             path = ServiceRiskAnalyzer._WINDOWS_ROOT + '\\' + path
         elif re.match(r'^syswow64[\\/]', path, re.IGNORECASE):
             path = ServiceRiskAnalyzer._WINDOWS_ROOT + '\\' + path
-
-        # 5. NT 设备路径 \??\ 前缀剥离
-        if path.startswith('\\??\\'):
-            path = path[4:]
 
         return os.path.normpath(path).lower()
 

@@ -580,6 +580,9 @@ class RuleEngine:
         if global_context is None:
             global_context = {}
 
+        # 确保 datetime 在本地作用域可用（避免条件 import 导致的 UnboundLocalError）
+        from datetime import datetime
+
         # ── 动态 IOC 引用：入口一次性加载（非逐条数据）──────────────
         # 不持久缓存，每次评估实时读取，保证增删/启用开关立即可生效。
         global_context["iocs_by_type"] = RuleEngine._load_iocs_by_type()
@@ -596,7 +599,6 @@ class RuleEngine:
 
         # T-P2-4: 预排序 all_items 供 time_cluster 二分计数，降 O(n²) 为 O(n log n)
         if global_context and isinstance(global_context.get("all_items"), list):
-            from datetime import datetime
 
             sorted_items = RuleEngine._build_sorted_items(global_context["all_items"])
             global_context["_tc_sorted"] = sorted_items
@@ -633,7 +635,16 @@ class RuleEngine:
                         "rule_name": rule.get("name", ""),
                         "severity": severity,
                         "reason": reason,
+                        "matched_dimension": item.get("_matched_dimension") if rule.get("rule_type") == "behavior" else None,
                     })
+                    # ── 规则命中统计（#10/#16）──────────────────────
+                    _risk_map = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+                    rule["_hit_updated"] = True
+                    rule["hit_count"] = rule.get("hit_count", 0) + 1
+                    rule["last_hit_at"] = datetime.now().isoformat()
+                    hit_cnt = rule["hit_count"]
+                    cur_avg = rule.get("avg_risk_score", 0.0) or 0.0
+                    rule["avg_risk_score"] = (cur_avg * (hit_cnt - 1) + _risk_map.get(severity, 2)) / hit_cnt
 
         # ── 攻击链关联检测（主机级）──────────────────────────────────
         # 跨 dimension 顺序匹配，命中时强制 severity=critical，reason 含步骤明细。
@@ -655,11 +666,60 @@ class RuleEngine:
                             "severity": "critical",
                             "reason": result["reason"],
                         })
+                        # 攻击链规则同样统计
+                        ac_rule["_hit_updated"] = True
+                        ac_rule["hit_count"] = ac_rule.get("hit_count", 0) + 1
+                        ac_rule["last_hit_at"] = datetime.now().isoformat()
+                        hit_cnt2 = ac_rule["hit_count"]
+                        cur_avg2 = ac_rule.get("avg_risk_score", 0.0) or 0.0
+                        ac_rule["avg_risk_score"] = (cur_avg2 * (hit_cnt2 - 1) + 4) / hit_cnt2
             else:
                 logger.debug(
                     "存在 attack_chain 规则但 global_context 缺少 host_id，跳过攻击链评估"
                 )
+
+        # ── 批量更新规则命中统计到 DB ──
+        RuleEngine._update_rule_stats(rules)
+
         return matches
+
+    @staticmethod
+    def _update_rule_stats(rules: list) -> None:
+        """批量更新规则命中统计到 DB（#10/#16）.
+
+        只更新标记了 ``_hit_updated`` 的规则，避免不必要的 DB 写入。
+        在 ``evaluate()`` 末尾统一调用，降低 DB 压力至每轮评估一次批量 UPDATE。
+
+        Args:
+            rules: 本次评估的规则列表（已原地更新 hit_count/last_hit_at/avg_risk_score）.
+        """
+        updated: list[tuple] = []
+        for rule in rules:
+            if rule.get("_hit_updated"):
+                updated.append((
+                    rule.get("hit_count", 0),
+                    rule.get("last_hit_at"),
+                    rule.get("avg_risk_score", 0.0),
+                    rule.get("name", ""),
+                ))
+        if not updated:
+            return
+        try:
+            from app.database import get_connection
+            with get_connection() as conn:
+                conn.executemany(
+                    """
+                    UPDATE rules SET
+                        hit_count = ?,
+                        last_hit_at = ?,
+                        avg_risk_score = ?
+                    WHERE name = ?
+                    """,
+                    updated,
+                )
+            logger.debug("Batch updated %d rule stats", len(updated))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("批量更新规则命中统计失败: %s", exc)
 
     @staticmethod
     def match_rule(data_item: dict, rule: dict, global_context: Optional[dict] = None) -> bool:
@@ -688,7 +748,11 @@ class RuleEngine:
         elif rule_type == "threshold":
             return RuleEngine._match_threshold(data_item, condition)
         elif rule_type == "behavior":
-            return RuleEngine._match_behavior(data_item, condition, global_context=global_context)
+            matched = RuleEngine._match_behavior(data_item, condition, global_context=global_context)
+            if matched:
+                # #19: 注入行为维度归属
+                data_item["_matched_dimension"] = RuleEngine._infer_dimension(condition.get("pattern", ""))
+            return matched
         elif rule_type == "composite":
             return RuleEngine._match_composite(data_item, condition, global_context=global_context)
         elif rule_type == "exists":
@@ -903,6 +967,36 @@ class RuleEngine:
 
     # ── 行为模式检测 ──────────────────────────────────────────────────────
 
+    # #19 DIMENSION_MAP: 根据 pattern 名称前缀自动推断维度
+    _DIMENSION_MAP = {
+        "orphan": "process", "suspicious_parent": "process", "unsigned": "process",
+        "network": "network", "scan": "network",
+        "persistence": "persistence", "process_respawn": "process",
+        "process_name": "process", "suspicious_path": "process",
+        "hidden": "process", "anomalous_net": "connection",
+        "zombie": "process", "ancestry": "process",
+        "parent_pid": "process", "memory": "process",
+        "cross_session": "process", "injection": "process",
+        "vanished": "process", "short_lived": "process",
+        "time_cluster": "process", "token": "process",
+        "credential": "process", "uac": "process",
+        "antivirus": "process", "defense": "process",
+        "lateral": "process", "data_exfil": "connection",
+        "webshell": "network", "ransomware": "process",
+        "discovery": "process", "dll_sideload": "process",
+        "revoked": "process", "whitelist": "process",
+        "interpreter": "process", "etw": "process",
+        "injection_window": "process",
+    }
+
+    @staticmethod
+    def _infer_dimension(pattern: str) -> str:
+        """根据 pattern 前缀推断行为维度."""
+        for prefix, dim in RuleEngine._DIMENSION_MAP.items():
+            if pattern.startswith(prefix):
+                return dim
+        return "unknown"
+
     @staticmethod
     def _match_behavior(data_item: dict, condition: dict, global_context: Optional[dict] = None) -> bool:
         """行为模式检测.
@@ -942,6 +1036,9 @@ class RuleEngine:
         ======================= ==========================================
         """
         pattern: str = condition.get("pattern", "")
+
+        # #19: 在匹配前清除旧标记，匹配成功时注入维度
+        data_item.pop("_matched_dimension", None)
 
         # ── 原有 4 个模式 ──────────────────────────────────────────
         if pattern == "orphan_process":

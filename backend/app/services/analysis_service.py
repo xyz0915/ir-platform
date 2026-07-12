@@ -1,5 +1,6 @@
 """分析编排服务 — 协调各分析模块完成完整分析流程."""
 
+import concurrent.futures
 import ipaddress
 import json
 import logging
@@ -37,6 +38,9 @@ logger = logging.getLogger(__name__)
 
 class AnalysisService:
     """分析编排服务."""
+
+    # 双路检测降级开关：关闭后跳过语义检索分支（P2）
+    _ENABLE_SEMANTIC_DETECTION: bool = True
 
     @staticmethod
     def _inject_exe_signatures(raw_data: dict) -> None:
@@ -97,6 +101,8 @@ class AnalysisService:
     @staticmethod
     def _sanitize_ints(data: Any, max_val: int = None) -> int:
         """递归裁剪超出 SQLite INTEGER 上限的整数字段，防止 DB batch_create 失败。
+
+        @deprecated 建议移到 import_service 层处理
 
         Args:
             data: 待处理的字典/列表/值（原地修改）。
@@ -180,19 +186,58 @@ class AnalysisService:
         # 不依赖 DB 时序；无对应 file_hash 时字段为 None 不报错）。供
         # malicious_hash_process（T03 动态 IOC 合并）与 unsigned_executable（T05）使用。
         AnalysisService._inject_exe_signatures(raw_data)
-        # 裁剪超出 SQLite INTEGER 上限的字段（如异常 PID 值）
+        # 裁剪超出 SQLite INTEGER 上限的字段（如异常 PID 值）—— 兜底防线
         AnalysisService._sanitize_ints(raw_data)
-        abnormal_processes = AnomalyDetector.detect_processes(raw_data, rules, whitelist_service=whitelist_service)
+
+        # ── Phase 1: 并行检测（仅计算，不写库） ──
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            future_processes = executor.submit(
+                AnomalyDetector.detect_processes, raw_data, rules,
+                whitelist_service=whitelist_service,
+            )
+            future_connections = executor.submit(
+                AnomalyDetector.detect_connections, raw_data, rules,
+            )
+            future_startup = executor.submit(
+                AnomalyDetector.detect_startup_items, raw_data, rules,
+            )
+            future_registry = executor.submit(
+                lambda: raw_data.get("registry_keys", []),
+            )
+
+            # as_completed 收集结果
+            results: dict[str, Any] = {}
+            for future in concurrent.futures.as_completed([
+                future_processes, future_connections,
+                future_startup, future_registry,
+            ]):
+                if future == future_processes:
+                    results["processes"] = future.result()
+                elif future == future_connections:
+                    results["connections"] = future.result()
+                elif future == future_startup:
+                    results["startup"] = future.result()
+                elif future == future_registry:
+                    results["registry"] = future.result()
+
+            abnormal_processes = results.get("processes", [])
+            suspicious_connections = results.get("connections", [])
+            suspicious_startup = results.get("startup", [])
+            registry_keys = results.get("registry", [])
+
+        # ── Phase 2: 串行写库（保持原顺序） ──
         AbnormalProcess.batch_create(host_id, abnormal_processes)
         logger.info("Detected %d abnormal processes", len(abnormal_processes))
 
-        suspicious_connections = AnomalyDetector.detect_connections(raw_data, rules)
         SuspiciousConnection.batch_create(host_id, suspicious_connections)
         logger.info("Detected %d suspicious connections", len(suspicious_connections))
 
-        suspicious_startup = AnomalyDetector.detect_startup_items(raw_data, rules)
         SuspiciousStartupItem.batch_create(host_id, suspicious_startup)
         logger.info("Detected %d suspicious startup items", len(suspicious_startup))
+
+        if isinstance(registry_keys, list) and registry_keys:
+            RegistryKey.batch_create(host_id, registry_keys)
+            logger.info("Extracted %d registry keys", len(registry_keys))
 
         # 5. 持久化痕迹分析
         all_persistence = PersistenceFinder.find_all(raw_data)
@@ -240,11 +285,6 @@ class AnalysisService:
         if isinstance(wmi_data, list) and wmi_data:
             WmiSubscription.batch_create(host_id, wmi_data)
             logger.info("Extracted %d WMI subscriptions", len(wmi_data))
-        # P2-5: 注册表键值
-        reg_data = raw_data.get("registry_keys", [])
-        if isinstance(reg_data, list) and reg_data:
-            RegistryKey.batch_create(host_id, reg_data)
-            logger.info("Extracted %d registry keys", len(reg_data))
 
         # 8.6 文件哈希情报匹配（TI_malware_hash：list 规则 field=file_hash，动态并入 iocs.hash）
         # 把已落库的 FileHash 维度作为 data_items 送入 RuleEngine.evaluate，
@@ -289,45 +329,46 @@ class AnalysisService:
 
         # ── Phase 1 双路检测 ──
         knowledge_hits: list[dict] = []
-        try:
-            from app.services.knowledge_retriever import KnowledgeRetriever, _build_dim_query
+        if AnalysisService._ENABLE_SEMANTIC_DETECTION:
+            try:
+                from app.services.knowledge_retriever import KnowledgeRetriever, _build_dim_query
 
-            tiered = AnalysisService._build_tiered_data(raw_data)
-            # 动态构建查询文本，替代硬编码
-            dim_parts: list[str] = []
-            for dim in ("process", "connection", "webshell_ms"):
-                q = _build_dim_query(dim, raw_data)
-                if q:
-                    dim_parts.append(q)
-            dim_summary = " ".join(dim_parts) if dim_parts else "unknown"
-            # 传入 _raw_data 供三维并行检索使用
-            hits = KnowledgeRetriever.retrieve(
-                {"host_basic": tiered.get("host_basic", {}),
-                 "analysis_result": {"summary": dim_summary[:512]},
-                 "abnormal_processes_high": tiered.get("abnormal_processes_high", []),
-                 "suspicious_connections_high": tiered.get("suspicious_connections_high", []),
-                 "webshell_items": tiered.get("webshell_items", []),
-                 "memory_shell_items": tiered.get("memory_shell_items", []),
-                 "persistence_items": tiered.get("persistence_items", []),
-                 "_raw_data": raw_data},
-                limit=10, structured=True)
-            if hits:
-                knowledge_hits = AnalysisService._cross_validate(
-                    abnormal_processes, hits,
-                    suspicious_connections=suspicious_connections,
-                    webshell_hits=[],
-                    memory_shell_hits=[],
-                    persistence_items=assessed_persistence,
-                )
-                # 过滤：只保留 score >= 0.75 或 confidence 为 high/medium 的命中
-                knowledge_hits = [
-                    h for h in knowledge_hits
-                    if (h.get("score") or 0) >= 0.75 or h.get("confidence") in ("high", "medium")
-                ]
-            logger.info("Dual-path: %d hits, %d after xval", len(hits), len(knowledge_hits))
-        except Exception as exc:
-            logger.warning("RAG-DEBUG-EXC: %s", exc, exc_info=True)
-            logger.warning("双路语义检索失败（不影响主流程）: %s", exc, exc_info=True)
+                tiered = AnalysisService._build_tiered_data(raw_data)
+                # 动态构建查询文本，替代硬编码
+                dim_parts: list[str] = []
+                for dim in ("process", "connection", "webshell_ms"):
+                    q = _build_dim_query(dim, raw_data)
+                    if q:
+                        dim_parts.append(q)
+                dim_summary = " ".join(dim_parts) if dim_parts else "unknown"
+                # 传入 _raw_data 供三维并行检索使用
+                hits = KnowledgeRetriever.retrieve(
+                    {"host_basic": tiered.get("host_basic", {}),
+                     "analysis_result": {"summary": dim_summary[:512]},
+                     "abnormal_processes_high": tiered.get("abnormal_processes_high", []),
+                     "suspicious_connections_high": tiered.get("suspicious_connections_high", []),
+                     "webshell_items": tiered.get("webshell_items", []),
+                     "memory_shell_items": tiered.get("memory_shell_items", []),
+                     "persistence_items": tiered.get("persistence_items", []),
+                     "_raw_data": raw_data},
+                    limit=10, structured=True)
+                if hits:
+                    knowledge_hits = AnalysisService._cross_validate(
+                        abnormal_processes, hits,
+                        suspicious_connections=suspicious_connections,
+                        webshell_hits=[],
+                        memory_shell_hits=[],
+                        persistence_items=assessed_persistence,
+                    )
+                    # 过滤：只保留 score >= 0.75 或 confidence 为 high/medium 的命中
+                    knowledge_hits = [
+                        h for h in knowledge_hits
+                        if (h.get("score") or 0) >= 0.75 or h.get("confidence") in ("high", "medium")
+                    ]
+                logger.info("Dual-path: %d hits, %d after xval", len(hits), len(knowledge_hits))
+            except Exception as exc:
+                logger.warning("RAG-DEBUG-EXC: %s", exc, exc_info=True)
+                logger.warning("双路语义检索失败（不影响主流程）: %s", exc, exc_info=True)
 
         # 8.5 攻击链关联检测（任务①）：主机级跨维度顺序匹配
         # 此时各维度取证数据已落库，_build_host_events 可按 host_id 下钻聚合。

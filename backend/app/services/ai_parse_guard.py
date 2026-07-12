@@ -32,6 +32,24 @@ from app.shared.ai_constants import (
 logger = logging.getLogger(__name__)
 
 
+# ── 置信度 0-100 分制映射（#14）────────────────────────────────────
+_CONFIDENCE_MAP: dict = {
+    "high": 85,
+    "medium": 65,
+    "low": 35,
+}
+
+_CONFIDENCE_LABEL_MAP: dict = {
+    85: "高", 65: "中", 35: "低",
+}
+
+_CONF_COLOR_MAP = {
+    "高": "#2da44e",
+    "中": "#d4a72c",
+    "低": "#cf222e",
+}
+
+
 # 风险等级排序（用于上限封顶与回落）
 _RISK_LEVEL_ORDER: dict[str, int] = {
     "安全": 0,
@@ -157,13 +175,19 @@ def _apply_confidence_penalty(risk: dict, corrections: list[dict]) -> None:
         risk["risk_score"] = 0
         return
 
-    confidence_level = str(risk.get("confidence", "medium")).strip().lower()
-    _cn = {"高": "high", "中": "medium", "低": "low"}
-    confidence_level = _cn.get(confidence_level, confidence_level)
-    if confidence_level not in ("high", "medium", "low"):
-        confidence_level = "medium"  # 默认中等,不惩罚未知
-
-    penalty = {"high": 1.0, "medium": 0.85, "low": 0.6}[confidence_level]
+    # #14: 使用 confidence_score（0-100），映射为降级系数
+    score_val = risk.get("confidence_score")
+    if not isinstance(score_val, (int, float)) or score_val < 0 or score_val > 100:
+        score_val = 65  # 默认中置信
+    if score_val >= 75:
+        penalty = 1.0
+        conf_label = "高"
+    elif score_val >= 50:
+        penalty = 0.85
+        conf_label = "中"
+    else:
+        penalty = 0.6
+        conf_label = "低"
 
     # 安全求和(防 KeyError)
     raw_score = 0
@@ -187,7 +211,7 @@ def _apply_confidence_penalty(risk: dict, corrections: list[dict]) -> None:
 
     # 无 confirmed 证据 → 进一步封顶 50
     evidence_confirmed = any(
-        str(it.get("evidence_source", "")).strip().lower() == "confirmed" 
+        str(it.get("evidence_source", "")).strip().lower() == "confirmed"
         for it in breakdown
     )
     if not evidence_confirmed:
@@ -200,7 +224,7 @@ def _apply_confidence_penalty(risk: dict, corrections: list[dict]) -> None:
             "field": "risk_score",
             "action": "confidence_penalty",
             "detail": (
-                f"置信度 '{confidence_level}' ×{penalty}，"
+                f"置信度 '{conf_label}'({score_val}) ×{penalty}，"
                 f"{raw_score} → {adjusted_score}"
                 f"{'（无 confirmed 证据封顶 50）' if not evidence_confirmed else '（全局封顶 85）' if raw_score > 85 else ''}"
             ),
@@ -208,19 +232,51 @@ def _apply_confidence_penalty(risk: dict, corrections: list[dict]) -> None:
 
 
 def _ensure_confidence(risk: dict, threat: dict, corrections: list[dict]) -> None:
-    """R1-3：高中危结论必带 confidence；finding 缺失补默认并标记。"""
+    """R1-3：高中危结论必带 confidence；finding 缺失补默认并标记。
+
+    #14 0-100 分制：字符串 confidence 自动转换为整数 confidence_score。
+    """
     level = str(risk.get("risk_level", ""))
     is_high_or_mid = _RISK_LEVEL_ORDER.get(level, 0) >= 2
 
+    _cn_to_en = {"高": "high", "中": "medium", "低": "low"}
     conf = risk.get("confidence")
+
+    # ── 缺失 → 补默认 ──
     if not conf:
-        risk["confidence"] = "中" if is_high_or_mid else "低"
+        default_label = "中" if is_high_or_mid else "低"
+        risk["confidence"] = default_label
         corrections.append({
             "rule": "R1-3",
             "field": "risk_assessment.confidence",
             "action": "default",
-            "detail": f"缺失置信度，按等级补默认 '{risk['confidence']}'",
+            "detail": f"缺失置信度，按等级补默认 '{default_label}'",
         })
+        risk["confidence_score"] = _CONFIDENCE_MAP.get(
+            _cn_to_en.get(default_label, "medium"), 65
+        )
+
+    # ── 字符串 → 整数转换 ──
+    else:
+        raw_conf = str(conf).strip().lower()
+        # 字符串形式 "high"/"medium"/"low"/"高"/"中"/"低"
+        if raw_conf in ("high", "medium", "low"):
+            risk["confidence_score"] = _CONFIDENCE_MAP[raw_conf]
+            risk["confidence"] = _CONFIDENCE_LABEL_MAP[_CONFIDENCE_MAP[raw_conf]]
+        elif raw_conf in ("高", "中", "低"):
+            en_key = _cn_to_en.get(raw_conf, "medium")
+            risk["confidence_score"] = _CONFIDENCE_MAP[en_key]
+        elif isinstance(conf, (int, float)) and 0 <= int(conf) <= 100:
+            # 已是数值 → 保留原值，补充中文标签
+            score = int(conf)
+            risk["confidence_score"] = score
+            # 取最近档位标签
+            if score >= 75:
+                risk["confidence"] = "高"
+            elif score >= 50:
+                risk["confidence"] = "中"
+            else:
+                risk["confidence"] = "低"
 
     # 威胁分析 findings 互补默认值（仅当为 dict 结构才补字段）
     malicious = threat.get("malicious_behaviors")
@@ -538,23 +594,110 @@ def _normalize_audience(parsed: dict) -> Any:
     return AUDIENCE_DEFAULT
 
 
+def _validate_evidence_refs(parsed: dict, tiered_data: Optional[dict] = None) -> list[dict]:
+    """R-11：验证 evidence_refs 完整性，缺失时尝试自动补全.
+
+    Args:
+        parsed: 原始 AI 输出 dict.
+        tiered_data: 分层分析数据字典，用于自动补全证据引用.
+
+    Returns:
+        数据缺口列表（可追加到 data_gaps[]）.
+    """
+    gaps: list[dict] = []
+    threat = parsed.get("threat_analysis", {})
+    malicious = threat.get("malicious_behaviors")
+    if not isinstance(malicious, list):
+        return gaps
+
+    # 收集可用进程数据（用于自动补全）
+    available_processes: dict[str, dict] = {}
+    if tiered_data:
+        for key in ("abnormal_processes_high", "abnormal_processes_medium", "abnormal_processes_low"):
+            for proc in (tiered_data.get(key) or []):
+                if not isinstance(proc, dict):
+                    continue
+                pid = proc.get("pid") or proc.get("PID")
+                if pid:
+                    available_processes[str(pid)] = proc
+
+    for i, beh in enumerate(malicious):
+        if not isinstance(beh, dict):
+            continue
+        evidence_refs = beh.get("evidence_refs")
+        if not isinstance(evidence_refs, list):
+            continue
+
+        for j, ref in enumerate(evidence_refs):
+            if not isinstance(ref, dict):
+                continue
+
+            missing_fields: list[str] = []
+            for field in ("pid", "process_name", "file_path", "command_line"):
+                if field not in ref or not ref.get(field):
+                    missing_fields.append(field)
+
+            if not missing_fields:
+                continue
+
+            # 尝试自动补全
+            auto_filled = False
+            pid_val = ref.get("pid")
+            if pid_val and str(pid_val) in available_processes:
+                proc = available_processes[str(pid_val)]
+                for field in list(missing_fields):  # 遍历副本，因为可能从 missing 移除
+                    field_map = {
+                        "process_name": "process_name",
+                        "file_path": "process_path",
+                        "command_line": "command_line",
+                    }
+                    src_key = field_map.get(field) or field
+                    if src_key in proc and proc[src_key]:
+                        ref[field] = str(proc[src_key])
+                        missing_fields.remove(field)
+                        auto_filled = True
+
+            if missing_fields:
+                ref["evidence_auto_filled"] = False
+                gaps.append({
+                    "type": "evidence_refs_incomplete",
+                    "category": "evidence_chain",
+                    "severity": "medium",
+                    "title": f"证据引用字段缺失（malicious_behaviors[{i}].evidence_refs[{j}]）",
+                    "detail": f"缺少字段: {', '.join(missing_fields)}，无法自动补全",
+                    "suggestion": "请补充对应进程的完整证据引用信息",
+                })
+            elif auto_filled:
+                # 记录已自动补全但不作为缺口
+                logger.info(
+                    "evidence_refs auto-filled for malicious_behaviors[%d].evidence_refs[%d]",
+                    i, j,
+                )
+
+    return gaps
+
+
 def normalize_and_guard(
     parsed: dict,
     *,
     baseline: Optional[dict] = None,
     attack_chain_hits: Optional[list] = None,
     audience: Optional[str] = None,
+    tiered_data: Optional[dict] = None,
+    rules_risk_level: Optional[str] = None,
 ) -> dict:
-    """解析层统一守护入口。
+    """解析层统一守护入口.
 
     对 AI 原始解析结果做一致性纠正、评分回落、置信兜底、缺口合并、
-    基线降噪、ATT&CK 校验、稀有提级、受众归一，返回作战化增强后的结构化结果。
+    基线降噪、ATT&CK 校验、稀有提级、受众归一，返回作战化增强后的结构化结果.
 
     Args:
-        parsed: 原始解析字典（含 risk_assessment / threat_analysis / ...）。
-        baseline: 主机差分基线 JSON（R3-3 降噪用），可为 None。
-        attack_chain_hits: 引擎攻击链命中（v1.2.0 已落库），仅叙述不重判；可为 None。
-        audience: 提交时透传的受众偏好（technical/executive/both），覆盖 parsed。
+        parsed: 原始解析字典（含 risk_assessment / threat_analysis / ...）.
+        baseline: 主机差分基线 JSON（R3-3 降噪用），可为 None.
+        attack_chain_hits: 引擎攻击链命中（v1.2.0 已落库），仅叙述不重判；可为 None.
+        audience: 提交时透传的受众偏好（technical/executive/both），覆盖 parsed.
+        tiered_data: 分层分析数据字典（R-11 证据链校验用），可为 None.
+        rules_risk_level: 规则引擎输出的风险等级（R6-CROSS_CHECK 冲突自检用），可为 None.
 
     Returns:
         守护后的字典，包含：
@@ -682,9 +825,11 @@ def normalize_and_guard(
     risk["escalation_conditions"] = escalation_conditions
 
     # ── 风险等级自洽约束：低置信度 + 评分 < 60 → 等级不高于「高」──
-    confidence_for_level = str(risk.get("confidence", "")).strip().lower()
-    _cn_low = {"低", "low"}
-    if confidence_for_level in _cn_low and score < RISK_SCORE_THRESHOLD_HIGH:
+    confidence_for_level = risk.get("confidence_score")
+    if not isinstance(confidence_for_level, (int, float)):
+        confidence_for_level = 35  # 兜底
+    # #14 分制：低置信 = score < 50
+    if confidence_for_level < 50 and score < RISK_SCORE_THRESHOLD_HIGH:
         current_level = str(risk.get("risk_level", ""))
         current_order = _RISK_LEVEL_ORDER.get(current_level, 0)
         cap_order = _RISK_LEVEL_ORDER.get("高", 3)
@@ -702,6 +847,44 @@ def normalize_and_guard(
 
     # ── 一致性纠正痕迹 ──
     risk["consistency_corrections"] = corrections
+
+    # ── R6-CROSS_CHECK：AI 与规则引擎冲突自检 ──
+    if rules_risk_level:
+        rules_high = {r.lower() for r in ("高危", "严重", "critical", "high")}
+        ai_safe = {r.lower() for r in ("正常", "安全", "低危", "low")}
+        ai_level = str(risk.get("risk_level", "")).strip().lower()
+        if rules_risk_level.strip().lower() in rules_high and ai_level in ai_safe:
+            # AI 结论与规则引擎冲突 → 降低 AI 置信度 + 标记冲突
+            risk["confidence"] = "低"
+            risk["confidence_score"] = 35  # #14: 同步设置整数评分
+            risk["cross_check_conflict"] = True
+            corrections.append({
+                "rule": "R6-CROSS_CHECK",
+                "field": "risk_assessment.risk_level",
+                "action": "override",
+                "detail": (
+                    f"AI 结论（{risk.get('risk_level')}）与规则引擎（{rules_risk_level}）冲突，"
+                    f"强制 AI 置信度降为 '低'，请优先参考规则引擎结果"
+                ),
+            })
+            data_gaps.append({
+                "type": "ai_rule_conflict",
+                "category": "cross_check",
+                "severity": "high",
+                "title": "AI 结论与规则引擎冲突",
+                "detail": "AI 结论与规则引擎冲突，请优先参考规则引擎结果",
+                "suggestion": "以规则引擎结果为准，复核 AI 分析逻辑",
+            })
+
+    # ── R-11：证据链校验 ──
+    evidence_gaps = _validate_evidence_refs(parsed, tiered_data)
+    for eg in evidence_gaps:
+        eg["recommended_actions"] = _normalize_recommended_actions(eg)
+        data_gaps.append(eg)
+        merged_actions.extend(eg["recommended_actions"])
+    if evidence_gaps:
+        recommendations["data_gaps"] = data_gaps
+        recommendations["recommended_actions"] = merged_actions
 
     # ── 受众 ──
     aud = _normalize_audience(parsed)

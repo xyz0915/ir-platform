@@ -116,6 +116,8 @@ from app.api import threat_intel  # noqa: E402
 from app.api import baseline  # noqa: E402  # v1.3.0 差分基线
 from app.api import knowledge_draft  # noqa: E402  # AI 自动知识入库
 from app.api import process_events  # noqa: E402  # T-P2-3 进程事件流入口（PoC）
+from app.api import rule_suppression  # noqa: E402  # #18 规则抑制
+from app.api import dashboard  # noqa: E402  # 全局态势仪表盘
 
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(cases.router, prefix="/api/cases", tags=["案件"])
@@ -132,6 +134,8 @@ app.include_router(iocs.router, prefix="/api/iocs", tags=["IOC"])
 app.include_router(threat_intel.router, prefix="/api/threat-intel", tags=["威胁情报外联"])
 app.include_router(knowledge_draft.router, prefix="/api/knowledge", tags=["知识入库"])
 app.include_router(process_events.router, prefix="/api", tags=["进程事件"])  # T-P2-3 进程事件流入口
+app.include_router(rule_suppression.router, prefix="/api", tags=["规则抑制"])  # #18 规则抑制
+app.include_router(dashboard.router, prefix="/api", tags=["仪表盘"])  # 全局态势仪表盘
 
 
 @app.get("/api/health")

@@ -15,6 +15,11 @@ const routes = [
     children: [
       {
         path: '',
+        name: 'Dashboard',
+        component: () => import('@/views/DashboardView.vue')
+      },
+      {
+        path: 'cases',
         name: 'CaseList',
         component: () => import('@/views/CaseListView.vue')
       },

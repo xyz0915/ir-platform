@@ -93,5 +93,414 @@
         }
       ]
     }
+  },
+  {
+    "name": "attack_chain_webshell_certutil",
+    "label": "WebShell→certutil 下载→注册表持久化→C2 外连",
+    "description": "WebShell 创建进程 → certutil 下载载荷 → 注册表 Run 键持久化 → C2 外连",
+    "category": "attack_chain",
+    "rule_type": "attack_chain",
+    "severity": "critical",
+    "enabled": true,
+    "source": "default",
+    "mitre_attack": "T1505.003/T1105/T1547.001/T1041",
+    "condition": {
+      "_meta": {
+        "mitre_attack": "T1505.003/T1105/T1547.001/T1041"
+      },
+      "window_minutes": 60,
+      "host_scope": "single",
+      "ordered_steps": [
+        {
+          "step": 1,
+          "dimension": "process",
+          "match": {
+            "type": "regex",
+            "field": "command_line",
+            "pattern": "(?i)(w3wp|tomcat|nginx|httpd).*cmd\\.exe"
+          }
+        },
+        {
+          "step": 2,
+          "dimension": "process",
+          "match": {
+            "type": "regex",
+            "field": "command_line",
+            "pattern": "(?i)certutil.*(-urlcache|-verify|-split)"
+          }
+        },
+        {
+          "step": 3,
+          "dimension": "registry",
+          "match": {
+            "type": "regex",
+            "field": "key_path",
+            "pattern": "(?i).*\\\\Run"
+          }
+        },
+        {
+          "step": 4,
+          "dimension": "connection",
+          "match": {
+            "type": "threshold",
+            "field": "remote_port",
+            "operator": ">=",
+            "value": 1024
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "attack_chain_rdp_psexec_lsass",
+    "label": "RDP 爆破→PsExec→LSASS 转储→SMB 横向移动",
+    "description": "RDP 爆破 → PsExec 远程执行 → LSASS 进程转储凭据 → SMB 横向移动",
+    "category": "attack_chain",
+    "rule_type": "attack_chain",
+    "severity": "critical",
+    "enabled": true,
+    "source": "default",
+    "mitre_attack": "T1110/T1570/T1003.001/T1021.002",
+    "condition": {
+      "_meta": {
+        "mitre_attack": "T1110/T1570/T1003.001/T1021.002"
+      },
+      "window_minutes": 60,
+      "host_scope": "single",
+      "ordered_steps": [
+        {
+          "step": 1,
+          "dimension": "process",
+          "match": {
+            "type": "regex",
+            "field": "command_line",
+            "pattern": "(?i)(eventvwr|termdd|3389)"
+          }
+        },
+        {
+          "step": 2,
+          "dimension": "process",
+          "match": {
+            "type": "regex",
+            "field": "command_line",
+            "pattern": "(?i)psexec.*-s"
+          }
+        },
+        {
+          "step": 3,
+          "dimension": "process",
+          "match": {
+            "type": "regex",
+            "field": "command_line",
+            "pattern": "(?i)(procdump.*lsass|comsvcs.*MiniDump|tasklist.*lsass)"
+          }
+        },
+        {
+          "step": 4,
+          "dimension": "connection",
+          "match": {
+            "type": "list",
+            "field": "remote_port",
+            "values": [445, 139],
+            "match_mode": "exact"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "attack_chain_phishing_macro_ps_c2",
+    "label": "钓鱼附件→宏执行→PowerShell 编码下载→C2 Beacon",
+    "description": "Office 钓鱼附件 → 宏执行 cmd → PowerShell 编码指令下载载荷 → C2 Beacon 外连",
+    "category": "attack_chain",
+    "rule_type": "attack_chain",
+    "severity": "critical",
+    "enabled": true,
+    "source": "default",
+    "mitre_attack": "T1566.001/T1204.002/T1059.001/T1041",
+    "condition": {
+      "_meta": {
+        "mitre_attack": "T1566.001/T1204.002/T1059.001/T1041"
+      },
+      "window_minutes": 30,
+      "host_scope": "single",
+      "ordered_steps": [
+        {
+          "step": 1,
+          "dimension": "process",
+          "match": {
+            "type": "regex",
+            "field": "command_line",
+            "pattern": "(?i)(winword|excel|powerpnt).*cmd"
+          }
+        },
+        {
+          "step": 2,
+          "dimension": "process",
+          "match": {
+            "type": "regex",
+            "field": "command_line",
+            "pattern": "(?i)powershell.*(-enc|-encodedcommand)"
+          }
+        },
+        {
+          "step": 3,
+          "dimension": "connection",
+          "match": {
+            "type": "threshold",
+            "field": "remote_port",
+            "operator": ">=",
+            "value": 1024
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "attack_chain_zerologon_dcsync",
+    "label": "Zerologon→域控提权→DCSync→黄金票据",
+    "description": "Zerologon 漏洞利用 → ntdsutil 提取 NTDS → Mimikatz DCSync 获取哈希 → 黄金票据攻击",
+    "category": "attack_chain",
+    "rule_type": "attack_chain",
+    "severity": "critical",
+    "enabled": true,
+    "source": "default",
+    "mitre_attack": "T1210/T1003.006/T1558.001",
+    "condition": {
+      "_meta": {
+        "mitre_attack": "T1210/T1003.006/T1558.001"
+      },
+      "window_minutes": 60,
+      "host_scope": "single",
+      "ordered_steps": [
+        {
+          "step": 1,
+          "dimension": "process",
+          "match": {
+            "type": "regex",
+            "field": "command_line",
+            "pattern": "(?i)(zerologon|CVE-2020-1472)"
+          }
+        },
+        {
+          "step": 2,
+          "dimension": "process",
+          "match": {
+            "type": "regex",
+            "field": "command_line",
+            "pattern": "(?i)ntdsutil.*(acm|NTDS)"
+          }
+        },
+        {
+          "step": 3,
+          "dimension": "process",
+          "match": {
+            "type": "regex",
+            "field": "command_line",
+            "pattern": "(?i)(mimikatz.*dcsync|lsadump::dcsync)"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "attack_chain_log4j_shell_escalate",
+    "label": "Log4j/Exchange 利用→WebShell→提权→信息收集",
+    "description": "Log4j/JNDI 注入或 Exchange 漏洞利用 → WebShell 执行命令 → 提权 → 内网信息收集",
+    "category": "attack_chain",
+    "rule_type": "attack_chain",
+    "severity": "critical",
+    "enabled": true,
+    "source": "default",
+    "mitre_attack": "T1190/T1505.003/T1068/T1082",
+    "condition": {
+      "_meta": {
+        "mitre_attack": "T1190/T1505.003/T1068/T1082"
+      },
+      "window_minutes": 60,
+      "host_scope": "single",
+      "ordered_steps": [
+        {
+          "step": 1,
+          "dimension": "process",
+          "match": {
+            "type": "regex",
+            "field": "command_line",
+            "pattern": "(?i)(jndi|ldap.*log4j|CVE-2021-44228)"
+          }
+        },
+        {
+          "step": 2,
+          "dimension": "process",
+          "match": {
+            "type": "regex",
+            "field": "command_line",
+            "pattern": "(?i)(w3wp.*cmd|tomcat.*cmd|nginx.*bash)"
+          }
+        },
+        {
+          "step": 3,
+          "dimension": "process",
+          "match": {
+            "type": "regex",
+            "field": "command_line",
+            "pattern": "(?i)(systeminfo|whoami /all|net user|net group.*domain)"
+          }
+        },
+        {
+          "step": 4,
+          "dimension": "connection",
+          "match": {
+            "type": "list",
+            "field": "remote_port",
+            "values": [80, 443, 8080],
+            "match_mode": "exact"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "attack_chain_schtask_ps_cred",
+    "label": "计划任务→PowerShell 外连→凭据窃取",
+    "description": "schtasks/at.exe 创建计划任务 → PowerShell 外连 C2 → 凭据窃取工具执行",
+    "category": "attack_chain",
+    "rule_type": "attack_chain",
+    "severity": "critical",
+    "enabled": true,
+    "source": "default",
+    "mitre_attack": "T1053.005/T1041/T1003",
+    "condition": {
+      "_meta": {
+        "mitre_attack": "T1053.005/T1041/T1003"
+      },
+      "window_minutes": 30,
+      "host_scope": "single",
+      "ordered_steps": [
+        {
+          "step": 1,
+          "dimension": "process",
+          "match": {
+            "type": "regex",
+            "field": "command_line",
+            "pattern": "(?i)(schtasks|at\\.exe)"
+          }
+        },
+        {
+          "step": 2,
+          "dimension": "connection",
+          "match": {
+            "type": "threshold",
+            "field": "remote_port",
+            "operator": ">=",
+            "value": 443
+          }
+        },
+        {
+          "step": 3,
+          "dimension": "process",
+          "match": {
+            "type": "regex",
+            "field": "command_line",
+            "pattern": "(?i)(procdump|mimikatz|laZagne)"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "attack_chain_usb_lnk_c2",
+    "label": "USB 传播→LNK 执行→C2 回连",
+    "description": "USB 设备传播 → rundll32 或 LNK 快捷方式执行 → C2 回连",
+    "category": "attack_chain",
+    "rule_type": "attack_chain",
+    "severity": "critical",
+    "enabled": true,
+    "source": "default",
+    "mitre_attack": "T1091/T1204.001/T1041",
+    "condition": {
+      "_meta": {
+        "mitre_attack": "T1091/T1204.001/T1041"
+      },
+      "window_minutes": 30,
+      "host_scope": "single",
+      "ordered_steps": [
+        {
+          "step": 1,
+          "dimension": "process",
+          "match": {
+            "type": "regex",
+            "field": "command_line",
+            "pattern": "(?i)(rundll32.*(shimgvw|zipfldr)|cmd.*setup\\.exe)"
+          }
+        },
+        {
+          "step": 2,
+          "dimension": "process",
+          "match": {
+            "type": "regex",
+            "field": "command_line",
+            "pattern": "(?i)\\.lnk.*cmd|mshta.*vbscript"
+          }
+        },
+        {
+          "step": 3,
+          "dimension": "connection",
+          "match": {
+            "type": "threshold",
+            "field": "remote_port",
+            "operator": ">=",
+            "value": 443
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "attack_chain_fileless_wmi_cred",
+    "label": "无文件攻击→WMI 持久化→凭据收集",
+    "description": "无文件 PowerShell 或 mshta 内存加载 → WMI 事件订阅持久化 → Mimikatz 凭据窃取",
+    "category": "attack_chain",
+    "rule_type": "attack_chain",
+    "severity": "critical",
+    "enabled": true,
+    "source": "default",
+    "mitre_attack": "T1059.001/T1059.005/T1546.003/T1003",
+    "condition": {
+      "_meta": {
+        "mitre_attack": "T1059.001/T1059.005/T1546.003/T1003"
+      },
+      "window_minutes": 30,
+      "host_scope": "single",
+      "ordered_steps": [
+        {
+          "step": 1,
+          "dimension": "process",
+          "match": {
+            "type": "regex",
+            "field": "command_line",
+            "pattern": "(?i)(powershell.*(IEX|Invoke-)|mshta.*(HTTP|http))"
+          }
+        },
+        {
+          "step": 2,
+          "dimension": "process",
+          "match": {
+            "type": "regex",
+            "field": "command_line",
+            "pattern": "(?i)(wmic.*/namespace:\\\\root\\\\subscription|Register-WmiEvent)"
+          }
+        },
+        {
+          "step": 3,
+          "dimension": "process",
+          "match": {
+            "type": "regex",
+            "field": "command_line",
+            "pattern": "(?i)(mimikatz|Invoke-Mimikatz|Get-Credential)"
+          }
+        }
+      ]
+    }
   }
 ]

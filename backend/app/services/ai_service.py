@@ -25,6 +25,7 @@ from app.services.input_quality_service import InputQualityService
 from app.services.knowledge_retriever import KnowledgeRetriever
 from app.services.prompt_builder import PromptBuilder
 from app.services.ai_parse_guard import normalize_and_guard
+from app.services.retry_handler import CircuitBreaker, with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,9 @@ DEFAULT_SYSTEM_PROMPT = """你是一个专业的网络安全应急响应分析�
 
 class AiService:
     """AI分析服务."""
+
+    # 断路器实例（类级别，所有请求共享熔断状态）
+    _ai_circuit_breaker = CircuitBreaker(failure_threshold=5, recovery_timeout=300)
 
     # ================================================================
     # API Key 加解密（不变）
@@ -179,6 +183,7 @@ class AiService:
     # ================================================================
 
     @staticmethod
+    @with_retry()
     async def call_llm(
         api_base_url: str,
         api_key: str,
@@ -193,6 +198,9 @@ class AiService:
         兼容部分新模型/代理网关对 token 参数名的差异：
         - 传统 chat completions: max_tokens
         - 新接口/部分网关: max_output_tokens
+
+        已集成断路器（@with_retry + CircuitBreaker.call），
+        熔断时抛出 RuntimeError 由上层降级处理.
 
         Args:
             api_base_url: API 基础 URL.
@@ -210,6 +218,7 @@ class AiService:
             httpx.HTTPStatusError: API 返回非 200.
             httpx.TimeoutException: 请求超时.
             httpx.ConnectError: 连接失败.
+            RuntimeError: 断路器已熔断.
         """
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -227,26 +236,30 @@ class AiService:
         url = api_base_url.rstrip("/") + "/chat/completions"
         logger.info("Calling LLM API: %s, model: %s", url, model)
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(url, headers=headers, json=payload)
-            if resp.status_code == 400:
-                body_text = resp.text
-                if "Unsupported parameter: max_output_tokens" in body_text:
-                    retry_payload = dict(payload)
-                    retry_payload.pop("max_tokens", None)
-                    retry_payload["max_output_tokens"] = max_tokens
-                    logger.warning(
-                        "LLM gateway rejected max_output_tokens expectation mismatch; retrying with max_output_tokens"
-                    )
-                    resp = await client.post(url, headers=headers, json=retry_payload)
-                elif "Unsupported parameter: max_tokens" in body_text:
-                    retry_payload = dict(payload)
-                    retry_payload.pop("max_tokens", None)
-                    retry_payload["max_output_tokens"] = max_tokens
-                    logger.warning("LLM gateway rejected max_tokens; retrying with max_output_tokens")
-                    resp = await client.post(url, headers=headers, json=retry_payload)
-            resp.raise_for_status()
-            return resp.json()
+        async def _do_llm_request() -> dict:
+            """实际的 HTTP 请求体（被断路器包裹）."""
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(url, headers=headers, json=payload)
+                if resp.status_code == 400:
+                    body_text = resp.text
+                    if "Unsupported parameter: max_output_tokens" in body_text:
+                        retry_payload = dict(payload)
+                        retry_payload.pop("max_tokens", None)
+                        retry_payload["max_output_tokens"] = max_tokens
+                        logger.warning(
+                            "LLM gateway rejected max_output_tokens expectation mismatch; retrying with max_output_tokens"
+                        )
+                        resp = await client.post(url, headers=headers, json=retry_payload)
+                    elif "Unsupported parameter: max_tokens" in body_text:
+                        retry_payload = dict(payload)
+                        retry_payload.pop("max_tokens", None)
+                        retry_payload["max_output_tokens"] = max_tokens
+                        logger.warning("LLM gateway rejected max_tokens; retrying with max_output_tokens")
+                        resp = await client.post(url, headers=headers, json=retry_payload)
+                resp.raise_for_status()
+                return resp.json()
+
+        return await AiService._ai_circuit_breaker.call(_do_llm_request)
 
     @staticmethod
     async def call_llm_stream(
@@ -387,6 +400,18 @@ class AiService:
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
+        except RuntimeError as e:
+            err_str = str(e)
+            if "断路器已熔断" in err_str:
+                logger.warning("AI analysis degraded for host %d: %s", host_id, err_str)
+                return {
+                    "risk_level": "未知",
+                    "risk_score": 0,
+                    "summary": "AI 服务不可用（断路器熔断）",
+                    "details": {},
+                    "degraded": True,
+                }
+            raise
         except httpx.HTTPStatusError as e:
             logger.error("LLM API error: %s %s", e.response.status_code, e.response.text)
             raise ValueError(map_http_error(e))

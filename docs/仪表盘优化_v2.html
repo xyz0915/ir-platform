@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>应急响应平台 - 全局态势感知 v2</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  background: #f0f2f5;
+  color: #1f2937;
+  padding: 20px;
+}
+.dashboard { max-width: 1440px; margin: 0 auto; }
+
+/* ─── 头部 ─── */
+.header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 20px;
+}
+.header-left { display: flex; align-items: center; gap: 12px; }
+.header-left .logo {
+  width: 36px; height: 36px; background: linear-gradient(135deg, #cf222e, #851c2a);
+  border-radius: 8px; display: flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: 700; font-size: 16px;
+}
+.header-left h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; }
+.header-left h1 span { font-size: 13px; font-weight: 400; color: #6b7280; margin-left: 10px; }
+.header-right {
+  display: flex; align-items: center; gap: 20px; font-size: 13px; color: #6b7280;
+}
+.header-right .time { font-family: 'SF Mono', 'Cascadia Code', monospace; font-size: 13px; }
+.header-right .refresh-btn {
+  padding: 6px 14px; border: 1px solid #e5e7eb; border-radius: 6px;
+  background: #fff; cursor: pointer; font-size: 12px; color: #374151;
+  transition: all .15s;
+}
+.header-right .refresh-btn:hover { background: #f3f4f6; border-color: #d1d5db; }
+.header-right .refresh-btn:active { transform: scale(0.96); }
+
+/* ─── 时间选择器 ─── */
+.time-range {
+  display: flex; gap: 4px; margin-bottom: 20px;
+}
+.time-range .pill {
+  padding: 4px 14px; border-radius: 16px; font-size: 12px;
+  border: 1px solid #e5e7eb; background: #fff; color: #6b7280;
+  cursor: pointer; transition: all .15s;
+}
+.time-range .pill.active { background: #cf222e; color: #fff; border-color: #cf222e; }
+.time-range .pill:hover:not(.active) { background: #f3f4f6; }
+
+/* ─── KPI 卡片行 ─── */
+.kpi-row {
+  display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px;
+  margin-bottom: 20px;
+}
+.kpi-card {
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
+  padding: 16px 18px; position: relative; overflow: hidden;
+  transition: box-shadow .2s, transform .15s;
+}
+.kpi-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.06); transform: translateY(-1px); }
+.kpi-card .kpi-label { font-size: 12px; color: #9ca3af; margin-bottom: 4px; letter-spacing: 0.3px; }
+.kpi-card .kpi-value {
+  font-size: 28px; font-weight: 700; letter-spacing: -0.5px; line-height: 1.1;
+}
+.kpi-card .kpi-sub { font-size: 11px; margin-top: 6px; }
+.kpi-card .kpi-icon {
+  position: absolute; right: 14px; top: 14px;
+  width: 36px; height: 36px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; opacity: 0.85;
+}
+.kpi-card .kpi-trend { font-size: 11px; margin-top: 2px; }
+.trend-up { color: #cf222e; }
+.trend-down { color: #2da44e; }
+.kpi-card.critical .kpi-value { color: #cf222e; }
+.kpi-card.high .kpi-value { color: #d4a72c; }
+.kpi-card.medium .kpi-value { color: #0969da; }
+.kpi-card.purple .kpi-value { color: #8250df; }
+.kpi-card.green .kpi-value { color: #2da44e; }
+.kpi-card.teal .kpi-value { color: #0d9488; }
+
+/* ─── 图表行 ─── */
+.charts-row {
+  display: grid; grid-template-columns: 2fr 1fr; gap: 12px;
+  margin-bottom: 20px;
+}
+.chart-card {
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
+  padding: 18px 20px;
+}
+.chart-card .chart-header {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  margin-bottom: 12px;
+}
+.chart-card .chart-title { font-size: 14px; font-weight: 600; color: #1f2937; }
+.chart-card .chart-subtitle { font-size: 11px; color: #9ca3af; margin-top: 2px; }
+.chart-box { width: 100%; height: 280px; }
+
+/* ─── 底部三列 ─── */
+.bottom-row {
+  display: grid; grid-template-columns: 1.5fr 1fr 1fr; gap: 12px;
+}
+.panel {
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
+  padding: 18px 20px;
+}
+.panel .panel-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 14px;
+}
+.panel .panel-title { font-size: 14px; font-weight: 600; }
+.panel .panel-link { font-size: 12px; color: #0969da; cursor: pointer; text-decoration: none; }
+.panel .panel-link:hover { text-decoration: underline; }
+
+/* ─── 告警列表 ─── */
+.alert-item {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 0; border-bottom: 1px solid #f3f4f6;
+}
+.alert-item:last-child { border-bottom: none; }
+.alert-severity-dot {
+  flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; margin-top: 5px;
+}
+.dot-critical { background: #cf222e; }
+.dot-high { background: #d4a72c; }
+.dot-medium { background: #0969da; }
+.dot-low { background: #2da44e; }
+.alert-body { flex: 1; min-width: 0; }
+.alert-title { font-size: 13px; font-weight: 500; color: #1f2937; }
+.alert-meta { font-size: 11px; color: #9ca3af; margin-top: 2px; }
+.alert-badge {
+  flex-shrink: 0; padding: 1px 8px; border-radius: 10px;
+  font-size: 10px; font-weight: 500; margin-top: 2px;
+}
+.badge-critical { background: #ffebe9; color: #cf222e; }
+.badge-high { background: #fff8c5; color: #9a6700; }
+.badge-medium { background: #ddf4ff; color: #0969da; }
+
+/* ─── 主机网格 ─── */
+.host-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+}
+.host-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-radius: 6px; border: 1px solid #f3f4f6;
+  font-size: 12px; transition: background .15s;
+}
+.host-item:hover { background: #f9fafb; }
+.host-item .host-name { font-weight: 500; color: #1f2937; }
+.host-item .host-ip { font-size: 10px; color: #9ca3af; margin-top: 1px; }
+.host-risk-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+}
+.host-risk-dot.critical { background: #cf222e; }
+.host-risk-dot.high { background: #d4a72c; }
+.host-risk-dot.medium { background: #0969da; }
+.host-risk-dot.low { background: #2da44e; }
+
+/* ─── 规则效能列表 ─── */
+.eff-item {
+  display: flex; align-items: center; padding: 8px 0;
+  border-bottom: 1px solid #f3f4f6; font-size: 12px;
+}
+.eff-item:last-child { border-bottom: none; }
+.eff-item .eff-name { flex: 1; font-weight: 500; color: #1f2937; }
+.eff-item .eff-count { font-size: 11px; color: #6b7280; width: 40px; text-align: right; }
+.eff-bar-bg {
+  width: 80px; height: 6px; background: #f3f4f6; border-radius: 3px;
+  margin: 0 10px; overflow: hidden; flex-shrink: 0;
+}
+.eff-bar-fill {
+  height: 100%; border-radius: 3px; transition: width 1s ease;
+}
+
+/* ─── 告警分类环形图 ─── */
+.ring-legend {
+  display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px;
+}
+.ring-legend-item {
+  display: flex; align-items: center; gap: 6px; font-size: 11px; color: #6b7280;
+}
+.ring-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+/* ─── 状态动画 ─── */
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.kpi-card, .chart-card, .panel { animation: fadeSlideUp 0.4s ease both; }
+.kpi-card:nth-child(2) { animation-delay: 0.05s; }
+.kpi-card:nth-child(3) { animation-delay: 0.1s; }
+.kpi-card:nth-child(4) { animation-delay: 0.15s; }
+.kpi-card:nth-child(5) { animation-delay: 0.2s; }
+.kpi-card:nth-child(6) { animation-delay: 0.25s; }
+.charts-row .chart-card:first-child { animation-delay: 0.15s; }
+.charts-row .chart-card:last-child { animation-delay: 0.2s; }
+.bottom-row .panel:nth-child(1) { animation-delay: 0.2s; }
+.bottom-row .panel:nth-child(2) { animation-delay: 0.25s; }
+.bottom-row .panel:nth-child(3) { animation-delay: 0.3s; }
+
+/* ─── 响应式 ─── */
+@media (max-width: 1100px) {
+  .kpi-row { grid-template-columns: repeat(3, 1fr); }
+  .charts-row { grid-template-columns: 1fr; }
+  .bottom-row { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 640px) {
+  .kpi-row { grid-template-columns: repeat(2, 1fr); }
+  .bottom-row { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="dashboard">
+
+  <!-- ═══ 头部 ═══ -->
+  <div class="header">
+    <div class="header-left">
+      <div class="logo">IR</div>
+      <h1>
+        应急响应平台
+        <span>全局态势感知</span>
+      </h1>
+    </div>
+    <div class="header-right">
+      <span>🕐 <span class="time" id="clock"></span></span>
+      <span>已连接 · <strong style="color:#2da44e;">4</strong> 个节点在线</span>
+      <button class="refresh-btn" onclick="refreshAll()">↻ 刷新</button>
+    </div>
+  </div>
+
+  <!-- ═══ 时间选择器 ═══ -->
+  <div class="time-range">
+    <span class="pill active">最近 24 小时</span>
+    <span class="pill">最近 7 天</span>
+    <span class="pill">最近 30 天</span>
+    <span class="pill">全部</span>
+  </div>
+
+  <!-- ═══ KPI 卡片行（6 项）═══ -->
+  <div class="kpi-row">
+    <div class="kpi-card critical">
+      <div class="kpi-label">待处理告警</div>
+      <div class="kpi-value">23</div>
+      <div class="kpi-sub" style="color:#9ca3af;">需立即处置 <strong style="color:#cf222e;">5</strong> 条</div>
+      <div class="kpi-trend trend-up">↑ 8 较昨日</div>
+      <div class="kpi-icon" style="background:#ffebe9;">⚡</div>
+    </div>
+    <div class="kpi-card high">
+      <div class="kpi-label">活跃案件</div>
+      <div class="kpi-value">12</div>
+      <div class="kpi-sub" style="color:#9ca3af;">今日新增 <strong style="color:#d4a72c;">3</strong> 件</div>
+      <div class="kpi-trend trend-up">↑ 2 较昨日</div>
+      <div class="kpi-icon" style="background:#fff8c5;">📋</div>
+    </div>
+    <div class="kpi-card medium">
+      <div class="kpi-label">已采集主机</div>
+      <div class="kpi-value">47</div>
+      <div class="kpi-sub" style="color:#9ca3af;">待分析 <strong style="color:#0969da;">3</strong> 台</div>
+      <div class="kpi-trend trend-up">↑ 8 最近 24h</div>
+      <div class="kpi-icon" style="background:#ddf4ff;">🖥</div>
+    </div>
+    <div class="kpi-card purple">
+      <div class="kpi-label">规则命中</div>
+      <div class="kpi-value">1,247</div>
+      <div class="kpi-sub" style="color:#9ca3af;">今日 <strong style="color:#8250df;">+86</strong> · 活跃规则 28 条</div>
+      <div class="kpi-trend trend-up">↑ 12% 覆盖率</div>
+      <div class="kpi-icon" style="background:#f3eefc;">📊</div>
+    </div>
+    <div class="kpi-card green">
+      <div class="kpi-label">知识库命中</div>
+      <div class="kpi-value">186</div>
+      <div class="kpi-sub" style="color:#9ca3af;">语义匹配命中率 <strong style="color:#2da44e;">73%</strong></div>
+      <div class="kpi-trend trend-up">↑ 15% 较上周</div>
+      <div class="kpi-icon" style="background:#e6f6e8;">📚</div>
+    </div>
+    <div class="kpi-card teal">
+      <div class="kpi-label">AI 分析</div>
+      <div class="kpi-value">98</div>
+      <div class="kpi-sub" style="color:#9ca3af;">可用率 <strong style="color:#0d9488;">99.5%</strong></div>
+      <div class="kpi-trend trend-down">↓ 0.3% 较昨日</div>
+      <div class="kpi-icon" style="background:#e6fffa;">🤖</div>
+    </div>
+  </div>
+
+  <!-- ═══ 图表行 ═══ -->
+  <div class="charts-row">
+    <!-- 案件趋势 + 规则命中堆叠 -->
+    <div class="chart-card">
+      <div class="chart-header">
+        <div>
+          <div class="chart-title">案件与规则命中趋势</div>
+          <div class="chart-subtitle">最近 7 天 · 含告警量与规则命中数</div>
+        </div>
+      </div>
+      <div class="chart-box" id="chartTrend"></div>
+    </div>
+    <!-- 告警分类分布 -->
+    <div class="chart-card">
+      <div class="chart-header">
+        <div>
+          <div class="chart-title">告警类别分布</div>
+          <div class="chart-subtitle">按攻击手法聚合</div>
+        </div>
+      </div>
+      <div class="chart-box" id="chartCategory"></div>
+    </div>
+  </div>
+
+  <!-- ═══ 底部三列 ═══ -->
+  <div class="bottom-row">
+
+    <!-- 左：待处理告警 -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">🔔 待处理告警</span>
+        <a class="panel-link" href="#">查看全部 →</a>
+      </div>
+      <div class="alert-item">
+        <span class="alert-severity-dot dot-critical"></span>
+        <div class="alert-body">
+          <div class="alert-title">【WebShell】w3wp.exe 频繁创建子进程</div>
+          <div class="alert-meta">TEST-PC-001 · PID 2010 · cmd.exe /c whoami</div>
+        </div>
+        <span class="alert-badge badge-critical">CRITICAL</span>
+      </div>
+      <div class="alert-item">
+        <span class="alert-severity-dot dot-critical"></span>
+        <div class="alert-body">
+          <div class="alert-title">【凭据窃取】procdump -ma lsass.exe</div>
+          <div class="alert-meta">FILE-SRV-01 · PID 5000 · C:\admin\procdump.exe</div>
+        </div>
+        <span class="alert-badge badge-critical">CRITICAL</span>
+      </div>
+      <div class="alert-item">
+        <span class="alert-severity-dot dot-high"></span>
+        <div class="alert-body">
+          <div class="alert-title">【横向移动】PSEXESVC 服务安装</div>
+          <div class="alert-meta">DB-SRV-02 · EventID 7045 · 源 192.168.1.50</div>
+        </div>
+        <span class="alert-badge badge-high">HIGH</span>
+      </div>
+      <div class="alert-item">
+        <span class="alert-severity-dot dot-high"></span>
+        <div class="alert-body">
+          <div class="alert-title">【持久化】计划任务伪装系统更新</div>
+          <div class="alert-meta">WEB-SRV-01 · MicrosoftEdgeUpdateTask → PS</div>
+        </div>
+        <span class="alert-badge badge-high">HIGH</span>
+      </div>
+      <div class="alert-item">
+        <span class="alert-severity-dot dot-medium"></span>
+        <div class="alert-body">
+          <div class="alert-title">【IOC 命中】外连 185.220.101.1:443</div>
+          <div class="alert-meta">TEST-PC-001 · certutil.exe · ESTABLISHED</div>
+        </div>
+        <span class="alert-badge badge-medium">MEDIUM</span>
+      </div>
+      <div class="alert-item">
+        <span class="alert-severity-dot dot-medium"></span>
+        <div class="alert-body">
+          <div class="alert-title">【服务异常】WinDefend 启动类型被改为"已禁用"</div>
+          <div class="alert-meta">DC-01 · 安全服务篡改 P0-1-TAMPER</div>
+        </div>
+        <span class="alert-badge badge-medium">MEDIUM</span>
+      </div>
+    </div>
+
+    <!-- 中：最近采集主机 + 风险等级 -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">🖥 最近主机</span>
+        <a class="panel-link" href="#">主机列表 →</a>
+      </div>
+      <div class="host-grid">
+        <div class="host-item">
+          <span class="host-risk-dot critical"></span>
+          <div>
+            <div class="host-name">TEST-PC-001</div>
+            <div class="host-ip">192.168.1.100</div>
+          </div>
+          <span style="margin-left:auto;font-size:10px;color:#cf222e;">CRITICAL</span>
+        </div>
+        <div class="host-item">
+          <span class="host-risk-dot high"></span>
+          <div>
+            <div class="host-name">WEB-SRV-01</div>
+            <div class="host-ip">192.168.1.50</div>
+          </div>
+          <span style="margin-left:auto;font-size:10px;color:#d4a72c;">HIGH</span>
+        </div>
+        <div class="host-item">
+          <span class="host-risk-dot high"></span>
+          <div>
+            <div class="host-name">DB-SRV-02</div>
+            <div class="host-ip">192.168.1.60</div>
+          </div>
+          <span style="margin-left:auto;font-size:10px;color:#d4a72c;">HIGH</span>
+        </div>
+        <div class="host-item">
+          <span class="host-risk-dot medium"></span>
+          <div>
+            <div class="host-name">FILE-SRV-01</div>
+            <div class="host-ip">192.168.1.70</div>
+          </div>
+          <span style="margin-left:auto;font-size:10px;color:#0969da;">MEDIUM</span>
+        </div>
+        <div class="host-item">
+          <span class="host-risk-dot medium"></span>
+          <div>
+            <div class="host-name">MAIL-SRV-01</div>
+            <div class="host-ip">192.168.1.80</div>
+          </div>
+          <span style="margin-left:auto;font-size:10px;color:#0969da;">MEDIUM</span>
+        </div>
+        <div class="host-item">
+          <span class="host-risk-dot low"></span>
+          <div>
+            <div class="host-name">DC-01</div>
+            <div class="host-ip">192.168.1.10</div>
+          </div>
+          <span style="margin-left:auto;font-size:10px;color:#2da44e;">LOW</span>
+        </div>
+        <div class="host-item">
+          <span class="host-risk-dot medium"></span>
+          <div>
+            <div class="host-name">APP-SRV-01</div>
+            <div class="host-ip">192.168.1.90</div>
+          </div>
+          <span style="margin-left:auto;font-size:10px;color:#0969da;">MEDIUM</span>
+        </div>
+        <div class="host-item">
+          <span class="host-risk-dot low"></span>
+          <div>
+            <div class="host-name">GITLAB-01</div>
+            <div class="host-ip">192.168.1.110</div>
+          </div>
+          <span style="margin-left:auto;font-size:10px;color:#2da44e;">LOW</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右：规则效能 Top 8 -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">📊 规则命中 Top 8</span>
+        <a class="panel-link" href="#">规则管理 →</a>
+      </div>
+      <div class="eff-item">
+        <span class="eff-name">PowerShell 编码命令</span>
+        <div class="eff-bar-bg"><div class="eff-bar-fill" style="width:100%;background:#cf222e;"></div></div>
+        <span class="eff-count">342</span>
+      </div>
+      <div class="eff-item">
+        <span class="eff-name">cmd.exe 子进程异常</span>
+        <div class="eff-bar-bg"><div class="eff-bar-fill" style="width:82%;background:#d4a72c;"></div></div>
+        <span class="eff-count">281</span>
+      </div>
+      <div class="eff-item">
+        <span class="eff-name">certutil 下载执行</span>
+        <div class="eff-bar-bg"><div class="eff-bar-fill" style="width:65%;background:#d4a72c;"></div></div>
+        <span class="eff-count">224</span>
+      </div>
+      <div class="eff-item">
+        <span class="eff-name">短存活 Shell 进程</span>
+        <div class="eff-bar-bg"><div class="eff-bar-fill" style="width:58%;background:#0969da;"></div></div>
+        <span class="eff-count">198</span>
+      </div>
+      <div class="eff-item">
+        <span class="eff-name">WebShell 可疑外连</span>
+        <div class="eff-bar-bg"><div class="eff-bar-fill" style="width:47%;background:#0969da;"></div></div>
+        <span class="eff-count">162</span>
+      </div>
+      <div class="eff-item">
+        <span class="eff-name">无签名进程执行</span>
+        <div class="eff-bar-bg"><div class="eff-bar-fill" style="width:41%;background:#8250df;"></div></div>
+        <span class="eff-count">141</span>
+      </div>
+      <div class="eff-item">
+        <span class="eff-name">计划任务持久化</span>
+        <div class="eff-bar-bg"><div class="eff-bar-fill" style="width:33%;background:#8250df;"></div></div>
+        <span class="eff-count">113</span>
+      </div>
+      <div class="eff-item">
+        <span class="eff-name">凭据转储工具</span>
+        <div class="eff-bar-bg"><div class="eff-bar-fill" style="width:26%;background:#2da44e;"></div></div>
+        <span class="eff-count">89</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── 实时时钟 ──
+function updateClock() {
+  const now = new Date();
+  document.getElementById('clock').textContent =
+    now.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+}
+updateClock();
+setInterval(updateClock, 1000);
+
+// ── 刷新 ──
+function refreshAll() {
+  const btn = document.querySelector('.refresh-btn');
+  btn.textContent = '⟳ 刷新中...';
+  btn.disabled = true;
+  setTimeout(() => {
+    btn.textContent = '↻ 刷新';
+    btn.disabled = false;
+    // 重绘图表
+    document.querySelectorAll('.chart-box').forEach(el => {
+      const id = el.id;
+      if (id) echarts.getInstanceByDom(el)?.resize();
+    });
+  }, 800);
+}
+
+// ── 时间选择器 ──
+document.querySelectorAll('.time-range .pill').forEach(p => {
+  p.addEventListener('click', function() {
+    document.querySelectorAll('.time-range .pill').forEach(x => x.classList.remove('active'));
+    this.classList.add('active');
+  });
+});
+
+// ═══ ECharts — 案件趋势 + 规则命中（双 Y 轴）═══
+(function() {
+  var chart = echarts.init(document.getElementById('chartTrend'));
+  chart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'cross' },
+      backgroundColor: '#fff',
+      borderColor: '#e5e7eb',
+      borderWidth: 1,
+      textStyle: { fontSize: 12, color: '#1f2937' }
+    },
+    legend: {
+      data: ['高危告警', '中危告警', '规则命中（次）'],
+      bottom: 0,
+      textStyle: { fontSize: 11, color: '#6b7280' }
+    },
+    grid: { left: 45, right: 50, top: 20, bottom: 40 },
+    xAxis: {
+      type: 'category',
+      data: ['7/6', '7/7', '7/8', '7/9', '7/10', '7/11', '7/12'],
+      axisLine: { lineStyle: { color: '#e5e7eb' } },
+      axisLabel: { color: '#6b7280', fontSize: 11 }
+    },
+    yAxis: [
+      {
+        type: 'value', name: '告警数', nameTextStyle: { fontSize: 11, color: '#9ca3af' },
+        splitLine: { lineStyle: { color: '#f3f4f6', type: 'dashed' } },
+        axisLabel: { color: '#6b7280', fontSize: 11 }
+      },
+      {
+        type: 'value', name: '命中数', nameTextStyle: { fontSize: 11, color: '#9ca3af' },
+        splitLine: { show: false },
+        axisLabel: { color: '#6b7280', fontSize: 11 }
+      }
+    ],
+    series: [
+      {
+        name: '高危告警', type: 'bar', stack: 'alert', barWidth: 22,
+        itemStyle: { color: '#cf222e', borderRadius: [2,2,0,0] },
+        data: [3, 5, 2, 4, 6, 3, 4]
+      },
+      {
+        name: '中危告警', type: 'bar', stack: 'alert',
+        itemStyle: { color: '#d4a72c' },
+        data: [5, 3, 6, 4, 5, 7, 6]
+      },
+      {
+        name: '规则命中（次）', type: 'line', yAxisIndex: 1,
+        smooth: true, symbol: 'circle', symbolSize: 6,
+        lineStyle: { color: '#8250df', width: 2 },
+        itemStyle: { color: '#8250df' },
+        areaStyle: { color: 'rgba(130,80,223,0.08)' },
+        data: [120, 145, 98, 167, 188, 132, 156]
+      }
+    ]
+  });
+  window.addEventListener('resize', () => chart.resize());
+})();
+
+// ═══ ECharts — 告警类别分布（饼图）═══
+(function() {
+  var chart = echarts.init(document.getElementById('chartCategory'));
+  var data = [
+    { value: 38, name: 'WebShell', itemStyle: { color: '#cf222e' } },
+    { value: 28, name: '横向移动', itemStyle: { color: '#d4a72c' } },
+    { value: 22, name: '凭据窃取', itemStyle: { color: '#0969da' } },
+    { value: 35, name: '持久化', itemStyle: { color: '#8250df' } },
+    { value: 18, name: 'C2 外连', itemStyle: { color: '#0d9488' } },
+    { value: 15, name: '权限提升', itemStyle: { color: '#e94e4e' } },
+    { value: 12, name: '防御绕过', itemStyle: { color: '#c4801a' } },
+    { value: 20, name: '信息收集', itemStyle: { color: '#2da44e' } },
+  ];
+  chart.setOption({
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: '#fff',
+      borderColor: '#e5e7eb',
+      borderWidth: 1,
+      textStyle: { fontSize: 12, color: '#1f2937' },
+      formatter: '{b}: {c} 条 ({d}%)'
+    },
+    series: [{
+      type: 'pie',
+      radius: ['40%', '68%'],
+      center: ['50%', '48%'],
+      avoidLabelOverlap: true,
+      itemStyle: { borderRadius: 4, borderColor: '#fff', borderWidth: 2 },
+      label: {
+        show: true,
+        formatter: '{b}\n{d}%',
+        fontSize: 11,
+        color: '#374151',
+        lineHeight: 16
+      },
+      emphasis: {
+        label: { show: true, fontSize: 13, fontWeight: 'bold' },
+        itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.15)' }
+      },
+      data: data
+    }]
+  });
+  window.addEventListener('resize', () => chart.resize());
+})();
+</script>
+</body>
+</html>

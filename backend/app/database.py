@@ -199,6 +199,7 @@ DDL_STATEMENTS = [
         condition       TEXT,
         severity        TEXT    DEFAULT 'medium',
         enabled         INTEGER DEFAULT 1,
+        version         INTEGER DEFAULT 1,  -- #17 规则版本
         created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
         updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
     )
@@ -513,6 +514,17 @@ DDL_STATEMENTS = [
         raw_ioc             TEXT,
         created_at          TEXT,
         reviewed_at         TEXT
+    )
+    """,
+    # rule_suppression — 规则抑制表（#18）
+    """
+    CREATE TABLE IF NOT EXISTS rule_suppression (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        rule_name       TEXT    NOT NULL,
+        host_id         INTEGER DEFAULT 0,
+        suppressed_until TEXT   NOT NULL,
+        reason          TEXT,
+        created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
     )
     """,
 ]
@@ -1147,6 +1159,38 @@ def _init_knowledge_drafts(conn: sqlite3.Connection) -> None:
         logger.info("knowledge_drafts table ready")
 
 
+def _alter_rules_table_stats(conn: sqlite3.Connection) -> None:
+    """检测并添加 rules 表效能统计列：hit_count / last_hit_at / avg_risk_score (#10/#16)."""
+    cursor = conn.execute("PRAGMA table_info(rules)")
+    existing_columns: set[str] = {row["name"] for row in cursor.fetchall()}
+
+    new_columns: list[tuple[str, str]] = [
+        ("hit_count", "INTEGER DEFAULT 0"),
+        ("last_hit_at", "TEXT"),
+        ("avg_risk_score", "REAL DEFAULT 0.0"),
+    ]
+
+    for col_name, col_type in new_columns:
+        if col_name not in existing_columns:
+            conn.execute(
+                f"ALTER TABLE rules ADD COLUMN {col_name} {col_type}"
+            )
+            logger.info("Added column '%s' to rules table", col_name)
+
+
+def _alter_add_column(table: str, column: str, col_type: str) -> None:
+    """安全地追加列（SQLite 不支持 IF NOT EXISTS for ALTER TABLE）."""
+    with get_connection() as db:
+        cursor = db.execute(f"PRAGMA table_info({table})")
+        existing_columns: set[str] = {row["name"] for row in cursor.fetchall()}
+        if column not in existing_columns:
+            try:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+                logger.info("Added column %s.%s", table, column)
+            except Exception:
+                logger.debug("Column %s.%s already exists", table, column)
+
+
 def init_db() -> None:
     """初始化数据库：创建目录、执行建表语句、迁移旧数据、ALTER表、创建默认用户、导入默认规则、导入默认白名单."""
     # 确保数据目录存在
@@ -1182,6 +1226,9 @@ def init_db() -> None:
         conn.commit()
         _create_default_admin(conn)
         _alter_rules_table(conn)
+        _alter_rules_table_stats(conn)
+        # 规则版本管理（P2 #17）
+        _alter_add_column("rules", "version", "INTEGER DEFAULT 1")
         _import_default_rules(conn)
         _alter_abnormal_processes_table(conn)
         _alter_suspicious_connections_table(conn)

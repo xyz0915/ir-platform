@@ -124,7 +124,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 import {
   Cpu, Lock, CircleCheck, Warning, Connection, Collection,
-  Setting, Folder, Sunny, Moon, User, ArrowDown,
+  Setting, Folder, Sunny, Moon, User, ArrowDown, Monitor,
   DArrowLeft, DArrowRight, Expand, Close, Fold
 } from '@element-plus/icons-vue'
 
@@ -140,7 +140,8 @@ const isMobile = ref(window.innerWidth < 768)
 
 // ==================== 导航项配置 ====================
 const navItems = [
-  { index: '/', label: '案件管理', icon: Folder },
+  { index: '/', label: '全局态势', icon: Monitor },
+  { index: '/cases', label: '案件管理', icon: Folder },
   { index: '/ai', label: 'AI 分析', icon: Cpu },
   { index: '/rules', label: '规则管理', icon: Setting },
   { index: '/whitelist', label: '白名单配置', icon: CircleCheck },
@@ -153,7 +154,8 @@ const navItems = [
 const asideWidth = computed(() => collapsed.value ? 64 : 210)
 
 const activeMenu = computed(() => {
-  if (route.path.startsWith('/cases') || route.path.startsWith('/hosts')) return '/'
+  if (route.path === '/') return '/'
+  if (route.path.startsWith('/cases') || route.path.startsWith('/hosts')) return '/cases'
   if (route.path === '/whitelist') return '/whitelist'
   if (route.path === '/iocs') return '/iocs'
   if (route.path === '/knowledge') return '/knowledge'
@@ -163,6 +165,7 @@ const activeMenu = computed(() => {
 
 const routeMeta = computed(() => {
   const names = {
+    'Dashboard': { title: '全局态势', subtitle: '应急响应全局态势感知' },
     'CaseList': { title: '案件管理', subtitle: '应急响应案件总览与调度' },
     'CaseDetail': { title: '案件详情', subtitle: '' },
     'HostDetail': { title: '主机详情', subtitle: '' },
