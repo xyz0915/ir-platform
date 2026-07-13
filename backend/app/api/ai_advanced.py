@@ -134,10 +134,15 @@ def correlate_incidents(
 
 @router.post("/ai/query")
 def ai_nl_query(
-    query: str = Query(..., min_length=1),
+    query: str = Query(""),
     current_user: dict = Depends(get_current_user),
 ):
     """自然语言 → 结构化查询 + 返回结果."""
+    if not query.strip():
+        return {"success": True, "data": {
+            "intent": "unknown", "params": {}, "summary": "请输入问题",
+            "data": None, "suggestions": ["严重的告警", "统计信息", "在线主机", "登录失败的日志", "查看策略"]
+        }}
     q = query.lower().strip()
 
     # 意图识别
