@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException
 
 from app.models.policy import DetectionPolicy
-from app.models.rules import Rule
+from app.models.rule import Rule
 from app.services.auth_service import get_current_user
 
 logger = logging.getLogger(__name__)
