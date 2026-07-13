@@ -147,6 +147,48 @@ class Rule:
         return Rule.list(enabled=True)
 
     @staticmethod
+    def search(category: Optional[str] = None, severity: Optional[str] = None,
+               rule_type: Optional[str] = None, keyword: Optional[str] = None,
+               page: int = 1, page_size: int = 100) -> dict:
+        """规则多维度搜索（供策略规则选择器使用）. """
+        with get_connection() as conn:
+            conditions = ["1=1"]
+            params = []
+            if category:
+                conditions.append("category=?")
+                params.append(category)
+            if severity:
+                sevs = severity.split(",")
+                placeholders = ",".join("?" for _ in sevs)
+                conditions.append(f"severity IN ({placeholders})")
+                params.extend(sevs)
+            if rule_type:
+                conditions.append("rule_type=?")
+                params.append(rule_type)
+            if keyword:
+                conditions.append("(name LIKE ? OR description LIKE ? OR condition LIKE ?)")
+                kw = f"%{keyword}%"
+                params.extend([kw, kw, kw])
+            where = " AND ".join(conditions)
+            total = conn.execute(f"SELECT COUNT(*) FROM rules WHERE {where}", params).fetchone()[0]
+            offset = (page - 1) * page_size
+            rows = conn.execute(
+                f"SELECT * FROM rules WHERE {where} ORDER BY severity DESC, category, name LIMIT ? OFFSET ?",
+                params + [page_size, offset]
+            ).fetchall()
+            items = []
+            for row in rows:
+                item = dict(row)
+                if item.get("condition"):
+                    try:
+                        item["condition"] = json.loads(item["condition"])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                item["enabled"] = bool(item.get("enabled"))
+                items.append(item)
+            return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+    @staticmethod
     def update(
         rule_id: int,
         enabled: Optional[bool] = None,

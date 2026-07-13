@@ -44,6 +44,25 @@ def startup_event() -> None:
     logger.info("Starting IR Platform backend...")
     init_db()
 
+    # ── 默认策略初始化 ──
+    try:
+        from app.models.policy import DetectionPolicy
+        from app.models.rule import Rule
+        policies = DetectionPolicy.get_all()
+        if not policies:
+            pid = DetectionPolicy.create(
+                name="默认策略（全量检测）",
+                description="涵盖全部检测规则，适用于首次全量分析和日常全面巡检。使用全部规则，RAG 语义分析开启，攻击链检测开启。",
+                enable_rag=1, enable_attack_chain=1,
+            )
+            if pid:
+                all_rules = Rule.list(enabled=True)
+                DetectionPolicy.set_rules(pid, [r["id"] for r in all_rules])
+                DetectionPolicy.activate(pid)
+                logger.info("Created default policy with %d rules", len(all_rules))
+    except Exception as e:
+        logger.warning("Default policy init skipped: %s", e)
+
     # ── Phase 2 定时同步调度（任务11）──
     _register_scheduled_tasks()
 
@@ -122,6 +141,7 @@ from app.api import alerts  # noqa: E402  # 实时告警管理
 from app.api import agents  # noqa: E402  # Agent 注册与心跳
 from app.api import case_hosts  # noqa: E402  # 案件→主机级联数据
 from app.api import logs  # noqa: E402  # 日志分析中心
+from app.api import policies  # noqa: E402  # 检测策略配置
 
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(case_hosts.router, prefix="/api", tags=["案件"])  # 必须在 cases.router 之前注册
@@ -145,6 +165,7 @@ app.include_router(alerts.router, prefix="/api", tags=["告警"])  # 实时告�
 app.include_router(agents.router, prefix="/api", tags=["Agent管理"])  # Agent 管理
 app.include_router(case_hosts.router, prefix="/api", tags=["案件"])  # 案件→主机级联
 app.include_router(logs.router, prefix="/api", tags=["日志分析"])  # 日志分析中心
+app.include_router(policies.router, prefix="/api", tags=["策略配置"])  # 检测策略配置
 
 
 @app.get("/api/health")

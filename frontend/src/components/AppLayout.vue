@@ -119,6 +119,7 @@ const navGroups = [
     path: '',
     children: [
       { emoji: '📏', label: '规则管理', path: '/rules' },
+      { emoji: '🎯', label: '策略配置', path: '/policies' },
       { emoji: '✅', label: '白名单', path: '/whitelist' },
       { emoji: '⚡', label: 'IOC 指标', path: '/iocs' },
       { emoji: '🌐', label: '威胁情报', path: '/threat-intel-config' },
@@ -153,6 +154,7 @@ const routeMeta = computed(() => {
     'AiConfig': { title: 'AI 分析', subtitle: '智能辅助分析与研判' },
     'ThreatIntelConfig': { title: '威胁情报外联配置', subtitle: '外部情报源接入管理' },
     'Knowledge': { title: '知识库管理', subtitle: '安全知识沉淀与检索' },
+    'PolicyConfig': { title: '策略配置', subtitle: '检测策略管理与规则选择' },
   }
   return names[route.name] || { title: '应急响应平台', subtitle: '' }
 })

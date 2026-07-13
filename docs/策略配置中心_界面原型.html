@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>策略配置中心 — 界面原型</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, "Segoe UI", sans-serif; background: #f5f6fa; min-height: 100vh; color: #1f2937; font-size: 13px; }
+
+/* ── 顶栏模拟 ── */
+.top-bar { height: 48px; background: #fff; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; padding: 0 20px; position: sticky; top: 0; z-index: 100; }
+.top-bar .logo { font-size: 14px; font-weight: 700; color: #1f2937; margin-right: 24px; }
+.top-bar .nav-hint { font-size: 12px; color: #059669; font-weight: 600; }
+.top-bar .nav-hint span { color: #6b7280; font-weight: 400; }
+
+/* ── 主体布局 ── */
+.layout { display: flex; height: calc(100vh - 48px); }
+
+/* ── 左侧策略列表 ── */
+.sidebar { width: 280px; min-width: 280px; background: #fff; border-right: 1px solid #e5e7eb; overflow-y: auto; }
+.sidebar-head { display: flex; justify-content: space-between; align-items: center; padding: 16px 16px 8px; font-size: 14px; font-weight: 600; color: #1f2937; }
+.sidebar-head .add-btn { width: 28px; height: 28px; border-radius: 6px; border: 1px dashed #d1d5db; background: none; cursor: pointer; font-size: 16px; color: #6b7280; display: flex; align-items: center; justify-content: center; transition: .2s; }
+.sidebar-head .add-btn:hover { border-color: #059669; color: #059669; }
+.sidebar-search { padding: 0 16px 10px; }
+.sidebar-search input { width: 100%; border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px 10px; font-size: 12px; outline: none; }
+.sidebar-search input:focus { border-color: #059669; }
+
+.policy-item { display: flex; align-items: center; gap: 10px; padding: 10px 16px; cursor: pointer; border-left: 3px solid transparent; transition: .2s; }
+.policy-item:hover { background: #f9fafb; }
+.policy-item.active { background: #ecfdf5; border-left-color: #059669; }
+.policy-item .status { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.policy-item .status.active { background: #059669; box-shadow: 0 0 6px rgba(5,150,105,.4); }
+.policy-item .status.inactive { background: #d1d5db; }
+.policy-info { flex: 1; min-width: 0; }
+.policy-name { font-size: 13px; font-weight: 600; color: #1f2937; }
+.policy-meta { font-size: 11px; color: #6b7280; margin-top: 1px; }
+.policy-badge { font-size: 10px; padding: 1px 8px; border-radius: 10px; font-weight: 600; }
+.policy-badge.active-tag { background: #d1fae5; color: #065f46; }
+
+/* ── 右侧内容 ── */
+.main { flex: 1; overflow-y: auto; padding: 20px 24px; }
+.main-section { display: grid; gap: 16px; }
+.card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 20px; }
+
+/* 头部 */
+.policy-header { display: flex; justify-content: space-between; align-items: flex-start; }
+.policy-header-left { flex: 1; }
+.policy-header-left input[type=text] { width: 100%; font-size: 20px; font-weight: 700; border: none; outline: none; padding: 0; margin-bottom: 4px; }
+.policy-header-left input[type=text]:focus { border-bottom: 2px solid #059669; }
+.policy-header-left textarea { width: 100%; border: none; outline: none; resize: none; font-size: 12px; color: #6b7280; line-height: 1.4; }
+.policy-header-left textarea:focus { border-bottom: 1px solid #d1d5db; }
+.policy-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.btn { padding: 5px 14px; border-radius: 6px; font-size: 12px; cursor: pointer; border: 1px solid #e5e7eb; background: #fff; color: #374151; transition: .15s; }
+.btn:hover { border-color: #d1d5db; background: #f9fafb; }
+.btn-primary { background: #059669; color: #fff; border-color: #059669; }
+.btn-primary:hover { background: #047857; }
+.btn-danger { color: #dc2626; border-color: #fee2e2; }
+.btn-danger:hover { background: #fef2f2; }
+.btn-success { background: #059669; color: #fff; border-color: #059669; display: flex; align-items: center; gap: 4px; }
+
+/* 开关 */
+.toggle-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
+.toggle-row + .toggle-row { border-top: 1px solid #f3f4f6; padding-top: 12px; }
+.toggle-switch { position: relative; width: 40px; height: 22px; background: #d1d5db; border-radius: 11px; cursor: pointer; transition: .2s; flex-shrink: 0; }
+.toggle-switch.on { background: #059669; }
+.toggle-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: .2s; }
+.toggle-switch.on::after { left: 20px; }
+.toggle-label { flex: 1; }
+.toggle-label .tl-title { font-size: 13px; font-weight: 500; }
+.toggle-label .tl-desc { font-size: 11px; color: #6b7280; }
+
+/* 规则筛选栏 */
+.filter-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.filter-bar select, .filter-bar input { border: 1px solid #e5e7eb; border-radius: 6px; padding: 5px 10px; font-size: 12px; outline: none; background: #fff; }
+.filter-bar select:focus, .filter-bar input:focus { border-color: #059669; }
+.filter-bar .selected-count { font-size: 12px; color: #059669; font-weight: 600; margin-left: auto; }
+
+/* 规则表格 */
+.rule-table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+.rule-table th { text-align: left; padding: 8px 12px; font-size: 11px; font-weight: 600; color: #6b7280; border-bottom: 1px solid #e5e7eb; background: #f9fafb; }
+.rule-table td { padding: 8px 12px; font-size: 12px; border-bottom: 1px solid #f3f4f6; }
+.rule-table tr:hover td { background: #f9fafb; }
+.rule-table .chk { width: 20px; height: 20px; cursor: pointer; accent-color: #059669; }
+.sv-badge { display: inline-block; padding: 0 8px; border-radius: 4px; font-size: 10px; font-weight: 600; }
+.sv-critical { background: #fee2e2; color: #dc2626; }
+.sv-high { background: #fef3c7; color: #92400e; }
+.sv-medium { background: #dbeafe; color: #1e40af; }
+.sv-low { background: #f3f4f6; color: #6b7280; }
+.cat-tag { font-size: 10px; padding: 0 6px; border-radius: 4px; background: #f3f4f6; color: #374151; }
+
+/* 提示 */
+.info-box { padding: 12px 16px; background: #fffbeb; border-left: 3px solid #f59e0b; border-radius: 0 6px 6px 0; font-size: 11px; color: #92400e; line-height: 1.5; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<div class="top-bar">
+  <div class="logo">🛡️ 应急平台</div>
+  <div class="nav-hint"><span>检测配置 →</span> 策略配置</div>
+</div>
+
+<div class="layout">
+  <!-- ===== 左侧：策略列表 ===== -->
+  <div class="sidebar">
+    <div class="sidebar-head">
+      <span>📋 检测策略</span>
+      <button class="add-btn" title="新建策略">＋</button>
+    </div>
+    <div class="sidebar-search">
+      <input placeholder="🔍 搜索策略名称...">
+    </div>
+
+    <div class="policy-item active">
+      <span class="status active"></span>
+      <div class="policy-info">
+        <div class="policy-name">默认策略（全量检测）</div>
+        <div class="policy-meta">200 条规则 · RAG 开</div>
+      </div>
+      <span class="policy-badge active-tag">已激活</span>
+    </div>
+
+    <div class="policy-item">
+      <span class="status inactive"></span>
+      <div class="policy-info">
+        <div class="policy-name">应急响应策略</div>
+        <div class="policy-meta">40 条规则 · RAG 开 · 攻击链开</div>
+      </div>
+    </div>
+
+    <div class="policy-item">
+      <span class="status inactive"></span>
+      <div class="policy-info">
+        <div class="policy-name">Linux 基线策略</div>
+        <div class="policy-meta">20 条规则 · RAG 关</div>
+      </div>
+    </div>
+
+    <div class="policy-item">
+      <span class="status inactive"></span>
+      <div class="policy-info">
+        <div class="policy-name">轻量巡检策略</div>
+        <div class="policy-meta">10 条规则 · RAG 关 · 用时 10s</div>
+      </div>
+    </div>
+
+    <div class="policy-item">
+      <span class="status inactive"></span>
+      <div class="policy-info">
+        <div class="policy-name">季度合规审计策略</div>
+        <div class="policy-meta">180 条规则 · RAG 开</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 右侧：策略详情 ===== -->
+  <div class="main">
+    <div class="main-section">
+
+      <!-- ===== 基本信息 ===== -->
+      <div class="card">
+        <div class="policy-header">
+          <div class="policy-header-left">
+            <input type="text" value="默认策略（全量检测）">
+            <textarea rows="2">涵盖全部检测规则，适用于首次全量分析和日常全面巡检。RAG 语义分析开启，攻击链检测开启。⚠️ 策略激活后分析引擎只会执行该策略内的规则。</textarea>
+          </div>
+          <div class="policy-actions">
+            <button class="btn btn-success">● 已激活</button>
+            <button class="btn">📋 复制派生</button>
+            <button class="btn btn-danger">🗑 删除</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== 开关配置 ===== -->
+      <div class="card">
+        <div class="toggle-row">
+          <div class="toggle-switch on" onclick="this.classList.toggle('on')"></div>
+          <div class="toggle-label">
+            <div class="tl-title">🧠 RAG 语义分析</div>
+            <div class="tl-desc">启用后分析引擎将调用知识库进行语义匹配，增强检测深度 · 增加 30-60s 分析耗时</div>
+          </div>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-switch on" onclick="this.classList.toggle('on')"></div>
+          <div class="toggle-label">
+            <div class="tl-title">🔗 攻击链检测</div>
+            <div class="tl-desc">启用后分析引擎将尝试关联多个发现项，还原攻击者完整攻击链</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== 规则选择 ===== -->
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <div style="font-size:14px;font-weight:600">📏 规则选择</div>
+          <span style="font-size:12px;color:#6b7280">共 <strong style="color:#059669">200</strong> 条已选 / 平台全量 <strong>278</strong> 条</span>
+        </div>
+
+        <div class="filter-bar">
+          <select style="width:100px"><option>全部分类</option><option>进程行为</option><option>网络连接</option><option>登录事件</option><option>文件操作</option></select>
+          <select style="width:90px"><option>全部严重度</option><option>严重</option><option>高危</option><option>中危</option></select>
+          <select style="width:90px"><option>全部平台</option><option>Windows</option><option>Linux</option><option>Cross</option></select>
+          <select style="width:90px"><option>全部类型</option><option>list</option><option>regex</option><option>attack_chain</option></select>
+          <input placeholder="🔍 规则名/关键词" style="width:160px">
+          <button class="btn" style="background:#059669;color:#fff;border-color:#059669">筛选</button>
+          <button class="btn">重置</button>
+          <span class="selected-count">已选 200 条</span>
+        </div>
+
+        <table class="rule-table">
+          <thead>
+            <tr><th style="width:30px"><input type="checkbox" class="chk" checked></th><th>规则名称</th><th style="width:60px">严重度</th><th style="width:80px">分类</th><th style="width:60px">平台</th><th style="width:60px">类型</th><th style="width:60px">最近命中</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><input type="checkbox" class="chk" checked></td><td><span style="font-weight:500">EVT-001</span> 进程创建检测</td><td><span class="sv-badge sv-critical">严重</span></td><td><span class="cat-tag">进程</span></td><td>Windows</td><td>regex</td><td style="color:#6b7280;font-size:11px">12m前</td></tr>
+            <tr><td><input type="checkbox" class="chk" checked></td><td><span style="font-weight:500">EVT-002</span> PS编码执行检测</td><td><span class="sv-badge sv-critical">严重</span></td><td><span class="cat-tag">进程</span></td><td>Windows</td><td>regex</td><td style="color:#6b7280;font-size:11px">2h前</td></tr>
+            <tr><td><input type="checkbox" class="chk" checked></td><td><span style="font-weight:500">LIN-001</span> SSH暴力破解</td><td><span class="sv-badge sv-high">高危</span></td><td><span class="cat-tag">登录</span></td><td>Linux</td><td>regex</td><td style="color:#6b7280;font-size:11px">—</td></tr>
+            <tr><td><input type="checkbox" class="chk"></td><td><span style="font-weight:500">WEB-001</span> WebShell检测</td><td><span class="sv-badge sv-critical">严重</span></td><td><span class="cat-tag">文件</span></td><td>Cross</td><td>list</td><td style="color:#6b7280;font-size:11px">—</td></tr>
+            <tr><td><input type="checkbox" class="chk" checked></td><td><span style="font-weight:500">NET-001</span> 异常外连检测</td><td><span class="sv-badge sv-high">高危</span></td><td><span class="cat-tag">网络</span></td><td>Cross</td><td>list</td><td style="color:#6b7280;font-size:11px">5m前</td></tr>
+            <tr><td><input type="checkbox" class="chk" checked></td><td><span style="font-weight:500">REG-001</span> 注册表持久化</td><td><span class="sv-badge sv-high">高危</span></td><td><span class="cat-tag">持久化</span></td><td>Windows</td><td>regex</td><td style="color:#6b7280;font-size:11px">—</td></tr>
+            <tr><td><input type="checkbox" class="chk"></td><td><span style="font-weight:500">MEM-001</span> 内存码检测</td><td><span class="sv-badge sv-critical">严重</span></td><td><span class="cat-tag">进程</span></td><td>Cross</td><td>list</td><td style="color:#6b7280;font-size:11px">—</td></tr>
+            <tr><td><input type="checkbox" class="chk" checked></td><td><span style="font-weight:500">IOC-001</span> IOC指标匹配</td><td><span class="sv-badge sv-high">高危</span></td><td><span class="cat-tag">IOC</span></td><td>Cross</td><td>list</td><td style="color:#6b7280;font-size:11px">30m前</td></tr>
+            <tr><td><input type="checkbox" class="chk" checked></td><td><span style="font-weight:500">STP-001</span> 启动项检测</td><td><span class="sv-badge sv-medium">中危</span></td><td><span class="cat-tag">持久化</span></td><td>Windows</td><td>regex</td><td style="color:#6b7280;font-size:11px">—</td></tr>
+            <tr><td><input type="checkbox" class="chk"></td><td><span style="font-weight:500">SCR-001</span> 计划任务异常</td><td><span class="sv-badge sv-high">高危</span></td><td><span class="cat-tag">持久化</span></td><td>Windows</td><td>regex</td><td style="color:#6b7280;font-size:11px">—</td></tr>
+          </tbody>
+        </table>
+
+        <div class="info-box">
+          💡 <strong>策略激活提示</strong>：切换到其他策略时当前策略自动停用。分析引擎执行时使用激活策略内的规则集。
+          无激活策略时默认降级为全量检测。
+          <br>
+          🔄 <strong>复制派生</strong>：选中"应急响应策略"→点击复制派生 → 新策略包含完全相同配置和规则 → 可修改规则后独立保存。
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

@@ -599,6 +599,33 @@ DDL_STATEMENTS = [
         created_at      TEXT NOT NULL DEFAULT (datetime('now'))
     )
     """,
+    # detection_policies — 检测策略表
+    """
+    CREATE TABLE IF NOT EXISTS detection_policies (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        name            TEXT NOT NULL,
+        description     TEXT DEFAULT '',
+        is_active       INTEGER DEFAULT 0,
+        enable_rag      INTEGER DEFAULT 0,
+        enable_attack_chain INTEGER DEFAULT 0,
+        parent_id       INTEGER REFERENCES detection_policies(id),
+        rule_count      INTEGER DEFAULT 0,
+        tags            TEXT DEFAULT '',
+        created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    # policy_rules — 策略-规则关联表
+    """
+    CREATE TABLE IF NOT EXISTS policy_rules (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        policy_id       INTEGER NOT NULL REFERENCES detection_policies(id) ON DELETE CASCADE,
+        rule_id         INTEGER NOT NULL REFERENCES rules(id) ON DELETE CASCADE,
+        enabled         INTEGER DEFAULT 1,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(policy_id, rule_id)
+    )
+    """,
 ]
 
 

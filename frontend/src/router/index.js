@@ -82,6 +82,11 @@ const routes = [
         path: 'logs',
         name: 'LogAnalysis',
         component: () => import('@/views/LogAnalysisView.vue')
+      },
+      {
+        path: 'policies',
+        name: 'PolicyConfig',
+        component: () => import('@/views/PolicyConfigView.vue')
       }
     ]
   }
