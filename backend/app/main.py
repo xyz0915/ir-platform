@@ -121,6 +121,7 @@ from app.api import dashboard  # noqa: E402  # 全局态势仪表盘
 from app.api import alerts  # noqa: E402  # 实时告警管理
 from app.api import agents  # noqa: E402  # Agent 注册与心跳
 from app.api import case_hosts  # noqa: E402  # 案件→主机级联数据
+from app.api import logs  # noqa: E402  # 日志分析中心
 
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(case_hosts.router, prefix="/api", tags=["案件"])  # 必须在 cases.router 之前注册
@@ -143,6 +144,7 @@ app.include_router(dashboard.router, prefix="/api", tags=["仪表盘"])  # 全�
 app.include_router(alerts.router, prefix="/api", tags=["告警"])  # 实时告警
 app.include_router(agents.router, prefix="/api", tags=["Agent管理"])  # Agent 管理
 app.include_router(case_hosts.router, prefix="/api", tags=["案件"])  # 案件→主机级联
+app.include_router(logs.router, prefix="/api", tags=["日志分析"])  # 日志分析中心
 
 
 @app.get("/api/health")

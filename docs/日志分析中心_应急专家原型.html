@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>日志分析中心 — 应急专家视图</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', -apple-system, sans-serif; background: #0f1219; color: #e0e4ea; min-height: 100vh; font-size: 13px; }
+.container { max-width: 1440px; margin: 0 auto; padding: 16px 20px; }
+
+/* ===== 顶栏 ===== */
+.top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+.top-bar h1 { font-size: 20px; font-weight: 600; }
+.top-bar h1 span { font-size: 12px; font-weight: 400; color: #8b929a; margin-left: 8px; }
+.top-actions { display: flex; gap: 8px; }
+.top-actions button { background: #1a1f2e; border: 1px solid #2d3548; color: #c8cdd5; padding: 5px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+.top-actions button:hover { border-color: #58a6ff; color: #58a6ff; }
+.top-actions button.active { background: #238636; border-color: #238636; color: #fff; }
+
+/* ===== KPI ===== */
+.kpi-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-bottom: 12px; }
+.kpi { background: #1a1f2e; border: 1px solid #242b3d; border-radius: 8px; padding: 10px 12px; }
+.kpi .lbl { font-size: 10px; color: #6e7681; }
+.kpi .val { font-size: 20px; font-weight: 700; margin: 2px 0; }
+.kpi .val.critical { color: #f85149; }
+.kpi .val.high { color: #d4a72c; }
+.kpi .val.medium { color: #58a6ff; }
+.kpi .val.green { color: #2da44e; }
+.kpi .sub { font-size: 10px; color: #6e7681; }
+
+/* ===== 视图切换 ===== */
+.view-tabs { display: flex; gap: 2px; margin-bottom: 10px; background: #1a1f2e; border: 1px solid #242b3d; border-radius: 8px; padding: 3px; width: fit-content; }
+.view-tab { padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; color: #8b929a; transition: .2s; }
+.view-tab:hover { color: #c8cdd5; }
+.view-tab.active { background: #238636; color: #fff; }
+
+/* ===== 图表行 ===== */
+.chart-row { display: grid; grid-template-columns: 2fr 1fr; gap: 8px; margin-bottom: 10px; }
+.chart-box { background: #1a1f2e; border: 1px solid #242b3d; border-radius: 8px; padding: 10px 12px; }
+.chart-title { font-size: 12px; font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+.chart-title .badge { font-size: 10px; color: #6e7681; font-weight: 400; }
+.ch-echart { width: 100%; height: 90px; }
+
+/* ===== 筛选栏 ===== */
+.filter-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; background: #1a1f2e; border: 1px solid #242b3d; border-radius: 8px; padding: 8px 12px; margin-bottom: 8px; }
+.filter-bar select, .filter-bar input { background: #0f1219; border: 1px solid #2d3548; color: #e0e4ea; padding: 4px 8px; border-radius: 4px; font-size: 12px; outline: none; }
+.filter-bar input { width: 140px; }
+.filter-bar select:focus, .filter-bar input:focus { border-color: #58a6ff; }
+.filter-bar .quick-tag { font-size: 11px; padding: 3px 10px; border-radius: 12px; cursor: pointer; border: 1px solid #2d3548; color: #8b929a; background: transparent; }
+.filter-bar .quick-tag:hover { border-color: #d4a72c; color: #d4a72c; }
+.filter-bar .quick-tag.danger { border-color: #f8514944; color: #f85149; }
+.filter-bar .quick-tag.danger:hover { background: #f8514911; }
+.filter-tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+.filter-tag { display: flex; align-items: center; gap: 3px; background: #242b3d; padding: 2px 8px; border-radius: 4px; font-size: 11px; color: #c8cdd5; }
+.filter-tag .close { cursor: pointer; color: #6e7681; font-size: 13px; }
+.filter-tag .close:hover { color: #f85149; }
+
+/* ===== 日志表格 ===== */
+.log-table-wrap { background: #1a1f2e; border: 1px solid #242b3d; border-radius: 8px; overflow: hidden; }
+.log-table { width: 100%; border-collapse: collapse; }
+.log-table th { text-align: left; padding: 7px 10px; font-size: 11px; font-weight: 600; color: #6e7681; border-bottom: 1px solid #242b3d; background: #0f1219; white-space: nowrap; }
+.log-table td { padding: 7px 10px; font-size: 12px; border-bottom: 1px solid #1a1f2e; }
+.log-table tr:hover td { background: #1e2433; }
+.log-table tr:last-child td { border-bottom: none; }
+.log-table .clickable { color: #58a6ff; cursor: pointer; }
+.log-table .clickable:hover { text-decoration: underline; }
+
+.sev-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; }
+.sev-dot.critical { background: #f85149; box-shadow: 0 0 4px #f8514966; }
+.sev-dot.high { background: #d4a72c; }
+.sev-dot.medium { background: #58a6ff; }
+.sev-dot.low { background: #6e7681; }
+
+.event-tag { font-size: 10px; padding: 1px 6px; border-radius: 3px; }
+.event-tag.critical { background: #f8514922; color: #f85149; }
+.event-tag.high { background: #d4a72c22; color: #d4a72c; }
+.event-tag.medium { background: #58a6ff22; color: #58a6ff; }
+.event-tag.low { color: #6e7681; }
+
+.label-tag { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; padding: 1px 6px; border-radius: 3px; background: #242b3d; color: #8b929a; }
+.label-tag.ps { background: #d4a72c22; color: #d4a72c; }
+.label-tag.alert { background: #f8514922; color: #f85149; }
+
+.pagination { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-top: 1px solid #242b3d; }
+.pagination .total { font-size: 11px; color: #6e7681; }
+.page-btn { width: 26px; height: 26px; border: 1px solid #2d3548; background: transparent; color: #c8cdd5; border-radius: 4px; cursor: pointer; font-size: 12px; }
+.page-btn:hover { background: #242b3d; }
+.page-btn.active { background: #238636; border-color: #238636; }
+
+/* ===== 详情抽屉 ===== */
+.drawer-overlay { position: fixed; top: 0; right: 0; width: 400px; height: 100%; background: #1a1f2e; border-left: 1px solid #2d3548; z-index: 1000; display: none; flex-direction: column; box-shadow: -4px 0 20px rgba(0,0,0,.4); }
+.drawer-overlay.open { display: flex; }
+.drawer-header { padding: 14px 16px; border-bottom: 1px solid #242b3d; display: flex; justify-content: space-between; align-items: center; }
+.drawer-header h3 { font-size: 15px; font-weight: 600; }
+.drawer-close { cursor: pointer; color: #6e7681; font-size: 18px; }
+.drawer-body { padding: 14px 16px; overflow-y: auto; flex: 1; }
+.drawer-section { margin-bottom: 12px; }
+.ds-lbl { font-size: 11px; color: #6e7681; margin-bottom: 2px; }
+.ds-val { font-size: 13px; color: #e0e4ea; }
+.ds-row { display: flex; gap: 16px; flex-wrap: wrap; }
+.ds-field { flex: 1; min-width: 100px; }
+.drawer-tags { display: flex; gap: 4px; flex-wrap: wrap; }
+.drawer-btn { display: block; width: 100%; padding: 6px 0; border: 1px solid #2d3548; background: transparent; color: #58a6ff; border-radius: 5px; cursor: pointer; font-size: 12px; text-align: center; margin-bottom: 4px; }
+.drawer-btn:hover { background: #242b3d; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- ===== 顶栏 ===== -->
+  <div class="top-bar">
+    <h1>🛡️ 日志分析中心 <span>Log Analysis Center</span></h1>
+    <div class="top-actions">
+      <button>📤 导出 CSV</button>
+      <button onclick="openDrawer(null, true)">📋 使用帮助</button>
+    </div>
+  </div>
+
+  <!-- ===== KPI ===== -->
+  <div class="kpi-row">
+    <div class="kpi"><div class="lbl">📦 总日志</div><div class="val medium">1,200</div><div class="sub">7 天内</div></div>
+    <div class="kpi"><div class="lbl">🚨 严重事件</div><div class="val critical">12</div><div class="sub">需立即处置</div></div>
+    <div class="kpi"><div class="lbl">🟡 高危事件</div><div class="val high">45</div><div class="sub">需排查确认</div></div>
+    <div class="kpi"><div class="lbl">🔑 登录失败</div><div class="val high">230</div><div class="sub">4625</div></div>
+    <div class="kpi"><div class="lbl">⚙️ 进程创建</div><div class="val medium">450</div><div class="sub">4688</div></div>
+    <div class="kpi"><div class="lbl">🎯 高危标签</div><div class="val critical">7</div><div class="sub">PS编码/审计清除</div></div>
+  </div>
+
+  <!-- ===== 视图切换 ===== -->
+  <div class="view-tabs">
+    <span class="view-tab active">📈 概览</span>
+    <span class="view-tab" onclick="switchView(this)">🔑 暴破分析</span>
+    <span class="view-tab" onclick="switchView(this)">🔄 横向移动</span>
+    <span class="view-tab" onclick="switchView(this)">🌳 进程溯源</span>
+    <span class="view-tab" onclick="switchView(this)">🚨 威胁告警</span>
+  </div>
+
+  <!-- ===== 图表 ===== -->
+  <div class="chart-row">
+    <div class="chart-box">
+      <div class="chart-title">⏱ 事件时间线 <span class="badge">鼠标拖拽缩放 | 点事件跳转</span></div>
+      <div class="ch-echart" id="timelineChart"></div>
+    </div>
+    <div class="chart-box">
+      <div class="chart-title">🧩 事件类型分布 <span class="badge">按 P0/P1/P2</span></div>
+      <div class="ch-echart" id="pieChart"></div>
+    </div>
+  </div>
+
+  <!-- ===== 筛选栏 ===== -->
+  <div class="filter-bar">
+    <select style="width:100px"><option>全部事件类型</option><option>🚨 P0 急救事件</option><option>⚠️ P1 深度排查</option></select>
+    <select style="width:120px"><option>全部主机</option><option>WEB-SRV-01</option><option>DB-SRV-02</option></select>
+    <input placeholder="用户名">
+    <input placeholder="IP 地址">
+    <input placeholder="🔍 关键词全文搜索" style="width:160px">
+    <select style="width:120px"><option>近 24 小时</option><option>近 7 天</option><option>自定义</option></select>
+    <button style="background:#238636;border:none;color:#fff;padding:4px 12px;border-radius:4px;cursor:pointer">搜索</button>
+    <button style="background:transparent;border:1px solid#2d3548;color:#8b929a;padding:4px 10px;border-radius:4px;cursor:pointer">重置</button>
+    <span style="font-size:11px;color:#6e7681;margin:0 4px">|</span>
+    <button class="quick-tag danger" onclick="applyQuickFilter(this)">🚨 审计清除</button>
+    <button class="quick-tag" onclick="applyQuickFilter(this)">⚡ PS编码执行</button>
+    <button class="quick-tag" onclick="applyQuickFilter(this)">🔑 暴破检测</button>
+    <button class="quick-tag" onclick="applyQuickFilter(this)">📦 服务安装</button>
+  </div>
+  <div class="filter-tags">
+    <span class="filter-tag">主机: WEB-SRV-01 <span class="close">×</span></span>
+    <span class="filter-tag">时间: 近 24h <span class="close">×</span></span>
+  </div>
+
+  <!-- ===== 日志表格 ===== -->
+  <div class="log-table-wrap">
+    <table class="log-table">
+      <thead>
+        <tr><th style="width:70px">时间</th><th style="width:80px">事件类型</th><th style="width:40px">ID</th><th style="width:50px">严重</th><th style="width:100px">主机</th><th style="width:100px">来源 IP</th><th style="width:80px">用户</th><th style="width:100px">进程</th><th>描述 / 命令行</th><th style="width:70px">标签</th></tr>
+      </thead>
+      <tbody>
+        <tr onclick="openDrawer(this)">
+          <td style="color:#8b929a">09:30:12</td>
+          <td><span class="event-tag high">进程创建</span></td>
+          <td style="color:#58a6ff;cursor:pointer">4688</td>
+          <td><span class="sev-dot critical"></span>严重</td>
+          <td class="clickable" onclick="event.stopPropagation();filterBy(this)">WEB-01</td>
+          <td class="clickable" onclick="event.stopPropagation();filterBy(this)">—</td>
+          <td class="clickable" onclick="event.stopPropagation();filterBy(this)">SYSTEM</td>
+          <td class="clickable" onclick="event.stopPropagation();filterBy(this)">powershell.exe</td>
+          <td style="color:#8b929a;font-size:11px">powershell -enc SQBFAFgA...</td>
+          <td><span class="label-tag ps">⚡ PS编码</span></td>
+        </tr>
+        <tr onclick="openDrawer(this)">
+          <td style="color:#8b929a">09:25:03</td>
+          <td><span class="event-tag high">登录失败</span></td>
+          <td style="color:#58a6ff;cursor:pointer">4625</td>
+          <td><span class="sev-dot high"></span>高危</td>
+          <td class="clickable" onclick="event.stopPropagation();filterBy(this)">WEB-01</td>
+          <td class="clickable" onclick="event.stopPropagation();filterBy(this)">192.168.1.200</td>
+          <td class="clickable" onclick="event.stopPropagation();filterBy(this)">admin</td>
+          <td>—</td>
+          <td style="color:#8b929a;font-size:11px">登录失败 · 来源 IP 192.168.1.200 · 帐户 admin</td>
+          <td><span class="label-tag" style="border-color:#d4a72c;color:#d4a72c">🔑 暴破</span></td>
+        </tr>
+        <tr onclick="openDrawer(this)">
+          <td style="color:#8b929a">09:20:44</td>
+          <td><span class="event-tag critical">审计清除</span></td>
+          <td style="color:#58a6ff;cursor:pointer">1102</td>
+          <td><span class="sev-dot critical"></span>严重</td>
+          <td class="clickable" onclick="event.stopPropagation();filterBy(this)">DB-01</td>
+          <td>—</td>
+          <td class="clickable" onclick="event.stopPropagation();filterBy(this)">SYSTEM</td>
+          <td>—</td>
+          <td style="color:#f85149;font-size:11px">🚨 审计日志已清除 · 安全事件日志已清除</td>
+          <td><span class="label-tag alert">🚨 审计清除</span></td>
+        </tr>
+        <tr onclick="openDrawer(this)">
+          <td style="color:#8b929a">09:15:10</td>
+          <td><span class="event-tag high">服务安装</span></td>
+          <td style="color:#58a6ff;cursor:pointer">7045</td>
+          <td><span class="sev-dot high"></span>高危</td>
+          <td class="clickable" onclick="event.stopPropagation();filterBy(this)">DB-01</td>
+          <td>—</td>
+          <td class="clickable" onclick="event.stopPropagation();filterBy(this)">SYSTEM</td>
+          <td class="clickable" onclick="event.stopPropagation();filterBy(this)">svchost.exe</td>
+          <td style="color:#8b929a;font-size:11px">服务 EvilSvc 已安装 · 路径: C:\Windows\EvilSvc.exe</td>
+          <td><span class="label-tag" style="border-color:#f85149;color:#f85149">📦 后门</span></td>
+        </tr>
+        <tr onclick="openDrawer(this)">
+          <td style="color:#8b929a">08:58:32</td>
+          <td><span class="event-tag medium">登录成功</span></td>
+          <td style="color:#58a6ff;cursor:pointer">4624</td>
+          <td><span class="sev-dot medium"></span>中危</td>
+          <td class="clickable" onclick="event.stopPropagation();filterBy(this)">WEB-01</td>
+          <td class="clickable" onclick="event.stopPropagation();filterBy(this)">192.168.1.200</td>
+          <td class="clickable" onclick="event.stopPropagation();filterBy(this)">admin</td>
+          <td>—</td>
+          <td style="color:#8b929a;font-size:11px">登录成功 · 类型 3(网络) · admin 来自 192.168.1.200</td>
+          <td><span class="label-tag" style="border-color:#d4a72c;color:#d4a72c">🔑 暴破</span></td>
+        </tr>
+        <tr onclick="openDrawer(this)">
+          <td style="color:#8b929a">08:45:17</td>
+          <td><span class="event-tag high">管理员登录</span></td>
+          <td style="color:#58a6ff;cursor:pointer">4672</td>
+          <td><span class="sev-dot high"></span>高危</td>
+          <td class="clickable" onclick="event.stopPropagation();filterBy(this)">DB-01</td>
+          <td class="clickable" onclick="event.stopPropagation();filterBy(this)">10.0.0.5</td>
+          <td class="clickable" onclick="event.stopPropagation();filterBy(this)">Administrator</td>
+          <td>—</td>
+          <td style="color:#8b929a;font-size:11px">特殊权限已分配给新登录 · 管理员登录 · 会话 0x3E7</td>
+          <td></td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="pagination">
+      <span class="total">共 1,200 条 · 显示 1-6 条</span>
+      <div><button class="page-btn active">1</button><button class="page-btn">2</button><button class="page-btn">3</button><button class="page-btn">›</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 详情抽屉 ===== -->
+<div class="drawer-overlay" id="drawer">
+  <div class="drawer-header">
+    <h3 id="drawerTitle">🔍 进程创建</h3>
+    <span class="drawer-close" onclick="closeDrawer()">×</span>
+  </div>
+  <div class="drawer-body" id="drawerBody">
+    <div class="drawer-section">
+      <div class="ds-row">
+        <div class="ds-field"><div class="ds-lbl">严重度</div><div class="ds-val" style="color:#f85149">🚨 严重</div></div>
+        <div class="ds-field"><div class="ds-lbl">事件 ID</div><div class="ds-val">4688</div></div>
+        <div class="ds-field"><div class="ds-lbl">MITRE</div><div class="ds-val" style="color:#58a6ff">T1059.001</div></div>
+      </div>
+    </div>
+    <div class="drawer-section">
+      <div class="ds-lbl">时间</div><div class="ds-val">2026-07-12 09:30:12</div>
+      <div class="ds-lbl">主机</div><div class="ds-val" style="color:#58a6ff;cursor:pointer">WEB-SRV-01 (192.168.1.50)</div>
+    </div>
+    <hr style="border-color:#242b3d;margin:10px 0">
+    <div class="drawer-section">
+      <div class="ds-lbl">进程</div><div class="ds-val">powershell.exe</div>
+      <div class="ds-lbl">PID</div><div class="ds-val">1234</div>
+      <div class="ds-lbl">父进程</div><div class="ds-val" style="color:#58a6ff;cursor:pointer">explorer.exe (PID 888)</div>
+      <div class="ds-lbl">命令行</div>
+      <div style="background:#0f1219;padding:6px 8px;border-radius:4px;font-size:12px;font-family:monospace;color:#8b929a;margin-top:2px">
+        powershell -enc SQBFAFgA<br>
+        AG8AbgB2AGUAcgB0AC0AVABvAC0ARQB4AGUAYwB1AHQAaQBvAG4A...
+      </div>
+      <div class="ds-lbl" style="margin-top:6px">用户</div><div class="ds-val">NT AUTHORITY\SYSTEM</div>
+    </div>
+    <hr style="border-color:#242b3d;margin:10px 0">
+    <div class="drawer-section">
+      <div class="ds-lbl">🏷️ 安全标签</div>
+      <div class="drawer-tags">
+        <span class="label-tag ps">⚡ PowerShell 编码执行</span>
+        <span class="label-tag" style="background:#58a6ff22;color:#58a6ff">🎯 无文件攻击</span>
+        <span class="label-tag" style="background:#d4a72c22;color:#d4a72c">💻 LOLBIN</span>
+      </div>
+    </div>
+    <hr style="border-color:#242b3d;margin:10px 0">
+    <div class="drawer-section">
+      <div class="ds-lbl">🔗 关联操作</div>
+      <button class="drawer-btn" onclick="closeDrawer();showMsg('已筛选: powershell.exe')">🔍 查看该进程所有事件</button>
+      <button class="drawer-btn" onclick="closeDrawer();showMsg('已筛选: SYSTEM')">👤 查看该用户所有事件</button>
+      <button class="drawer-btn" onclick="closeDrawer();showMsg('已跳转到主机详情')">🖥 跳转到主机详情</button>
+      <button class="drawer-btn" style="color:#f85149" onclick="closeDrawer();showMsg('✅ 已创建告警')">🚨 创建告警</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===== 时间线图 =====
+(function() {
+  const c = echarts.init(document.getElementById('timelineChart'));
+  const labels = [], critical = [], high = [], medium = [];
+  for (let i = 23; i >= 0; i--) {
+    labels.push((i).toString().padStart(2,'0') + ':00');
+    critical.push(Math.random() > 0.7 ? Math.floor(Math.random()*3) : 0);
+    high.push(Math.floor(Math.random()*5) + 1);
+    medium.push(Math.floor(Math.random()*10) + 2);
+  }
+  c.setOption({
+    tooltip: { trigger: 'axis', backgroundColor: '#1a1f2e', borderColor: '#2d3548', textStyle:{color:'#e0e4ea',fontSize:10} },
+    legend: { data: ['严重','高危','中危'], textStyle:{color:'#6e7681',fontSize:10}, bottom:0, itemWidth:8, itemHeight:6 },
+    grid: { left:30, right:8, top:4, bottom:26 },
+    xAxis: { type:'category', data:labels, axisLabel:{color:'#6e7681',fontSize:9}, axisLine:{lineStyle:{color:'#242b3d'}}, axisTick:{show:false} },
+    yAxis: { type:'value', splitLine:{lineStyle:{color:'#1e2433',type:'dashed'}}, axisLabel:{color:'#6e7681',fontSize:9} },
+    dataZoom: [{ type:'inside', xAxisIndex:0, start:50, end:100 }, { type:'slider', xAxisIndex:0, start:50, end:100, height:10, bottom:2, borderColor:'#2d3548', backgroundColor:'rgba(45,53,72,0.3)' }],
+    series: [
+      { name:'严重', type:'bar', stack:'t', data:critical, itemStyle:{color:'#f85149',borderRadius:[2,2,0,0]}, barWidth:'60%' },
+      { name:'高危', type:'bar', stack:'t', data:high, itemStyle:{color:'#d4a72c'} },
+      { name:'中危', type:'bar', stack:'t', data:medium, itemStyle:{color:'#58a6ff',borderRadius:[0,0,2,2]} },
+    ]
+  });
+  window.addEventListener('resize', ()=>c.resize());
+})();
+
+// ===== 饼图 =====
+(function() {
+  const c = echarts.init(document.getElementById('pieChart'));
+  c.setOption({
+    tooltip: { trigger:'item', backgroundColor:'#1a1f2e', borderColor:'#2d3548', textStyle:{color:'#e0e4ea',fontSize:10}, formatter:'{b}: {c} 条 ({d}%)' },
+    series: [{ type:'pie', radius:['50%','70%'], center:['50%','48%'], itemStyle:{borderRadius:3, borderColor:'#0f1219', borderWidth:2},
+      label:{ show:true, formatter:'{b}', fontSize:10, color:'#c8cdd5' },
+      data:[
+        { name:'🚨 审计清除', value:2, itemStyle:{color:'#f85149'} },
+        { name:'⚡ PS编码执行', value:5, itemStyle:{color:'#d4a72c'} },
+        { name:'🔑 登录失败', value:230, itemStyle:{color:'#d4a72c'} },
+        { name:'⚙️ 进程创建', value:450, itemStyle:{color:'#58a6ff'} },
+        { name:'📦 其他', value:513, itemStyle:{color:'#6e7681'} },
+      ]
+    }]
+  });
+  window.addEventListener('resize', ()=>c.resize());
+})();
+
+// ===== 视图切换 =====
+function switchView(el) {
+  document.querySelectorAll('.view-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  showMsg('已切换到: ' + el.textContent.trim());
+}
+
+// ===== 快速筛选 =====
+function applyQuickFilter(el) {
+  showMsg('📌 已筛选: ' + el.textContent.trim());
+}
+
+// ===== 点击跳转 =====
+function filterBy(el) {
+  const v = el.textContent.trim();
+  showMsg('🔍 已筛选: ' + v);
+}
+
+// ===== 详情抽屉 =====
+function openDrawer(row, isHelp) {
+  document.getElementById('drawer').classList.add('open');
+}
+function closeDrawer() {
+  document.getElementById('drawer').classList.remove('open');
+}
+document.addEventListener('keydown', e => { if(e.key === 'Escape') closeDrawer(); });
+
+// ===== Toast =====
+function showMsg(msg) {
+  const d = document.createElement('div');
+  d.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#1a1f2e;border:1px solid #238636;color:#e0e4ea;padding:8px 16px;border-radius:6px;font-size:12px;z-index:9999;animation:fadeIn .2s;';
+  d.textContent = msg;
+  document.body.appendChild(d);
+  setTimeout(() => d.remove(), 2000);
+}
+</script>
+<style>@keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}</style>
+</body>
+</html>

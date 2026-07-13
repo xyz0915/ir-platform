@@ -567,6 +567,38 @@ DDL_STATEMENTS = [
         created_at      TEXT NOT NULL DEFAULT (datetime('now'))
     )
     """,
+    # normalized_logs — 范式化日志表
+    """
+    CREATE TABLE IF NOT EXISTS normalized_logs (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        host_id         INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+        hostname        TEXT,
+        log_source      TEXT NOT NULL,
+        event_id        INTEGER DEFAULT 0,
+        event_type      TEXT NOT NULL,
+        event_label     TEXT,
+        mitre_attack    TEXT,
+        severity        TEXT DEFAULT 'info',
+        timestamp       TEXT NOT NULL,
+        source_ip       TEXT,
+        source_hostname TEXT,
+        target_ip       TEXT,
+        target_hostname TEXT,
+        user_name       TEXT,
+        user_domain     TEXT,
+        logon_session   TEXT,
+        process_name    TEXT,
+        process_pid     INTEGER,
+        parent_process_name TEXT,
+        parent_process_pid  INTEGER,
+        command_line    TEXT,
+        object_name     TEXT,
+        tags            TEXT,
+        description     TEXT,
+        raw_data        TEXT,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
 ]
 
 

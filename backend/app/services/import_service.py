@@ -154,6 +154,22 @@ class ImportService:
             os_version=system_info.get("os_version") if isinstance(system_info, dict) else None,
         )
 
+        # 日志范式化（不阻塞导入）
+        try:
+            from app.analysis.log_normalizer import LogNormalizer
+            from app.models.normalized_log import NormalizedLog
+            host_info = Host.get_by_id(host_id)
+            hostname = host_info.get("hostname", "") if host_info else ""
+            logs_data = data.get("logs", {})
+            if logs_data:
+                normalized = LogNormalizer.normalize_host_logs(logs_data, host_id, hostname)
+                if normalized:
+                    count = NormalizedLog.batch_create(normalized)
+                    if count:
+                        logger.info("Normalized %d log entries for host %d", count, host_id)
+        except Exception as exc:
+            logger.warning("Log normalization failed (non-blocking): %s", exc)
+
         # 创建导入记录
         record = ImportRecord.create(
             host_id=host_id,

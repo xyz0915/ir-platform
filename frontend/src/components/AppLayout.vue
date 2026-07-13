@@ -142,6 +142,7 @@ const isMobile = ref(window.innerWidth < 768)
 const navItems = [
   { index: '/', label: '全局态势', icon: Monitor },
   { index: '/alerts', label: '告警监控', icon: Warning },
+  { index: '/logs', label: '日志分析', icon: Collection },
   { index: '/cases', label: '案件管理', icon: Folder },
   { index: '/ai', label: 'AI 分析', icon: Cpu },
   { index: '/rules', label: '规则管理', icon: Setting },
@@ -157,6 +158,7 @@ const asideWidth = computed(() => collapsed.value ? 64 : 210)
 const activeMenu = computed(() => {
   if (route.path === '/') return '/'
   if (route.path === '/alerts') return '/alerts'
+  if (route.path === '/logs') return '/logs'
   if (route.path.startsWith('/cases') || route.path.startsWith('/hosts')) return '/cases'
   if (route.path === '/whitelist') return '/whitelist'
   if (route.path === '/iocs') return '/iocs'

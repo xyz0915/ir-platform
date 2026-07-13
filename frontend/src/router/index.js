@@ -77,6 +77,11 @@ const routes = [
         path: 'alerts',
         name: 'AlertCenter',
         component: () => import('@/views/UnifiedAlertCenter.vue')
+      },
+      {
+        path: 'logs',
+        name: 'LogAnalysis',
+        component: () => import('@/views/LogAnalysisView.vue')
       }
     ]
   }
