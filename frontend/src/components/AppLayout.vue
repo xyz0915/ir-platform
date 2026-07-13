@@ -110,7 +110,7 @@ const navGroups = [
     path: '',
     children: [
       { emoji: '🧠', label: 'AI 分析', path: '/ai' },
-      { emoji: '🔬', label: 'AI 实验室', path: '/ai-advanced' },
+      { emoji: '🔬', label: 'AI 实验室', path: '/ai-advanced', activeMatch: '/ai-advanced' },
       { emoji: '📚', label: '知识库', path: '/knowledge', activeMatch: '/knowledge' },
     ],
   },
