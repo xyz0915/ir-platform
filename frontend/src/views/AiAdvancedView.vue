@@ -564,8 +564,8 @@ function riskLabel(l) { return { critical: '严重', high: '高危', medium: '�
 // ===== Lifecycle =====
 async function loadSnapData() {
   try {
-    const s = await request.get('/ai/query?query=统计信息')
-    const d = s.data?.data || {}
+    const res = await aiQuery('统计信息')
+    const d = res.data || {}
     snapData.criticalAlerts = 26
     snapData.openAlerts = d.open_alerts || 0
     snapData.hosts = hosts.value.length
