@@ -380,6 +380,20 @@ class RuleEngine:
         return Rule.list_enabled()
 
     @staticmethod
+    def load_rules_by_ids(rule_ids: list[int]) -> list:
+        """按规则ID列表加载规则（策略激活时使用）.
+
+        Args:
+            rule_ids: 规则 ID 列表.
+
+        Returns:
+            规则列表.
+        """
+        if not rule_ids:
+            return []
+        return Rule.list_by_ids(rule_ids)
+
+    @staticmethod
     def _compile_regex(pattern: str, flags: int) -> "re.Pattern":
         """编译并缓存正则表达式（T-P2-4 性能优化）.
 

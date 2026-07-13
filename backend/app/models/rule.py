@@ -2,7 +2,7 @@
 
 import json
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, List
 
 from app.database import get_connection
 
@@ -145,6 +145,24 @@ class Rule:
     def list_enabled() -> list:
         """获取所有启用的规则."""
         return Rule.list(enabled=True)
+
+    @staticmethod
+    def list_by_ids(rule_ids: List[int]) -> list:
+        """按ID列表批量获取启用的规则."""
+        if not rule_ids:
+            return []
+        placeholders = ",".join("?" for _ in rule_ids)
+        with get_connection() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM rules WHERE id IN ({placeholders}) AND enabled=1",
+                rule_ids
+            ).fetchall()
+            results = []
+            for row in rows:
+                item = dict(row)
+                item["enabled"] = bool(item.get("enabled"))
+                results.append(Rule._normalize_mitre(item))
+            return results
 
     @staticmethod
     def search(category: Optional[str] = None, severity: Optional[str] = None,

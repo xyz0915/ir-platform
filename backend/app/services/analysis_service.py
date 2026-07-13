@@ -160,9 +160,16 @@ class AnalysisService:
         # 1. 清除旧分析结果
         clear_analysis_by_host(host_id)
 
-        # 2. 加载规则
-        rules = RuleEngine.load_rules()
-        logger.info("Loaded %d rules", len(rules))
+        # 2. 加载规则（优先使用激活策略）
+        from app.models.policy import DetectionPolicy
+        active_policy = DetectionPolicy.get_active()
+        if active_policy and active_policy.get("rule_ids"):
+            rules = RuleEngine.load_rules_by_ids(active_policy["rule_ids"])
+            policy_name = active_policy.get("name", "未命名")
+            logger.info("Using active policy '%s': %d rules", policy_name, len(rules))
+        else:
+            rules = RuleEngine.load_rules()
+            logger.warning("No active policy — fallback to all enabled rules (%d rules)", len(rules))
 
         # 3. 构建主机画像
         profile_data = ProfileBuilder.build(raw_data)
