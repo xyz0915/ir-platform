@@ -1,8 +1,8 @@
 # 个人应急响应平台（IR Platform）用户手册
 
-> **文档版本**: v1.0  
-> **日期**: 2026-07-12  
-> **适配平台版本**: commit `8bb6d77`  
+> **文档版本**: v1.2  
+> **日期**: 2026-07-14  
+> **适配平台版本**: commit `eaa4948`  
 > **面向角色**: 👤 用户 / 🔧 运维 / 💻 开发
 
 ---
@@ -74,7 +74,7 @@
 | **认证** | JWT (HS256) + passlib/bcrypt | Token 有效期 24h |
 | **前端** | Vue 3 + Element Plus + Pinia + Vue Router | SPA 单页应用 |
 | **图表** | ECharts 5 | 进程树、统计图表 |
-| **报告** | Jinja2 + WeasyPrint | HTML + PDF 双格式 |
+| **报告** | Jinja2 + WeasyPrint + python-docx | HTML + PDF + DOCX 三格式 |
 | **Agent** | Python + psutil + WMI | 跨平台采集端 |
 | **AI** | httpx + tiktoken + ChromaDB + sentence-transformers | LLM 分析 + RAG 向量检索 |
 | **打包** | PyInstaller | Agent 单文件分发 |
@@ -1241,7 +1241,7 @@ IOC 管理独立于分析引擎，提供 CRUD 接口（`backend/app/api/iocs.py`
 
 ### 15.7 AI 分析模块
 
-`AiView.vue` 提供：
+`AiAnalysisDialog.vue` 提供 AI 分析全流程交互：
 - AI 配置 Profile 管理（多 Provider 支持）
 - 活跃 Profile 切换
 - API 连接测试
@@ -1249,14 +1249,34 @@ IOC 管理独立于分析引擎，提供 CRUD 接口（`backend/app/api/iocs.py`
 - 任务状态轮询 + SSE 流式进度
 - 报告版本管理 + Diff 对比
 - 审计日志查询
+- **专业级 3 层分析结果展示**（KPI 仪表盘 → 可下钻面板 → 底部深度面板）
+- **全文搜索** — 实时搜索分析结果中的所有段落
+- **一键补采** — 数据缺口可直接触发 Agent 补采
 
 ### 15.8 报告导出
 
 - **HTML 报告**: `GET /api/hosts/{host_id}/report?report_level=technical|executive`
 - **PDF 报告**: `GET /api/hosts/{host_id}/report/pdf`
+- **DOCX 报告**: `GET /api/reports/{report_id}/export/docx`
+- **Markdown 报告**: `GET /api/reports/{report_id}/export/markdown`
+- **JSON 报告**: `GET /api/reports/{report_id}/export/json`
 - **AI PDF 报告**: `GET /api/ai/report/{host_id}/pdf`
 - **时间线 CSV**: `GET /api/analysis/timeline/{host_id}/export/csv`
 - **时间线 PDF**: `GET /api/analysis/timeline/{host_id}/export/pdf`
+
+### 15.9 报告列表与编辑
+
+`ReportOutputView.vue` 提供完整的报告生命周期管理：
+
+- **按主机分组展示** — 报告列表按主机名 + IP 分组，案件综合报告置顶
+- **7 段式折叠编辑器** — 概要/影响范围/时间线/MITRE/证据/建议措施/协作评论
+- **AI 自动创建** — AI 分析完成后自动生成 incident_report 草稿
+- **增量更新** — 重新生成草稿时支持按段落选择更新范围
+- **版本差异对比** — 更新后展示段落级差异对比（changed/added/removed）
+- **置信度标注** — 每段标题旁显示 AI 置信度评分和颜色条
+- **处置优先级色标** — P0⚠️/P1⚡/P2✅ 三级分类
+- **证据双向跳转** — 证据文本中的 🔗 链接可跳转到原始数据
+- **多格式导出** — PDF（技术版/管理版）/ DOCX / Markdown / JSON
 
 > **面向角色**: 👤用户
 
@@ -1304,6 +1324,7 @@ AI 分析模块利用大语言模型（LLM）对主机分析结果进行深度�
    e. 解析 LLM 响应 → risk_assessment/threat_analysis/timeline_analysis/recommendations
    f. 保存报告到 ai_analysis_reports（版本管理）
    g. 写入审计日志 ai_audit_log
+   h. **★ 自动创建 incident_report** — 将四段分析映射为应急报告草稿
 4. 前端 SSE 流式获取进度 → GET /api/ai/tasks/{task_id}/stream
 5. 结果获取 → GET /api/ai/report/{host_id}
 ```
@@ -1316,29 +1337,74 @@ AI 分析模块利用大语言模型（LLM）对主机分析结果进行深度�
     "risk_level": "high",
     "confidence": 85,
     "key_findings": [...],
-    "data_gaps": [...]
+    "data_gaps": [...],
+    "score_breakdown": ["name": "unknown_binary_in_temp", "score": 20]
   },
   "threat_analysis": {
     "attack_vectors": [...],
-    "threat_actors": "...",
+    "malicious_behaviors": [...],
+    "evidence_trace": {...},
     "mitre_attack_mapping": [...]
   },
   "timeline_analysis": {
-    "key_events": [...],
+    "key_events": [
+      {"time": "...", "severity": "high", "event": "...", "description": "...", "stage": "执行"}
+    ],
     "attack_chain": [...]
   },
   "recommendations": {
     "immediate_actions": [...],
-    "long_term": [...]
+    "long_term": [...],
+    "input_suggestions": [...]
   },
   "version": 1,
   "analysis_type": "full",
   "audience": {"role": "technical", "detail_level": "deep"},
-  "mitre_attack": ["T1059", "T1505.003"],
+  "mitre_attack": {"TA0001": {...}, "TA0002": {...}},
   "attack_chain_hits": [...],
   "rare_high_signals": [...]
 }
 ```
+
+### 16.5.1 自动创建应急报告草稿
+
+AI 分析完成后，系统自动将分析结果映射为 `incident_reports` 表中的应急报告草稿：
+- **字段映射**：risk_assessment.summary → summary，threat_analysis → impact_scope，timeline_analysis.key_events → timeline_json，recommendations → recommendations
+- **版本管理**：同主机每次 AI 分析创建新报告（标题自动编号 #1/#2/#3）
+- **报告类型自动推断**：高风险→emergency，安全→situation，待确认→forensic
+- **置信度元数据**：每个段落附带置信度评分和等级
+- **证据结构化索引**：evidence_meta 存储进程/网络/注册表/文件等索引
+
+### 16.5.2 专业级分析结果展示
+
+分析完成后的结果展示采用 3 层纵深结构：
+
+```
+第 1 层：KPI 仪表盘（4 列卡片）
+  ├── 风险等级（色点 + 评分数字）
+  ├── 置信度（绿色确认）
+  ├── 标记发现（中/低分类）
+  └── 攻击链命中计数
+
+第 2 层：6 个可下钻面板（3x2 grid，点击展开）
+  ├── 风险评估   — 评分条形图 + 评分明细 + 置信度修正审计
+  ├── 威胁分析   — 恶意行为明细 + 证据状态标记
+  ├── 时间线分析 — 事件按时间排序 + 阶段彩色标签
+  ├── ATT&CK    — 技术树（T IDs + 路径说明）
+  ├── 处置建议/证据链 — P0/P1/P2 三级 + 证据完整性地图
+  └── 稀有信号   — 罕见高危信号展示
+
+第 3 层：底部深度面板（2 列）
+  ├── 数据缺口与升级路径（一键补采按钮）
+  └── 分析元数据（模型/Token/耗时/基线降噪/一致性修正）
+```
+
+### 16.5.3 一键补采
+
+数据缺口卡片上的「一键补采」按钮可触发 Agent 补采：
+- 支持补采类型：网络流量、安全日志、文件样本、注册表、进程
+- 补采后 Toast 提示「补采任务已下发」
+- 补采数据自动回填到分析结果中
 
 ### 16.6 版本管理
 
@@ -1359,6 +1425,20 @@ AI 分析模块利用大语言模型（LLM）对主机分析结果进行深度�
 - 调用的 Profile/模型
 - Token 消耗（prompt_tokens/completion_tokens）
 - 延迟（latency_ms）
+
+### 16.9 新增 API 端点参考
+
+#### 报告相关
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/api/reports/grouped-by-host` | 按主机分组的报告列表 |
+| `POST` | `/api/reports/{id}/regenerate-from-ai` | 重新生成报告草稿（支持增量更新参数 `sections`） |
+| `GET` | `/api/reports/{id}/diff` | 版本差异对比 |
+| `GET` | `/api/reports/{id}/export/docx` | 导出 DOCX |
+| `GET` | `/api/reports/{id}/export/markdown` | 导出 Markdown |
+| `GET` | `/api/reports/{id}/export/json` | 导出 JSON |
+| `GET` | `/api/reports/{id}/audit-logs` | 审计日志 |
 - 脱敏模式（masked_mode）
 - 完整 prompt 和 response（可选存储）
 
@@ -2504,7 +2584,10 @@ ai_tasks ──1:1──▶ ai_analysis_reports
    - 设置环境变量 `IR_SECRET_KEY`（64+ 位随机字符串）
    - 设置环境变量 `IR_AI_ENCRYPTION_KEY`（Fernet 格式 32 字节 base64）
 2. **修改默认密码**: 首次登录后立即修改 `admin` 密码
-3. **限制 CORS**: 修改 `backend/app/config.py` 中的 `CORS_ORIGINS` 为实际前端域名
+3. **CORS 配置**: 
+   - 单机部署: 保持 `backend/app/config.py` 中默认值 `["http://localhost:5173", ...]`
+   - 外部终端访问: 在 `CORS_ORIGINS` 中加入外部 IP 地址，或添加 `"*"` 允许全部
+   - SSE 支持: 后端已内置 SSE 反代理缓冲中间件（`X-Accel-Buffering: no`）
 4. **数据库备份**: 定期备份 `backend/data/ir_platform.db` 和 `backend/data/imports/`
 
 ### 21.2 依赖安装
@@ -2521,6 +2604,7 @@ pip install -r requirements.txt
 - `fastapi==0.111.0` + `uvicorn[standard]==0.30.1`
 - `python-jose[cryptography]==3.3.0` + `passlib[bcrypt]==1.7.4`
 - `weasyprint==62.1` — PDF 生成（需要系统级 GTK 库）
+- `python-docx>=1.1.0` — DOCX 报告导出（新增）
 - `chromadb>=1.5.0` + `sentence-transformers>=3.0.0` — RAG 向量检索（首次启动自动下载 ~80MB 模型）
 
 #### 前端
@@ -2653,16 +2737,27 @@ CMD ["python", "run.py"]
 ### 22.5 变更日志格式
 
 ```
-## [版本号] - YYYY-MM-DD
+## [v1.2] - 2026-07-14
 
 ### 新增
-- 功能描述 (#PR)
+- AI 分析完成自动创建 incident_report 草稿
+- 报告列表按主机分组树形展示
+- 置信度标注 + 质量评分卡片
+- 增量更新 — 重新生成草稿时支持段落级选择
+- 版本差异对比（changed/added/removed 三态）
+- 证据双向跳转 🔗（→ 进程/网络/注册表原始数据）
+- DOCX/Markdown/JSON 三格式报告导出
+- 外网终端 SSE 跨域支持（CORS 配置 + 轮询兜底）
+- 一键补采数据缺口
+- 评分明细条形图 + 时间线阶段着色
+- 处置建议 P0/P1/P2 优先级色标
+- 全文搜索
+- 专业级 KPI 仪表盘 + 6 面板可下钻展示
 
 ### 修复
-- 问题描述 (#PR)
-
-### 变更
-- 修改描述 (#PR)
+- analysis_service.py: condition 字段为 str 时 AttributeError
+- _map_ai_to_incident_report: key_events/recommendations/evidence 未规范化
+- CORS 配置限制外部 IP 访问 SSE 流
 ```
 
 > **面向角色**: 💻开发
