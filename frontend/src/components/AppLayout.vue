@@ -52,14 +52,6 @@
       </div>
     </div>
 
-    <!-- ===== 面包屑 ===== -->
-    <div class="crumb-bar">
-      <div class="crumb-left">
-        <span class="crumb-title">{{ routeMeta.title }}</span>
-        <span v-if="routeMeta.subtitle" class="crumb-sub">{{ routeMeta.subtitle }}</span>
-      </div>
-    </div>
-
     <!-- ===== 主内容 ===== -->
     <div class="main-content">
       <router-view />
@@ -397,36 +389,6 @@ function handleCommand(command) {
 
 .user-arrow {
   font-size: 12px;
-}
-
-/* ===== 面包屑 ===== */
-.crumb-bar {
-  height: 40px;
-  min-height: 40px;
-  background: var(--color-canvas-default);
-  border-bottom: 1px solid var(--color-border-default);
-  display: flex;
-  align-items: center;
-  padding: 0 20px;
-}
-
-.crumb-left {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-
-.crumb-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--color-fg-default);
-  line-height: 1.3;
-}
-
-.crumb-sub {
-  font-size: 11px;
-  color: var(--color-fg-muted);
-  line-height: 1.3;
 }
 
 /* ===== 主内容 ===== */
