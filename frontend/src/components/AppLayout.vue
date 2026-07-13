@@ -1,201 +1,189 @@
 <template>
-  <el-container class="app-layout">
-    <!-- ========== 移动端遮罩层 ========== -->
-    <div
-      v-if="isMobile && mobileOpen"
-      class="mobile-overlay"
-      @click="closeMobileMenu"
-    />
+  <div class="app-layout">
+    <!-- ===== 横向导航栏 ===== -->
+    <div class="top-nav">
+      <div class="nav-left">
+        <div class="logo">
+          <el-icon :size="20"><Lock /></el-icon>
+          <span>应急平台</span>
+        </div>
 
-    <!-- ========== 侧边栏 ========== -->
-    <el-aside
-      :width="!isMobile ? asideWidth + 'px' : '210px'"
-      class="app-aside"
-      :class="{
-        collapsed: !isMobile && collapsed,
-        'mobile-open': isMobile && mobileOpen
-      }"
-    >
-      <!-- Logo 区 -->
-      <div class="logo">
-        <el-icon :size="22"><Lock /></el-icon>
-        <span class="logo-text" :class="{ 'logo-text--hidden': !isMobile && collapsed }">
-          应急响应平台
-        </span>
-      </div>
-
-      <!-- 导航菜单 — 使用 el-menu 原生 collapse，不切换 DOM 结构（避免销毁/重建开销） -->
-      <el-menu
-        :default-active="activeMenu"
-        :collapse="!isMobile && collapsed"
-        router
-        class="app-menu"
-      >
-        <template v-for="item in navItems" :key="item.index">
-          <!-- tooltip 在展开时 disabled，折叠时启用；DOM 不销毁，只切换 disabled 状态 -->
-          <el-tooltip
-            :content="item.label"
-            placement="right"
-            effect="dark"
-            :show-after="300"
-            :disabled="!(!isMobile && collapsed)"
+        <div class="nav-tabs" v-for="group in navGroups" :key="group.label">
+          <div
+            :class="['nav-tab', { active: activeGroup === group.label }]"
+            @mouseenter="hoverGroup = group.label"
+            @mouseleave="hoverGroup = ''"
+            @click="openFirstChild(group)"
           >
-            <el-menu-item :index="item.index" @click="closeMobileMenu">
-              <el-icon><component :is="item.icon" /></el-icon>
-              <span>{{ item.label }}</span>
-            </el-menu-item>
-          </el-tooltip>
-        </template>
-      </el-menu>
-
-      <!-- 底部折叠按钮（桌面端） -->
-      <div v-if="!isMobile" class="sidebar-collapse-btn" @click="collapsed = !collapsed">
-        <el-icon :size="16">
-          <component :is="collapsed ? DArrowRight : DArrowLeft" />
-        </el-icon>
-        <span v-show="!collapsed" class="collapse-label">折叠</span>
-      </div>
-    </el-aside>
-
-    <!-- ========== 主内容区 ========== -->
-    <el-container>
-      <el-header class="app-header">
-        <div class="header-left">
-          <!-- 移动端汉堡菜单 -->
-          <el-button
-            v-if="isMobile"
-            class="hamburger-btn"
-            text
-            @click="toggleMobileMenu"
-          >
-            <el-icon :size="20"><component :is="mobileOpen ? Close : Expand" /></el-icon>
-          </el-button>
-          <!-- 桌面端折叠切换 -->
-          <el-button
-            v-if="!isMobile"
-            class="collapse-toggle-btn"
-            text
-            @click="collapsed = !collapsed"
-          >
-            <el-icon :size="20"><Fold /></el-icon>
-          </el-button>
-          <!-- 面包屑区 -->
-          <div class="breadcrumb-area">
-            <span class="page-breadcrumb">{{ currentRouteName }}</span>
-            <span v-if="pageSubtitle" class="page-subtitle">{{ pageSubtitle }}</span>
+            {{ group.emoji }} {{ group.label }}
+            <span v-if="group.badge" class="nav-badge">{{ alertCount }}</span>
+            <div class="nav-dropdown" v-if="hoverGroup === group.label || activeGroup === group.label">
+              <div
+                v-for="child in group.children"
+                :key="child.path"
+                :class="['nav-item', { active: route.path === child.path || (child.activeMatch && route.path.startsWith(child.activeMatch)) }]"
+                @click.stop="navigate(child)"
+              >
+                <span class="nav-dot" />
+                {{ child.emoji }} {{ child.label }}
+                <span v-if="child.badge" class="nav-item-badge">{{ alertCount }}</span>
+              </div>
+            </div>
           </div>
         </div>
-        <div class="header-right">
-          <el-button
-            class="theme-toggle"
-            text
-            :title="themeStore.theme === 'dark' ? '切换到亮色' : '切换到暗色'"
-            @click="themeStore.toggleTheme()"
-          >
-            <el-icon size="18">
-              <component :is="themeStore.theme === 'dark' ? Sunny : Moon" />
-            </el-icon>
-          </el-button>
-          <el-dropdown @command="handleCommand">
-            <span class="user-info">
-              <el-icon><User /></el-icon>
-              <span class="user-name">{{ authStore.user?.username || '用户' }}</span>
-              <el-icon class="user-arrow"><ArrowDown /></el-icon>
-            </span>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="logout">退出登录</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-        </div>
-      </el-header>
-      <el-main class="app-main">
-        <router-view />
-      </el-main>
-    </el-container>
-  </el-container>
+      </div>
+
+      <div class="nav-right">
+        <el-button text @click="themeStore.toggleTheme()" class="nav-btn">
+          <el-icon size="18"><component :is="themeStore.theme === 'dark' ? Sunny : Moon" /></el-icon>
+        </el-button>
+        <el-dropdown @command="handleCommand">
+          <span class="user-trigger">
+            <el-icon><User /></el-icon>
+            <span class="user-name">{{ authStore.user?.username || '用户' }}</span>
+            <el-icon class="user-arrow"><ArrowDown /></el-icon>
+          </span>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="logout">退出登录</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+      </div>
+    </div>
+
+    <!-- ===== 面包屑 ===== -->
+    <div class="crumb-bar">
+      <div class="crumb-left">
+        <span class="crumb-title">{{ routeMeta.title }}</span>
+        <span v-if="routeMeta.subtitle" class="crumb-sub">{{ routeMeta.subtitle }}</span>
+      </div>
+    </div>
+
+    <!-- ===== 主内容 ===== -->
+    <div class="main-content">
+      <router-view />
+    </div>
+  </div>
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
-import {
-  Cpu, Lock, CircleCheck, Warning, Connection, Collection,
-  Setting, Folder, Sunny, Moon, User, ArrowDown, Monitor,
-  DArrowLeft, DArrowRight, Expand, Close, Fold
-} from '@element-plus/icons-vue'
+import { Lock, Sunny, Moon, User, ArrowDown } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const themeStore = useThemeStore()
 
-// ==================== 状态 ====================
-const collapsed = ref(false)
-const mobileOpen = ref(false)
-const isMobile = ref(window.innerWidth < 768)
+const hoverGroup = ref('')
 
-// ==================== 导航项配置 ====================
-const navItems = [
-  { index: '/', label: '全局态势', icon: Monitor },
-  { index: '/alerts', label: '告警监控', icon: Warning },
-  { index: '/logs', label: '日志分析', icon: Collection },
-  { index: '/cases', label: '案件管理', icon: Folder },
-  { index: '/ai', label: 'AI 分析', icon: Cpu },
-  { index: '/rules', label: '规则管理', icon: Setting },
-  { index: '/whitelist', label: '白名单配置', icon: CircleCheck },
-  { index: '/iocs', label: 'IOC 指标', icon: Warning },
-  { index: '/threat-intel-config', label: '威胁情报外联', icon: Connection },
-  { index: '/knowledge', label: '知识库', icon: Collection }
+// ===== 导航配置 =====
+const alertCount = computed(() => 0) // 可从告警 store 获取
+
+const navGroups = [
+  {
+    emoji: '📊',
+    label: '态势感知',
+    path: '/',
+    children: [
+      { emoji: '📈', label: '全局态势', path: '/' },
+      { emoji: '🚨', label: '告警监控', path: '/alerts', badge: true, activeMatch: '/alerts' },
+      { emoji: '📋', label: '日志分析', path: '/logs', activeMatch: '/logs' },
+    ],
+  },
+  {
+    emoji: '📁',
+    label: '案件管理',
+    path: '/cases',
+    children: [
+      { emoji: '📂', label: '案件列表', path: '/cases', activeMatch: '/cases' },
+      { emoji: '🖥', label: '主机详情', path: '/hosts/:id', activeMatch: '/hosts' },
+    ],
+  },
+  {
+    emoji: '📄',
+    label: '报告输出',
+    path: '',
+    children: [
+      { emoji: '📝', label: '分析报告', path: '/hosts/:id/report', activeMatch: '/report' },
+    ],
+  },
+  {
+    emoji: '🤖',
+    label: '智能分析',
+    path: '',
+    children: [
+      { emoji: '🧠', label: 'AI 分析', path: '/ai' },
+      { emoji: '📚', label: '知识库', path: '/knowledge', activeMatch: '/knowledge' },
+    ],
+  },
+  {
+    emoji: '⚙️',
+    label: '检测配置',
+    path: '',
+    children: [
+      { emoji: '📏', label: '规则管理', path: '/rules' },
+      { emoji: '✅', label: '白名单', path: '/whitelist' },
+      { emoji: '⚡', label: 'IOC 指标', path: '/iocs' },
+      { emoji: '🌐', label: '威胁情报', path: '/threat-intel-config' },
+    ],
+  },
 ]
 
-// ==================== 计算属性 ====================
-const asideWidth = computed(() => collapsed.value ? 64 : 210)
-
-const activeMenu = computed(() => {
-  if (route.path === '/') return '/'
-  if (route.path === '/alerts') return '/alerts'
-  if (route.path === '/logs') return '/logs'
-  if (route.path.startsWith('/cases') || route.path.startsWith('/hosts')) return '/cases'
-  if (route.path === '/whitelist') return '/whitelist'
-  if (route.path === '/iocs') return '/iocs'
-  if (route.path === '/knowledge') return '/knowledge'
-  if (route.path === '/threat-intel-config') return '/threat-intel-config'
-  return route.path
+// ===== 活跃分组 =====
+const activeGroup = computed(() => {
+  const p = route.path
+  for (const g of navGroups) {
+    for (const c of g.children) {
+      if (p === c.path || (c.activeMatch && p.startsWith(c.activeMatch))) return g.label
+    }
+  }
+  return navGroups[0].label
 })
 
+// ===== 页面元信息 =====
 const routeMeta = computed(() => {
   const names = {
     'Dashboard': { title: '全局态势', subtitle: '应急响应全局态势感知' },
     'AlertCenter': { title: '告警监控', subtitle: '一体化告警监控与处置中心' },
+    'LogAnalysis': { title: '日志分析', subtitle: '事件日志分析与检索' },
     'CaseList': { title: '案件管理', subtitle: '应急响应案件总览与调度' },
     'CaseDetail': { title: '案件详情', subtitle: '' },
     'HostDetail': { title: '主机详情', subtitle: '' },
-    'Report': { title: '分析报告', subtitle: '' },
+    'Report': { title: '分析报告', subtitle: '应急响应分析报告输出' },
     'Rules': { title: '规则管理', subtitle: '配置检测规则与响应策略' },
     'Whitelist': { title: '白名单配置', subtitle: '管理信任名单与豁免规则' },
     'Iocs': { title: 'IOC 指标管理', subtitle: '威胁情报指标库维护' },
     'AiConfig': { title: 'AI 分析', subtitle: '智能辅助分析与研判' },
     'ThreatIntelConfig': { title: '威胁情报外联配置', subtitle: '外部情报源接入管理' },
-    'Knowledge': { title: '知识库管理', subtitle: '安全知识沉淀与检索' }
+    'Knowledge': { title: '知识库管理', subtitle: '安全知识沉淀与检索' },
   }
   return names[route.name] || { title: '应急响应平台', subtitle: '' }
 })
 
-const currentRouteName = computed(() => routeMeta.value.title)
-
-const pageSubtitle = computed(() => routeMeta.value.subtitle)
-
-// ==================== 方法 ====================
-function toggleMobileMenu() {
-  mobileOpen.value = !mobileOpen.value
+// ===== 导航跳转 =====
+function navigate(child) {
+  if (child.path === '/hosts/:id') {
+    // 主机详情需要跳转到最近的案件主机
+    router.push('/cases')
+    return
+  }
+  if (child.path === '/hosts/:id/report') {
+    router.push('/cases')
+    return
+  }
+  router.push(child.path)
 }
 
-function closeMobileMenu() {
-  mobileOpen.value = false
+function openFirstChild(group) {
+  // 点击一级菜单默认打开第一个二级页面
+  if (group.children.length > 0) {
+    // hover 处理下拉展开，不需要额外 action
+  }
 }
 
 function handleCommand(command) {
@@ -204,295 +192,198 @@ function handleCommand(command) {
     router.push('/login')
   }
 }
-
-function handleResize() {
-  // rAF 防抖：在一帧内只触发一次，避免频繁 resize 事件（如拖拽窗口时）导致多次重排
-  if (_resizeRaf) return
-  _resizeRaf = requestAnimationFrame(() => {
-    _resizeRaf = null
-    isMobile.value = window.innerWidth < 768
-  })
-}
-let _resizeRaf = null
-
-// 路由切换时自动关闭移动端侧边栏
-watch(() => route.path, () => {
-  if (isMobile.value) {
-    mobileOpen.value = false
-  }
-})
-
-onMounted(() => {
-  window.addEventListener('resize', handleResize)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('resize', handleResize)
-})
 </script>
 
 <style scoped>
-/* ============================================================
- * 基础布局
- * ============================================================ */
 .app-layout {
-  height: 100%;
-}
-
-/* ============================================================
- * 侧边栏
- *
- * 性能优化：
- * - will-change: width   → 提前告示浏览器，提升为独立合成层（GPU 加速）
- * - contain: layout       → 隔离侧边栏的布局重排，避免传播到主内容区
- * - 使用 width 过渡而非 transform：el-container 的 flex 布局下 width 不可避免，
- *   但配合 will-change + contain 可大幅降低重排开销
- * - logo 区用 max-width 替代 width 过渡（避免文字回流的二次重排）
- * ============================================================ */
-.app-aside {
-  background: var(--color-sidebar-bg);
-  overflow: hidden;
-  transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  height: 100vh;
   display: flex;
   flex-direction: column;
-  flex-shrink: 0;
-  will-change: width;
-  contain: layout style;
+  background: var(--color-canvas-subtle);
 }
 
-/* 折叠时宽度由 el-aside 的 :width 属性控制，
-   .collapsed 类提供额外样式覆盖（防御） */
-.app-aside.collapsed {
-  width: 64px !important;
-  min-width: 64px !important;
-}
-
-/* ---------- Logo 区 ---------- */
-.logo {
-  height: 60px;
-  min-height: 60px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-fg-on-emphasis);
-  font-size: 16px;
-  font-weight: bold;
-  gap: 8px;
-  border-bottom: 1px solid var(--color-sidebar-border);
-  padding: 0 16px;
-  white-space: nowrap;
-}
-
-.logo .el-icon {
-  flex-shrink: 0;
-}
-
-.logo-text {
-  overflow: hidden;
-  white-space: nowrap;
-  /* max-width 替代 width：避免文字回流时的二次重排，动画更平滑 */
-  max-width: 200px;
-  opacity: 1;
-  transition: opacity 0.15s ease, max-width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.logo-text--hidden {
-  opacity: 0;
-  max-width: 0;
-}
-
-/* ---------- 导航菜单 ---------- */
-.app-menu {
-  border: none;
-  background: var(--color-sidebar-bg);
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-
-.app-menu .el-menu-item {
-  color: var(--color-sidebar-fg-muted);
-  transition: background 0.15s ease, color 0.15s ease;
-}
-
-.app-menu .el-menu-item:hover {
-  background: var(--color-sidebar-hover-bg);
-}
-
-.app-menu .el-menu-item.is-active {
-  background: var(--color-sidebar-active-bg);
-  color: var(--color-fg-on-emphasis);
-}
-
-/* 折叠时菜单项样式 — 确保文字完全隐藏，不截断溢出 */
-.app-aside.collapsed .app-menu .el-menu-item {
-  justify-content: center;
-  padding: 0 !important;
-}
-
-/* 关键：el-menu collapse 模式下 <span> 文字必须完全隐藏，
-   防止文字截断导致的视觉混乱（如"案件管""规则管"） */
-.app-aside.collapsed .app-menu .el-menu-item span {
-  display: none;
-}
-
-/* 展开时文字正常显示 */
-.app-menu .el-menu-item span {
-  display: inline;
-}
-
-/* ---------- 底部折叠按钮 ---------- */
-.sidebar-collapse-btn {
-  height: 48px;
-  min-height: 48px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  color: var(--color-sidebar-fg-muted);
-  cursor: pointer;
-  border-top: 1px solid var(--color-sidebar-border);
-  transition: background 0.15s ease, color 0.15s ease;
-  user-select: none;
-  white-space: nowrap;
-}
-
-.sidebar-collapse-btn:hover {
-  background: var(--color-sidebar-hover-bg);
-  color: var(--color-sidebar-fg);
-}
-
-.collapse-label {
-  font-size: 13px;
-}
-
-.app-aside.collapsed .sidebar-collapse-btn {
-  justify-content: center;
-}
-
-/* ============================================================
- * 移动端 overlay 模式
- *
- * 性能优化：使用 transform: translateX 而非 left/width，
- * transform 只触发 composite，不触发 layout/paint
- * ============================================================ */
-@media (max-width: 767px) {
-  .app-aside {
-    position: fixed;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    z-index: 1000;
-    transform: translateX(-100%);
-    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-    will-change: transform;
-    width: 210px !important;
-    min-width: 210px !important;
-  }
-
-  .app-aside.mobile-open {
-    transform: translateX(0);
-    box-shadow: 4px 0 12px rgba(0, 0, 0, 0.25);
-  }
-
-  .mobile-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 999;
-    background: rgba(0, 0, 0, 0.5);
-    animation: fadeIn 0.2s ease;
-  }
-
-  @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-}
-
-/* ============================================================
- * 顶部 Header
- * ============================================================ */
-.app-header {
+/* ===== 横向顶栏 ===== */
+.top-nav {
+  height: 52px;
+  min-height: 52px;
   background: var(--color-canvas-default);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
   border-bottom: 1px solid var(--color-border-default);
-  height: 60px;
+  display: flex;
+  align-items: center;
   padding: 0 20px;
-  flex-shrink: 0;
+  gap: 0;
+  z-index: 200;
 }
 
-.header-left {
+.nav-left {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  gap: 0;
+}
+
+.nav-right {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
-.header-right {
+.logo {
   display: flex;
   align-items: center;
+  gap: 6px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-fg-default);
+  margin-right: 16px;
+  flex-shrink: 0;
 }
 
-/* ---------- 汉堡按钮 / 折叠按钮 ---------- */
-.hamburger-btn,
-.collapse-toggle-btn {
+/* ===== 一级导航标签 ===== */
+.nav-tab {
+  position: relative;
+  padding: 14px 12px;
+  font-size: 13px;
+  color: var(--color-fg-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  transition: color 0.15s, background 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.nav-tab:hover {
+  color: var(--color-accent-fg);
+  background: var(--color-canvas-subtle);
+}
+
+.nav-tab.active {
+  color: var(--color-accent-fg);
+  font-weight: 600;
+}
+
+.nav-tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  background: var(--color-success-emphasis, #059669);
+  border-radius: 2px;
+}
+
+.nav-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  background: var(--color-danger-subtle, #fee2e2);
+  color: var(--color-danger-fg, #dc2626);
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  margin-left: 2px;
+}
+
+/* ===== 下拉面板 ===== */
+.nav-dropdown {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 160px;
+  background: var(--color-canvas-default);
+  border: 1px solid var(--color-border-default);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+  padding: 6px 0;
+  z-index: 300;
+}
+
+.nav-tab:hover .nav-dropdown {
+  display: block;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--color-fg-muted);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.nav-item:hover {
+  background: var(--color-canvas-subtle);
+  color: var(--color-accent-fg);
+}
+
+.nav-item.active {
+  color: var(--color-accent-fg);
+  font-weight: 600;
+  background: var(--color-accent-subtle, #ecfdf5);
+}
+
+.nav-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--color-border-default);
+  flex-shrink: 0;
+}
+
+.nav-item.active .nav-dot {
+  background: var(--color-accent-fg);
+}
+
+.nav-item-badge {
+  margin-left: auto;
+  background: var(--color-danger-subtle, #fee2e2);
+  color: var(--color-danger-fg, #dc2626);
+  font-size: 10px;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-weight: 700;
+}
+
+/* ===== 右侧用户 ===== */
+.nav-btn {
   color: var(--color-fg-muted);
   padding: 6px;
   border-radius: 6px;
-  transition: background 0.15s ease;
 }
 
-.hamburger-btn:hover,
-.collapse-toggle-btn:hover {
+.nav-btn:hover {
   background: var(--color-canvas-subtle);
   color: var(--color-fg-default);
 }
 
-/* ---------- 面包屑 ---------- */
-.breadcrumb-area {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.page-breadcrumb {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--color-fg-default);
-  line-height: 1.3;
-}
-
-.page-subtitle {
-  font-size: 12px;
-  color: var(--color-fg-muted);
-  line-height: 1.3;
-}
-
-/* ---------- 主题切换 + 用户 ---------- */
-.theme-toggle {
-  margin-right: 8px;
-  color: var(--color-fg-muted);
-}
-
-.user-info {
+.user-trigger {
   display: flex;
   align-items: center;
   gap: 5px;
   cursor: pointer;
   color: var(--color-fg-muted);
-  font-size: 14px;
+  font-size: 13px;
   padding: 4px 8px;
   border-radius: 6px;
-  transition: background 0.15s ease;
+  transition: background 0.15s;
 }
 
-.user-info:hover {
+.user-trigger:hover {
   background: var(--color-canvas-subtle);
 }
 
 .user-name {
-  max-width: 120px;
+  max-width: 100px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -500,25 +391,41 @@ onUnmounted(() => {
 
 .user-arrow {
   font-size: 12px;
-  margin-left: 2px;
 }
 
-/* ============================================================
- * 主内容区
- * ============================================================ */
-.app-main {
-  background: var(--color-canvas-subtle);
-  padding: 24px;
+/* ===== 面包屑 ===== */
+.crumb-bar {
+  height: 40px;
+  min-height: 40px;
+  background: var(--color-canvas-default);
+  border-bottom: 1px solid var(--color-border-default);
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+}
+
+.crumb-left {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.crumb-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-fg-default);
+  line-height: 1.3;
+}
+
+.crumb-sub {
+  font-size: 11px;
+  color: var(--color-fg-muted);
+  line-height: 1.3;
+}
+
+/* ===== 主内容 ===== */
+.main-content {
+  flex: 1;
   overflow-y: auto;
-}
-
-@media (max-width: 767px) {
-  .app-main {
-    padding: 16px;
-  }
-
-  .app-header {
-    padding: 0 12px;
-  }
 }
 </style>

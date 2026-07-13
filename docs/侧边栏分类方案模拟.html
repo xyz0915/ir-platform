@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>侧边栏分类方案模拟</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, "Segoe UI", sans-serif; background: #f5f6fa; padding: 20px; }
+
+.layout { display: flex; gap: 30px; flex-wrap: wrap; }
+.scheme {
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 12px;
+  padding: 20px; width: 280px; height: 640px; box-shadow: 0 2px 8px rgba(0,0,0,.04);
+}
+.scheme h3 { font-size: 15px; color: #1f2937; margin-bottom: 4px; }
+.scheme .desc { font-size: 11px; color: #6b7280; margin-bottom: 16px; line-height: 1.5; }
+
+/* ── 侧边栏模拟 ── */
+.sidebar { background: #fff; border: 1px solid #f0f0f0; border-radius: 8px; padding: 8px 0; height: 100%; }
+
+/* 顶部 logo */
+.logo { padding: 8px 16px 12px; font-size: 14px; font-weight: 700; color: #1f2937; border-bottom: 1px solid #f5f5f5; display: flex; align-items: center; gap: 6px; }
+.logo .lock { color: #4b5563; font-size: 14px; }
+
+/* 一级菜单 */
+.l1-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 16px; font-size: 13px; color: #4b5563; cursor: pointer;
+  transition: .2s;
+}
+.l1-item:hover { background: #f9fafb; }
+.l1-item.active { background: #ecfdf5; color: #059669; font-weight: 600; }
+.l1-item .icon { width: 16px; text-align: center; font-size: 14px; }
+.l1-item .arrow { margin-left: auto; font-size: 10px; color: #9ca3af; transition: .2s; }
+.l1-item.open .arrow { transform: rotate(90deg); }
+
+/* 折叠二级 */
+.l2-list { max-height: 0; overflow: hidden; transition: max-height .3s; background: #fafbfc; }
+.l1-item.open + .l2-list { max-height: 320px; }
+.l2-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 16px 6px 38px; font-size: 12px; color: #6b7280; cursor: pointer;
+}
+.l2-item:hover { color: #2563eb; }
+.l2-item.active { color: #2563eb; font-weight: 600; }
+.l2-item .dot { width: 4px; height: 4px; border-radius: 50%; background: #cbd5e1; }
+.l2-item.active .dot { background: #2563eb; }
+
+/* ── 推荐标签 ── */
+.scheme .verdict { margin-top: 14px; padding: 10px; background: #f0fdf4; border-left: 3px solid #10b981; font-size: 11px; color: #065f46; line-height: 1.5; border-radius: 0 4px 4px 0; }
+.scheme.bad .verdict { background: #fef2f2; border-color: #ef4444; color: #991b1b; }
+</style>
+</head>
+<body>
+
+<div class="layout">
+
+  <!-- 方案 A: 强分类 -->
+  <div class="scheme">
+    <h3>方案 A: 强分类</h3>
+    <div class="desc">按业务场景分 5 大类，一级菜单可点击+下钻。应急人员 3 秒内能找到目标。</div>
+    <div class="sidebar">
+      <div class="logo">🔒 应急响应平台</div>
+
+      <div class="l1-item open">
+        <span class="icon">📊</span><span>态势感知</span><span class="arrow">▶</span>
+      </div>
+      <div class="l2-list">
+        <div class="l2-item"><span class="dot"></span>全局态势</div>
+        <div class="l2-item"><span class="dot"></span>实时告警</div>
+        <div class="l2-item"><span class="dot"></span>实时监控</div>
+        <div class="l2-item"><span class="dot"></span>日志分析</div>
+      </div>
+
+      <div class="l1-item">
+        <span class="icon">📁</span><span>案件管理</span><span class="arrow">▶</span>
+      </div>
+      <div class="l2-list">
+        <div class="l2-item"><span class="dot"></span>案件列表</div>
+        <div class="l2-item"><span class="dot"></span>案件详情</div>
+        <div class="l2-item"><span class="dot"></span>主机详情</div>
+        <div class="l2-item"><span class="dot"></span>分析报告</div>
+      </div>
+
+      <div class="l1-item">
+        <span class="icon">🤖</span><span>智能分析</span><span class="arrow">▶</span>
+      </div>
+      <div class="l2-list">
+        <div class="l2-item"><span class="dot"></span>AI 分析</div>
+        <div class="l2-item"><span class="dot"></span>知识库</div>
+      </div>
+
+      <div class="l1-item">
+        <span class="icon">⚙️</span><span>检测配置</span><span class="arrow">▶</span>
+      </div>
+      <div class="l2-list">
+        <div class="l2-item"><span class="dot"></span>规则管理</div>
+        <div class="l2-item"><span class="dot"></span>白名单</div>
+        <div class="l2-item"><span class="dot"></span>IOC 指标</div>
+        <div class="l2-item"><span class="dot"></span>威胁情报</div>
+      </div>
+    </div>
+    <div class="verdict">
+      ✅ <strong>推荐</strong>：<br>
+      · 顶层 4 个大类，从 10 项减少到 4 项<br>
+      · 应急分析师 60% 时间在「态势感知」类<br>
+      · 缺点：需多一次点击（但 el-menu 记住上次展开）
+    </div>
+  </div>
+
+  <!-- 方案 B: 扁平 + 分隔线 -->
+  <div class="scheme bad">
+    <h3>方案 B: 扁平+分组（不推荐）</h3>
+    <div class="desc">保留所有项，只用分隔线分组。仍 10 项，应急时认知负担没减少。</div>
+    <div class="sidebar">
+      <div class="logo">🔒 应急响应平台</div>
+      <div class="l1-item"><span class="icon">📊</span><span>全局态势</span></div>
+      <div class="l1-item active"><span class="icon">🚨</span><span>告警监控</span></div>
+      <div class="l1-item"><span class="icon">📋</span><span>日志分析</span></div>
+      <div style="height:1px;background:#f0f0f0;margin:6px 12px"></div>
+      <div style="padding:4px 16px;font-size:10px;color:#9ca3af">业务</div>
+      <div class="l1-item"><span class="icon">📁</span><span>案件管理</span></div>
+      <div style="height:1px;background:#f0f0f0;margin:6px 12px"></div>
+      <div style="padding:4px 16px;font-size:10px;color:#9ca3af">智能</div>
+      <div class="l1-item"><span class="icon">🤖</span><span>AI 分析</span></div>
+      <div class="l1-item"><span class="icon">📚</span><span>知识库</span></div>
+      <div style="height:1px;background:#f0f0f0;margin:6px 12px"></div>
+      <div style="padding:4px 16px;font-size:10px;color:#9ca3af">配置</div>
+      <div class="l1-item"><span class="icon">⚙️</span><span>规则管理</span></div>
+      <div class="l1-item"><span class="icon">✅</span><span>白名单</span></div>
+      <div class="l1-item"><span class="icon">⚡</span><span>IOC</span></div>
+      <div class="l1-item"><span class="icon">🌐</span><span>威胁情报</span></div>
+    </div>
+    <div class="verdict">
+      ❌ <strong>不推荐</strong>：<br>
+      · 仍是 10 项，只是加了分组标签<br>
+      · 滚动条问题没解决<br>
+      · 没解决根本问题
+    </div>
+  </div>
+
+  <!-- 方案 C: 4 大类 + 应急模式 -->
+  <div class="scheme">
+    <h3>方案 C: 分类 + 应急模式 ⭐</h3>
+    <div class="desc">推荐方案 A 升级版：默认折叠，点击展开二级。一级菜单永远可见，二级按需展开。</div>
+    <div class="sidebar">
+      <div class="logo">🔒 应急响应平台</div>
+
+      <div class="l1-item open">
+        <span class="icon">📊</span><span>态势感知</span><span class="arrow">▶</span>
+      </div>
+      <div class="l2-list">
+        <div class="l2-item"><span class="dot"></span>全局态势</div>
+        <div class="l2-item active"><span class="dot"></span>实时告警</div>
+        <div class="l2-item"><span class="dot"></span>实时监控</div>
+        <div class="l2-item"><span class="dot"></span>日志分析</div>
+      </div>
+
+      <div class="l1-item">
+        <span class="icon">📁</span><span>案件管理</span><span class="arrow">▶</span>
+      </div>
+      <div class="l2-list">
+        <div class="l2-item"><span class="dot"></span>案件列表</div>
+        <div class="l2-item"><span class="dot"></span>主机详情</div>
+        <div class="l2-item"><span class="dot"></span>分析报告</div>
+      </div>
+
+      <div class="l1-item">
+        <span class="icon">🤖</span><span>智能分析</span><span class="arrow">▶</span>
+      </div>
+      <div class="l2-list">
+        <div class="l2-item"><span class="dot"></span>AI 分析</div>
+        <div class="l2-item"><span class="dot"></span>知识库</div>
+      </div>
+
+      <div class="l1-item">
+        <span class="icon">⚙️</span><span>检测配置</span><span class="arrow">▶</span>
+      </div>
+      <div class="l2-list">
+        <div class="l2-item"><span class="dot"></span>规则管理</div>
+        <div class="l2-item"><span class="dot"></span>白名单</div>
+        <div class="l2-item"><span class="dot"></span>IOC</div>
+        <div class="l2-item"><span class="dot"></span>威胁情报</div>
+      </div>
+    </div>
+    <div class="verdict">
+      ⭐ <strong>推荐</strong>：<br>
+      · 顶层 4 类，二级按需展开<br>
+      · 展开状态可记忆（localStorage）<br>
+      · 应急高亮（红色/数字角标显示待处理告警数）<br>
+      · 折叠时仅 4 项，认知负担降至最低
+    </div>
+  </div>
+
+</div>
+
+<p style="margin-top:20px;padding:12px 20px;background:#fffbeb;border-left:3px solid #f59e0b;font-size:12px;color:#92400e;border-radius:0 4px 4px 0;max-width:900px">
+  <strong>分类建议：</strong><br>
+  · <strong>态势感知</strong>（应急日常使用率 60%）：全局态势 / 告警监控 / 实时监控 / 日志分析<br>
+  · <strong>案件管理</strong>（应急调研 30%）：案件列表 / 主机详情 / 分析报告（案件详情+报告归入二级）<br>
+  · <strong>智能分析</strong>（辅助决策 8%）：AI 分析 / 知识库<br>
+  · <strong>检测配置</strong>（配置维护 2%）：规则 / 白名单 / IOC / 威胁情报
+</p>
+
+</body>
+</html>
