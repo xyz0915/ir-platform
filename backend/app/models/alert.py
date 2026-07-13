@@ -249,7 +249,7 @@ class Alert:
                     h = r["hour"]
                     if h not in trend:
                         trend[h] = {"hour": h, "critical": 0, "high": 0, "medium": 0, "total": 0}
-                    trend[h][r["severity"]] = trend[h].get(r["severity"], 0) + 1
+                    trend[h][r["severity"]] = trend[h].get(r["severity"], 0) + r["cnt"]
                     trend[h]["total"] += r["cnt"]
                 return sorted(trend.values(), key=lambda x: x["hour"])
         except Exception:
