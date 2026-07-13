@@ -125,7 +125,7 @@ import { useThemeStore } from '@/stores/theme'
 import {
   Cpu, Lock, CircleCheck, Warning, Connection, Collection,
   Setting, Folder, Sunny, Moon, User, ArrowDown, Monitor,
-  DArrowLeft, DArrowRight, Expand, Close, Fold
+  DArrowLeft, DArrowRight, Expand, Close, Fold, VideoCamera
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
@@ -142,6 +142,7 @@ const isMobile = ref(window.innerWidth < 768)
 const navItems = [
   { index: '/', label: '全局态势', icon: Monitor },
   { index: '/alerts', label: '实时告警', icon: Warning },
+  { index: '/realtime', label: '实时监控', icon: VideoCamera },
   { index: '/cases', label: '案件管理', icon: Folder },
   { index: '/ai', label: 'AI 分析', icon: Cpu },
   { index: '/rules', label: '规则管理', icon: Setting },
@@ -157,6 +158,7 @@ const asideWidth = computed(() => collapsed.value ? 64 : 210)
 const activeMenu = computed(() => {
   if (route.path === '/') return '/'
   if (route.path === '/alerts') return '/alerts'
+  if (route.path === '/realtime') return '/realtime'
   if (route.path.startsWith('/cases') || route.path.startsWith('/hosts')) return '/cases'
   if (route.path === '/whitelist') return '/whitelist'
   if (route.path === '/iocs') return '/iocs'
@@ -169,6 +171,7 @@ const routeMeta = computed(() => {
   const names = {
     'Dashboard': { title: '全局态势', subtitle: '应急响应全局态势感知' },
     'AlertCenter': { title: '实时告警', subtitle: '7×24 实时告警监控与处置' },
+    'RealTimeMonitor': { title: '实时监控', subtitle: '7×24 持续监控与动态分析' },
     'CaseList': { title: '案件管理', subtitle: '应急响应案件总览与调度' },
     'CaseDetail': { title: '案件详情', subtitle: '' },
     'HostDetail': { title: '主机详情', subtitle: '' },
