@@ -402,25 +402,53 @@ class AnalysisService:
             from app.models.alert import Alert
             _alert_engine = AlertEngine(ws_manager=alert_ws_manager)
             alert_count = 0
-            for proc in (abnormal_processes or []):
-                sev = proc.get("severity", "")
-                if sev not in ("critical", "high"):
-                    continue
-                alert_id, is_new = Alert.create_or_aggregate(
-                    host_id=host_id, rule_name=proc.get("rule_name", "ANALYSIS-HIGH"),
-                    severity=sev, title=proc.get("reason", "") or f"[分析发现] {proc.get('process_name', '')}",
-                    detail=proc.get("command_line", ""),
-                    source_pid=proc.get("pid"), source_process=proc.get("process_name"),
-                    source_path=proc.get("process_path"),
-                    rule_label="分析发现-高风险",
-                )
-                if is_new and alert_id:
-                    import asyncio
-                    alert_data = Alert.get_by_id(alert_id)
-                    if alert_data:
-                        asyncio.create_task(alert_ws_manager.broadcast({"type": "new_alert", "alert": alert_data}))
-                    alert_count += 1
+
+            def _sync_items(items, label, detail_field=None, proc_field=None):
+                """通用告警同步辅助."""
+                c = 0
+                for item in (items or []):
+                    sev = item.get("severity", "")
+                    if sev not in ("critical", "high"):
+                        continue
+                    aid, is_new = Alert.create_or_aggregate(
+                        host_id=host_id,
+                        rule_name=item.get("rule_name", "ANALYSIS-HIGH"),
+                        severity=sev,
+                        title=item.get("reason", "") or f"[{label}] {item.get(proc_field or 'process_name', '')}",
+                        detail=str(item.get(detail_field or "command_line", ""))[:500],
+                        source_pid=item.get("pid"),
+                        source_process=item.get(proc_field or "process_name"),
+                        source_path=item.get("process_path"),
+                        rule_label=label,
+                    )
+                    if aid:
+                        c += 1
+                return c
+
+            alert_count += _sync_items(abnormal_processes, "分析发现-高风险",
+                                       detail_field="command_line")
+            alert_count += _sync_items(suspicious_connections, "分析发现-可疑外连",
+                                       detail_field="remote_address",
+                                       proc_field="process_name")
+            alert_count += _sync_items(suspicious_startup_items, "分析发现-可疑启动项",
+                                       detail_field="item_path",
+                                       proc_field="item_name")
+            # WebSocket 广播新告警
             if alert_count:
+                import asyncio
+                for item in (abnormal_processes or [])[:5]:
+                    sev = item.get("severity", "")
+                    if sev in ("critical", "high"):
+                        from app.models.alert import Alert as _A
+                        ad = _A.get_by_id(
+                            _A.create_or_aggregate(
+                                host_id=host_id, rule_name=item.get("rule_name", ""),
+                                severity=sev, title="", detail="")[0]
+                        )
+                        if ad:
+                            asyncio.create_task(alert_ws_manager.broadcast(
+                                {"type": "new_alert", "alert": ad}
+                            ))
                 logger.info("Synced %d high-risk findings to alert center", alert_count)
         except Exception as exc:
             logger.warning("分析结果同步告警失败（不影响主流程）: %s", exc)
