@@ -53,7 +53,7 @@
     <!-- ===== 图表 + 主机 ===== -->
     <div class="mid-section">
       <div class="mid-panel">
-        <div class="p-head">📈 告警趋势 <span class="p-badge">过去 24 小时</span></div>
+        <div class="p-head">📈 告警趋势 <span class="p-badge">过去 7 天</span></div>
         <div ref="trendChartRef" class="chart-box" />
       </div>
       <div class="mid-panel">
@@ -229,9 +229,11 @@ function formatTime(iso) {
 async function fetchStats() {
   try {
     const res = await getAlertStats()
+    // 后端返回 {success, data: {total, open, ...}}，res 是 success/data 整体，res.data 是 stats dict
     stats.value = res.data || { total: 0, open: 0, critical: 0, today: 0 }
     hourlyNew.value = res.data?.hourly || '-'
-    ruleHitTotal.value = res.data?.rule_hits || '-'
+    ruleHitTotal.value = res.data?.rule_hits ?? '-'
+    console.log('Stats:', stats.value)
   } catch (e) { console.error(e) }
 }
 
@@ -262,7 +264,10 @@ async function fetchHosts() {
 async function fetchCaseHosts() {
   try {
     const res = await getCasesWithHosts()
-    caseHostOptions.value = res.data?.data || []
+    // getCasesWithHosts 返回 {success, data: [...]}
+    // res.data 是数组
+    caseHostOptions.value = res.data || []
+    console.log('Case host options loaded:', caseHostOptions.value.length)
   } catch (e) { console.error(e) }
 }
 
@@ -327,11 +332,12 @@ function renderCharts(trendData) {
   if (pieChartRef.value) {
     pieChart?.dispose()
     pieChart = echarts.init(pieChartRef.value)
-    const total = stats.value.total || 0
-    const c = stats.value.critical || 0
-    const h = stats.value.high || 0
-    const m = stats.value.medium || 0
-    const l = Math.max(0, total - c - h - m)
+    // 优先使用后端返回的 severity_dist 全量分布，没有则用 stats 字段
+    const dist = stats.value.severity_dist || {}
+    const c = dist.critical || 0
+    const h = dist.high || 0
+    const m = dist.medium || 0
+    const l = dist.low || 0
     const pieData = []
     if (c) pieData.push({ name: '严重', value: c, itemStyle: { color: '#f85149' } })
     if (h) pieData.push({ name: '高危', value: h, itemStyle: { color: '#d4a72c' } })
@@ -387,7 +393,7 @@ async function fetchAll() {
 
 async function fetchAlertTrend() {
   try {
-    const res = await getAlertTrend(24)
+    const res = await getAlertTrend(168)  // 7 天
     const trendData = res.data || []
     if (trendData.length) {
       eventRate.value = (trendData.reduce((s, h) => s + (h.total || 0), 0) / trendData.length).toFixed(1) + '/h'

@@ -194,10 +194,41 @@ class Alert:
                 total = conn.execute(f"SELECT COUNT(*) FROM alerts WHERE {where_clause}", params).fetchone()[0]
                 open_count = conn.execute(f"SELECT COUNT(*) FROM alerts WHERE status='open' AND {where_clause}", params).fetchone()[0]
                 critical = conn.execute(f"SELECT COUNT(*) FROM alerts WHERE severity='critical' AND status='open' AND {where_clause}", params).fetchone()[0]
+                # 全量严重度分布（不受status过滤）
+                sev_rows = conn.execute(
+                    f"SELECT severity, COUNT(*) FROM alerts WHERE {where_clause} GROUP BY severity",
+                    params
+                ).fetchall()
+                severity_dist = {row[0]: row[1] for row in sev_rows}
                 today_start = datetime.now().strftime("%Y-%m-%d 00:00:00")
                 today = conn.execute(f"SELECT COUNT(*) FROM alerts WHERE first_seen_at >= ? AND {where_clause}",
                                      [today_start] + params).fetchone()[0]
-                return {"total": total, "open": open_count, "critical": critical, "today": today}
+                # 近1小时新增
+                hour_ago = (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+                hourly = conn.execute(
+                    f"SELECT COUNT(*) FROM alerts WHERE first_seen_at >= ? AND {where_clause}",
+                    [hour_ago] + params
+                ).fetchone()[0]
+                # 7 天内规则命中统计
+                week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+                rule_hits = conn.execute(
+                    f"SELECT COALESCE(SUM(count), 0) FROM alerts WHERE first_seen_at >= ? AND {where_clause}",
+                    [week_ago] + params
+                ).fetchone()[0]
+                active_rules = conn.execute(
+                    f"SELECT COUNT(DISTINCT rule_name) FROM alerts WHERE first_seen_at >= ? AND {where_clause}",
+                    [week_ago] + params
+                ).fetchone()[0]
+                return {
+                    "total": total,
+                    "open": open_count,
+                    "critical": critical,
+                    "today": today,
+                    "hourly": hourly,
+                    "severity_dist": severity_dist,
+                    "rule_hits": rule_hits,
+                    "active_rules": active_rules,
+                }
         except Exception:
             return {"total": 0, "open": 0, "critical": 0, "today": 0}
 
