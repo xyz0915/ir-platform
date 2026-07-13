@@ -87,8 +87,8 @@
 
           <el-table :data="rules" stripe border size="small" @selection-change="onRuleSelect" style="margin-top:8px">
             <el-table-column type="selection" width="36" :selectable="() => true" />
-            <el-table-column label="规则名称" min-width="180">
-              <template #default="{row}"><span style="font-weight:500">{{ row.name }}</span></template>
+            <el-table-column label="规则名称" min-width="200">
+              <template #default="{row}"><span style="font-weight:500">{{ row.label || row.name }}</span><br><span style="font-size:11px;color:#6b7280">{{ row.name }}</span></template>
             </el-table-column>
             <el-table-column label="严重度" width="70">
               <template #default="{row}"><el-tag :type="sevType(row.severity)" size="small">{{ row.severity }}</el-tag></template>

@@ -9,11 +9,11 @@ export function getPolicy(id) {
 }
 
 export function createPolicy(params) {
-  return request.post('/policies', null, { params })
+  return request({ method: 'post', url: `/policies?${new URLSearchParams(params).toString()}` })
 }
 
 export function updatePolicy(id, params) {
-  return request.put(`/policies/${id}`, null, { params })
+  return request({ method: 'put', url: `/policies/${id}?${new URLSearchParams(params).toString()}` })
 }
 
 export function deletePolicy(id) {
@@ -33,8 +33,9 @@ export function duplicatePolicy(id) {
 }
 
 export function setPolicyRules(policyId, ruleIds) {
-  return request.put(`/policies/${policyId}/rules`, null, {
-    params: { rule_ids: ruleIds }
+  return request({
+    method: 'put',
+    url: `/policies/${policyId}/rules?rule_ids=${ruleIds.join('&rule_ids=')}`
   })
 }
 
