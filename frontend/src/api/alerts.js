@@ -35,3 +35,7 @@ export function getOnlineHosts() {
 export function getHostsStatus() {
   return request.get('/agents/online-status')
 }
+
+export function getCasesWithHosts() {
+  return request.get('/cases/with-hosts')
+}

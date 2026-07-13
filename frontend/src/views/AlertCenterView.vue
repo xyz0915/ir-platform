@@ -200,11 +200,10 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import axios from 'axios'
 import {
   getAlerts, getAlertStats, acknowledgeAlert, resolveAlert, dismissAlert
 } from '@/api/alerts'
-import { getHostsStatus } from '@/api/alerts'
+import { getHostsStatus, getCasesWithHosts } from '@/api/alerts'
 
 const alerts = ref([])
 const stats = ref({ total: 0, open: 0, critical: 0, today: 0 })
@@ -344,12 +343,12 @@ async function fetchHosts() {
   try {
     const [res1, res2] = await Promise.all([
       getHostsStatus(),
-      axios.get('/api/cases/with-hosts'),
+      getCasesWithHosts(),
     ])
     const hosts = res1.data || []
     onlineCount.value = hosts.filter(h => h.status === 'online').length
     totalHosts.value = hosts.length
-    caseHostOptions.value = res2.data?.data || []
+    caseHostOptions.value = res2.data || []
   } catch (e) { console.error(e) }
 }
 
