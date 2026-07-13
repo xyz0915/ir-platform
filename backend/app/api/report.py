@@ -115,7 +115,9 @@ def create_report(title: str = "未命名报告", report_type: str = "emergency"
 @router.put("/reports/{report_id}")
 def update_report(report_id: int, title: str = None, summary: str = None,
                    evidence: str = None, report_type: str = None, audience: str = None,
-                   status: str = None):
+                   status: str = None, impact_scope: str = None,
+                   timeline_json: str = None, mitre_cover: str = None,
+                   recommendations: str = None):
     """更新报告."""
     try:
         from datetime import datetime
@@ -126,6 +128,10 @@ def update_report(report_id: int, title: str = None, summary: str = None,
         if report_type is not None: updates["report_type"] = report_type
         if audience is not None: updates["audience"] = audience
         if status is not None: updates["status"] = status
+        if impact_scope is not None: updates["impact_scope"] = impact_scope
+        if timeline_json is not None: updates["timeline_json"] = timeline_json
+        if mitre_cover is not None: updates["mitre_cover"] = mitre_cover
+        if recommendations is not None: updates["recommendations"] = recommendations
         if not updates:
             return {"success": True}
         updates["updated_at"] = datetime.now().isoformat()

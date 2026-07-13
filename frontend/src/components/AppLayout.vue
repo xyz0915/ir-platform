@@ -400,7 +400,7 @@ function handleCommand(command) {
 .main-content {
   flex: 1;
   overflow-y: auto;
-  padding: 24px 8px;
+  padding: 0;
   max-width: 1440px;
   width: 100%;
   margin: 0 auto;
