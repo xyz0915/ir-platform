@@ -66,19 +66,19 @@
       <el-table :data="items" v-loading="loading" stripe border size="small" :max-height="420"
         @row-click="openDetail" style="width:100%">
         <el-table-column label="时间" width="140">
-          <template #default="{row}"><span class="t-time">{{ row.timestamp?.slice(11,19) || row.timestamp }}</span></template>
+          <template #default="{row}"><span class="t-time">{{ row.timestamp ? row.timestamp.slice(0,19).replace('T',' ') : '-' }}</span></template>
         </el-table-column>
-        <el-table-column label="事件类型" width="100">
-          <template #default="{row}"><el-tag :type="sevType(row.severity)" size="small" effect="dark" style="width:100%">{{ row.event_label || row.event_type }}</el-tag></template>
+        <el-table-column label="事件类型" width="110">
+          <template #default="{row}"><el-tag :type="sevType(row.severity)" size="small" effect="dark" style="width:100%">{{ row.event_label || row.event_type || '未知事件' }}</el-tag></template>
         </el-table-column>
         <el-table-column label="ID" width="50">
-          <template #default="{row}"><span class="pivot" @click.stop="pivot('event_id', row.event_id)">{{ row.event_id }}</span></template>
+          <template #default="{row}"><span class="pivot" @click.stop="pivot('event_id', row.event_id)">{{ row.event_id || '-' }}</span></template>
         </el-table-column>
-        <el-table-column label="严重" width="50">
-          <template #default="{row}"><span :class="'sev-dot ' + row.severity" /></template>
+        <el-table-column label="严重" width="55">
+          <template #default="{row}"><span :class="'sev-dot ' + row.severity" /> <span class="sev-text">{{ sevLabel(row.severity) }}</span></template>
         </el-table-column>
         <el-table-column label="主机" width="100">
-          <template #default="{row}"><span class="pivot" @click.stop="pivot('hostname', row.hostname)">{{ row.hostname }}</span></template>
+          <template #default="{row}"><span class="pivot" @click.stop="pivot('hostname', row.hostname)">{{ row.hostname || '-' }}</span></template>
         </el-table-column>
         <el-table-column label="来源 IP" width="110">
           <template #default="{row}"><span class="pivot" @click.stop="pivot('source_ip', row.source_ip)">{{ row.source_ip || '-' }}</span></template>
@@ -91,10 +91,16 @@
         </el-table-column>
         <el-table-column label="描述/命令行" min-width="200">
           <template #default="{row}">
-            <div class="t-desc">{{ row.command_line || row.description || '' }}</div>
+            <div class="t-desc">{{ row.command_line || row.description || (row.process_name + '@' + (row.hostname || '')) || '-' }}</div>
             <div v-if="row.tags" class="t-tags">
-              <el-tag v-for="t in (row.tags||'').split(',')" :key="t" size="small" type="warning" style="margin-right:2px">{{ t }}</el-tag>
+              <el-tag v-for="t in (row.tags||'').split(',').filter(Boolean)" :key="t" size="small" :type="tagType(t)" effect="plain" style="margin-right:2px">{{ t }}</el-tag>
             </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="标签" width="120">
+          <template #default="{row}">
+            <div v-if="row.mitre_attack" class="t-mitre">MITRE: <a :href="'https://attack.mitre.org/techniques/'+row.mitre_attack.replace('.','/')" target="_blank" @click.stop>{{ row.mitre_attack }}</a></div>
+            <el-tag v-for="t in (row.tags||'').split(',').filter(Boolean).slice(0,2)" :key="'tag2-'+t" size="small" :type="tagType(t)" effect="plain">{{ t }}</el-tag>
           </template>
         </el-table-column>
       </el-table>
@@ -194,6 +200,14 @@ const dateShortcuts = [
 ]
 
 function sevType(s) { return { critical: 'danger', high: 'warning', medium: 'primary', low: 'info' }[s] || 'info' }
+function sevLabel(s) { return { critical: '严重', high: '高危', medium: '中危', low: '低危', info: '信息' }[s] || s }
+function tagType(t) {
+  // 安全标签按关键词着色
+  if (/mimikatz|credential|procdump|sekurlsa/.test(t)) return 'danger'
+  if (/powershell|certutil|wevtutil/.test(t)) return 'warning'
+  if (/psexec|wm ic|winrm/.test(t)) return 'warning'
+  return 'info'
+}
 
 // ===== 数据 =====
 async function fetchStats() {
@@ -377,6 +391,10 @@ onUnmounted(() => { timelineChart?.dispose(); pieChart?.dispose() })
 .t-time { font-size: 12px; color: #6b7280; }
 .t-desc { font-size: 12px; color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .t-tags { margin-top: 2px; }
+.t-mitre { font-size: 10px; color: #6b7280; margin-bottom: 2px; }
+.t-mitre a { color: #2563eb; text-decoration: none; }
+.t-mitre a:hover { text-decoration: underline; }
+.sev-text { font-size: 10px; color: #6b7280; margin-left: 2px; }
 .sev-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
 .sev-dot.critical { background: #dc2626; }
 .sev-dot.high { background: #d97706; }

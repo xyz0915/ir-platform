@@ -283,6 +283,7 @@ class LogNormalizer:
         try:
             log_name = raw.get("log_name", "")
             source = raw.get("source", "")
+            computer = raw.get("computer", "") or ""
             desc = raw.get("description", "") or ""
 
             # 从 description 中尝试提取 Event ID
@@ -291,10 +292,51 @@ class LogNormalizer:
             if m:
                 event_id = int(m.group(1))
 
-            # 从 source 推断事件类型
+            # 从 source 推断事件类型 + 严重度
             event_source = source or log_name or "unknown"
+            severity = "info"
+            mitre = ""
             event_type = f"windows_{log_source}_{event_source.replace(' ','_').lower()[:30]}"
             event_label = f"{log_name} - {event_source}"
+
+            # Source 关键词 → 严重度升级 + MITRE 标签
+            source_lower = source.lower()
+            if "security-auditing" in source_lower or "fail" in source_lower:
+                severity = "medium"
+            if any(kw in source_lower for kw in ("defender", "firewall", "malware", "attack", "threat")):
+                severity = "high"
+            if any(kw in source_lower for kw in ("clear", "disable", "tamper", "delete", "removed")):
+                severity = "critical"
+
+            # 从 source 推断类别的事件 ID
+            if event_id == 0:
+                source_to_event = {
+                    "microsoft-windows-distributedcom": 10016,
+                    "service control manager": 7036,
+                    "microsoft-windows-security-auditing": 4624,
+                    "microsoft-windows-security-spp": 16384,
+                    "microsoft-windows-kernel-generic": 12,
+                    "microsoft-windows-windowsupdateclient": 19,
+                    "microsoft-windows-time-service": 35,
+                    "msiinstaller": 10005,
+                    "vmauthd": 100,
+                    "microsoft-windows-hyper-v-vmsw": 12500,
+                    "edgeupdate": 0,
+                    "securitycenter": 1116,
+                    "windows_error_reporting": 1001,
+                    "browser": 1018,
+                    "mssqlserver": 18401,
+                }
+                for key, eid in source_to_event.items():
+                    if key in source_lower:
+                        event_id = eid
+                        mapping = WINDOWS_EVENT_MAP.get(event_id)
+                        if mapping:
+                            event_type = mapping[0]
+                            event_label = mapping[1]
+                            severity = mapping[2]
+                            mitre = mapping[3]
+                            break
 
             # 提取时间戳
             timestamp = ""
@@ -306,22 +348,22 @@ class LogNormalizer:
 
             return {
                 "host_id": host_id,
-                "hostname": hostname,
+                "hostname": hostname or computer,
                 "log_source": log_source,
                 "event_id": event_id,
                 "event_type": event_type[:50],
-                "event_label": event_label[:50],
-                "mitre_attack": "",
-                "severity": "info",
+                "event_label": event_label[:80],
+                "mitre_attack": mitre,
+                "severity": severity,
                 "timestamp": timestamp,
                 "source_ip": "",
                 "user_name": "",
                 "process_name": source,
                 "process_pid": None,
-                "command_line": "",
-                "object_name": "",
+                "command_line": desc[:500] if desc else "",
+                "object_name": source,
                 "tags": ",".join(tags) if tags else "",
-                "description": desc[:500],
+                "description": f"{source}@{computer}" if not desc else desc[:500],
                 "raw_data": desc[:500],
             }
         except Exception as e:
