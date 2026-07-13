@@ -87,6 +87,11 @@ const routes = [
         path: 'policies',
         name: 'PolicyConfig',
         component: () => import('@/views/PolicyConfigView.vue')
+      },
+      {
+        path: 'ai-advanced',
+        name: 'AiAdvanced',
+        component: () => import('@/views/AiAdvancedView.vue')
       }
     ]
   }

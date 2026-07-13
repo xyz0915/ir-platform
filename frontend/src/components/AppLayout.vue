@@ -110,6 +110,7 @@ const navGroups = [
     path: '',
     children: [
       { emoji: '🧠', label: 'AI 分析', path: '/ai' },
+      { emoji: '🔬', label: 'AI 实验室', path: '/ai-advanced' },
       { emoji: '📚', label: '知识库', path: '/knowledge', activeMatch: '/knowledge' },
     ],
   },
@@ -155,6 +156,7 @@ const routeMeta = computed(() => {
     'ThreatIntelConfig': { title: '威胁情报外联配置', subtitle: '外部情报源接入管理' },
     'Knowledge': { title: '知识库管理', subtitle: '安全知识沉淀与检索' },
     'PolicyConfig': { title: '策略配置', subtitle: '检测策略管理与规则选择' },
+    'AiAdvanced': { title: 'AI 实验室', subtitle: '高级关联功能 · 智能辅助分析与研判' },
   }
   return names[route.name] || { title: '应急响应平台', subtitle: '' }
 })
