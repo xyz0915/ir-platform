@@ -63,32 +63,34 @@
 
     <!-- ===== 日志表格 ===== -->
     <div class="table-wrap">
-      <el-table :data="items" v-loading="loading" stripe border size="small" :max-height="420"
+      <el-table :data="items" v-loading="loading" stripe border size="small" :max-height="500"
         @row-click="openDetail" style="width:100%">
-        <el-table-column label="时间" width="130">
+        <el-table-column label="时间" width="140">
           <template #default="{row}"><span class="t-time">{{ row.timestamp ? row.timestamp.slice(0,19).replace('T',' ') : (row.created_at ? row.created_at.slice(11,19) : '-') }}</span></template>
         </el-table-column>
-        <el-table-column label="事件类型" width="105">
-          <template #default="{row}"><el-tag :type="sevType(row.severity)" size="small" effect="dark" style="width:98px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block">{{ sevLabel(row.severity) }}</el-tag></template>
+        <el-table-column label="严重度" width="80">
+          <template #default="{row}">
+            <el-tag :type="sevType(row.severity)" size="small" effect="dark" style="display:block;text-align:center">{{ sevLabel(row.severity) }}</el-tag>
+          </template>
         </el-table-column>
-        <el-table-column label="ID" width="45">
+        <el-table-column label="ID" width="60">
           <template #default="{row}"><span class="pivot" @click.stop="pivot('event_id', row.event_id)">{{ row.event_id || '-' }}</span></template>
         </el-table-column>
-        <el-table-column label="主机" width="110">
-          <template #default="{row}"><span class="pivot" @click.stop="pivot('hostname', row.hostname)">{{ (row.hostname || '').substring(0,14) || '-' }}</span></template>
+        <el-table-column label="主机" min-width="120">
+          <template #default="{row}"><span class="pivot" @click.stop="pivot('hostname', row.hostname)">{{ row.hostname || '-' }}</span></template>
         </el-table-column>
-        <el-table-column label="来源 IP" width="105">
+        <el-table-column label="来源 IP" min-width="100">
           <template #default="{row}"><span class="pivot" @click.stop="pivot('source_ip', row.source_ip)">{{ row.source_ip || '-' }}</span></template>
         </el-table-column>
-        <el-table-column label="用户" width="70">
-          <template #default="{row}"><span class="pivot" @click.stop="pivot('user_name', row.user_name)">{{ (row.user_name || '-').substring(0,8) }}</span></template>
+        <el-table-column label="用户" min-width="100">
+          <template #default="{row}"><span class="pivot" @click.stop="pivot('user_name', row.user_name)">{{ row.user_name || '-' }}</span></template>
         </el-table-column>
-        <el-table-column label="进程" width="100">
-          <template #default="{row}"><span class="pivot" @click.stop="pivot('process_name', row.process_name)">{{ (row.process_name || '-').substring(0,16) }}</span></template>
+        <el-table-column label="进程" min-width="160">
+          <template #default="{row}"><span class="pivot" @click.stop="pivot('process_name', row.process_name)">{{ row.process_name || '-' }}</span></template>
         </el-table-column>
-        <el-table-column label="描述" min-width="180">
+        <el-table-column label="描述" min-width="240">
           <template #default="{row}">
-            <div class="t-desc">{{ row.command_line || row.description || (row.process_name||'') + '@' + (row.hostname||'').substring(0,8) }}</div>
+            <div class="t-desc">{{ row.command_line || row.description || (row.process_name||'') + '@' + (row.hostname||'') }}</div>
             <div v-if="row.tags" class="t-tags">
               <el-tag v-for="t in (row.tags||'').split(',').filter(Boolean).slice(0,2)" :key="t" size="small" :type="tagType(t)" effect="plain" style="margin-right:2px">{{ t }}</el-tag>
             </div>
@@ -410,7 +412,7 @@ onUnmounted(() => { timelineChart?.dispose(); pieChart?.dispose() })
 .pivot { color: #2563eb; cursor: pointer; font-weight: 500; }
 .pivot:hover { text-decoration: underline; }
 .t-time { font-size: 12px; color: #6b7280; }
-.t-desc { font-size: 12px; color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t-desc { font-size: 12px; color: #374151; line-height: 1.4; word-break: break-all; }
 .t-tags { margin-top: 2px; }
 .t-mitre { font-size: 10px; color: #6b7280; margin-bottom: 2px; }
 .t-mitre a { color: #2563eb; text-decoration: none; }
