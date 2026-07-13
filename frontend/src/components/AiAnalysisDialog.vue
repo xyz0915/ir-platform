@@ -168,6 +168,35 @@
           </template>
         </el-alert>
 
+        <!-- ★ 新增：全文搜索 -->
+        <div class="report-search mb-10" v-if="store.taskStatus === 'completed'">
+          <el-input
+            v-model="searchQuery"
+            placeholder="搜索分析结果... (如 ToDesk、/tmp、危险)"
+            size="small"
+            clearable
+            :prefix-icon="Search"
+            @input="handleSearch"
+          />
+          <div v-if="searchQuery && searchResults.length" class="search-results">
+            <div
+              v-for="(r, i) in searchResults.slice(0, 10)"
+              :key="i"
+              class="search-result-item"
+              @click="scrollToSection(r.section)"
+            >
+              <span class="search-highlight" v-html="r.html"></span>
+              <span class="search-section">— {{ r.section }}</span>
+            </div>
+            <div v-if="searchResults.length > 10" class="search-more">
+              还有 {{ searchResults.length - 10 }} 条结果...
+            </div>
+          </div>
+          <div v-if="searchQuery && !searchResults.length" class="search-no-results">
+            未找到匹配结果
+          </div>
+        </div>
+
         <!-- 报告展示（成功时） -->
         <div v-if="store.taskStatus === 'completed' && currentReport" class="ai-report">
           <!-- 报告元信息 -->
@@ -186,86 +215,177 @@
             </span>
           </div>
 
-          <!-- v1.3.0 BugFix: 受众切换驱动条件渲染 -->
-          <div v-if="hasAudienceContent" class="audience-section mb-15">
-            <!-- 技术受众视图 -->
-            <div v-if="selectedAudience === 'technical' || selectedAudience === 'both'" class="audience-panel technical">
-              <div class="audience-panel-header">🔧 技术视图</div>
-              <div v-if="techCommands.length" class="audience-block">
-                <div class="audience-block-title">可执行命令</div>
-                <pre class="audience-code" v-for="(cmd, i) in techCommands" :key="'cmd-'+i">{{ cmd }}</pre>
-              </div>
-              <div v-if="techIocs.length" class="audience-block">
-                <div class="audience-block-title">IOC 清单</div>
-                <el-tag v-for="(ioc, i) in techIocs" :key="'ioc-'+i" size="small" effect="plain" class="mr-5 mb-5">{{ ioc }}</el-tag>
-              </div>
-              <div v-if="techScripts.length" class="audience-block">
-                <div class="audience-block-title">处置脚本</div>
-                <pre class="audience-code" v-for="(scr, i) in techScripts" :key="'scr-'+i">{{ scr }}</pre>
+          <!-- ===== 第 1 层：KPI 仪表盘 ===== -->
+          <div class="kpi-grid mb-15">
+            <div class="kpi-card" :style="{ borderLeft: '3px solid ' + riskColor }">
+              <div class="kpi-label">风险等级</div>
+              <div class="kpi-value">
+                <span class="kpi-dot" :style="{ background: riskColor }"></span>
+                <span>{{ riskLevel || '待确认' }}</span>
+                <span class="kpi-score">{{ riskScore }}</span>
+                <span class="kpi-total">/100</span>
               </div>
             </div>
-            <!-- 管理层视图 -->
-            <div v-if="selectedAudience === 'executive' || selectedAudience === 'both'" class="audience-panel executive">
-              <div class="audience-panel-header">📊 管理层视图</div>
-              <div v-if="execImpact" class="audience-block">
-                <div class="audience-block-title">业务影响</div>
-                <p class="audience-text">{{ execImpact }}</p>
+            <div class="kpi-card">
+              <div class="kpi-label">置信度</div>
+              <div class="kpi-value">
+                <span class="kpi-dot" style="background:#639922"></span>
+                <span>{{ confidence || '待确认' }}</span>
               </div>
-              <div v-if="execRecommendations" class="audience-block">
-                <div class="audience-block-title">建议措施</div>
-                <p class="audience-text">{{ execRecommendations }}</p>
-              </div>
-              <div v-if="execBusinessLanguage" class="audience-block">
-                <div class="audience-block-title">业务语言摘要</div>
-                <p class="audience-text">{{ execBusinessLanguage }}</p>
-              </div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">标记发现</div>
+              <div class="kpi-value">{{ totalFindings }}</div>
+              <div class="kpi-sub">中 {{ mediumFindings }} · 低 {{ lowFindings }}</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">攻击链</div>
+              <div class="kpi-value">{{ attackChainCount }}</div>
+              <div class="kpi-sub">条命中</div>
             </div>
           </div>
 
-          <div class="structured-grid mb-15">
-            <InputQualityPanel
-              :quality="parsedRiskAssessment.input_quality || {}"
-              :suggestions="parsedRecommendations.input_suggestions || []"
-            />
-            <CoverageGapPanel
-              :gaps="parsedRiskAssessment.coverage_gaps || []"
-              :miss-risk="parsedRiskAssessment.miss_risk || {}"
-            />
-            <EvidenceTracePanel :evidence-trace="parsedThreatAnalysis.evidence_trace || {}" />
-            <StructuredTimelinePanel :timeline="parsedTimelineAnalysis" />
+          <!-- ===== 第 2 层：可下钻面板 ===== -->
+          <div class="drill-grid mb-15">
+            <!-- 面板 1：风险评估 -->
+            <div class="drill-card" :class="{ expanded: activeDrill === 'risk' }" @click="toggleDrill('risk')" style="border-left:3px solid #e24b4a">
+              <div class="drill-header">
+                <span class="drill-title">风险评估</span>
+                <span class="drill-arrow">{{ activeDrill === 'risk' ? '收起' : '展开' }}</span>
+              </div>
+              <div class="drill-summary">评分 {{ riskScore }} · 高危/中危/低危</div>
+              <div v-if="activeDrill === 'risk'" class="drill-body">
+                <RiskConclusionCard
+                  :risk-assessment="parsedRiskAssessment"
+                  :threat-analysis="parsedThreatAnalysis"
+                  :escalation-conditions="parsedEscalation"
+                  :analysis-mode="analysisMode"
+                  :data-enhancement-banner="dataEnhancementBanner"
+                  @toggle-escalation="onToggleEscalation"
+                />
+              </div>
+            </div>
+            <!-- 面板 2：威胁分析 -->
+            <div class="drill-card" :class="{ expanded: activeDrill === 'threat' }" @click="toggleDrill('threat')" style="border-left:3px solid #d85a30">
+              <div class="drill-header">
+                <span class="drill-title">威胁分析</span>
+                <span class="drill-arrow">{{ activeDrill === 'threat' ? '收起' : '展开' }}</span>
+              </div>
+              <div class="drill-summary">技术视图 · IOC 清单 · 处置脚本</div>
+              <div v-if="activeDrill === 'threat'" class="drill-body">
+                <div v-if="hasAudienceContent" class="audience-section mb-15">
+                  <!-- 技术受众视图 -->
+                  <div v-if="selectedAudience === 'technical' || selectedAudience === 'both'" class="audience-panel technical">
+                    <div class="audience-panel-header">🔧 技术视图</div>
+                    <div v-if="techCommands.length" class="audience-block">
+                      <div class="audience-block-title">可执行命令</div>
+                      <pre class="audience-code" v-for="(cmd, i) in techCommands" :key="'cmd-'+i">{{ cmd }}</pre>
+                    </div>
+                    <div v-if="techIocs.length" class="audience-block">
+                      <div class="audience-block-title">IOC 清单</div>
+                      <el-tag v-for="(ioc, i) in techIocs" :key="'ioc-'+i" size="small" effect="plain" class="mr-5 mb-5">{{ ioc }}</el-tag>
+                    </div>
+                    <div v-if="techScripts.length" class="audience-block">
+                      <div class="audience-block-title">处置脚本</div>
+                      <pre class="audience-code" v-for="(scr, i) in techScripts" :key="'scr-'+i">{{ scr }}</pre>
+                    </div>
+                  </div>
+                  <!-- 管理层视图 -->
+                  <div v-if="selectedAudience === 'executive' || selectedAudience === 'both'" class="audience-panel executive">
+                    <div class="audience-panel-header">📊 管理层视图</div>
+                    <div v-if="execImpact" class="audience-block">
+                      <div class="audience-block-title">业务影响</div>
+                      <p class="audience-text">{{ execImpact }}</p>
+                    </div>
+                    <div v-if="execRecommendations" class="audience-block">
+                      <div class="audience-block-title">建议措施</div>
+                      <p class="audience-text">{{ execRecommendations }}</p>
+                    </div>
+                    <div v-if="execBusinessLanguage" class="audience-block">
+                      <div class="audience-block-title">业务语言摘要</div>
+                      <p class="audience-text">{{ execBusinessLanguage }}</p>
+                    </div>
+                  </div>
+                </div>
+                <InputQualityPanel
+                  :quality="parsedRiskAssessment.input_quality || {}"
+                  :suggestions="parsedRecommendations.input_suggestions || []"
+                />
+                <CoverageGapPanel
+                  :gaps="parsedRiskAssessment.coverage_gaps || []"
+                  :miss-risk="parsedRiskAssessment.miss_risk || {}"
+                />
+              </div>
+            </div>
+            <!-- 面板 3：时间线 -->
+            <div class="drill-card" :class="{ expanded: activeDrill === 'timeline' }" @click="toggleDrill('timeline')" style="border-left:3px solid #378add">
+              <div class="drill-header">
+                <span class="drill-title">时间线</span>
+                <span class="drill-arrow">{{ activeDrill === 'timeline' ? '收起' : '展开' }}</span>
+              </div>
+              <div class="drill-summary">关键事件 · 攻击阶段</div>
+              <div v-if="activeDrill === 'timeline'" class="drill-body">
+                <StructuredTimelinePanel :timeline="parsedTimelineAnalysis" />
+                <AttackChainNarrative :attack-chain-hits="parsedAttackChainHits" />
+              </div>
+            </div>
+            <!-- 面板 4：ATT&CK 矩阵 -->
+            <div class="drill-card" :class="{ expanded: activeDrill === 'mitre' }" @click="toggleDrill('mitre')" style="border-left:3px solid #7f77dd">
+              <div class="drill-header">
+                <span class="drill-title">ATT&CK 矩阵</span>
+                <span class="drill-arrow">{{ activeDrill === 'mitre' ? '收起' : '展开' }}</span>
+              </div>
+              <div class="drill-summary">MITRE ATT&CK 映射</div>
+              <div v-if="activeDrill === 'mitre'" class="drill-body">
+                <AttckMatrix
+                  :mitre-attack="parsedMitreAttack"
+                  :attack-chain-hits="parsedAttackChainHits"
+                />
+              </div>
+            </div>
+            <!-- 面板 5：处置建议/证据链 -->
+            <div class="drill-card" :class="{ expanded: activeDrill === 'remediation' }" @click="toggleDrill('remediation')" style="border-left:3px solid #378add">
+              <div class="drill-header">
+                <span class="drill-title">处置建议/证据链</span>
+                <span class="drill-arrow">{{ activeDrill === 'remediation' ? '收起' : '展开' }}</span>
+              </div>
+              <div class="drill-summary">证据溯源 · 处置建议</div>
+              <div v-if="activeDrill === 'remediation'" class="drill-body">
+                <EvidenceTracePanel :evidence-trace="parsedThreatAnalysis.evidence_trace || {}" />
+              </div>
+            </div>
+            <!-- 面板 6：稀有信号 -->
+            <div class="drill-card" :class="{ expanded: activeDrill === 'signals' }" @click="toggleDrill('signals')" style="border-left:3px solid #1d9e75">
+              <div class="drill-header">
+                <span class="drill-title">稀有信号</span>
+                <span class="drill-arrow">{{ activeDrill === 'signals' ? '收起' : '展开' }}</span>
+              </div>
+              <div class="drill-summary">稀有高危信号</div>
+              <div v-if="activeDrill === 'signals'" class="drill-body">
+                <RareSignalCard v-if="parsedRareSignals.length" :rare-signals="parsedRareSignals" />
+              </div>
+            </div>
           </div>
 
-          <!-- v1.3.0 作战化：风险结论卡 + 稀有高危卡 -->
-          <div class="ops-grid mb-15">
-            <RiskConclusionCard
-              :risk-assessment="parsedRiskAssessment"
-              :threat-analysis="parsedThreatAnalysis"
-              :escalation-conditions="parsedEscalation"
-              :analysis-mode="analysisMode"
-              :data-enhancement-banner="dataEnhancementBanner"
-              @toggle-escalation="onToggleEscalation"
-            />
-            <RareSignalCard v-if="parsedRareSignals.length" :rare-signals="parsedRareSignals" />
-          </div>
-
-          <!-- v1.3.0 作战化：ATT&CK 矩阵 + 攻击链叙述 -->
-          <div class="mb-15">
-            <AttckMatrix
-              :mitre-attack="parsedMitreAttack"
-              :attack-chain-hits="parsedAttackChainHits"
-            />
-          </div>
-          <div class="mb-15">
-            <AttackChainNarrative :attack-chain-hits="parsedAttackChainHits" />
-          </div>
-
-          <!-- v1.3.0 作战化：缺口即动作（可派发只读采集） -->
-          <div class="mb-15">
-            <DataGapActionCard
-              :data-gaps="parsedDataGaps"
-              :host-id="currentHostId"
-              @dispatched="onDispatched"
-            />
+          <!-- ===== 第 3 层：底部深度面板 ===== -->
+          <div class="bottom-grid">
+            <div class="bottom-card">
+              <div class="bottom-title">数据缺口与升级路径</div>
+              <DataGapActionCard
+                :data-gaps="parsedDataGaps"
+                :host-id="currentHostId"
+                @dispatched="onDispatched"
+              />
+            </div>
+            <div class="bottom-card">
+              <div class="bottom-title">分析元数据</div>
+              <div class="meta-grid">
+                <span class="meta-label">模式</span><span>{{ analysisMode }}</span>
+                <span class="meta-label">模型</span><span>{{ currentReport?.model_used }}</span>
+                <span class="meta-label">tokens</span><span>{{ formatNumber(currentReport?.tokens_used) }}</span>
+                <span class="meta-label">耗时</span><span>约 {{ estimatedTime }}s</span>
+              </div>
+            </div>
           </div>
 
           <DeepDiveQuestionPanel
@@ -425,7 +545,7 @@
 <script setup>
 import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
-import { CircleCheck, Loading } from '@element-plus/icons-vue'
+import { CircleCheck, Loading, Search } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import { exportAiReportPdf, getAiReportByVersion, chatWithAi } from '@/api/ai'
 import { useAiStore } from '@/stores/ai'
@@ -581,6 +701,50 @@ const chatRoundCount = computed(() => {
 })
 
 // ============================================================
+// 建议5: 全文搜索
+// ============================================================
+const searchQuery = ref('')
+const searchResults = ref([])
+
+function handleSearch(query) {
+  if (!query || !currentReport.value) {
+    searchResults.value = []
+    return
+  }
+  const results = []
+  const q = query.toLowerCase()
+
+  const searchableText = [
+    { text: JSON.stringify(parsedRiskAssessment.value || ''), section: '风险评估' },
+    { text: JSON.stringify(parsedThreatAnalysis.value || ''), section: '威胁分析' },
+    { text: JSON.stringify(parsedTimelineAnalysis.value || ''), section: '时间线' },
+    { text: JSON.stringify(parsedRecommendations.value || ''), section: '处置建议' },
+    { text: store.streamContent || '', section: '完整回复' },
+  ]
+
+  for (const item of searchableText) {
+    const text = item.text.toLowerCase()
+    let start = 0
+    let count = 0
+    while ((start = text.indexOf(q, start)) !== -1 && count < 3) {
+      const snippet = item.text.slice(Math.max(0, start - 30), start + q.length + 30)
+      results.push({
+        html: snippet.replace(new RegExp(q, 'gi'), '<mark>$&</mark>'),
+        section: item.section,
+      })
+      start += q.length
+      count++
+    }
+  }
+  searchResults.value = results
+}
+
+function scrollToSection(section) {
+  searchQuery.value = ''
+  searchResults.value = []
+}
+
+// ============================================================
 // Computed
 // ============================================================
 const dialogTitle = computed(() => {
@@ -683,6 +847,47 @@ const hasAudienceContent = computed(() => {
 })
 // v1.3.0：受众切换（默认双受众，前端默认 technical 由主理人决策④）
 const selectedAudience = ref('both')
+
+// ============================================================
+// 第 1 层 KPI computed
+// ============================================================
+const riskLevel = computed(() => parsedRiskAssessment.value?.risk_level || '')
+const riskScore = computed(() => parsedRiskAssessment.value?.risk_score || 0)
+const riskColor = computed(() => {
+  const rl = riskLevel.value
+  if (rl === '严重' || rl === '高危') return '#e24b4a'
+  if (rl === '中危') return '#ef9f27'
+  if (rl === '低危') return '#378add'
+  return '#d3d1c7'
+})
+const confidence = computed(() => parsedRiskAssessment.value?.confidence || '')
+const totalFindings = computed(() => {
+  const findings = parsedRiskAssessment.value?.findings || []
+  return Array.isArray(findings) ? findings.length : 0
+})
+const mediumFindings = computed(() => {
+  const findings = parsedRiskAssessment.value?.findings || []
+  return Array.isArray(findings) ? findings.filter(f => f.severity === 'medium' || f.severity === '中').length : 0
+})
+const lowFindings = computed(() => {
+  const findings = parsedRiskAssessment.value?.findings || []
+  return Array.isArray(findings) ? findings.filter(f => f.severity === 'low' || f.severity === '低').length : 0
+})
+const attackChainCount = computed(() => parsedAttackChainHits.value?.length || 0)
+const estimatedTime = computed(() => {
+  if (currentReport.value?.elapsed_seconds) return currentReport.value.elapsed_seconds
+  const timeline = store.stageTimeline || []
+  const totalMs = timeline.reduce((sum, s) => sum + (s.elapsed_ms || 0), 0)
+  return totalMs > 0 ? Math.round(totalMs / 1000) : '-'
+})
+
+// ============================================================
+// 第 2 层 drill 状态
+// ============================================================
+const activeDrill = ref('')
+function toggleDrill(name) {
+  activeDrill.value = activeDrill.value === name ? '' : name
+}
 
 // ============================================================
 // 监听 visible，重置状态
@@ -1645,6 +1850,43 @@ function formatElapsed(ms) {
 }
 
 /* ============================================================
+   ★ 建议5: 全文搜索
+   ============================================================ */
+.report-search { position: relative; }
+.search-results {
+  position: absolute;
+  top: 100%;
+  left: 0; right: 0;
+  z-index: 100;
+  background: var(--color-background-primary, #fff);
+  border: 0.5px solid var(--color-border-tertiary, #e0e0e0);
+  border-radius: 4px;
+  max-height: 300px;
+  overflow-y: auto;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+.search-result-item {
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 11px;
+  border-bottom: 0.5px solid var(--color-border-tertiary, #eee);
+}
+.search-result-item:hover { background: var(--color-background-info, #e6f1fb); }
+.search-highlight mark {
+  background: #ef9f27;
+  color: #1a1a1a;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+.search-section { color: #999; margin-left: 8px; font-size: 10px; }
+.search-no-results {
+  font-size: 11px; color: #999; padding: 8px 10px;
+}
+.search-more {
+  font-size: 11px; color: #909399; padding: 8px 10px; text-align: center; font-style: italic;
+}
+
+/* ============================================================
    Utility
    ============================================================ */
 .mb-10 { margin-bottom: 10px; }
@@ -1672,5 +1914,120 @@ function formatElapsed(ms) {
   justify-content: center;
   align-items: center;
   gap: 12px;
+}
+
+/* ============================================================
+   3 层纵深界面样式
+   ============================================================ */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+.kpi-card {
+  background: var(--color-background-primary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-md);
+  padding: 10px 12px;
+}
+.kpi-label {
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+  margin-bottom: 4px;
+}
+.kpi-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 18px;
+  font-weight: 500;
+}
+.kpi-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.kpi-score {
+  font-weight: 600;
+}
+.kpi-total {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  font-weight: 400;
+}
+.kpi-sub {
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  margin-top: 2px;
+}
+.drill-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.drill-card {
+  background: var(--color-background-primary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-md);
+  padding: 12px;
+  cursor: pointer;
+  transition: box-shadow 0.2s;
+}
+.drill-card:hover {
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+.drill-card.expanded {
+  grid-column: 1 / -1;
+}
+.drill-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.drill-title {
+  font-size: 12px;
+  font-weight: 500;
+}
+.drill-arrow {
+  font-size: 9px;
+  color: var(--color-text-tertiary);
+}
+.drill-summary {
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  margin-top: 4px;
+}
+.drill-body {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 0.5px solid var(--color-border-tertiary);
+}
+.bottom-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.bottom-card {
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-md);
+  padding: 12px;
+}
+.bottom-title {
+  font-size: 12px;
+  font-weight: 500;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  font-size: 10px;
+}
+.meta-label {
+  color: var(--color-text-tertiary);
 }
 </style>

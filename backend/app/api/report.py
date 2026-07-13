@@ -74,6 +74,60 @@ def list_reports(status: str = "all", page: int = 1, page_size: int = 50):
         return {"success": False, "data": {"items": [], "total": 0}}
 
 
+@router.get("/reports/grouped-by-host")
+def list_reports_grouped_by_host(status: str = "all"):
+    """报告列表 — 按 host_id 分组（T-05）.
+
+    - host_id=0 作为案件级报告，单独分组置顶
+    - 其他 host_id 按组返回
+    """
+    try:
+        with db.get_connection() as conn:
+            conditions = ["1=1"]
+            params: list = []
+            if status != "all":
+                conditions.append("status=?")
+                params.append(status)
+            where = " AND ".join(conditions)
+
+            rows = conn.execute(
+                f"SELECT * FROM incident_reports WHERE {where} ORDER BY updated_at DESC",
+                params,
+            ).fetchall()
+
+            case_reports: list[dict] = []
+            host_groups: dict[int, list[dict]] = {}
+
+            for r in rows:
+                d = dict(r)
+                hid = d.get("host_id", 0) or 0
+                if hid == 0:
+                    case_reports.append(d)
+                else:
+                    host_groups.setdefault(hid, []).append(d)
+
+            groups: list[dict] = []
+            if case_reports:
+                groups.append({
+                    "host_id": 0,
+                    "host_name": "案件级报告",
+                    "reports": case_reports,
+                    "count": len(case_reports),
+                })
+            for hid, reports in sorted(host_groups.items()):
+                groups.append({
+                    "host_id": hid,
+                    "host_name": f"主机 {hid}",
+                    "reports": reports,
+                    "count": len(reports),
+                })
+
+            return {"success": True, "data": {"groups": groups, "total": len(rows)}}
+    except Exception as e:
+        logger.error("list_reports_grouped_by_host failed: %s", e)
+        return {"success": False, "data": {"groups": [], "total": 0}}
+
+
 @router.get("/reports/{report_id}")
 def get_report(report_id: int):
     """报告详情."""
@@ -169,6 +223,112 @@ def submit_report(report_id: int):
 def publish_report(report_id: int):
     """待审→已发."""
     return update_report(report_id, status="published")
+
+
+# ── T-10: 导出端点 ──
+
+
+@router.get("/reports/{report_id}/export/json")
+def export_report_json(report_id: int):
+    """导出报告为 JSON 格式."""
+    try:
+        with db.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM incident_reports WHERE id = ?", (report_id,),
+            ).fetchone()
+        if not row:
+            raise HTTPException(404, "报告不存在")
+        return {"success": True, "data": dict(row)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("export_report_json failed: %s", e)
+        raise HTTPException(500, "导出失败")
+
+
+@router.get("/reports/{report_id}/export/docx")
+def export_report_docx(report_id: int):
+    """导出报告为 DOCX 文件."""
+    try:
+        from app.services.docx_export_service import DocxExportService
+
+        docx_bytes = DocxExportService.export(report_id)
+        if docx_bytes is None:
+            raise HTTPException(404, "报告不存在或导出失败")
+        from fastapi.responses import Response
+        return Response(
+            content=docx_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={
+                "Content-Disposition": f"attachment; filename=report_{report_id}.docx",
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("export_report_docx failed: %s", e)
+        raise HTTPException(500, "DOCX 导出失败")
+
+
+@router.get("/reports/{report_id}/export/markdown")
+def export_report_markdown(report_id: int):
+    """导出报告为 Markdown 文本."""
+    try:
+        from app.services.markdown_export_service import MarkdownExportService
+
+        md_text = MarkdownExportService.export(report_id)
+        if md_text is None:
+            raise HTTPException(404, "报告不存在或导出失败")
+        from fastapi.responses import Response
+        return Response(
+            content=md_text,
+            media_type="text/markdown; charset=utf-8",
+            headers={
+                "Content-Disposition": f"attachment; filename=report_{report_id}.md",
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("export_report_markdown failed: %s", e)
+        raise HTTPException(500, "Markdown 导出失败")
+
+
+# ── T-11: 审计日志 API ──
+
+
+@router.get("/reports/{report_id}/audit-logs")
+def list_report_audit_logs(
+    report_id: int,
+    page: int = 1,
+    page_size: int = 50,
+):
+    """查询报告的审计日志历史（T-11）."""
+    try:
+        with db.get_connection() as conn:
+            total = conn.execute(
+                "SELECT COUNT(*) FROM incident_report_audit WHERE report_id = ?",
+                (report_id,),
+            ).fetchone()[0]
+            offset = (page - 1) * page_size
+            rows = conn.execute(
+                """SELECT * FROM incident_report_audit
+                   WHERE report_id = ?
+                   ORDER BY created_at DESC LIMIT ? OFFSET ?""",
+                (report_id, page_size, offset),
+            ).fetchall()
+            return {
+                "success": True,
+                "data": {
+                    "items": [dict(r) for r in rows],
+                    "total": total,
+                    "page": page,
+                    "page_size": page_size,
+                },
+            }
+    except Exception as e:
+        logger.error("list_report_audit_logs failed: %s", e)
+        return {"success": False, "data": {"items": [], "total": 0}}
 
 
 @router.get("/hosts/{host_id}/report")

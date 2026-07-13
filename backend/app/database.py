@@ -1331,6 +1331,64 @@ def _alter_add_column(table: str, column: str, col_type: str) -> None:
                 logger.debug("Column %s.%s already exists", table, column)
 
 
+def _alter_incident_reports_table(conn: sqlite3.Connection) -> None:
+    """检测并添加 incident_reports 表的新增报告扩展列（T-01）.
+
+    新增 6 列：
+      - risk_score              INTEGER DEFAULT 0     # 风险评分
+      - confidence_metadata     TEXT                   # 各段落置信度 JSON
+      - version                 INTEGER DEFAULT 1      # 报告版本号
+      - ai_report_id            INTEGER                # 关联的 AI 分析报告 ID
+      - mode                    TEXT DEFAULT 'auto'    # 生成模式
+      - report_label            TEXT                   # 额外标签
+    """
+    cursor = conn.execute("PRAGMA table_info(incident_reports)")
+    existing_columns: set[str] = {row["name"] for row in cursor.fetchall()}
+
+    new_columns: list[tuple[str, str]] = [
+        ("risk_score", "INTEGER DEFAULT 0"),
+        ("confidence_metadata", "TEXT"),
+        ("version", "INTEGER DEFAULT 1"),
+        ("ai_report_id", "INTEGER"),
+        ("mode", "TEXT DEFAULT 'auto'"),
+        ("report_label", "TEXT"),
+        ("evidence_meta", "TEXT"),
+    ]
+
+    for col_name, col_type in new_columns:
+        if col_name not in existing_columns:
+            conn.execute(
+                f"ALTER TABLE incident_reports ADD COLUMN {col_name} {col_type}"
+            )
+            logger.info("Added column '%s' to incident_reports table", col_name)
+
+
+def _create_incident_report_audit_table(conn: sqlite3.Connection) -> None:
+    """创建 incident_report_audit 报表审计表（T-01）.
+
+    记录 incident_reports 的所有修改操作，支持字段级追踪.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS incident_report_audit (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_id     INTEGER NOT NULL REFERENCES incident_reports(id) ON DELETE CASCADE,
+            action        TEXT NOT NULL,
+            field_name    TEXT,
+            old_value     TEXT,
+            new_value     TEXT,
+            operator      TEXT DEFAULT '',
+            comment       TEXT DEFAULT '',
+            created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_incident_report_audit_report ON incident_report_audit(report_id)"
+    )
+    logger.info("incident_report_audit table ready")
+
+
 def init_db() -> None:
     """初始化数据库：创建目录、执行建表语句、迁移旧数据、ALTER表、创建默认用户、导入默认规则、导入默认白名单."""
     # 确保数据目录存在
@@ -1375,6 +1433,9 @@ def init_db() -> None:
         _alter_network_connections_table(conn)
         _import_default_whitelist(conn)
         _import_default_iocs(conn)
+        # T-01: incident_reports 扩展列 + 审计表
+        _alter_incident_reports_table(conn)
+        _create_incident_report_audit_table(conn)
         # v1.3.0 作战化新表
         _create_agent_baselines_table(conn)
         _create_ai_evidence_refills_table(conn)

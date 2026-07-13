@@ -735,6 +735,272 @@ def delete_ai_report(host_id: int, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/reports/{report_id}/regenerate-from-ai")
+def regenerate_report_from_ai(
+    report_id: int,
+    sections: str = Query(default="", description="需要重新生成的段落，逗号分隔；空=全量"),
+    user: dict = Depends(get_current_user),
+):
+    """从 AI 报告重新生成 incident_report 的指定段落（T-06）.
+
+    sections 参数示例: "summary,impact,timeline,mitre,evidence,recommendations,confidence"
+    空 sections 表示全量重新生成.
+    """
+    try:
+        from app.database import get_connection as db_conn
+
+        # 1. 查找 incident_report
+        with db_conn() as conn:
+            inc_row = conn.execute(
+                "SELECT * FROM incident_reports WHERE id = ?", (report_id,),
+            ).fetchone()
+        if not inc_row:
+            raise HTTPException(status_code=404, detail="报告不存在")
+        inc = dict(inc_row)
+        ai_report_id = inc.get("ai_report_id")
+        if not ai_report_id:
+            raise HTTPException(status_code=400, detail="该报告未关联 AI 分析报告，无法重新生成")
+
+        # 2. 查找 AiAnalysisReport
+        ai_report = AiAnalysisReport.get_by_id(ai_report_id)
+        if not ai_report:
+            raise HTTPException(status_code=404, detail="关联的 AI 分析报告不存在")
+
+        # 3. 解析 AI 报告内容
+        raw_response = ai_report.get("raw_response", "")
+        parsed = AiTaskService._parse_json_response(raw_response)
+
+        host_id = inc.get("host_id", ai_report.get("host_id", 0))
+        host_obj = Host.get_by_id(host_id)
+        host_name = host_obj.get("hostname", "") if host_obj else ""
+        case_id = inc.get("case_id", ai_report.get("case_id", 0))
+        audience = inc.get("audience", "technical")
+        mode = inc.get("mode", "standard")
+
+        # 简化 guarded 构造（复用已保存的 mitre_attack 等）
+        guarded = {
+            "mitre_attack": json.loads(ai_report.get("mitre_attack", "[]") or "[]")
+            if isinstance(ai_report.get("mitre_attack"), str) and ai_report["mitre_attack"]
+            else [],
+            "attack_chain_hits": json.loads(ai_report.get("attack_chain_hits", "[]") or "[]")
+            if isinstance(ai_report.get("attack_chain_hits"), str) and ai_report["attack_chain_hits"]
+            else [],
+            "rare_high_signals": json.loads(ai_report.get("rare_high_signals", "[]") or "[]")
+            if isinstance(ai_report.get("rare_high_signals"), str) and ai_report["rare_high_signals"]
+            else [],
+            "audience": json.loads(ai_report.get("audience", "{}") or "{}")
+            if isinstance(ai_report.get("audience"), str) and ai_report["audience"]
+            else {},
+        }
+
+        # 4. 确定 sections 列表
+        section_list: Optional[list[str]] = None
+        if sections and sections.strip():
+            section_list = [s.strip() for s in sections.split(",") if s.strip()]
+
+        # 5. 调用映射函数
+        result = AiTaskService._map_ai_to_incident_report(
+            parsed=parsed,
+            guarded=guarded,
+            host_id=host_id,
+            host_name=host_name,
+            case_id=case_id,
+            audience=audience,
+            mode=mode,
+            ai_report_id=ai_report_id,
+            sections=section_list,
+        )
+
+        # 6. 记录审计日志
+        try:
+            from app.database import get_connection as db_conn2
+            with db_conn2() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO incident_report_audit
+                        (report_id, action, field_name, old_value, new_value, operator)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        report_id,
+                        "regenerate_from_ai",
+                        sections if sections else "all",
+                        "",
+                        json.dumps(parsed, ensure_ascii=False)[:500],
+                        user.get("username", "system"),
+                    ),
+                )
+                conn.commit()
+        except Exception as exc:
+            logger.warning("Failed to write audit log for regenerate: %s", exc)
+
+        return _ok(result, "报告已重新生成")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("regenerate_report_from_ai error")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/reports/{report_id}/diff")
+def diff_report_with_ai(
+    report_id: int,
+    user: dict = Depends(get_current_user),
+):
+    """对比 incident_report 与 AI 报告的差异（T-07）.
+
+    比较当前 incident_report 各字段与最新 AI 分析报告对应字段的内容差异.
+    返回逐字段差异列表.
+    """
+    try:
+        from app.database import get_connection as db_conn
+
+        with db_conn() as conn:
+            inc_row = conn.execute(
+                "SELECT * FROM incident_reports WHERE id = ?", (report_id,),
+            ).fetchone()
+        if not inc_row:
+            raise HTTPException(status_code=404, detail="报告不存在")
+        inc = dict(inc_row)
+
+        ai_report_id = inc.get("ai_report_id")
+        if not ai_report_id:
+            return _ok({
+                "report_id": report_id,
+                "has_ai_report": False,
+                "diffs": [],
+                "message": "该报告未关联 AI 分析报告",
+            })
+
+        ai_report = AiAnalysisReport.get_by_id(ai_report_id)
+        if not ai_report:
+            return _ok({
+                "report_id": report_id,
+                "has_ai_report": False,
+                "diffs": [],
+                "message": "关联的 AI 分析报告不存在",
+            })
+
+        # 解析 AI 报告的四个段落
+        raw_response = ai_report.get("raw_response", "")
+        parsed = AiTaskService._parse_json_response(raw_response)
+        risk = parsed.get("risk_assessment", {})
+        threat = parsed.get("threat_analysis", {})
+        timeline = parsed.get("timeline_analysis", {})
+        recs = parsed.get("recommendations", {})
+
+        def _safe_json(val) -> str:
+            """统一比较格式."""
+            if isinstance(val, str):
+                try:
+                    return json.dumps(json.loads(val), ensure_ascii=False, sort_keys=True)
+                except (json.JSONDecodeError, TypeError):
+                    return val or ""
+            if isinstance(val, (dict, list)):
+                return json.dumps(val, ensure_ascii=False, sort_keys=True)
+            return str(val or "")
+
+        def _safe_str(val) -> str:
+            if isinstance(val, str):
+                return val
+            if isinstance(val, (dict, list)):
+                return json.dumps(val, ensure_ascii=False)
+            return str(val or "")
+
+        diffs = []
+
+        # summary
+        inc_summary = _safe_str(inc.get("summary", ""))
+        ai_summary = _safe_str(risk.get("summary", ""))
+        if inc_summary != ai_summary:
+            diffs.append({
+                "field": "summary",
+                "incident_value": inc_summary[:500],
+                "ai_value": ai_summary[:500],
+                "has_diff": True,
+            })
+
+        # impact_scope vs affected_systems
+        inc_impact = _safe_json(inc.get("impact_scope", "[]"))
+        ai_impact = _safe_json(threat.get("affected_systems", []))
+        if inc_impact != ai_impact:
+            diffs.append({
+                "field": "impact_scope",
+                "incident_value": inc_impact[:500],
+                "ai_value": ai_impact[:500],
+                "has_diff": True,
+            })
+
+        # timeline_json vs key_events
+        inc_timeline = _safe_json(inc.get("timeline_json", "[]"))
+        ai_timeline = _safe_json(timeline.get("key_events", []))
+        if inc_timeline != ai_timeline:
+            diffs.append({
+                "field": "timeline",
+                "incident_value": inc_timeline[:500],
+                "ai_value": ai_timeline[:500],
+                "has_diff": True,
+            })
+
+        # mitre_cover vs ai_report mitre_attack
+        inc_mitre = _safe_json(inc.get("mitre_cover", "[]"))
+        ai_mitre_raw = ai_report.get("mitre_attack", "[]")
+        ai_mitre = _safe_json(ai_mitre_raw if isinstance(ai_mitre_raw, str) else json.dumps(ai_mitre_raw))
+        if inc_mitre != ai_mitre:
+            diffs.append({
+                "field": "mitre_cover",
+                "incident_value": inc_mitre[:500],
+                "ai_value": ai_mitre[:500],
+                "has_diff": True,
+            })
+
+        # evidence vs findings
+        inc_evidence = _safe_str(inc.get("evidence", ""))
+        ai_findings_list = risk.get("findings", [])
+        ai_evidence_str = ""
+        if isinstance(ai_findings_list, list):
+            parts = []
+            for f in ai_findings_list:
+                if isinstance(f, dict):
+                    parts.append(f.get("description", f.get("title", str(f))))
+                else:
+                    parts.append(str(f))
+            ai_evidence_str = "\n".join(parts)
+        if inc_evidence != ai_evidence_str:
+            diffs.append({
+                "field": "evidence",
+                "incident_value": inc_evidence[:500],
+                "ai_value": ai_evidence_str[:500],
+                "has_diff": True,
+            })
+
+        # recommendations
+        inc_recs = _safe_json(inc.get("recommendations", "{}"))
+        ai_recs_items = recs.get("items", recs.get("recommendations", []))
+        ai_recs_str = _safe_json({"items": ai_recs_items} if isinstance(ai_recs_items, list) else recs)
+        if inc_recs != ai_recs_str:
+            diffs.append({
+                "field": "recommendations",
+                "incident_value": inc_recs[:500],
+                "ai_value": ai_recs_str[:500],
+                "has_diff": True,
+            })
+
+        return _ok({
+            "report_id": report_id,
+            "ai_report_id": ai_report_id,
+            "has_ai_report": True,
+            "diffs": diffs,
+            "changed_fields": sum(1 for d in diffs if d.get("has_diff")),
+            "total_fields": 6,
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("diff_report_with_ai error")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ================================================================
 # 审计日志（2端点）
 # ================================================================

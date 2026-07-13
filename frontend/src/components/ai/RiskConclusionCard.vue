@@ -25,6 +25,7 @@
     <div v-if="breakdown.length" class="rc-breakdown">
       <div class="rc-sub">评分明细 (score_breakdown)</div>
       <div v-for="item in breakdown" :key="item.signal" class="rc-bar-row">
+        <span class="rc-dot" :style="{ background: contribColor(item.contribution) }"></span>
         <span class="rc-signal">{{ item.signal }}</span>
         <el-progress
           :percentage="pct(item.contribution)"
@@ -34,6 +35,9 @@
         />
         <span class="rc-contrib">{{ item.contribution }}</span>
         <el-tag v-if="item.historical_known" size="mini" type="info" effect="plain">基线已知</el-tag>
+      </div>
+      <div v-if="topContribItem" class="rc-top-contrib">
+        主要风险: {{ topContribItem.signal }} ({{ topContribItem.contribution }}分)
       </div>
     </div>
 
@@ -156,6 +160,18 @@ const maxContrib = computed(() => {
   return ms
 })
 
+const topContribItem = computed(() => {
+  if (!breakdown.value.length) return null
+  return breakdown.value.reduce((a, b) => (Math.abs(b.contribution || 0) > Math.abs(a.contribution || 0) ? b : a))
+})
+
+function contribColor(contribution) {
+  const abs = Math.abs(contribution || 0)
+  if (abs >= 15) return '#c0392b'
+  if (abs >= 10) return '#e67e22'
+  return '#2980b9'
+}
+
 function pct(v) {
   return Math.min(100, Math.round((Math.abs(v || 0) / maxContrib.value) * 100))
 }
@@ -183,8 +199,10 @@ function onToggle(ec) {
 .rc-breakdown { margin-top: 4px; }
 .rc-bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .rc-signal { width: 150px; font-size: 12px; color: #444; }
+.rc-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .rc-bar { flex: 1; }
 .rc-contrib { width: 36px; text-align: right; font-size: 12px; }
+.rc-top-contrib { margin-top: 6px; font-size: 12px; color: #c0392b; font-weight: 500; padding: 4px 8px; background: #fef0f0; border-radius: 4px; }
 .rc-corr-list { font-size: 12px; color: #666; padding-left: 16px; }
 .rc-corr-list code { color: #c0392b; }
 .rc-collapse { margin-top: 8px; }

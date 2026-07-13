@@ -13,6 +13,7 @@ import {
   cancelAiTask,
   getAiReport,
   getAiReportVersions,
+  getAiTaskStatus,
 } from '@/api/ai'
 
 export const useAiStore = defineStore('ai', () => {
@@ -196,14 +197,55 @@ export const useAiStore = defineStore('ai', () => {
     _cancelled = false
     taskStatus.value = 'analyzing'
 
-    const token = localStorage.getItem('ir_token')
-    const baseUrl = '/api'
-    const url = `${baseUrl}/ai/tasks/${taskId}/stream?token=${encodeURIComponent(token || '')}`
+    // ── 轮询兜底：每隔 2 秒检查任务状态（SSE 失败时的 fallback）──
+    let pollCount = 0
+    const pollInterval = setInterval(async () => {
+      if (taskStatus.value !== 'analyzing' || _cancelled) {
+        clearInterval(pollInterval)
+        return
+      }
+      pollCount++
+      try {
+        const task = await getAiTaskStatus(taskId)
+        const status = task?.data?.status || task?.status
+        const progress = task?.data?.progress || task?.progress
+        const stage = task?.data?.stage || task?.stage
+        const errorMsg = task?.data?.error_message || task?.error_message
+        const reportId = task?.data?.report_id || task?.report_id
+
+        if (progress !== undefined) taskProgress.value = progress
+        if (stage) taskStage.value = stage
+
+        if (status === 'completed') {
+          taskStatus.value = 'completed'
+          taskProgress.value = 100
+          clearInterval(pollInterval)
+          return
+        }
+        if (status === 'failed' || status === 'error') {
+          taskStatus.value = 'error'
+          taskStage.value = errorMsg || '分析失败'
+          clearInterval(pollInterval)
+          return
+        }
+        if (status === 'cancelled') {
+          taskStatus.value = 'cancelled'
+          clearInterval(pollInterval)
+          return
+        }
+      } catch (e) {
+        console.warn('[AiStore] status poll failed:', e)
+      }
+    }, 2000)
 
     const controller = new AbortController()
     streamAbortController = controller
 
     try {
+      const token = localStorage.getItem('ir_token')
+      const baseUrl = '/api'
+      const url = `${baseUrl}/ai/tasks/${taskId}/stream?token=${encodeURIComponent(token || '')}`
+
       const response = await fetch(url, {
         headers: {
           Accept: 'text/event-stream',
@@ -275,10 +317,12 @@ export const useAiStore = defineStore('ai', () => {
         taskStatus.value = 'cancelled'
         taskStage.value = '已取消'
       } else {
-        taskStatus.value = 'error'
-        taskStage.value = err.message || 'SSE 连接异常'
+        // SSE 失败 → 依赖 polling fallback 兜底
+        console.warn('[AiStore] SSE connection failed, relying on polling:', err.message)
+        taskStage.value = 'SSE 连接异常，改用轮询模式...'
       }
     } finally {
+      clearInterval(pollInterval)
       streamAbortController = null
     }
   }

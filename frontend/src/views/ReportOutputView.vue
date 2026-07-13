@@ -53,59 +53,80 @@
           </el-radio-group>
         </div>
 
-        <!-- 列表 -->
+        <!-- 列表（按主机分组） -->
         <div class="sb-list">
-          <div
-            v-for="r in filteredReports" :key="r.id"
-            :class="['rp-item', { active: selectedId === r.id, hover: hoverId === r.id }]"
-            @click="selectReport(r.id)"
-            @mouseenter="hoverId = r.id"
-            @mouseleave="hoverId = null"
-          >
-            <!-- 类型色标 -->
-            <div class="rp-accent" :style="{ background: typeBorderColor(r.report_type) }"></div>
-            <!-- 图标 -->
-            <div class="rp-item-icon">{{ reportIcon(r.report_type) }}</div>
-            <!-- 主体 -->
-            <div class="rp-item-body">
-              <div class="rp-item-top">
-                <div class="rp-item-title" :title="r.title">{{ r.title }}</div>
-                <el-tag size="small" class="rp-aud-tag" round>{{ audienceLabel(r.audience) }}</el-tag>
-              </div>
-              <div class="rp-item-meta">
-                <!-- 状态流程指示 -->
-                <span class="rp-status-flow">
-                  <span :class="['sf-dot', { done: r.status !== 'draft' }]"></span>
-                  <span class="sf-line"></span>
-                  <span :class="['sf-dot', { done: r.status === 'published' }, { current: r.status === 'review' }]"></span>
-                  <span class="sf-line"></span>
-                  <span :class="['sf-dot', { done: r.status === 'published' }, { current: r.status === 'published' }]"></span>
-                </span>
-                <span class="rp-item-status" :style="{ color: statusColor(r.status) }">
-                  {{ statusLabel(r.status) }}
-                </span>
-                <span class="rp-item-date">{{ relativeTime(r.updated_at) }}</span>
-              </div>
-            </div>
-            <!-- 悬停删除 -->
-            <el-button
-              v-if="hoverId === r.id"
-              size="small"
-              type="danger"
-              link
-              @click.stop="handleSidebarDelete(r.id)"
-              class="rp-del-btn"
-            >
-              <el-icon><Delete /></el-icon>
-            </el-button>
+          <!-- 状态过滤后无数据 -->
+          <div v-if="!filteredGroupedReports.length && reports.length" class="empty-state">
+            <el-empty description="该状态下暂无报告" :image-size="60" />
           </div>
-
-          <!-- 空状态 -->
+          <!-- 完全无报告 -->
           <div v-if="!reports.length" class="empty-state">
             <el-empty description="暂无报告" :image-size="80">
               <el-button size="small" type="primary" @click="showCreate = true">新建第一份报告</el-button>
             </el-empty>
           </div>
+
+          <el-collapse v-model="expandedGroups" v-if="filteredGroupedReports.length">
+            <el-collapse-item
+              v-for="group in filteredGroupedReports"
+              :key="group.host_id"
+              :name="String(group.host_id)"
+            >
+              <template #title>
+                <div class="gh-header">
+                  <span class="gh-icon">{{ group.host_id === 0 ? '📋' : '🖥️' }}</span>
+                  <span class="gh-hostname">{{ group.hostname || '未命名主机' }}</span>
+                  <span class="gh-ip" v-if="group.ip">({{ group.ip }})</span>
+                  <el-tag size="small" type="info" round class="gh-count">{{ group.reports.length }}</el-tag>
+                  <span class="gh-label" v-if="group.host_id === 0">案件综合</span>
+                </div>
+              </template>
+              <div
+                v-for="r in group.reports" :key="r.id"
+                :class="['rp-item', { active: selectedId === r.id, hover: hoverId === r.id }]"
+                @click="selectReport(r.id)"
+                @mouseenter="hoverId = r.id"
+                @mouseleave="hoverId = null"
+              >
+                <!-- 类型色标 -->
+                <div class="rp-accent" :style="{ background: typeBorderColor(r.report_type) }"></div>
+                <!-- 图标 -->
+                <div class="rp-item-icon">{{ reportIcon(r.report_type) }}</div>
+                <!-- 主体 -->
+                <div class="rp-item-body">
+                  <div class="rp-item-top">
+                    <div class="rp-item-title" :title="r.title">{{ r.title }}</div>
+                    <el-tag size="small" class="rp-aud-tag" round>{{ audienceLabel(r.audience) }}</el-tag>
+                  </div>
+                  <div class="rp-item-meta">
+                    <!-- 状态流程指示 -->
+                    <span class="rp-status-flow">
+                      <span :class="['sf-dot', { done: r.status !== 'draft' }]"></span>
+                      <span class="sf-line"></span>
+                      <span :class="['sf-dot', { done: r.status === 'published' }, { current: r.status === 'review' }]"></span>
+                      <span class="sf-line"></span>
+                      <span :class="['sf-dot', { done: r.status === 'published' }, { current: r.status === 'published' }]"></span>
+                    </span>
+                    <span class="rp-item-status" :style="{ color: statusColor(r.status) }">
+                      {{ statusLabel(r.status) }}
+                    </span>
+                    <span class="rp-item-date">{{ relativeTime(r.updated_at) }}</span>
+                  </div>
+                </div>
+                <!-- 悬停删除 -->
+                <el-button
+                  v-if="hoverId === r.id"
+                  size="small"
+                  type="danger"
+                  link
+                  @click.stop="handleSidebarDelete(r.id)"
+                  class="rp-del-btn"
+                >
+                  <el-icon><Delete /></el-icon>
+                </el-button>
+              </div>
+            </el-collapse-item>
+          </el-collapse>
         </div>
       </div>
 
@@ -153,6 +174,14 @@
               </el-button>
               <el-button
                 size="small"
+                :disabled="detail.status !== 'draft'"
+                @click="showRegenerate = true"
+              >
+                <el-icon :size="14"><Refresh /></el-icon>
+                重新生成草稿
+              </el-button>
+              <el-button
+                size="small"
                 type="success"
                 :disabled="detail.status !== 'review'"
                 @click="showPublish = true"
@@ -168,9 +197,11 @@
                 </el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
-                    <el-dropdown-item command="pdf">导出 PDF</el-dropdown-item>
-                    <el-dropdown-item command="html">导出 HTML</el-dropdown-item>
+                    <el-dropdown-item command="pdf">导出 PDF（技术版）</el-dropdown-item>
+                    <el-dropdown-item command="html">导出 PDF（管理版）</el-dropdown-item>
+                    <el-dropdown-item command="docx" divided>导出 DOCX</el-dropdown-item>
                     <el-dropdown-item command="markdown">导出 Markdown</el-dropdown-item>
+                    <el-dropdown-item command="json">导出 JSON</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>
@@ -222,6 +253,7 @@
               <div class="section-header">
                 <span class="section-dot dot-summary" />
                 <span class="section-name">概要</span>
+                <span class="conf-bar" :style="{ color: confidenceColor(getConfidenceScore('summary')) }" v-if="detail">{{ confidenceBar('summary') }}</span>
                 <el-tag size="small" type="info" effect="plain" v-if="edit.summary?.length">
                   {{ edit.summary.length }} 字
                 </el-tag>
@@ -247,6 +279,7 @@
               <div class="section-header">
                 <span class="section-dot dot-impact" />
                 <span class="section-name">影响范围</span>
+                <span class="conf-bar" :style="{ color: confidenceColor(getConfidenceScore('impact_scope')) }" v-if="detail">{{ confidenceBar('impact_scope') }}</span>
                 <el-tag size="small" type="info" effect="plain" v-if="edit.impactScope?.affected_systems?.length">
                   {{ edit.impactScope.affected_systems.length }} 个系统
                 </el-tag>
@@ -309,6 +342,7 @@
               <div class="section-header">
                 <span class="section-dot dot-timeline" />
                 <span class="section-name">时间线</span>
+                <span class="conf-bar" :style="{ color: confidenceColor(getConfidenceScore('timeline')) }" v-if="detail">{{ confidenceBar('timeline') }}</span>
                 <el-tag size="small" type="info" effect="plain" v-if="edit.timeline.length">
                   {{ edit.timeline.length }} 个事件
                 </el-tag>
@@ -391,6 +425,7 @@
               <div class="section-header">
                 <span class="section-dot dot-mitre" />
                 <span class="section-name">MITRE ATT&CK 战术覆盖</span>
+                <span class="conf-bar" :style="{ color: confidenceColor(getConfidenceScore('mitre')) }" v-if="detail">{{ confidenceBar('mitre') }}</span>
                 <el-tag size="small" type="info" effect="plain" v-if="edit.mitreTactics.length">
                   已选 {{ edit.mitreTactics.length }}
                 </el-tag>
@@ -424,6 +459,7 @@
               <div class="section-header">
                 <span class="section-dot dot-evidence" />
                 <span class="section-name">证据</span>
+                <span class="conf-bar" :style="{ color: confidenceColor(getConfidenceScore('evidence')) }" v-if="detail">{{ confidenceBar('evidence') }}</span>
                 <el-tag size="small" type="info" effect="plain" v-if="edit.evidence?.length">
                   {{ edit.evidence.length }} 字
                 </el-tag>
@@ -453,6 +489,7 @@
               <div class="section-header">
                 <span class="section-dot dot-rec" />
                 <span class="section-name">建议措施</span>
+                <span class="conf-bar" :style="{ color: confidenceColor(getConfidenceScore('recommendations')) }" v-if="detail">{{ confidenceBar('recommendations') }}</span>
                 <el-tag size="small" type="info" effect="plain" v-if="edit.recommendations.length">
                   {{ doneCount }}/{{ edit.recommendations.length }}
                 </el-tag>
@@ -480,13 +517,16 @@
                   <el-select
                     v-model="item.priority"
                     size="small"
-                    style="width: 80px; flex-shrink: 0"
+                    style="width: 110px; flex-shrink: 0"
                     @change="markDirty"
                   >
-                    <el-option label="高" value="high" />
-                    <el-option label="中" value="medium" />
-                    <el-option label="低" value="low" />
+                    <el-option label="⚠️ 紧急/P0" value="high" />
+                    <el-option label="⚡ 短期/P1" value="medium" />
+                    <el-option label="✅ 长期/P2" value="low" />
                   </el-select>
+                  <span class="priority-badge" :class="item.priority">
+                    {{ item.priority === 'high' ? '⚠️ P0' : item.priority === 'medium' ? '⚡ P1' : '✅ P2' }}
+                  </span>
                   <el-button
                     size="small"
                     type="danger"
@@ -509,6 +549,7 @@
               <div class="section-header">
                 <span class="section-dot dot-collab" />
                 <span class="section-name">协作评论</span>
+                <span class="conf-bar" :style="{ color: confidenceColor(getConfidenceScore('collaboration')) }" v-if="detail">{{ confidenceBar('collaboration') }}</span>
                 <el-tag size="small" type="info" effect="plain" v-if="comments.length">
                   {{ comments.length }}
                 </el-tag>
@@ -545,6 +586,40 @@
             </div>
           </el-collapse-item>
         </el-collapse>
+
+        <!-- AI 分析质量信息卡片 -->
+        <div class="card ai-quality-card" v-if="aiQualityStats">
+          <div class="aiq-header">
+            <el-icon :size="16"><InfoFilled /></el-icon>
+            <span>AI 分析质量</span>
+          </div>
+          <div class="aiq-body">
+            <div class="aiq-stat">
+              <span class="aiq-label">平均置信度</span>
+              <span class="aiq-value" :style="{ color: confidenceColor(Number(aiQualityStats.avg)) }">{{ aiQualityStats.avg }}</span>
+            </div>
+            <div class="aiq-stat">
+              <span class="aiq-label">最高</span>
+              <span class="aiq-value" :style="{ color: confidenceColor(aiQualityStats.max) }">{{ aiQualityStats.max }}</span>
+            </div>
+            <div class="aiq-stat">
+              <span class="aiq-label">最低</span>
+              <span class="aiq-value" :style="{ color: confidenceColor(aiQualityStats.min) }">{{ aiQualityStats.min }}</span>
+            </div>
+            <div class="aiq-stat">
+              <span class="aiq-label">高质量 (≥90)</span>
+              <span class="aiq-value" style="color: #67c23a">{{ aiQualityStats.high }}</span>
+            </div>
+            <div class="aiq-stat">
+              <span class="aiq-label">中等 (70-89)</span>
+              <span class="aiq-value" style="color: #409eff">{{ aiQualityStats.medium }}</span>
+            </div>
+            <div class="aiq-stat">
+              <span class="aiq-label">待改进 (&lt;70)</span>
+              <span class="aiq-value" style="color: #e6a23c">{{ aiQualityStats.low }}</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- 未选报告空状态 -->
@@ -609,6 +684,106 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- ===== 增量更新对话框 ===== -->
+    <el-dialog v-model="showRegenerate" title="重新生成草稿" width="500px" destroy-on-close>
+      <div class="reg-hint">
+        <el-icon :size="18" color="#409eff"><InfoFilled /></el-icon>
+        <span>将使用最新的 AI 分析结果重新填充报告内容。</span>
+      </div>
+      <el-radio-group v-model="regenerateMode" style="margin-top: 12px; display: flex; flex-direction: column; gap: 8px;">
+        <el-radio value="all">全部段落（完整替换）</el-radio>
+        <el-radio value="partial">仅更新所选段落</el-radio>
+      </el-radio-group>
+
+      <div class="reg-sections" v-if="regenerateMode === 'partial'">
+        <div class="reg-section-title">选择要更新的段落：</div>
+        <el-checkbox-group v-model="regenerateSections">
+          <div
+            v-for="sec in REGENERATE_SECTIONS"
+            :key="sec.key"
+            class="reg-section-item"
+          >
+            <el-checkbox :label="sec.key" :value="sec.key">
+              <span class="reg-sec-name">{{ sec.label }}</span>
+              <span
+                class="reg-sec-score"
+                :style="{ color: confidenceColor(getConfidenceScore(sec.confKey)) }"
+              >
+                {{ getConfidenceScore(sec.confKey) !== null ? getConfidenceScore(sec.confKey) + ' 分' : '—' }}
+              </span>
+            </el-checkbox>
+          </div>
+        </el-checkbox-group>
+      </div>
+
+      <template #footer>
+        <el-button size="small" @click="showRegenerate = false">取消</el-button>
+        <el-button size="small" type="primary" @click="confirmRegenerate" :loading="regenerating">
+          确认生成
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ===== 版本差异对比面板 ===== -->
+    <el-dialog v-model="showDiff" title="版本差异对比" width="680px" top="5vh" destroy-on-close>
+      <div class="diff-summary" v-if="diffData">
+        <span class="diff-stat diff-changed">变更 {{ diffData.changed?.length || 0 }}</span>
+        <span class="diff-stat diff-added">新增 {{ diffData.added?.length || 0 }}</span>
+        <span class="diff-stat diff-removed">移除 {{ diffData.removed?.length || 0 }}</span>
+      </div>
+
+      <div class="diff-list" v-if="diffData">
+        <!-- 变更 -->
+        <div v-if="diffData.changed?.length" class="diff-group">
+          <div class="diff-group-title">变更的段落</div>
+          <div v-for="item in diffData.changed" :key="item.section" class="diff-item diff-item-changed">
+            <div class="diff-section-label">{{ sectionLabel(item.section) }}</div>
+            <div class="diff-compare">
+              <div class="diff-side diff-old">
+                <div class="diff-side-title">旧版本</div>
+                <div class="diff-side-content">{{ item.old }}</div>
+              </div>
+              <div class="diff-vs">
+                <el-icon :size="20" color="#409eff"><Refresh /></el-icon>
+              </div>
+              <div class="diff-side diff-new">
+                <div class="diff-side-title">新版本</div>
+                <div class="diff-side-content">{{ item.new }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 新增 -->
+        <div v-if="diffData.added?.length" class="diff-group">
+          <div class="diff-group-title">新增的段落</div>
+          <div v-for="item in diffData.added" :key="item.section" class="diff-item diff-item-added">
+            <div class="diff-section-label">{{ sectionLabel(item.section) }}</div>
+            <div class="diff-side-content">{{ item.content }}</div>
+          </div>
+        </div>
+
+        <!-- 移除 -->
+        <div v-if="diffData.removed?.length" class="diff-group">
+          <div class="diff-group-title">移除的段落</div>
+          <div v-for="item in diffData.removed" :key="item.section" class="diff-item diff-item-removed">
+            <div class="diff-section-label">{{ sectionLabel(item.section) }}</div>
+            <div class="diff-side-content">{{ item.content }}</div>
+          </div>
+        </div>
+      </div>
+
+      <div v-else class="diff-empty">
+        <el-empty description="暂无差异数据" :image-size="60" />
+      </div>
+
+      <template #footer>
+        <el-button size="small" @click="showDiff = false">关闭</el-button>
+        <el-button size="small" type="primary" @click="acceptNewVersion">采纳新版本</el-button>
+        <el-button size="small" type="success" @click="editAndSave">手动编辑后保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -646,6 +821,8 @@ const commonSystems = [
 
 // ── 响应式状态 ──
 const reports = ref([])
+const groupedReports = ref([])
+const expandedGroups = ref([])
 const selectedId = ref(null)
 const detail = ref(null)
 const searchKeyword = ref('')
@@ -668,6 +845,25 @@ const createForm = reactive({
 // 发布对话框
 const showPublish = ref(false)
 const publishLevel = ref('technical')
+
+// 增量更新对话框
+const showRegenerate = ref(false)
+const regenerateMode = ref('all')
+const regenerateSections = ref([])
+const regenerating = ref(false)
+
+const REGENERATE_SECTIONS = [
+  { key: 'summary', confKey: 'summary', label: '概要' },
+  { key: 'impact_scope', confKey: 'impact_scope', label: '影响范围' },
+  { key: 'timeline', confKey: 'timeline', label: '时间线' },
+  { key: 'mitre', confKey: 'mitre', label: 'MITRE 战术覆盖' },
+  { key: 'evidence', confKey: 'evidence', label: '证据' },
+  { key: 'recommendations', confKey: 'recommendations', label: '建议措施' },
+]
+
+// 版本差异对比
+const showDiff = ref(false)
+const diffData = ref(null)
 
 // 编辑态（展开的 section）
 const activeSections = ref('summary')
@@ -695,6 +891,16 @@ const filteredReports = computed(() => {
     list = list.filter(r => r.title?.toLowerCase().includes(kw))
   }
   return list
+})
+
+// 按主机分组且支持搜索过滤（用于左侧树形展示）
+const filteredGroupedReports = computed(() => {
+  if (!searchKeyword.value) return groupedReports.value
+  const kw = searchKeyword.value.toLowerCase()
+  return groupedReports.value.map(group => {
+    const filtered = group.reports.filter(r => r.title?.toLowerCase().includes(kw))
+    return { ...group, reports: filtered }
+  }).filter(g => g.reports.length > 0)
 })
 
 const doneCount = computed(() => edit.recommendations.filter(i => i.checked).length)
@@ -761,6 +967,73 @@ function audienceLabel(aud) {
   return map[aud] || aud
 }
 
+function sectionLabel(key) {
+  const map = {
+    summary: '概要',
+    impact_scope: '影响范围',
+    timeline: '时间线',
+    mitre: 'MITRE 战术覆盖',
+    evidence: '证据',
+    recommendations: '建议措施',
+    collaboration: '协作评论'
+  }
+  return map[key] || key
+}
+
+// ── AI 置信度辅助 ──
+function getConfidenceScore(sectionKey) {
+  const raw = detail.value?.confidence_metadata || detail.value?.ai_confidence
+  if (!raw) return null
+  const conf = typeof raw === 'string'
+    ? parseJsonField(raw, {})
+    : raw
+  return conf[sectionKey] ?? null
+}
+
+function confidenceColor(score) {
+  if (score === null || score === undefined) return '#d1d5db'
+  if (score >= 90) return '#67c23a'
+  if (score >= 70) return '#409eff'
+  if (score >= 40) return '#e6a23c'
+  return '#f56c6c'
+}
+
+function confidenceBar(sectionKey) {
+  const score = getConfidenceScore(sectionKey)
+  if (score === null) return ''
+  const filled = score >= 90 ? 7 : score >= 70 ? 6 : score >= 40 ? 4 : 2
+  const empty = 7 - filled
+  return '█'.repeat(filled) + '░'.repeat(empty)
+}
+
+const SECTION_KEYS = {
+  summary: 'summary',
+  impact: 'impact_scope',
+  timeline: 'timeline',
+  mitre: 'mitre',
+  evidence: 'evidence',
+  recommendations: 'recommendations',
+  collaboration: 'collaboration'
+}
+
+// AI 分析质量统计数据
+const aiQualityStats = computed(() => {
+  const raw = detail.value?.confidence_metadata || detail.value?.ai_confidence
+  if (!raw) return null
+  const conf = typeof raw === 'string'
+    ? parseJsonField(raw, {})
+    : raw
+  const scores = Object.values(conf).filter(v => typeof v === 'number')
+  if (!scores.length) return null
+  const avg = (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1)
+  const min = Math.min(...scores)
+  const max = Math.max(...scores)
+  const high = scores.filter(s => s >= 90).length
+  const medium = scores.filter(s => s >= 70 && s < 90).length
+  const low = scores.filter(s => s < 70).length
+  return { avg, min, max, high, medium, low, total: scores.length }
+})
+
 // ── 数据序列化 / 反序列化 ──
 function parseJsonField(val, fallback) {
   if (!val) return fallback
@@ -811,11 +1084,47 @@ async function loadReports() {
     } else {
       console.warn('[loadReports] res?.success is falsy', res)
     }
+    // 同时加载分组数据
+    await fetchGroupedReports()
   } catch (e) {
     console.error('[loadReports] error', e)
-    ElMessage.error('加载报告列表失败')
+    if (!reports.value.length) {
+      ElMessage.error('加载报告列表失败')
+    }
   } finally {
     loading.value = false
+  }
+}
+
+async function fetchGroupedReports() {
+  try {
+    const res = await incidentReportApi.listGroupedByHost(filterStatus.value)
+    if (res?.success) {
+      const groups = res.data?.groups || []
+      groupedReports.value = groups
+
+      // 自动展开：最新草稿所在分组，以及 host_id=0 的案件综合分组
+      const toExpand = new Set()
+      // 找到最新草稿所在 host_id
+      let latestDraftHostId = null
+      let latestTime = ''
+      for (const g of groups) {
+        for (const r of g.reports) {
+          if (r.status === 'draft' && (!latestTime || r.updated_at > latestTime)) {
+            latestTime = r.updated_at
+            latestDraftHostId = g.host_id
+          }
+        }
+      }
+      if (latestDraftHostId !== null) toExpand.add(String(latestDraftHostId))
+      // host_id=0 的案件综合分组始终可见
+      const caseGroup = groups.find(g => g.host_id === 0)
+      if (caseGroup) toExpand.add('0')
+
+      expandedGroups.value = Array.from(toExpand)
+    }
+  } catch (e) {
+    console.error('[fetchGroupedReports] error', e)
   }
 }
 
@@ -895,6 +1204,53 @@ async function confirmPublish() {
   } finally {
     publishing.value = false
   }
+}
+
+async function confirmRegenerate() {
+  if (!selectedId.value) return
+  regenerating.value = true
+  try {
+    const sections = regenerateMode.value === 'all' ? null : regenerateSections.value
+    const res = await incidentReportApi.regenerateFromAi(selectedId.value, sections)
+    if (res?.success) {
+      showRegenerate.value = false
+      ElMessage.success('草稿已重新生成')
+      await selectReport(selectedId.value)
+      await loadReports()
+      // 生成成功后自动弹出差异对比面板
+      await fetchDiff()
+    }
+  } catch (e) {
+    ElMessage.error('重新生成失败')
+  } finally {
+    regenerating.value = false
+  }
+}
+
+async function fetchDiff() {
+  if (!selectedId.value) return
+  try {
+    const res = await incidentReportApi.diffReport(selectedId.value)
+    if (res?.success) {
+      diffData.value = res.data
+      showDiff.value = true
+    }
+  } catch (e) {
+    console.error('[fetchDiff] error', e)
+  }
+}
+
+async function acceptNewVersion() {
+  // 采纳新版本：重新加载详情即可
+  showDiff.value = false
+  ElMessage.success('已采纳新版本')
+  await selectReport(selectedId.value)
+}
+
+async function editAndSave() {
+  // 关闭对比面板，让用户手动编辑后保存
+  showDiff.value = false
+  ElMessage.info('请检查并编辑内容后手动保存')
 }
 
 async function deleteReport() {
@@ -1004,7 +1360,40 @@ function addComment() {
 }
 
 // 导出
+function downloadExport(url, filename) {
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+}
+
 function handleExport(format) {
+  if (!selectedId.value) {
+    ElMessage.warning('请先选择报告')
+    return
+  }
+
+  // 服务器端导出（DOCX / Markdown / JSON）
+  if (format === 'docx') {
+    const url = incidentReportApi.getDocxExportUrl(selectedId.value)
+    downloadExport(url, `${edit.title || '报告'}.docx`)
+    ElMessage.success('正在下载 DOCX 文件')
+    return
+  }
+  if (format === 'json') {
+    const url = incidentReportApi.getJsonExportUrl(selectedId.value)
+    downloadExport(url, `${edit.title || '报告'}.json`)
+    ElMessage.success('正在下载 JSON 文件')
+    return
+  }
+  if (format === 'markdown') {
+    const url = incidentReportApi.getMarkdownExportUrl(selectedId.value)
+    downloadExport(url, `${edit.title || '报告'}.md`)
+    ElMessage.success('正在下载 Markdown 文件')
+    return
+  }
+
+  // 本地客户端导出（PDF / HTML — 原有的 Markdown 导出逻辑保留）
   const title = edit.title || '未命名报告'
   let content = `# ${title}\n\n`
   content += `## 概要\n${edit.summary || '(空)'}\n\n`
@@ -1190,6 +1579,10 @@ onMounted(() => {
 .rec-item:hover { background: #f9fafb; }
 .rec-done :deep(.el-checkbox__label) { text-decoration: line-through; color: #9ca3af; }
 .rec-text-done { text-decoration: line-through; color: #9ca3af; }
+.priority-badge { font-size: 11px; padding: 2px 6px; border-radius: 4px; font-weight: 500; white-space: nowrap; flex-shrink: 0; }
+.priority-badge.high { background: #fef0f0; color: #c0392b; border: 1px solid #fbc4c4; }
+.priority-badge.medium { background: #fdf6ec; color: #d97706; border: 1px solid #fde68a; }
+.priority-badge.low { background: #f0f9eb; color: #2d7d2d; border: 1px solid #b3e19d; }
 
 /* ── 协作评论 ── */
 .comment-list { margin-bottom: 12px; }
@@ -1206,8 +1599,69 @@ onMounted(() => {
 /* ── 发布确认 ── */
 .publish-warn { display: flex; align-items: flex-start; gap: 8px; padding: 12px 14px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; font-size: 13px; color: #92400e; margin-bottom: 16px; }
 
+/* ── 增量更新对话框 ── */
+.reg-hint { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; background: #ecf5ff; border: 1px solid #d9e8ff; border-radius: 6px; font-size: 13px; color: #1f2937; }
+.reg-sections { margin-top: 12px; padding: 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; }
+.reg-section-title { font-size: 13px; font-weight: 500; color: #6b7280; margin-bottom: 8px; }
+.reg-section-item { padding: 6px 8px; border-radius: 4px; transition: background .15s; }
+.reg-section-item:hover { background: #f0f7ff; }
+.reg-section-item :deep(.el-checkbox__label) { display: flex !important; align-items: center; gap: 8px; }
+.reg-sec-name { font-size: 13px; }
+.reg-sec-score { font-size: 11px; font-weight: 500; font-family: 'Courier New', monospace; }
+
+/* ── 版本差异对比 ── */
+.diff-summary { display: flex; gap: 12px; margin-bottom: 16px; }
+.diff-stat { font-size: 13px; font-weight: 500; padding: 4px 12px; border-radius: 12px; }
+.diff-changed { background: #ecf5ff; color: #409eff; }
+.diff-added { background: #f0f9eb; color: #67c23a; }
+.diff-removed { background: #fef0f0; color: #f56c6c; }
+.diff-list { max-height: 450px; overflow-y: auto; }
+.diff-group { margin-bottom: 16px; }
+.diff-group-title { font-size: 14px; font-weight: 600; color: #1f2937; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid #e5e7eb; }
+.diff-item { padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 6px; margin-bottom: 8px; }
+.diff-item-changed { background: #f8faff; border-color: #d9e8ff; }
+.diff-item-added { background: #f0f9eb; border-color: #b3e19d; }
+.diff-item-removed { background: #fef0f0; border-color: #fbc4c4; }
+.diff-section-label { font-size: 12px; font-weight: 500; color: #6b7280; margin-bottom: 6px; }
+.diff-compare { display: flex; gap: 8px; align-items: flex-start; }
+.diff-side { flex: 1; min-width: 0; }
+.diff-side-title { font-size: 11px; color: #9ca3af; margin-bottom: 4px; font-weight: 500; }
+.diff-side-content { font-size: 12px; line-height: 1.5; color: #374151; white-space: pre-wrap; word-break: break-word; max-height: 120px; overflow-y: auto; padding: 6px 8px; background: #fff; border: 1px solid #f0f1f3; border-radius: 4px; }
+.diff-vs { display: flex; align-items: center; padding-top: 24px; flex-shrink: 0; }
+.diff-empty { padding: 20px 0; }
+
 /* ── 滚动条 ── */
 .sb-list::-webkit-scrollbar, .rp-main::-webkit-scrollbar { width: 5px; }
 .sb-list::-webkit-scrollbar-thumb, .rp-main::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 4px; }
 .sb-list::-webkit-scrollbar-track, .rp-main::-webkit-scrollbar-track { background: transparent; }
+
+/* ── 主机分组头部 ── */
+.gh-header { display: flex; align-items: center; gap: 6px; flex: 1; }
+.gh-icon { font-size: 16px; line-height: 1; }
+.gh-hostname { font-size: 13px; font-weight: 500; color: #1f2937; }
+.gh-ip { font-size: 11px; color: #9ca3af; }
+.gh-count { flex-shrink: 0; font-size: 10px !important; height: 18px !important; }
+.gh-label { font-size: 10px; color: #409eff; background: #ecf5ff; padding: 1px 6px; border-radius: 4px; }
+
+/* 分组 collapse 覆盖 — 去除多余边框 */
+.sb-list :deep(.el-collapse) { border: none; }
+.sb-list :deep(.el-collapse-item__header) { height: auto; padding: 8px 4px; border-bottom: 1px solid #f0f1f3; background: transparent; }
+.sb-list :deep(.el-collapse-item__wrap) { border: none; }
+.sb-list :deep(.el-collapse-item__content) { padding: 0 0 4px 4px; }
+.sb-list :deep(.el-collapse-item__arrow) { margin-right: 4px; }
+.sb-list :deep(.el-collapse-item.is-active .el-collapse-item__header) { border-bottom: 1px solid #e5e7eb; }
+
+/* 分组内的报告条目间距微调 */
+.sb-list .rp-item { margin-bottom: 2px; padding: 8px 8px 8px 4px; }
+
+/* ── 置信度条 ── */
+.conf-bar { font-size: 11px; font-family: 'Courier New', monospace; letter-spacing: 1px; margin-right: 4px; }
+
+/* ── AI 分析质量卡片 ── */
+.ai-quality-card { background: #f8faff; border: 1px solid #d9e8ff; border-radius: 8px; padding: 12px 16px; }
+.aiq-header { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; color: #1f2937; margin-bottom: 10px; }
+.aiq-body { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.aiq-stat { display: flex; align-items: center; gap: 6px; min-width: 120px; }
+.aiq-label { font-size: 12px; color: #6b7280; }
+.aiq-value { font-size: 14px; font-weight: 600; font-family: 'Courier New', monospace; }
 </style>

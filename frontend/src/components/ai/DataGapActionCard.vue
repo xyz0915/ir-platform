@@ -6,10 +6,25 @@
     <div v-for="(gap, gi) in dataGaps" :key="gi" class="dg-gap">
       <div class="dg-gap-head">
         <el-tag :type="sevType(gap.severity)" size="small" effect="plain">{{ gap.severity }}</el-tag>
+        <el-tag size="small" :type="gapType(gap.category)" effect="plain" class="dg-type-tag">{{ gap.category }}</el-tag>
         <span class="dg-gap-title">{{ gap.title }}</span>
-        <span class="dg-gap-cat">{{ gap.category }}</span>
       </div>
       <div class="dg-gap-desc">{{ gap.description }}</div>
+      <div class="dg-gap-foot">
+        <el-popconfirm
+          title="确认下发补采任务？"
+          confirm-button-text="确定"
+          cancel-button-text="取消"
+          @confirm="dispatchGap(gap)"
+        >
+          <template #reference>
+            <el-button size="small" type="primary" :loading="dispatching === 'gap-' + gi">
+              一键补采
+            </el-button>
+          </template>
+        </el-popconfirm>
+        <span class="dg-gap-hint">自动采集缺失数据，完成后可刷新查看</span>
+      </div>
 
       <div v-for="(act, ai) in (gap.recommended_actions || [])" :key="ai" class="dg-action">
         <div class="dg-act-row">
@@ -57,6 +72,38 @@ function sevType(s) {
   return m[s] || 'info'
 }
 
+function gapType(cat) {
+  const m = { network_analysis: 'warning', ioc: 'danger', process: 'primary', registry: 'success' }
+  return m[cat] || 'info'
+}
+
+/**
+ * 一键补采：派发该缺口下所有 auto_runnable 的动作
+ */
+async function dispatchGap(gap) {
+  const gi = props.dataGaps.indexOf(gap)
+  dispatching.value = 'gap-' + gi
+  let dispatchedCount = 0
+  try {
+    for (const act of (gap.recommended_actions || [])) {
+      if (!act.auto_runnable) continue
+      await dispatchReadonly(props.hostId, {
+        action_type: act.action_type,
+        target: act.target,
+        command_or_api: act.command_or_api,
+        auto_runnable: true,
+      })
+      dispatchedCount++
+    }
+    ElMessage.success(`补采任务已下发 (${dispatchedCount}项)，请稍后刷新查看`)
+    emit('dispatched', { taskId: null, gap, count: dispatchedCount })
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || e?.message || '补采派发失败')
+  } finally {
+    dispatching.value = ''
+  }
+}
+
 async function copyCmd(cmd) {
   if (!cmd) return
   try {
@@ -96,6 +143,9 @@ async function dispatch(gap, act) {
 .dg-gap-title { font-weight: 600; }
 .dg-gap-cat { margin-left: auto; color: #999; font-size: 12px; }
 .dg-gap-desc { color: #666; font-size: 13px; margin: 4px 0 6px; }
+.dg-gap-foot { display: flex; align-items: center; gap: 8px; margin: 6px 0 8px; }
+.dg-gap-hint { font-size: 11px; color: #999; }
+.dg-type-tag { font-size: 10px !important; }
 .dg-action { background: #fafafa; border-radius: 6px; padding: 8px; margin-bottom: 6px; }
 .dg-act-row { display: flex; align-items: center; gap: 6px; }
 .dg-act-type { font-weight: 600; font-size: 13px; }

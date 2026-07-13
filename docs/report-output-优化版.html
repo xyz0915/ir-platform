@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>报告输出 — 应急响应平台</title>
+  <!-- Element Plus 样式 -->
+  <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: #f3f4f6;
+      color: #1f2937;
+      height: 100vh;
+      overflow: hidden;
+    }
+    #app { height: 100vh; }
+
+    /* ===== 页面布局 ===== */
+    .report-page {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      padding: 20px 24px;
+      max-width: 1440px;
+      margin: 0 auto;
+    }
+    .page-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 16px;
+      flex-shrink: 0;
+    }
+    .page-head-left h2 { margin: 0; font-size: 20px; font-weight: 600; line-height: 1.3; }
+    .page-sub { display: block; font-size: 13px; color: #6b7280; margin-top: 2px; }
+
+    .rp-layout { flex: 1; display: flex; gap: 16px; overflow: hidden; }
+
+    /* ── 左侧边栏 ── */
+    .rp-sidebar {
+      width: 300px; flex-shrink: 0; display: flex; flex-direction: column;
+      background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden;
+    }
+    .sb-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 14px 8px; border-bottom: 1px solid #e5e7eb;
+    }
+    .sb-head-left { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 500; }
+    .sb-search { padding: 8px 14px; }
+    .sb-filter { padding: 0 14px 8px; }
+    .sb-list { flex: 1; overflow-y: auto; padding: 4px 8px; }
+
+    .rp-item {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 10px; border-radius: 6px; cursor: pointer;
+      transition: background 0.15s; margin-bottom: 2px;
+    }
+    .rp-item:hover { background: #f3f4f6; }
+    .rp-item.active { background: #ecfdf5; border-left: 3px solid #409eff; padding-left: 7px; }
+    .rp-item-icon { font-size: 20px; line-height: 1.4; flex-shrink: 0; }
+    .rp-item-body { flex: 1; min-width: 0; }
+    .rp-item-title { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rp-item-meta { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+    .rp-item-date { font-size: 11px; color: #9ca3af; }
+
+    /* ── 右侧编辑区 ── */
+    .rp-main { flex: 1; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; min-height: 0; }
+    .rp-main-empty { display: flex; align-items: center; justify-content: center; }
+
+    /* ── 工具栏 ── */
+    .toolbar-card {
+      background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
+      padding: 14px 16px; flex-shrink: 0;
+    }
+    .toolbar-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+    .toolbar-title-row { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 200px; }
+    .toolbar-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+    .title-input .el-input__wrapper {
+      background: transparent; box-shadow: none !important;
+      border-bottom: 2px solid transparent; border-radius: 0; transition: border-color 0.2s;
+    }
+    .title-input .el-input__wrapper:hover { border-bottom-color: #a0cfff; }
+    .title-input .el-input__wrapper.is-focus { border-bottom-color: #409eff; }
+    .title-input.title-saved .el-input__wrapper { border-bottom-color: #b3e19d; }
+    .title-input .el-input__inner { font-size: 18px !important; font-weight: 600; height: 40px; }
+
+    .toolbar-meta {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-top: 10px; padding-top: 10px; border-top: 1px solid #eee; flex-wrap: wrap; gap: 6px;
+    }
+    .meta-left { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .meta-badge { font-size: 12px; color: #6b7280; display: flex; align-items: center; gap: 4px; }
+    .meta-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .meta-time { font-size: 11px; color: #9ca3af; }
+    .saved-indicator { color: #67c23a; display: flex; align-items: center; gap: 3px; }
+
+    /* ── 折叠编辑器 ── */
+    .editor-collapse { border: none; background: transparent; }
+    .editor-collapse .el-collapse-item__header {
+      height: auto !important; padding: 10px 12px;
+      background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
+      margin-bottom: 4px; transition: border-color 0.2s, box-shadow 0.2s; line-height: 1.4;
+    }
+    .editor-collapse .el-collapse-item__header:hover { border-color: #d1d5db; box-shadow: 0 1px 4px rgba(0,0,0,0.04); }
+    .editor-collapse .el-collapse-item__wrap { border: none; background: transparent; }
+    .editor-collapse .el-collapse-item__content { padding: 0; }
+    .editor-collapse .el-collapse-item.is-active .el-collapse-item__header {
+      border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom: none;
+    }
+
+    .section-header { display: flex; align-items: center; gap: 8px; flex: 1; }
+    .section-dot { width: 4px; height: 20px; border-radius: 2px; flex-shrink: 0; }
+    .dot-summary { background: #409eff; }
+    .dot-impact { background: #e6a23c; }
+    .dot-timeline { background: #67c23a; }
+    .dot-mitre { background: #9b59b6; }
+    .dot-evidence { background: #f56c6c; }
+    .dot-rec { background: #1890ff; }
+    .dot-collab { background: #13c2c2; }
+    .section-name { font-size: 14px; font-weight: 500; }
+
+    .section-body {
+      padding: 16px; background: #fff;
+      border: 1px solid #e5e7eb; border-top: none;
+      border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; margin-bottom: 4px;
+    }
+    .section-field { margin-bottom: 14px; }
+    .field-label { display: block; font-size: 12px; font-weight: 500; color: #6b7280; margin-bottom: 6px; }
+    .section-tip { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 12px; color: #9ca3af; }
+
+    /* ── 时间线 ── */
+    .tl-event { display: flex; gap: 12px; margin-bottom: 14px; padding-left: 4px; }
+    .tl-event-bar { display: flex; flex-direction: column; align-items: center; width: 20px; flex-shrink: 0; }
+    .tl-index {
+      width: 20px; height: 20px; border-radius: 50%; background: #d9ecff; color: #409eff;
+      font-size: 11px; font-weight: 600; display: flex; align-items: center; justify-content: center;
+    }
+    .tl-connector { width: 2px; flex: 1; background: #e5e7eb; min-height: 20px; margin: 4px 0; }
+    .tl-event-body { flex: 1; min-width: 0; }
+    .tl-event-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+    /* ── MITRE ── */
+    .mitre-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
+    .mitre-item {
+      padding: 8px 10px; border: 1px solid #e5e7eb; border-radius: 6px;
+      cursor: pointer; transition: all 0.15s; background: #fafafa;
+    }
+    .mitre-item:hover { border-color: #a0cfff; background: #ecf5ff; }
+    .mitre-item.active { border-color: #409eff; background: #ecf5ff; }
+    .mitre-item .el-checkbox__label { display: flex !important; flex-direction: column; gap: 2px; }
+    .mitre-id { font-size: 10px; color: #9ca3af; font-family: monospace; }
+    .mitre-name { font-size: 13px; font-weight: 500; }
+
+    /* ── 建议措施 ── */
+    .rec-list { margin-bottom: 10px; }
+    .rec-item {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+      padding: 6px 8px; border: 1px solid #eee; border-radius: 6px; transition: background 0.15s;
+    }
+    .rec-item:hover { background: #f9fafb; }
+    .rec-done-text { text-decoration: line-through; color: #9ca3af; }
+
+    /* ── 评论 ── */
+    .comment-list { margin-bottom: 12px; }
+    .comment-item { display: flex; gap: 10px; margin-bottom: 12px; }
+    .comment-avatar {
+      width: 32px; height: 32px; border-radius: 50%; background: #d9ecff; color: #409eff;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 600; flex-shrink: 0;
+    }
+    .comment-content { flex: 1; min-width: 0; }
+    .comment-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+    .comment-author { font-size: 13px; font-weight: 500; }
+    .comment-time { font-size: 11px; color: #9ca3af; }
+    .comment-text { font-size: 13px; line-height: 1.5; color: #333; white-space: pre-wrap; }
+    .comment-empty { padding: 10px 0; }
+    .comment-input-row { display: flex; gap: 8px; }
+
+    /* ── 发布确认 ── */
+    .publish-warn {
+      display: flex; align-items: flex-start; gap: 8px;
+      padding: 12px 14px; background: #fffbeb; border: 1px solid #fde68a;
+      border-radius: 6px; font-size: 13px; color: #92400e; margin-bottom: 16px;
+    }
+
+    /* ── 滚动条 ── */
+    .sb-list::-webkit-scrollbar, .rp-main::-webkit-scrollbar { width: 5px; }
+    .sb-list::-webkit-scrollbar-thumb, .rp-main::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 4px; }
+    .sb-list::-webkit-scrollbar-track, .rp-main::-webkit-scrollbar-track { background: transparent; }
+  </style>
+</head>
+<body>
+<div id="app">
+  <div class="report-page">
+    <!-- ===== 顶部导航栏 ===== -->
+    <div class="page-head">
+      <div class="page-head-left">
+        <h2>报告输出</h2>
+        <span class="page-sub">应急响应报告 · 取证简报 · 合规审计</span>
+      </div>
+      <div class="page-head-right">
+        <el-button size="small" circle @click="loadReports">
+          <el-icon><Refresh /></el-icon>
+        </el-button>
+      </div>
+    </div>
+
+    <div class="rp-layout">
+      <!-- ===== 左侧报告列表 ===== -->
+      <div class="rp-sidebar">
+        <div class="sb-head">
+          <div class="sb-head-left">
+            <el-icon :size="16"><Document /></el-icon>
+            <span>报告列表</span>
+            <el-tag size="small" type="info" round>{{ reports.length }}</el-tag>
+          </div>
+          <el-button type="primary" size="small" @click="showCreate = true">
+            <el-icon :size="14"><Plus /></el-icon>
+            新建
+          </el-button>
+        </div>
+        <div class="sb-search">
+          <el-input v-model="searchKeyword" placeholder="搜索报告标题..." size="small" clearable>
+            <template #prefix><el-icon><Search /></el-icon></template>
+          </el-input>
+        </div>
+        <div class="sb-filter">
+          <el-radio-group v-model="filterStatus" size="small" @change="loadReports">
+            <el-radio-button value="all">全部</el-radio-button>
+            <el-radio-button value="draft">草稿</el-radio-button>
+            <el-radio-button value="review">待审</el-radio-button>
+            <el-radio-button value="published">已发</el-radio-button>
+          </el-radio-group>
+        </div>
+        <div class="sb-list">
+          <div v-for="r in filteredReports" :key="r.id"
+               :class="['rp-item', { active: selectedId === r.id }]"
+               @click="selectReport(r.id)">
+            <div class="rp-item-icon">{{ reportIcon(r.report_type) }}</div>
+            <div class="rp-item-body">
+              <div class="rp-item-title" :title="r.title">{{ r.title }}</div>
+              <div class="rp-item-meta">
+                <el-tag size="small" :type="statusTagType(r.status)" effect="plain" round>
+                  {{ statusLabel(r.status) }}
+                </el-tag>
+                <span class="rp-item-date">{{ (r.updated_at || '').slice(0, 10) }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== 右侧主编辑区 ===== -->
+      <div class="rp-main" v-if="detail">
+        <!-- ── 工具栏卡片 ── -->
+        <div class="toolbar-card">
+          <div class="toolbar-row">
+            <div class="toolbar-title-row">
+              <el-input v-model="edit.title" placeholder="输入报告标题..." size="large"
+                        class="title-input" :class="{ 'title-saved': !dirty && edit.title }"
+                        @input="markDirty" />
+              <el-button :type="dirty ? 'warning' : 'default'" size="small"
+                         :disabled="!dirty" @click="saveDraft" circle>
+                <el-icon><Edit v-if="dirty" /><Check v-else /></el-icon>
+              </el-button>
+            </div>
+            <div class="toolbar-actions">
+              <el-button size="small" @click="saveDraft" :disabled="!dirty">
+                <el-icon><Edit /></el-icon> 保存
+              </el-button>
+              <el-button size="small" type="primary"
+                         :disabled="detail.status !== 'draft'" @click="submitForReview">
+                <el-icon><Upload /></el-icon> 提交审核
+              </el-button>
+              <el-button size="small" type="success"
+                         :disabled="detail.status !== 'review'" @click="showPublish = true">
+                <el-icon><Select /></el-icon> 发布
+              </el-button>
+              <el-dropdown trigger="click" @command="handleExport">
+                <el-button size="small">
+                  <el-icon><Download /></el-icon> 导出 <el-icon><ArrowDown /></el-icon>
+                </el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="pdf">导出 PDF</el-dropdown-item>
+                    <el-dropdown-item command="html">导出 HTML</el-dropdown-item>
+                    <el-dropdown-item command="markdown">导出 Markdown</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+              <el-popconfirm title="确定删除此报告？" confirm-button-text="删除" cancel-button-text="取消" @confirm="deleteReport">
+                <template #reference>
+                  <el-button size="small" type="danger" plain>
+                    <el-icon><Delete /></el-icon>
+                  </el-button>
+                </template>
+              </el-popconfirm>
+            </div>
+          </div>
+          <!-- 元信息栏 -->
+          <div class="toolbar-meta">
+            <div class="meta-left">
+              <span class="meta-badge">
+                状态：<el-tag size="small" :type="statusTagType(detail.status)" effect="dark">{{ statusLabel(detail.status) }}</el-tag>
+              </span>
+              <span class="meta-badge">
+                类型：<el-tag size="small">{{ typeLabel(detail.report_type) }}</el-tag>
+              </span>
+              <span class="meta-badge">
+                读者：<el-tag size="small">{{ audienceLabel(detail.audience) }}</el-tag>
+              </span>
+            </div>
+            <div class="meta-right">
+              <span class="meta-time">创建：{{ (detail.created_at || '').slice(0, 16) }}</span>
+              <span class="meta-time">更新：{{ (detail.updated_at || '').slice(0, 16) }}</span>
+              <span v-if="savedAt" class="saved-indicator">
+                <el-icon><Check /></el-icon> {{ savedAt }}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── 7段折叠编辑器 ── -->
+        <el-collapse v-model="activeSection" accordion class="editor-collapse">
+
+          <!-- ① 概要 -->
+          <el-collapse-item name="summary">
+            <template #title>
+              <div class="section-header">
+                <span class="section-dot dot-summary"></span>
+                <span class="section-name">概要</span>
+                <el-tag size="small" type="info" effect="plain" v-if="edit.summary && edit.summary.length">
+                  {{ edit.summary.length }} 字
+                </el-tag>
+              </div>
+            </template>
+            <div class="section-body">
+              <el-input v-model="edit.summary" type="textarea" :rows="6"
+                        placeholder="描述安全事件的核心概要信息，包括事件类型、发生时间、影响程度等关键要点..."
+                        @input="markDirty" maxlength="2000" show-word-limit />
+            </div>
+          </el-collapse-item>
+
+          <!-- ② 影响范围 -->
+          <el-collapse-item name="impact">
+            <template #title>
+              <div class="section-header">
+                <span class="section-dot dot-impact"></span>
+                <span class="section-name">影响范围</span>
+                <el-tag size="small" type="info" effect="plain" v-if="edit.impactScope.affected_systems && edit.impactScope.affected_systems.length">
+                  {{ edit.impactScope.affected_systems.length }} 个系统
+                </el-tag>
+              </div>
+            </template>
+            <div class="section-body">
+              <div class="section-field">
+                <label class="field-label">影响范围类型</label>
+                <el-radio-group v-model="edit.impactScope.scope_type" @change="markDirty">
+                  <el-radio value="internal">内部网络</el-radio>
+                  <el-radio value="external">外部服务</el-radio>
+                  <el-radio value="both">内部 + 外部</el-radio>
+                </el-radio-group>
+              </div>
+              <div class="section-field">
+                <label class="field-label">受影响系统</label>
+                <el-select v-model="edit.impactScope.affected_systems" multiple filterable
+                           allow-create default-first-option
+                           placeholder="输入系统名称后回车添加" style="width:100%" @change="markDirty">
+                  <el-option v-for="sys in commonSystems" :key="sys" :label="sys" :value="sys" />
+                </el-select>
+              </div>
+              <div class="section-field">
+                <label class="field-label">业务影响分析</label>
+                <el-input v-model="edit.impactScope.business_impact" type="textarea" :rows="3"
+                          placeholder="描述对业务运营、数据机密性/完整性/可用性的影响..." @input="markDirty" />
+              </div>
+              <div class="section-field">
+                <label class="field-label">经济损失估算</label>
+                <el-input v-model="edit.impactScope.financial_estimate"
+                          placeholder="如：¥50,000-¥100,000 或 待评估" @input="markDirty" />
+              </div>
+            </div>
+          </el-collapse-item>
+
+          <!-- ③ 时间线 -->
+          <el-collapse-item name="timeline">
+            <template #title>
+              <div class="section-header">
+                <span class="section-dot dot-timeline"></span>
+                <span class="section-name">时间线</span>
+                <el-tag size="small" type="info" effect="plain" v-if="edit.timeline && edit.timeline.length">
+                  {{ edit.timeline.length }} 个事件
+                </el-tag>
+              </div>
+            </template>
+            <div class="section-body">
+              <div v-for="(evt, idx) in edit.timeline" :key="idx" class="tl-event">
+                <div class="tl-event-bar">
+                  <span class="tl-index">{{ idx + 1 }}</span>
+                  <span class="tl-connector"></span>
+                </div>
+                <div class="tl-event-body">
+                  <div class="tl-event-row">
+                    <el-date-picker v-model="evt.time" type="datetime" placeholder="事件时间"
+                                    size="small" style="width:180px"
+                                    value-format="YYYY-MM-DD HH:mm" @change="markDirty" />
+                    <el-select v-model="evt.severity" size="small" style="width:100px"
+                               placeholder="级别" @change="markDirty">
+                      <el-option label="严重" value="critical" />
+                      <el-option label="高危" value="high" />
+                      <el-option label="中危" value="medium" />
+                      <el-option label="低危" value="low" />
+                      <el-option label="信息" value="info" />
+                    </el-select>
+                    <el-button size="small" type="danger" link @click="removeTimelineEvent(idx)">
+                      <el-icon><Delete /></el-icon>
+                    </el-button>
+                  </div>
+                  <el-input v-model="evt.event" placeholder="事件名称" size="small" style="margin-top:6px" @input="markDirty" />
+                  <el-input v-model="evt.description" type="textarea" :rows="2" placeholder="事件描述" style="margin-top:6px" @input="markDirty" />
+                </div>
+              </div>
+              <el-button size="small" @click="addTimelineEvent">
+                <el-icon><Plus /></el-icon> 添加事件
+              </el-button>
+            </div>
+          </el-collapse-item>
+
+          <!-- ④ MITRE 战术 -->
+          <el-collapse-item name="mitre">
+            <template #title>
+              <div class="section-header">
+                <span class="section-dot dot-mitre"></span>
+                <span class="section-name">MITRE ATT&CK 战术覆盖</span>
+                <el-tag size="small" type="info" effect="plain" v-if="edit.mitreTactics && edit.mitreTactics.length">
+                  已选 {{ edit.mitreTactics.length }}
+                </el-tag>
+              </div>
+            </template>
+            <div class="section-body">
+              <div class="mitre-grid">
+                <label v-for="t in mitreTacticsList" :key="t.id"
+                       :class="['mitre-item', { active: edit.mitreTactics.includes(t.id) }]">
+                  <el-checkbox :model-value="edit.mitreTactics.includes(t.id)" @change="toggleMitre(t.id)">
+                    <span class="mitre-id">{{ t.id }}</span>
+                    <span class="mitre-name">{{ t.name }}</span>
+                  </el-checkbox>
+                </label>
+              </div>
+            </div>
+          </el-collapse-item>
+
+          <!-- ⑤ 证据 -->
+          <el-collapse-item name="evidence">
+            <template #title>
+              <div class="section-header">
+                <span class="section-dot dot-evidence"></span>
+                <span class="section-name">证据</span>
+                <el-tag size="small" type="info" effect="plain" v-if="edit.evidence && edit.evidence.length">
+                  {{ edit.evidence.length }} 字
+                </el-tag>
+              </div>
+            </template>
+            <div class="section-body">
+              <el-input v-model="edit.evidence" type="textarea" :rows="8"
+                        placeholder="记录取证发现、日志片段、文件哈希、网络连接等关键证据..."
+                        @input="markDirty" maxlength="5000" show-word-limit />
+              <div class="section-tip">
+                <el-icon><InfoFilled /></el-icon>
+                <span>提示：详细的取证数据可在主机分析 Tab 中查看，此处仅记录关键摘要</span>
+              </div>
+            </div>
+          </el-collapse-item>
+
+          <!-- ⑥ 建议措施 -->
+          <el-collapse-item name="recommendations">
+            <template #title>
+              <div class="section-header">
+                <span class="section-dot dot-rec"></span>
+                <span class="section-name">建议措施</span>
+                <el-tag size="small" type="info" effect="plain" v-if="edit.recommendations && edit.recommendations.length">
+                  {{ doneCount }}/{{ edit.recommendations.length }}
+                </el-tag>
+              </div>
+            </template>
+            <div class="section-body">
+              <div class="rec-list">
+                <div v-for="(item, idx) in edit.recommendations" :key="idx" class="rec-item">
+                  <el-checkbox v-model="item.checked" @change="markDirty" />
+                  <el-input v-model="item.text" placeholder="输入处置措施..."
+                            :class="{ 'rec-done-text': item.checked }" @input="markDirty" />
+                  <el-select v-model="item.priority" size="small" style="width:80px;flex-shrink:0" @change="markDirty">
+                    <el-option label="高" value="high" />
+                    <el-option label="中" value="medium" />
+                    <el-option label="低" value="low" />
+                  </el-select>
+                  <el-button size="small" type="danger" link @click="removeRec(idx)">
+                    <el-icon><Delete /></el-icon>
+                  </el-button>
+                </div>
+              </div>
+              <el-button size="small" @click="addRec">
+                <el-icon><Plus /></el-icon> 添加措施
+              </el-button>
+            </div>
+          </el-collapse-item>
+
+          <!-- ⑦ 协作评论 -->
+          <el-collapse-item name="collaboration">
+            <template #title>
+              <div class="section-header">
+                <span class="section-dot dot-collab"></span>
+                <span class="section-name">协作评论</span>
+                <el-tag size="small" type="info" effect="plain" v-if="comments && comments.length">
+                  {{ comments.length }}
+                </el-tag>
+              </div>
+            </template>
+            <div class="section-body">
+              <div class="comment-list" v-if="comments && comments.length">
+                <div v-for="(c, idx) in comments" :key="idx" class="comment-item">
+                  <div class="comment-avatar">{{ (c.author || '?').charAt(0) }}</div>
+                  <div class="comment-content">
+                    <div class="comment-header">
+                      <span class="comment-author">{{ c.author || '匿名' }}</span>
+                      <span class="comment-time">{{ c.time }}</span>
+                    </div>
+                    <div class="comment-text">{{ c.text }}</div>
+                  </div>
+                </div>
+              </div>
+              <div v-else class="comment-empty">
+                <el-empty description="暂无评论" :image-size="60" />
+              </div>
+              <div class="comment-input-row">
+                <el-input v-model="newComment" placeholder="输入评论内容..." size="small" @keyup.enter="addComment" />
+                <el-button size="small" type="primary" @click="addComment" :disabled="!newComment.trim()">发送</el-button>
+              </div>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
+      </div>
+
+      <!-- ===== 右侧空状态 ===== -->
+      <div class="rp-main rp-main-empty" v-else>
+        <el-empty description="选择或创建一份报告开始编辑" :image-size="100">
+          <el-button type="primary" @click="showCreate = true">
+            <el-icon><Plus /></el-icon> 新建报告
+          </el-button>
+        </el-empty>
+      </div>
+    </div>
+
+    <!-- ===== 新建对话框 ===== -->
+    <el-dialog v-model="showCreate" title="新建报告" width="480px" :close-on-click-modal="false">
+      <el-form label-position="top" size="small">
+        <el-form-item label="报告标题">
+          <el-input v-model="createForm.title" placeholder="输入报告标题" />
+        </el-form-item>
+        <el-form-item label="报告类型">
+          <el-select v-model="createForm.report_type" style="width:100%">
+            <el-option label="应急响应报告" value="emergency" />
+            <el-option label="取证分析简报" value="forensic" />
+            <el-option label="合规审计报告" value="compliance" />
+            <el-option label="安全态势报告" value="situation" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="目标读者">
+          <el-select v-model="createForm.audience" style="width:100%">
+            <el-option label="管理层" value="leader" />
+            <el-option label="技术人员" value="technical" />
+            <el-option label="客户" value="client" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button size="small" @click="showCreate = false">取消</el-button>
+        <el-button size="small" type="primary" @click="createReport">创建</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ===== 发布对话框 ===== -->
+    <el-dialog v-model="showPublish" title="发布确认" width="420px">
+      <div class="publish-warn">
+        <el-icon :size="20" color="#d97706"><WarningFilled /></el-icon>
+        <span>发布后报告将进入"已发布"状态，内容锁定不可直接编辑。</span>
+      </div>
+      <el-form label-position="top" size="small">
+        <el-form-item label="报告级别">
+          <el-radio-group v-model="publishLevel">
+            <el-radio value="executive">管理层摘要</el-radio>
+            <el-radio value="technical">技术详细报告</el-radio>
+          </el-radio-group>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button size="small" @click="showPublish = false">取消</el-button>
+        <el-button size="small" type="success" @click="confirmPublish">确认发布</el-button>
+      </template>
+    </el-dialog>
+  </div>
+</div>
+
+<!-- Vue 3 + Element Plus + Icons CDN -->
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://unpkg.com/element-plus/dist/index.full.min.js"></script>
+<script src="https://unpkg.com/@element-plus/icons-vue"></script>
+<script>
+const { createApp, ref, reactive, computed } = Vue
+
+// ===== MITRE 战术列表 =====
+const mitreTacticsList = [
+  { id: 'TA0001', name: '初始访问' }, { id: 'TA0002', name: '执行' },
+  { id: 'TA0003', name: '持久化' }, { id: 'TA0004', name: '权限提升' },
+  { id: 'TA0005', name: '防御规避' }, { id: 'TA0006', name: '凭据访问' },
+  { id: 'TA0007', name: '发现' }, { id: 'TA0008', name: '横向移动' },
+  { id: 'TA0009', name: '收集' }, { id: 'TA0010', name: '命令与控制' },
+  { id: 'TA0011', name: '数据渗出' }, { id: 'TA0040', name: '影响' },
+]
+const commonSystems = [
+  '域控服务器', '邮件服务器', '文件服务器', 'Web 服务器',
+  '数据库服务器', 'ERP 系统', 'OA 系统', '堡垒机',
+  '终端用户设备', '网络设备', '安全设备',
+]
+
+// ===== Root Component =====
+const RootComp = {
+  setup() {
+    const reports = ref([])
+    const selectedId = ref(null)
+    const detail = ref(null)
+    const searchKeyword = ref('')
+    const filterStatus = ref('all')
+    const dirty = ref(false)
+    const savedAt = ref('')
+    const showCreate = ref(false)
+    const showPublish = ref(false)
+    const activeSection = ref('summary')
+    const newComment = ref('')
+    const comments = ref([])
+    const publishLevel = ref('technical')
+
+    const createForm = reactive({ title: '', report_type: 'emergency', audience: 'leader' })
+    const edit = reactive({
+      title: '',
+      summary: '',
+      impactScope: { scope_type: 'internal', affected_systems: [], business_impact: '', financial_estimate: '' },
+      timeline: [],
+      mitreTactics: [],
+      evidence: '',
+      recommendations: [],
+    })
+
+    // ── Mock 报告数据 ──
+    reports.value = [
+      { id: 1, title: 'DC-01 域控服务器应急响应报告', report_type: 'emergency', status: 'draft', audience: 'leader', created_at: '2026-07-12T04:10:00', updated_at: '2026-07-13T10:30:00' },
+      { id: 2, title: 'Web 服务器入侵取证分析简报', report_type: 'forensic', status: 'review', audience: 'technical', created_at: '2026-07-11T08:00:00', updated_at: '2026-07-12T14:20:00' },
+      { id: 3, title: 'Q2 季度安全合规审计报告', report_type: 'compliance', status: 'published', audience: 'leader', created_at: '2026-07-01T09:00:00', updated_at: '2026-07-05T16:45:00' },
+      { id: 4, title: '钓鱼邮件攻击安全态势周报', report_type: 'situation', status: 'draft', audience: 'client', created_at: '2026-07-10T11:00:00', updated_at: '2026-07-10T11:00:00' },
+      { id: 5, title: '数据库服务器慢查询分析报告', report_type: 'emergency', status: 'published', audience: 'technical', created_at: '2026-07-08T15:30:00', updated_at: '2026-07-09T09:15:00' },
+    ]
+
+    // ── 选中第一个报告 ──
+    function loadDetailIntoEdit(r) {
+      edit.title = r.title
+      edit.summary = '2026年7月12日凌晨3时15分，安全运营中心（SOC）监测到异常网络流量，经分析确认域控服务器 DC-01 已被远程控制。攻击者通过鱼叉式钓鱼邮件获取初始访问权限后，利用 CobaltStrike Beacon 建立了持久化 C2 通道，并在内网横向移动。目前已经隔离受控主机，事件仍在进一步调查中。'
+      edit.impactScope = { scope_type: 'both', affected_systems: ['DC-01', 'File-Srv-02', 'DB-Master'], business_impact: '域认证服务中断2小时，部分业务系统无法正常登录。涉及财务、HR 核心系统的认证依赖，影响约 200 名用户的正常工作。', financial_estimate: '¥80,000-¥150,000' }
+      edit.timeline = [
+        { time: '2026-07-12 03:15', event: '首次检测到异常流量', description: 'IDS 告警：从外部 IP 向内部服务器 443 端口发起大量 TLS 握手请求', severity: 'critical' },
+        { time: '2026-07-12 03:42', event: '确认失陷主机', description: 'EDR 检测到 DC-01 域控服务器出现异常进程 spawn', severity: 'critical' },
+        { time: '2026-07-12 04:10', event: '开始应急响应', description: '安全团队启动应急响应流程，隔离 DC-01 网络', severity: 'high' },
+      ]
+      edit.mitreTactics = ['TA0001', 'TA0002', 'TA0003', 'TA0005', 'TA0008']
+      edit.evidence = '1. 鱼叉式钓鱼邮件样本 (phish_20260712.eml)\n2. CobaltStrike Beacon 配置文件解析\n3. 异常 RDP 登录日志 (Event ID 4625, 4624)\n4. 横向移动 SMB 连接日志 (Event ID 5140)\n5. DC-01 内存快照 (mem_dump_20260712.raw)'
+      edit.recommendations = [
+        { text: '重置所有受影响的域账号密码', checked: true, priority: 'high' },
+        { text: '对 DC-01 进行全盘取证镜像', checked: true, priority: 'high' },
+        { text: '排查横向移动痕迹，检查其他域控服务器', checked: false, priority: 'high' },
+        { text: '更新 EDR 规则，增加 CobaltStrike 检测签名', checked: false, priority: 'medium' },
+      ]
+      comments.value = [
+        { author: '张三', text: '建议在时间线中补充首次钓鱼邮件投递的时间点', time: '2026/7/12 14:30' },
+        { author: '李四', text: '已在邮件网关中查到相关记录，时间约为 7/11 22:00', time: '2026/7/12 15:10' },
+      ]
+      dirty.value = false
+    }
+
+    function selectReport(id) {
+      selectedId.value = id
+      const r = reports.value.find(x => x.id === id)
+      if (r) {
+        detail.value = { ...r }
+        loadDetailIntoEdit(r)
+        activeSection.value = 'summary'
+      }
+    }
+    selectReport(1)
+
+    // ── 计算属性 ──
+    const filteredReports = computed(() => {
+      let list = reports.value
+      if (searchKeyword.value) {
+        const kw = searchKeyword.value.toLowerCase()
+        list = list.filter(r => r.title && r.title.toLowerCase().includes(kw))
+      }
+      if (filterStatus.value !== 'all') {
+        list = list.filter(r => r.status === filterStatus.value)
+      }
+      return list
+    })
+    const doneCount = computed(() => {
+      if (!edit.recommendations) return 0
+      return edit.recommendations.filter(i => i.checked).length
+    })
+
+    // ── 辅助函数 ──
+    function reportIcon(type) {
+      return { emergency: '🚨', forensic: '🔍', compliance: '📋', situation: '📊' }[type] || '📄'
+    }
+    function statusTagType(s) { return { draft: 'info', review: 'warning', published: 'success' }[s] || 'info' }
+    function statusLabel(s) { return { draft: '草稿', review: '待审核', published: '已发布' }[s] || s }
+    function typeLabel(t) { return { emergency: '应急响应', forensic: '取证分析', compliance: '合规审计', situation: '安全态势' }[t] || t }
+    function audienceLabel(a) { return { leader: '管理层', technical: '技术人员', client: '客户' }[a] || a }
+
+    // ── 操作方法 ──
+    function markDirty() { dirty.value = true }
+    function loadReports() { /* mock */ }
+    function saveDraft() {
+      if (!dirty.value) return
+      dirty.value = false
+      savedAt.value = new Date().toLocaleTimeString()
+      ElementPlus.ElMessage.success('草稿保存成功')
+    }
+    function submitForReview() {
+      if (detail.value) detail.value.status = 'review'
+      ElementPlus.ElMessage.success('已提交审核')
+    }
+    function confirmPublish() {
+      if (detail.value) detail.value.status = 'published'
+      showPublish.value = false
+      ElementPlus.ElMessage.success('报告已发布')
+    }
+    function deleteReport() {
+      if (!detail.value) return
+      const idx = reports.value.findIndex(r => r.id === detail.value.id)
+      if (idx > -1) reports.value.splice(idx, 1)
+      detail.value = null; selectedId.value = null
+      ElementPlus.ElMessage.success('报告已删除')
+    }
+    function createReport() {
+      if (!createForm.title.trim()) { ElementPlus.ElMessage.warning('请输入报告标题'); return }
+      const newId = Date.now()
+      reports.value.unshift({ id: newId, title: createForm.title, report_type: createForm.report_type, status: 'draft', audience: createForm.audience, created_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      showCreate.value = false; createForm.title = ''
+      ElementPlus.ElMessage.success('报告创建成功')
+      selectReport(newId)
+    }
+    function addTimelineEvent() {
+      edit.timeline.push({ time: '', event: '', description: '', severity: 'medium' }); markDirty()
+    }
+    function removeTimelineEvent(idx) { edit.timeline.splice(idx, 1); markDirty() }
+    function toggleMitre(id) {
+      const idx = edit.mitreTactics.indexOf(id)
+      if (idx > -1) edit.mitreTactics.splice(idx, 1); else edit.mitreTactics.push(id)
+      markDirty()
+    }
+    function addRec() { edit.recommendations.push({ text: '', checked: false, priority: 'medium' }); markDirty() }
+    function removeRec(idx) { edit.recommendations.splice(idx, 1); markDirty() }
+    function addComment() {
+      const text = newComment.value.trim()
+      if (!text) return
+      comments.value.push({ author: '当前用户', text, time: new Date().toLocaleString() })
+      newComment.value = ''
+    }
+    function handleExport(fmt) { ElementPlus.ElMessage.success(`报告已导出为 ${fmt.toUpperCase()}`) }
+
+    return {
+      reports, selectedId, detail, searchKeyword, filterStatus,
+      dirty, savedAt, showCreate, showPublish, activeSection,
+      createForm, edit, newComment, comments, publishLevel,
+      mitreTacticsList, commonSystems,
+      filteredReports, doneCount,
+      reportIcon, statusTagType, statusLabel, typeLabel, audienceLabel,
+      loadReports, selectReport, saveDraft, submitForReview,
+      confirmPublish, deleteReport, createReport,
+      markDirty, addTimelineEvent, removeTimelineEvent,
+      toggleMitre, addRec, removeRec, addComment, handleExport,
+    }
+  }
+}
+
+// 创建应用并注册图标 + 插件
+const app = createApp(RootComp)
+const icons = ElementPlusIconsVue || {}
+for (const [key, component] of Object.entries(icons)) {
+  app.component(key, component)
+}
+app.use(ElementPlus)
+app.mount('#app')
+</script>
+</body>
+</html>

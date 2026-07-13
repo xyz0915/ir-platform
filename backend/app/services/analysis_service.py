@@ -301,7 +301,8 @@ class AnalysisService:
         hash_rules = [
             r for r in rules
             if r.get("rule_type") == "list"
-            and (r.get("condition") or {}).get("field") == "file_hash"
+            and isinstance(r.get("condition"), dict)
+            and r["condition"].get("field") == "file_hash"
         ]
         if hash_rules:
             fh_rows = FileHash.list_by_host(host_id) or []

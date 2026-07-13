@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>报告输出 — 应急响应平台</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;background:#f3f4f6;color:#1f2937;height:100vh;overflow:hidden}
+
+/* ── 页面容器 ── */
+.app{height:100vh;display:flex;flex-direction:column;padding:20px 24px;max-width:1440px;margin:0 auto}
+
+/* ── 顶栏 ── */
+.head{display:flex;align-items:center;justify-content:space-between;padding-bottom:16px;flex-shrink:0}
+.head-left h2{margin:0;font-size:20px;font-weight:600}
+.head-sub{font-size:13px;color:#6b7280;margin-top:2px}
+.head-btn{width:32px;height:32px;border-radius:50%;border:1px solid #d1d5db;background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:15px}
+.head-btn:hover{background:#f3f4f6}
+
+/* ── 双栏布局 ── */
+.layout{flex:1;display:flex;gap:16px;overflow:hidden}
+
+/* ── 左侧栏 ── */
+.sidebar{width:300px;flex-shrink:0;display:flex;flex-direction:column;background:#fff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden}
+.sb-hd{display:flex;align-items:center;justify-content:space-between;padding:12px 14px 8px;border-bottom:1px solid #e5e7eb}
+.sb-hd-l{display:flex;align-items:center;gap:6px;font-size:14px;font-weight:500}
+.sb-hd-l .badge{font-size:11px;background:#f3f4f6;color:#6b7280;padding:0 8px;border-radius:10px;line-height:20px}
+.btn-sm{height:28px;padding:0 12px;border-radius:6px;border:none;cursor:pointer;font-size:12px;display:inline-flex;align-items:center;gap:4px}
+.btn-pri{background:#409eff;color:#fff}.btn-pri:hover{background:#337ecc}
+.btn-plain{background:#fff;border:1px solid #d1d5db;color:#374151}.btn-plain:hover{background:#f9fafb}
+.btn-success{background:#67c23a;color:#fff}.btn-success:hover{background:#529b2e}
+.btn-danger{background:#f56c6c;color:#fff}.btn-danger:hover{background:#c45656}
+.btn-warn{background:#e6a23c;color:#fff}.btn-warn:hover{background:#cf9236}
+.btn-link{background:none;border:none;color:#f56c6c;cursor:pointer;padding:4px;font-size:13px}
+.btn-link:hover{color:#c45656}
+.btn-sm:disabled{opacity:.5;cursor:not-allowed}
+.sb-s{padding:8px 14px}
+.sb-s input{width:100%;height:30px;border:1px solid #d1d5db;border-radius:6px;padding:0 10px;font-size:13px;outline:none;transition:border-color .15s}
+.sb-s input:focus{border-color:#409eff}
+.sb-f{padding:0 14px 8px}
+.sb-f .rg{display:flex;gap:0}
+.sb-f .rg button{padding:4px 12px;font-size:12px;border:1px solid #d1d5db;background:#fff;cursor:pointer;color:#374151}
+.sb-f .rg button:first-child{border-radius:4px 0 0 4px}
+.sb-f .rg button:last-child{border-radius:0 4px 4px 0}
+.sb-f .rg button+button{margin-left:-1px}
+.sb-f .rg button.act{background:#409eff;color:#fff;border-color:#409eff}
+.sb-lst{flex:1;overflow-y:auto;padding:4px 8px}
+
+/* ── 报告条目 ── */
+.rp-item{display:flex;align-items:flex-start;gap:10px;padding:10px;border-radius:6px;cursor:pointer;margin-bottom:2px}
+.rp-item:hover{background:#f3f4f6}
+.rp-item.act{background:#ecfdf5;border-left:3px solid #409eff;padding-left:7px}
+.rp-ico{font-size:20px;line-height:1.4;flex-shrink:0}
+.rp-bd{flex:1;min-width:0}
+.rp-tt{font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rp-mt{display:flex;align-items:center;gap:8px;margin-top:4px}
+.tag{font-size:11px;padding:0 8px;border-radius:10px;line-height:20px;border:1px solid}
+.tag-info{background:#f3f4f6;color:#6b7280;border-color:#d1d5db}
+.tag-warn{background:#fffbeb;color:#d97706;border-color:#fde68a}
+.tag-succ{background:#ecfdf5;color:#059669;border-color:#a7f3d0}
+.tag-dk-info{background:#6b7280;color:#fff;border-color:#6b7280}
+.tag-dk-warn{background:#d97706;color:#fff;border-color:#d97706}
+.tag-dk-succ{background:#059669;color:#fff;border-color:#059669}
+.rp-dt{font-size:11px;color:#9ca3af}
+
+/* ── 右侧编辑区 ── */
+.main{flex:1;display:flex;flex-direction:column;gap:12px;overflow-y:auto;min-height:0}
+.main-empty{display:flex;align-items:center;justify-content:center}
+
+/* ── 工具栏 ── */
+.tb{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;flex-shrink:0}
+.tb-r{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.tb-tl{display:flex;align-items:center;gap:8px;flex:1;min-width:200px}
+.tb-tl input{flex:1;border:none;border-bottom:2px solid transparent;padding:8px 0;font-size:18px;font-weight:600;outline:none;background:transparent;transition:border-color .2s}
+.tb-tl input:focus{border-bottom-color:#409eff}
+.tb-tl input.saved{border-bottom-color:#b3e19d}
+.tb-act{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+
+/* 元信息 */
+.tb-m{display:flex;align-items:center;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:1px solid #eee;flex-wrap:wrap;gap:6px}
+.ml{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.ml span{font-size:12px;color:#6b7280;display:flex;align-items:center;gap:4px}
+.mr{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.mr span{font-size:11px;color:#9ca3af}
+.sv{color:#67c23a;display:flex;align-items:center;gap:3px}
+
+/* ── 7段折叠 ── */
+.ec{border:none}
+.sec-h{display:flex;align-items:center;gap:8px;flex:1}
+.sec-d{width:4px;height:20px;border-radius:2px;flex-shrink:0}
+.sec-n{font-size:14px;font-weight:500}
+.ec-h{padding:10px 12px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:4px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;transition:border-color .2s}
+.ec-h:hover{border-color:#d1d5db}
+.ec-h.act{border-radius:8px 8px 0 0;border-bottom:none}
+.ec-arr{transition:transform .2s;font-size:12px;color:#9ca3af}
+.ec-h.act .ec-arr{transform:rotate(90deg)}
+.sec-b{padding:16px;background:#fff;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;margin-bottom:4px;display:none}
+.sec-b.open{display:block}
+.sf{margin-bottom:14px}
+.sf-l{display:block;font-size:12px;font-weight:500;color:#6b7280;margin-bottom:6px}
+.sf-tip{display:flex;align-items:center;gap:6px;margin-top:10px;font-size:12px;color:#9ca3af}
+textarea{width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;font-family:inherit;outline:none;resize:vertical;transition:border-color .15s}
+textarea:focus{border-color:#409eff}
+input[type=text]{width:100%;border:1px solid #d1d5db;border-radius:6px;padding:0 10px;height:32px;font-size:13px;outline:none;transition:border-color .15s}
+input[type=text]:focus{border-color:#409eff}
+select{height:32px;border:1px solid #d1d5db;border-radius:6px;padding:0 8px;font-size:12px;outline:none;background:#fff}
+select:focus{border-color:#409eff}
+
+/* 时间线 */
+.tl-e{display:flex;gap:12px;margin-bottom:14px;padding-left:4px}
+.tl-b{display:flex;flex-direction:column;align-items:center;width:20px;flex-shrink:0}
+.tl-idx{width:20px;height:20px;border-radius:50%;background:#d9ecff;color:#409eff;font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center}
+.tl-c{width:2px;flex:1;background:#e5e7eb;min-height:20px;margin:4px 0}
+.tl-bd{flex:1;min-width:0}
+.tl-r{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+.tl-r input[type=text]{width:160px}
+.tl-r select{width:100px}
+
+/* MITRE网格 */
+.mg{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px}
+.mi{padding:8px 10px;border:1px solid #e5e7eb;border-radius:6px;cursor:pointer;background:#fafafa;display:flex;align-items:center;gap:6px;transition:all .15s;user-select:none}
+.mi:hover{border-color:#a0cfff;background:#ecf5ff}
+.mi.act{border-color:#409eff;background:#ecf5ff}
+.mi input[type=checkbox]{accent-color:#409eff}
+.mi-id{font-size:10px;color:#9ca3af;font-family:monospace}
+.mi-n{font-size:13px;font-weight:500}
+
+/* 措施 */
+.rl{margin-bottom:10px}
+.ri{display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:6px 8px;border:1px solid #eee;border-radius:6px}
+.ri input[type=text]{flex:1}
+.ri select{width:80px;flex-shrink:0}
+.ri input[type=checkbox]{accent-color:#409eff}
+.ri .done{text-decoration:line-through;color:#9ca3af}
+
+/* 评论 */
+.cmt-l{margin-bottom:12px}
+.cmt-i{display:flex;gap:10px;margin-bottom:12px}
+.cmt-a{width:32px;height:32px;border-radius:50%;background:#d9ecff;color:#409eff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;flex-shrink:0}
+.cmt-c{flex:1;min-width:0}
+.cmt-h{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.cmt-au{font-size:13px;font-weight:500}
+.cmt-t{font-size:11px;color:#9ca3af}
+.cmt-txt{font-size:13px;line-height:1.5;color:#333;white-space:pre-wrap}
+.cmt-r{display:flex;gap:8px}
+.cmt-r input{flex:1}
+
+/* 对话框 */
+.overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:1000;display:none;align-items:center;justify-content:center}
+.overlay.open{display:flex}
+.dlg{background:#fff;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,.12);max-height:80vh;overflow-y:auto}
+.dlg-hd{padding:16px 20px 0;font-size:16px;font-weight:600}
+.dlg-bd{padding:16px 20px}
+.dlg-ft{padding:0 20px 16px;display:flex;justify-content:flex-end;gap:8px}
+.dlg-ft .btn-sm{min-width:60px}
+.fm-g{margin-bottom:14px}
+.fm-g label{display:block;font-size:12px;font-weight:500;color:#6b7280;margin-bottom:6px}
+
+/* 警告条 */
+.warn-b{display:flex;align-items:flex-start;gap:8px;padding:12px 14px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;font-size:13px;color:#92400e;margin-bottom:16px}
+
+/* 空状态 */
+.es{text-align:center;padding:40px 0;color:#9ca3af}
+.es .ico{font-size:60px;margin-bottom:12px}
+.es p{font-size:14px;margin-bottom:16px}
+
+/* 单选/复选框组 */
+.rg-v{display:flex;gap:16px}
+.rg-v label{display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer}
+.rg-v input[type=radio]{accent-color:#409eff}
+
+/* 多选标签容器 */
+.tag-c{display:flex;flex-wrap:wrap;gap:4px;min-height:32px;padding:4px 8px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:text}
+.tag-c .t{display:flex;align-items:center;gap:3px;background:#ecf5ff;color:#409eff;font-size:12px;padding:2px 8px;border-radius:4px}
+.tag-c .t .x{cursor:pointer;font-size:14px;line-height:1;margin-left:2px}
+.tag-c .t .x:hover{color:#f56c6c}
+.tag-c input{border:none;outline:none;flex:1;min-width:80px;height:24px;font-size:13px}
+
+/* 滚动条 */
+.sb-lst::-webkit-scrollbar,.main::-webkit-scrollbar{width:5px}
+.sb-lst::-webkit-scrollbar-thumb,.main::-webkit-scrollbar-thumb{background:#d1d5db;border-radius:4px}
+.sb-lst::-webkit-scrollbar-track,.main::-webkit-scrollbar-track{background:transparent}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <!-- 顶栏 -->
+  <div class="head">
+    <div>
+      <h2>报告输出</h2>
+      <div class="head-sub">应急响应报告 · 取证简报 · 合规审计</div>
+    </div>
+    <button class="head-btn" onclick="loadList()" title="刷新">↻</button>
+  </div>
+
+  <div class="layout">
+    <!-- ===== 左侧栏 ===== -->
+    <div class="sidebar">
+      <div class="sb-hd">
+        <div class="sb-hd-l">📄 报告列表 <span class="badge" id="totalCnt">0</span></div>
+        <button class="btn-sm btn-pri" onclick="openCreate()">＋ 新建</button>
+      </div>
+      <div class="sb-s"><input type="text" id="searchBox" placeholder="搜索报告标题..." oninput="renderList()"></div>
+      <div class="sb-f">
+        <div class="rg" id="filterBar">
+          <button class="act" data-v="all" onclick="setFilter(this,'all')">全部</button>
+          <button data-v="draft" onclick="setFilter(this,'draft')">草稿</button>
+          <button data-v="review" onclick="setFilter(this,'review')">待审</button>
+          <button data-v="published" onclick="setFilter(this,'published')">已发</button>
+        </div>
+      </div>
+      <div class="sb-lst" id="reportList"></div>
+    </div>
+
+    <!-- ===== 右侧编辑区 ===== -->
+    <div class="main" id="mainArea">
+      <!-- 占位空状态 -->
+      <div class="main-empty" id="emptyState">
+        <div class="es">
+          <div class="ico">📋</div>
+          <p>选择或创建一份报告开始编辑</p>
+          <button class="btn-sm btn-pri" onclick="openCreate()">＋ 新建报告</button>
+        </div>
+      </div>
+      <!-- 编辑器（初始隐藏） -->
+      <div id="editorArea" style="display:none">
+        <!-- 工具栏 -->
+        <div class="tb">
+          <div class="tb-r">
+            <div class="tb-tl">
+              <input type="text" id="titleInput" placeholder="输入报告标题..." oninput="markDirty()">
+              <button class="btn-sm btn-plain" id="saveBtn" disabled onclick="saveDraft()">💾 保存</button>
+            </div>
+            <div class="tb-act">
+              <button class="btn-sm btn-pri" id="submitBtn" onclick="submitReview()">📤 提交审核</button>
+              <button class="btn-sm btn-success" id="publishBtn" onclick="openPublish()">✔ 发布</button>
+              <button class="btn-sm btn-plain" onclick="exportReport()">📥 导出 ▼</button>
+              <button class="btn-sm btn-danger" onclick="deleteReport()">🗑</button>
+            </div>
+          </div>
+          <div class="tb-m">
+            <div class="ml">
+              <span>状态：<span class="tag" id="statusTag"></span></span>
+              <span>类型：<span class="tag tag-info" id="typeTag"></span></span>
+              <span>读者：<span class="tag tag-info" id="audTag"></span></span>
+            </div>
+            <div class="mr">
+              <span id="createTime"></span>
+              <span id="updateTime"></span>
+              <span class="sv" id="savedIndicator" style="display:none">✓ <span id="savedTime"></span></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 7段编辑器 -->
+        <div class="ec" id="sectionContainer"></div>
+        <!-- /7段 -->
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 新建对话框 ===== -->
+<div class="overlay" id="createDlg">
+  <div class="dlg" style="width:480px">
+    <div class="dlg-hd">新建报告</div>
+    <div class="dlg-bd">
+      <div class="fm-g"><label>报告标题</label><input type="text" id="newTitle" placeholder="输入报告标题"></div>
+      <div class="fm-g">
+        <label>报告类型</label>
+        <select id="newType" style="width:100%">
+          <option value="emergency">应急响应报告</option>
+          <option value="forensic">取证分析简报</option>
+          <option value="compliance">合规审计报告</option>
+          <option value="situation">安全态势报告</option>
+        </select>
+      </div>
+      <div class="fm-g">
+        <label>目标读者</label>
+        <select id="newAud" style="width:100%">
+          <option value="leader">管理层</option>
+          <option value="technical">技术人员</option>
+          <option value="client">客户</option>
+        </select>
+      </div>
+    </div>
+    <div class="dlg-ft">
+      <button class="btn-sm btn-plain" onclick="closeDlg('createDlg')">取消</button>
+      <button class="btn-sm btn-pri" onclick="createReport()">创建</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 发布对话框 ===== -->
+<div class="overlay" id="publishDlg">
+  <div class="dlg" style="width:420px">
+    <div class="dlg-hd">发布确认</div>
+    <div class="dlg-bd">
+      <div class="warn-b">⚠️ 发布后报告将进入"已发布"状态，内容锁定不可直接编辑。</div>
+      <div class="fm-g">
+        <label>报告级别</label>
+        <div class="rg-v">
+          <label><input type="radio" name="pLv" value="executive" checked> 管理层摘要</label>
+          <label><input type="radio" name="pLv" value="technical"> 技术详细报告</label>
+        </div>
+      </div>
+    </div>
+    <div class="dlg-ft">
+      <button class="btn-sm btn-plain" onclick="closeDlg('publishDlg')">取消</button>
+      <button class="btn-sm btn-success" onclick="confirmPublish()">确认发布</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+//  数据
+// ============================================================
+const MITRE_TACS = [
+  {id:'TA0001',n:'初始访问'},{id:'TA0002',n:'执行'},{id:'TA0003',n:'持久化'},
+  {id:'TA0004',n:'权限提升'},{id:'TA0005',n:'防御规避'},{id:'TA0006',n:'凭据访问'},
+  {id:'TA0007',n:'发现'},{id:'TA0008',n:'横向移动'},{id:'TA0009',n:'收集'},
+  {id:'TA0010',n:'命令与控制'},{id:'TA0011',n:'数据渗出'},{id:'TA0040',n:'影响'}
+]
+const COMMON_SYS = ['域控服务器','邮件服务器','文件服务器','Web 服务器','数据库服务器','ERP 系统','OA 系统','堡垒机','终端用户设备','网络设备','安全设备']
+
+// 模拟报告数据
+let reports = [
+  {id:1,title:'DC-01 域控服务器应急响应报告',type:'emergency',status:'draft',aud:'leader',ct:'2026-07-12 04:10',ut:'2026-07-13 10:30'},
+  {id:2,title:'Web 服务器入侵取证分析简报',type:'forensic',status:'review',aud:'technical',ct:'2026-07-11 08:00',ut:'2026-07-12 14:20'},
+  {id:3,title:'Q2 季度安全合规审计报告',type:'compliance',status:'published',aud:'leader',ct:'2026-07-01 09:00',ut:'2026-07-05 16:45'},
+  {id:4,title:'钓鱼邮件攻击安全态势周报',type:'situation',status:'draft',aud:'client',ct:'2026-07-10 11:00',ut:'2026-07-10 11:00'},
+  {id:5,title:'数据库服务器慢查询分析报告',type:'emergency',status:'published',aud:'technical',ct:'2026-07-08 15:30',ut:'2026-07-09 09:15'},
+]
+
+let curId = null // 当前选中报告 ID
+let dirty = false
+let filterV = 'all'
+let activeSec = null // 当前展开的段落名
+
+// 编辑态数据
+const E = {
+  title:'',
+  summary:'',
+  impactScope:{scope_type:'both',affected_systems:['DC-01','File-Srv-02','DB-Master'],business_impact:'域认证服务中断2小时，部分业务系统无法正常登录。涉及财务、HR 核心系统的认证依赖，影响约200名用户的正常工作。',financial_estimate:'¥80,000-¥150,000'},
+  timeline:[
+    {time:'2026-07-12 03:15',event:'首次检测到异常流量',desc:'IDS 告警：从外部IP向内部服务器443端口发起大量TLS握手请求',sev:'critical'},
+    {time:'2026-07-12 03:42',event:'确认失陷主机',desc:'EDR 检测到 DC-01 域控服务器出现异常进程 spawn',sev:'critical'},
+    {time:'2026-07-12 04:10',event:'开始应急响应',desc:'安全团队启动应急响应流程，隔离 DC-01 网络',sev:'high'}
+  ],
+  mitre:['TA0001','TA0002','TA0003','TA0005','TA0008'],
+  evidence:'1. 鱼叉式钓鱼邮件样本 (phish_20260712.eml)\n2. CobaltStrike Beacon 配置文件解析\n3. 异常 RDP 登录日志 (Event ID 4625, 4624)\n4. 横向移动 SMB 连接日志 (Event ID 5140)\n5. DC-01 内存快照 (mem_dump_20260712.raw)',
+  recs:[
+    {text:'重置所有受影响的域账号密码',done:true,pri:'high'},
+    {text:'对 DC-01 进行全盘取证镜像',done:true,pri:'high'},
+    {text:'排查横向移动痕迹，检查其他域控服务器',done:false,pri:'high'},
+    {text:'更新 EDR 规则，增加 CobaltStrike 检测签名',done:false,pri:'medium'}
+  ]
+}
+let comments = [
+  {au:'张三',txt:'建议在时间线中补充首次钓鱼邮件投递的时间点',t:'2026/7/12 14:30'},
+  {au:'李四',txt:'已在邮件网关中查到相关记录，时间约为 7/11 22:00',t:'2026/7/12 15:10'}
+]
+
+// ============================================================
+//  渲染函数
+// ============================================================
+function statusTag(s){return {draft:'tag-info',review:'tag-warn',published:'tag-succ'}[s]||'tag-info'}
+function statusDk(s){return {draft:'tag-dk-info',review:'tag-dk-warn',published:'tag-dk-succ'}[s]||'tag-dk-info'}
+function statusLabel(s){return {draft:'草稿',review:'待审核',published:'已发布'}[s]||s}
+function typeLabel(t){return {emergency:'应急响应',forensic:'取证分析',compliance:'合规审计',situation:'安全态势'}[t]||t}
+function audLabel(a){return {leader:'管理层',technical:'技术人员',client:'客户'}[a]||a}
+function typeIco(t){return {emergency:'🚨',forensic:'🔍',compliance:'📋',situation:'📊'}[t]||'📄'}
+
+function renderList(){
+  const kw = document.getElementById('searchBox').value.toLowerCase()
+  let list = reports
+  if(kw) list = list.filter(r=>r.title.toLowerCase().includes(kw))
+  if(filterV!=='all') list = list.filter(r=>r.status===filterV)
+
+  document.getElementById('totalCnt').textContent = reports.length
+  const el = document.getElementById('reportList')
+  if(!list.length){el.innerHTML='<div class="es" style="padding:30px 0"><p>无匹配报告</p></div>';return}
+  el.innerHTML = list.map(r=>`
+    <div class="rp-item${curId===r.id?' act':''}" onclick="selectReport(${r.id})">
+      <div class="rp-ico">${typeIco(r.type)}</div>
+      <div class="rp-bd">
+        <div class="rp-tt" title="${r.title}">${r.title}</div>
+        <div class="rp-mt">
+          <span class="tag ${statusTag(r.status)}">${statusLabel(r.status)}</span>
+          <span class="rp-dt">${(r.ut||'').slice(0,10)}</span>
+        </div>
+      </div>
+    </div>`).join('')
+}
+
+function setFilter(btn,v){
+  filterV=v
+  document.querySelectorAll('#filterBar button').forEach(b=>b.classList.remove('act'))
+  btn.classList.add('act')
+  renderList()
+}
+
+// ============================================================
+//  选择报告
+// ============================================================
+function loadDetailIntoEdit(r){
+  E.title = r.title
+  E.summary = '2026年7月12日凌晨3时15分，安全运营中心（SOC）监测到异常网络流量，经分析确认域控服务器 DC-01 已被远程控制。攻击者通过鱼叉式钓鱼邮件获取初始访问权限后，利用 CobaltStrike Beacon 建立了持久化 C2 通道，并在内网横向移动。目前已经隔离受控主机，事件仍在进一步调查中。'
+  E.impactScope = {scope_type:'both',affected_systems:['DC-01','File-Srv-02','DB-Master'],business_impact:'域认证服务中断2小时，部分业务系统无法正常登录。涉及财务、HR 核心系统的认证依赖，影响约200名用户的正常工作。',financial_estimate:'¥80,000-¥150,000'}
+  E.timeline = [
+    {time:'2026-07-12 03:15',event:'首次检测到异常流量',desc:'IDS 告警：从外部IP向内部服务器443端口发起大量TLS握手请求',sev:'critical'},
+    {time:'2026-07-12 03:42',event:'确认失陷主机',desc:'EDR 检测到 DC-01 域控服务器出现异常进程 spawn',sev:'critical'},
+    {time:'2026-07-12 04:10',event:'开始应急响应',desc:'安全团队启动应急响应流程，隔离 DC-01 网络',sev:'high'}
+  ]
+  E.mitre = ['TA0001','TA0002','TA0003','TA0005','TA0008']
+  E.evidence = '1. 鱼叉式钓鱼邮件样本 (phish_20260712.eml)\n2. CobaltStrike Beacon 配置文件解析\n3. 异常 RDP 登录日志 (Event ID 4625, 4624)\n4. 横向移动 SMB 连接日志 (Event ID 5140)\n5. DC-01 内存快照 (mem_dump_20260712.raw)'
+  E.recs = [
+    {text:'重置所有受影响的域账号密码',done:true,pri:'high'},
+    {text:'对 DC-01 进行全盘取证镜像',done:true,pri:'high'},
+    {text:'排查横向移动痕迹，检查其他域控服务器',done:false,pri:'high'},
+    {text:'更新 EDR 规则，增加 CobaltStrike 检测签名',done:false,pri:'medium'}
+  ]
+  comments = [
+    {au:'张三',txt:'建议在时间线中补充首次钓鱼邮件投递的时间点',t:'2026/7/12 14:30'},
+    {au:'李四',txt:'已在邮件网关中查到相关记录，时间约为 7/11 22:00',t:'2026/7/12 15:10'}
+  ]
+  dirty = false
+}
+
+function selectReport(id){
+  curId = id
+  const r = reports.find(x=>x.id===id)
+  if(!r) return
+  loadDetailIntoEdit(r)
+  renderList()
+  renderEditor(r)
+  document.getElementById('emptyState').style.display = 'none'
+  document.getElementById('editorArea').style.display = 'block'
+}
+
+// ============================================================
+//  渲染编辑器
+// ============================================================
+function renderEditor(r){
+  if(!r) return
+  // 工具栏
+  document.getElementById('titleInput').value = E.title
+  updateMeta(r)
+  // 7段
+  renderSections()
+}
+
+function updateMeta(r){
+  const st = document.getElementById('statusTag')
+  st.className = 'tag '+statusDk(r.status)
+  st.textContent = statusLabel(r.status)
+  document.getElementById('typeTag').textContent = typeLabel(r.type)
+  document.getElementById('audTag').textContent = audLabel(r.aud)
+  document.getElementById('createTime').textContent = '创建：'+(r.ct||'').slice(0,16)
+  document.getElementById('updateTime').textContent = '更新：'+(r.ut||'').slice(0,16)
+  // 按钮状态
+  document.getElementById('submitBtn').disabled = r.status!=='draft'
+  document.getElementById('publishBtn').disabled = r.status!=='review'
+}
+
+function renderSections(){
+  const c = document.getElementById('sectionContainer')
+  c.innerHTML = `
+    ${secH('summary','概要',E.summary.length+' 字','#409eff')}
+    <div class="sec-b${activeSec==='summary'?' open':''}" id="secBody_summary">
+      <textarea rows="6" placeholder="描述安全事件的核心概要信息，包括事件类型、发生时间、影响程度等关键要点..." oninput="E.summary=this.value;markDirty()" maxlength="2000">${E.summary}</textarea>
+      <div style="text-align:right;font-size:11px;color:#9ca3af;margin-top:4px">${E.summary.length}/2000</div>
+    </div>
+
+    ${secH('impact','影响范围',(E.impactScope.affected_systems||[]).length+' 个系统','#e6a23c')}
+    <div class="sec-b${activeSec==='impact'?' open':''}" id="secBody_impact">
+      <div class="sf">
+        <div class="sf-l">影响范围类型</div>
+        <div class="rg-v">
+          <label><input type="radio" name="scopeType" value="internal" ${E.impactScope.scope_type==='internal'?'checked':''} onchange="E.impactScope.scope_type=this.value;markDirty()"> 内部网络</label>
+          <label><input type="radio" name="scopeType" value="external" ${E.impactScope.scope_type==='external'?'checked':''} onchange="E.impactScope.scope_type=this.value;markDirty()"> 外部服务</label>
+          <label><input type="radio" name="scopeType" value="both" ${E.impactScope.scope_type==='both'?'checked':''} onchange="E.impactScope.scope_type=this.value;markDirty()"> 内部+外部</label>
+        </div>
+      </div>
+      <div class="sf">
+        <div class="sf-l">受影响系统</div>
+        <div class="tag-c" id="sysTags" onclick="document.getElementById('sysInput').focus()">
+          ${(E.impactScope.affected_systems||[]).map(s=>'<span class="t">'+s+'<span class="x" onclick="removeSys(\''+s+'\')">×</span></span>').join('')}
+          <input type="text" id="sysInput" placeholder="输入后回车添加" onkeydown="if(event.key==='Enter')addSys(this.value)">
+        </div>
+      </div>
+      <div class="sf">
+        <div class="sf-l">业务影响分析</div>
+        <textarea rows="3" placeholder="描述对业务运营、数据机密性/完整性/可用性的影响..." oninput="E.impactScope.business_impact=this.value;markDirty()">${E.impactScope.business_impact||''}</textarea>
+      </div>
+      <div class="sf">
+        <div class="sf-l">经济损失估算</div>
+        <input type="text" value="${E.impactScope.financial_estimate||''}" placeholder="如：¥50,000-¥100,000 或 待评估" oninput="E.impactScope.financial_estimate=this.value;markDirty()">
+      </div>
+    </div>
+
+    ${secH('timeline','时间线',E.timeline.length+' 个事件','#67c23a')}
+    <div class="sec-b${activeSec==='timeline'?' open':''}" id="secBody_timeline">
+      <div id="tlList">${E.timeline.map((e,i)=>tlItem(e,i)).join('')}</div>
+      <button class="btn-sm btn-plain" onclick="addTlEvent()">＋ 添加事件</button>
+    </div>
+
+    ${secH('mitre','MITRE ATT&CK 战术覆盖','已选 '+E.mitre.length,'#9b59b6')}
+    <div class="sec-b${activeSec==='mitre'?' open':''}" id="secBody_mitre">
+      <div class="mg">${MITRE_TACS.map(t=>`
+        <label class="mi${E.mitre.includes(t.id)?' act':''}" onclick="toggleMitre('${t.id}',this)">
+          <input type="checkbox" ${E.mitre.includes(t.id)?'checked':''} onchange="toggleMitre('${t.id}',this.closest('.mi'))">
+          <span class="mi-id">${t.id}</span>
+          <span class="mi-n">${t.n}</span>
+        </label>`).join('')}
+      </div>
+    </div>
+
+    ${secH('evidence','证据',(E.evidence||'').length+' 字','#f56c6c')}
+    <div class="sec-b${activeSec==='evidence'?' open':''}" id="secBody_evidence">
+      <textarea rows="8" placeholder="记录取证发现、日志片段、文件哈希、网络连接等关键证据..." oninput="E.evidence=this.value;markDirty()" maxlength="5000">${E.evidence}</textarea>
+      <div style="text-align:right;font-size:11px;color:#9ca3af;margin-top:4px">${(E.evidence||'').length}/5000</div>
+      <div class="sf-tip">ℹ️ 提示：详细的取证数据可在主机分析 Tab 中查看，此处仅记录关键摘要</div>
+    </div>
+
+    ${secH('recs','建议措施',E.recs.filter(r=>r.done).length+'/'+E.recs.length,'#1890ff')}
+    <div class="sec-b${activeSec==='recs'?' open':''}" id="secBody_recs">
+      <div class="rl">${E.recs.map((r,i)=>`
+        <div class="ri">
+          <input type="checkbox" ${r.done?'checked':''} onchange="E.recs[${i}].done=this.checked;markDirty();renderSections()">
+          <input type="text" value="${r.text}" placeholder="输入处置措施..." class="${r.done?'done':''}" oninput="E.recs[${i}].text=this.value;markDirty()">
+          <select onchange="E.recs[${i}].pri=this.value;markDirty()">
+            <option value="high" ${r.pri==='high'?'selected':''}>高</option>
+            <option value="medium" ${r.pri==='medium'?'selected':''}>中</option>
+            <option value="low" ${r.pri==='low'?'selected':''}>低</option>
+          </select>
+          <button class="btn-link" onclick="E.recs.splice(${i},1);markDirty();renderSections()">×</button>
+        </div>`).join('')}
+      </div>
+      <button class="btn-sm btn-plain" onclick="E.recs.push({text:'',done:false,pri:'medium'});markDirty();renderSections()">＋ 添加措施</button>
+    </div>
+
+    ${secH('collab','协作评论',comments.length,'#13c2c2')}
+    <div class="sec-b${activeSec==='collab'?' open':''}" id="secBody_collab">
+      <div class="cmt-l" id="cmtList">${comments.map(c=>`
+        <div class="cmt-i">
+          <div class="cmt-a">${c.au.charAt(0)}</div>
+          <div class="cmt-c">
+            <div class="cmt-h"><span class="cmt-au">${c.au}</span><span class="cmt-t">${c.t}</span></div>
+            <div class="cmt-txt">${c.txt}</div>
+          </div>
+        </div>`).join('')||'<div class="es"><p>暂无评论</p></div>'}
+      </div>
+      <div class="cmt-r">
+        <input type="text" id="cmtInput" placeholder="输入评论内容..." onkeydown="if(event.key==='Enter')addComment()">
+        <button class="btn-sm btn-pri" onclick="addComment()">发送</button>
+      </div>
+    </div>
+  `
+}
+
+function secH(name,label,extra,color){
+  const isActive = activeSec===name
+  return `<div class="ec-h${isActive?' act':''}" onclick="toggleSec('${name}')">
+    <div class="sec-h">
+      <span class="sec-d" style="background:${color}"></span>
+      <span class="sec-n">${label}</span>
+      ${extra?'<span class="tag tag-info" style="font-size:11px">'+extra+'</span>':''}
+    </div>
+    <span class="ec-arr">▶</span>
+  </div>`
+}
+
+function toggleSec(name){
+  activeSec = activeSec===name ? null : name
+  renderSections()
+}
+
+// 时间线
+function tlItem(e,i){
+  const sv = {critical:'严重',high:'高危',medium:'中危',low:'低危',info:'信息'}
+  return `<div class="tl-e">
+    <div class="tl-b"><span class="tl-idx">${i+1}</span><span class="tl-c"></span></div>
+    <div class="tl-bd">
+      <div class="tl-r">
+        <input type="text" value="${e.time||''}" placeholder="事件时间 YYYY-MM-DD HH:mm" oninput="E.timeline[${i}].time=this.value;markDirty()">
+        <select onchange="E.timeline[${i}].sev=this.value;markDirty()">
+          ${Object.entries(sv).map(([k,v])=>'<option value="'+k+'"'+(e.sev===k?' selected':'')+'>'+v+'</option>').join('')}
+        </select>
+        <button class="btn-link" onclick="E.timeline.splice(${i},1);markDirty();renderSections()">×</button>
+      </div>
+      <input type="text" value="${e.event||''}" placeholder="事件名称" style="margin-top:6px" oninput="E.timeline[${i}].event=this.value;markDirty()">
+      <textarea rows="2" placeholder="事件描述" style="margin-top:6px" oninput="E.timeline[${i}].desc=this.value;markDirty()">${e.desc||''}</textarea>
+    </div>
+  </div>`
+}
+
+function addTlEvent(){
+  E.timeline.push({time:'',event:'',desc:'',sev:'medium'})
+  markDirty()
+  renderSections()
+}
+
+// MITRE
+function toggleMitre(id,el){
+  const idx = E.mitre.indexOf(id)
+  if(idx>-1) E.mitre.splice(idx,1)
+  else E.mitre.push(id)
+  el.classList.toggle('act')
+  el.querySelector('input').checked = E.mitre.includes(id)
+  markDirty()
+}
+
+// 受影响系统
+function addSys(v){
+  v=v.trim()
+  if(!v) return
+  if(!E.impactScope.affected_systems.includes(v)){
+    E.impactScope.affected_systems.push(v)
+    markDirty()
+    renderSections()
+    setTimeout(()=>{document.getElementById('sysInput').value=''},0)
+  }
+}
+function removeSys(v){
+  const idx = E.impactScope.affected_systems.indexOf(v)
+  if(idx>-1) E.impactScope.affected_systems.splice(idx,1)
+  markDirty()
+  renderSections()
+}
+
+// 评论
+function addComment(){
+  const inp = document.getElementById('cmtInput')
+  const txt = inp.value.trim()
+  if(!txt) return
+  comments.push({au:'当前用户',txt,t:new Date().toLocaleString()})
+  inp.value = ''
+  renderSections()
+}
+
+// ============================================================
+//  操作
+// ============================================================
+function markDirty(){
+  dirty = true
+  document.getElementById('saveBtn').disabled = false
+  document.getElementById('saveBtn').className = 'btn-sm btn-warn'
+  document.getElementById('saveBtn').innerHTML = '💾 保存'
+}
+function saveDraft(){
+  if(!dirty) return
+  dirty = false
+  document.getElementById('saveBtn').disabled = true
+  document.getElementById('saveBtn').className = 'btn-sm btn-plain'
+  document.getElementById('saveBtn').innerHTML = '💾 已保存'
+  document.getElementById('savedIndicator').style.display = 'flex'
+  document.getElementById('savedTime').textContent = new Date().toLocaleTimeString()
+}
+function submitReview(){
+  const r = reports.find(x=>x.id===curId)
+  if(r) r.status = 'review'
+  if(document.querySelector('#editorArea [style*="display:block"]')) updateMeta(r)
+  renderList()
+  saveDraft()
+}
+function confirmPublish(){
+  const r = reports.find(x=>x.id===curId)
+  if(r) r.status = 'published'
+  closeDlg('publishDlg')
+  if(document.querySelector('#editorArea [style*="display:block"]')) updateMeta(r)
+  renderList()
+  saveDraft()
+}
+function deleteReport(){
+  if(!confirm('确定删除此报告？')) return
+  const idx = reports.findIndex(r=>r.id===curId)
+  if(idx>-1) reports.splice(idx,1)
+  curId = null
+  document.getElementById('editorArea').style.display = 'none'
+  document.getElementById('emptyState').style.display = 'flex'
+  renderList()
+}
+function openCreate(){document.getElementById('createDlg').classList.add('open')}
+function openPublish(){document.getElementById('publishDlg').classList.add('open')}
+function closeDlg(id){document.getElementById(id).classList.remove('open')}
+function createReport(){
+  const title = document.getElementById('newTitle').value.trim()
+  if(!title) return
+  const nid = Date.now()
+  reports.unshift({id:nid,title,type:document.getElementById('newType').value,status:'draft',aud:document.getElementById('newAud').value,ct:new Date().toLocaleString(),ut:new Date().toLocaleString()})
+  closeDlg('createDlg')
+  document.getElementById('newTitle').value = ''
+  selectReport(nid)
+}
+function exportReport(){
+  // 简单导出为 .md 文件下载
+  let md = '# '+E.title+'\n\n## 概要\n'+(E.summary||'(空)')+'\n\n## 影响范围\n'+JSON.stringify(E.impactScope,null,2)+'\n\n## 时间线\n'
+  E.timeline.forEach(e=>{md+='- ['+e.time+'] '+e.event+': '+e.desc+'\n'})
+  md+='\n## MITRE 战术\n'+(E.mitre.join(', ')||'(空)')+'\n\n## 证据\n'+(E.evidence||'(空)')+'\n\n## 建议措施\n'
+  E.recs.forEach(r=>{md+='- ['+(r.done?'x':' ')+'] ['+r.pri+'] '+r.text+'\n'})
+  const blob = new Blob([md],{type:'text/markdown;charset=utf-8'}), a = document.createElement('a')
+  a.href=URL.createObjectURL(blob);a.download=(E.title||'报告')+'.md';a.click();URL.revokeObjectURL(blob)
+}
+
+// 加载报告列表
+function loadList(){renderList()}
+
+// ============================================================
+//  初始化
+// ============================================================
+renderList()
+selectReport(1)
+</script>
+</body>
+</html>

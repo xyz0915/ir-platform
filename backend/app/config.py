@@ -50,6 +50,8 @@ class Settings:
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://localhost:8000",
+        # 允许外部终端访问（SSE 需要浏览器 CORS 放行）
+        "*",
     ]
     # AI分析模块加密密钥（Fernet格式，用于加密存储API Key）
     # 生产环境应从环境变量读取，默认使用固定密钥（开发用）

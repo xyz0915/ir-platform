@@ -24,6 +24,7 @@ from app.services.input_quality_service import InputQualityService
 from app.services.knowledge_retriever import KnowledgeRetriever
 from app.services.explainability_service import ExplainabilityService
 from app.services.ai_parse_guard import normalize_and_guard
+from app.database import get_connection
 
 logger = logging.getLogger(__name__)
 
@@ -469,6 +470,20 @@ class AiTaskService:
                 logger.info(
                     "AI task %d 生成 %s 报告: report_id=%s", task_id, mode, report.get("id"),
                 )
+                # T-02: AI → incident_reports 映射（overview/remediation）
+                try:
+                    cls._map_ai_to_incident_report(
+                        parsed=parsed,
+                        guarded=guarded,
+                        host_id=host_id,
+                        host_name=host_name,
+                        case_id=case_id,
+                        audience=audience,
+                        mode=mode,
+                        ai_report_id=report["id"],
+                    )
+                except Exception as exc:
+                    logger.warning("AI→Report mapping failed for task %d: %s", task_id, exc)
             else:
                 # ── 标准 / 深挖 / 模块报告（既有逻辑）────────────────
                 tiered_data = PromptBuilder._fetch_tiered_data(host_id)
@@ -643,6 +658,21 @@ class AiTaskService:
                     rare_high_signals=json.dumps(guarded["rare_high_signals"], ensure_ascii=False),
                     source_event_id=source_event_ids,
                 )
+
+            # T-02: AI → incident_reports 映射（标准/深挖/模块模式）
+            try:
+                cls._map_ai_to_incident_report(
+                    parsed=parsed,
+                    guarded=guarded,
+                    host_id=host_id,
+                    host_name=host_name,
+                    case_id=case_id,
+                    audience=audience,
+                    mode=mode,
+                    ai_report_id=report["id"],
+                )
+            except Exception as exc:
+                logger.warning("AI→Report mapping failed for task %d: %s", task_id, exc)
 
             # --- 阶段4: 审计日志 (90%) ---
             latency_ms = int((time.time() - start_time) * 1000)
@@ -1240,3 +1270,400 @@ class AiTaskService:
         # 策略3：回退 — 把整个内容当作 risk_assessment
         default_result["risk_assessment"] = {"raw_analysis": content}
         return default_result
+
+    # ────────────────────────────────────────────────────────────
+    # T-02 ~ T-04: AI → incident_reports 映射核心逻辑
+    # ────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _normalize_timeline_events(key_events: list) -> list:
+        """规范化时间线事件，兼容 AI 输出的各种字段名变体."""
+        normalized = []
+        for i, evt in enumerate(key_events if key_events else []):
+            if not isinstance(evt, dict):
+                continue
+            normalized.append({
+                "_key": f"ai_{evt.get('time', evt.get('timestamp', evt.get('ts', f'event_{i}'))):.20}_{i}",
+                "time": evt.get("time", evt.get("timestamp", evt.get("ts", ""))),
+                "severity": evt.get("severity", evt.get("level", evt.get("risk", "medium"))),
+                "event": evt.get("event", evt.get("title", evt.get("name", ""))),
+                "description": evt.get("description", evt.get("detail", evt.get("desc", ""))),
+                # 保留原始有用字段以便前端跳转
+                "pid": evt.get("pid"),
+                "remote_ip": evt.get("remote_ip"),
+                "remote_port": evt.get("remote_port"),
+                "registry_key": evt.get("registry_key"),
+            })
+        return normalized
+
+    @staticmethod
+    def _normalize_recommendations(recs: dict) -> str:
+        """规范化建议措施，确保字段一致."""
+        items = recs.get("items", recs.get("recommendations", []))
+        if not isinstance(items, list):
+            return json.dumps({"items": []}, ensure_ascii=False)
+
+        normalized = []
+        for i, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            priority_raw = item.get("priority", item.get("level", "medium"))
+            # 优先级映射
+            priority_map = {
+                "urgent": "high", "critical": "high", "高": "high", "1": "high",
+                "medium": "medium", "中": "medium", "2": "medium",
+                "low": "low", "低": "low", "3": "low",
+            }
+            priority = priority_map.get(str(priority_raw).lower(), "medium")
+
+            normalized.append({
+                "_key": f"ai_rec_{i}",
+                "text": item.get("text", item.get("description", item.get("name", ""))),
+                "priority": priority,
+                "checked": False,
+                "source": "ai",
+            })
+
+        return json.dumps({"items": normalized}, ensure_ascii=False)
+
+    @classmethod
+    def _map_ai_to_incident_report(
+        cls,
+        parsed: dict,
+        guarded: dict,
+        host_id: int,
+        host_name: str,
+        case_id: int,
+        audience: str,
+        mode: str,
+        ai_report_id: int,
+        sections: Optional[list[str]] = None,
+    ) -> dict:
+        """将 AI 分析结果映射到 incident_reports 表记录.
+
+        支持全量（sections=None）和增量（sections=[...]）两种模式.
+
+        Args:
+            parsed: _parse_json_response 解析出的四段字典.
+            guarded: normalize_and_guard 的守护输出.
+            host_id: 主机 ID.
+            host_name: 主机名.
+            case_id: 案件 ID.
+            audience: 受众偏好.
+            mode: 分析模式（standard/overview/remediation）.
+            ai_report_id: AiAnalysisReport 的 ID.
+            sections: 仅更新的段落列表（None=全量）.
+
+        Returns:
+            创建的 incident_report 记录字典.
+        """
+        # 提取各段内容
+        risk = parsed.get("risk_assessment", {})
+        threat = parsed.get("threat_analysis", {})
+        timeline = parsed.get("timeline_analysis", {})
+        recs = parsed.get("recommendations", {})
+
+        # risk_assessment.summary -> summary
+        summary = ""
+        if isinstance(risk, dict):
+            summary = risk.get("summary", "") or ""
+
+        # threat_analysis.affected_systems -> impact_scope
+        impact_scope = "[]"
+        if isinstance(threat, dict) and threat.get("affected_systems"):
+            impact_scope = json.dumps(threat["affected_systems"], ensure_ascii=False)
+
+        # timeline_analysis.key_events -> timeline_json
+        timeline_json = "[]"
+        if isinstance(timeline, dict) and timeline.get("key_events"):
+            timeline_json = json.dumps(
+                cls._normalize_timeline_events(timeline["key_events"]),
+                ensure_ascii=False,
+            )
+
+        # guarded.mitre_attack -> mitre_cover
+        mitre_cover = "[]"
+        if guarded.get("mitre_attack"):
+            mitre_cover = json.dumps(guarded["mitre_attack"], ensure_ascii=False)
+
+        # risk_assessment.findings -> evidence（含证据链接标记 + evidence_meta 结构化索引）
+        evidence = ""
+        findings = []
+        evidence_meta = {"processes": [], "connections": [], "registry": [], "iocs": [], "files": []}
+        if isinstance(risk, dict):
+            raw_findings = risk.get("findings", [])
+            if isinstance(raw_findings, list):
+                for idx, f in enumerate(raw_findings):
+                    if isinstance(f, dict):
+                        f_text = f.get("description", f.get("title", f.get("detail", "")))
+                        f_type = f.get("type", "finding")
+                        if f_type == "process":
+                            f_id = f.get("pid", f.get("id", idx))
+                            evidence_meta["processes"].append({
+                                "pid": f.get("pid"), "name": f.get("name"), "path": f.get("path"),
+                            })
+                        elif f_type == "network":
+                            f_id = f.get("remote_ip", f.get("id", idx))
+                            evidence_meta["connections"].append({
+                                "remote_ip": f.get("remote_ip"), "remote_port": f.get("remote_port"),
+                                "protocol": f.get("protocol"),
+                            })
+                        elif f_type == "registry":
+                            f_id = f.get("key", f.get("registry_key", f.get("id", idx)))
+                            evidence_meta["registry"].append({
+                                "key": f.get("key", f.get("registry_key")),
+                            })
+                        elif f_type == "ioc":
+                            f_id = f.get("value", f.get("id", idx))
+                            evidence_meta["iocs"].append({
+                                "value": f.get("value"), "type": f.get("ioc_type"),
+                            })
+                        elif f_type == "file":
+                            f_id = f.get("path", f.get("name", f.get("id", idx)))
+                            evidence_meta["files"].append({
+                                "path": f.get("path"), "name": f.get("name"),
+                            })
+                        else:
+                            f_id = f.get("id", idx)
+                        link_mark = f"[🔗](host://{f_type}/{f_id})"
+                        findings.append(f"{link_mark} {f_text}")
+                    elif isinstance(f, str):
+                        findings.append(f)
+        if not findings and isinstance(risk, dict):
+            desc = risk.get("description", "")
+            if desc:
+                findings.append(desc)
+        if findings:
+            evidence = "\n".join(findings)
+
+        evidence_meta_json = json.dumps(evidence_meta, ensure_ascii=False)
+
+        # recommendations.items -> recommendations（规范化）
+        recommendations_str = "{}"
+        if isinstance(recs, dict):
+            recommendations_str = cls._normalize_recommendations(recs)
+
+        # 风险评分 & 风险等级
+        risk_score = 0
+        risk_level = ""
+        if isinstance(risk, dict):
+            risk_level = risk.get("risk_level", "") or ""
+            risk_score = risk.get("risk_score", 0) or 0
+
+        # 置信度元数据 (T-03)
+        confidence = cls._build_confidence_metadata(
+            parsed, guarded, risk, threat, recs, timeline,
+        )
+
+        # 报告类型 (T-04)
+        findings_count = len(findings)
+        report_type = cls._auto_detect_report_type(risk, mode, findings_count)
+
+        # 标题（自动序号）
+        existing_count = cls._count_existing_reports(host_id)
+        suffix = f" #{existing_count + 1}" if existing_count > 0 else ""
+        risk_prefix = f"[{risk.get('risk_level', '')}] " if isinstance(risk, dict) and risk.get("risk_level") else ""
+        title = f"{risk_prefix}{host_name} 安全分析报告{suffix}"
+
+        # ── 写入 incident_reports 表 ──
+        from datetime import datetime
+
+        now = datetime.now().isoformat()
+
+        if sections is None:
+            # 全量创建
+            with get_connection() as conn:
+                cur = conn.execute(
+                    """
+                    INSERT INTO incident_reports
+                        (title, report_type, audience, status, summary,
+                         impact_scope, timeline_json, mitre_cover, evidence,
+                         evidence_meta, recommendations, case_id, host_id, created_by,
+                         risk_score, confidence_metadata, version,
+                         ai_report_id, mode, created_at, updated_at)
+                    VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                            ?, ?, 1, ?, ?, ?, ?)
+                    """,
+                    (
+                        title, report_type, audience, summary,
+                        impact_scope, timeline_json, mitre_cover, evidence,
+                        evidence_meta_json, recommendations_str, case_id, host_id, "ai_auto",
+                        risk_score, json.dumps(confidence, ensure_ascii=False),
+                        ai_report_id, mode, now, now,
+                    ),
+                )
+                report_id = cur.lastrowid
+                conn.commit()
+        else:
+            # 增量更新
+            with get_connection() as conn:
+                row = conn.execute(
+                    "SELECT id, version FROM incident_reports WHERE ai_report_id = ? ORDER BY version DESC LIMIT 1",
+                    (ai_report_id,),
+                ).fetchone()
+                if not row:
+                    return cls._map_ai_to_incident_report(
+                        parsed, guarded, host_id, host_name,
+                        case_id, audience, mode, ai_report_id,
+                        sections=None,
+                    )
+                report_id = row["id"]
+                new_version = row["version"] + 1
+
+                updates = {"updated_at": now, "version": new_version}
+                if "summary" in sections:
+                    updates["summary"] = summary
+                if "impact" in sections:
+                    updates["impact_scope"] = impact_scope
+                if "timeline" in sections:
+                    updates["timeline_json"] = timeline_json
+                if "mitre" in sections:
+                    updates["mitre_cover"] = mitre_cover
+                if "evidence" in sections:
+                    updates["evidence"] = evidence
+                    updates["evidence_meta"] = evidence_meta_json
+                if "recommendations" in sections:
+                    updates["recommendations"] = recommendations_str
+                if "confidence" in sections:
+                    updates["confidence_metadata"] = json.dumps(confidence, ensure_ascii=False)
+                if "report_type" in sections:
+                    updates["report_type"] = report_type
+
+                set_clause = ", ".join(f"{k}=?" for k in updates)
+                params = list(updates.values()) + [report_id]
+                conn.execute(
+                    f"UPDATE incident_reports SET {set_clause} WHERE id=?",
+                    params,
+                )
+                conn.commit()
+
+        # 读取并返回完整记录
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM incident_reports WHERE id = ?", (report_id,),
+            ).fetchone()
+            return dict(row) if row else {}
+
+    @classmethod
+    def _count_existing_reports(cls, host_id: int) -> int:
+        """统计某主机已有的 incident_reports 数量."""
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) as cnt FROM incident_reports WHERE host_id = ?",
+                (host_id,),
+            ).fetchone()
+            return row["cnt"] if row else 0
+
+    @staticmethod
+    def _auto_detect_report_type(
+        risk_assessment: dict,
+        mode: str,
+        findings_count: int,
+    ) -> str:
+        """自动检测报告类型（T-04）.
+
+        Args:
+            risk_assessment: 风险评估段落.
+            mode: 分析模式.
+            findings_count: 发现项数量.
+
+        Returns:
+            报告类型: situation | forensic | emergency | compliance
+        """
+        if mode == "overview":
+            return "situation"
+
+        risk_level = ""
+        risk_score = 0
+        if isinstance(risk_assessment, dict):
+            risk_level = (risk_assessment.get("risk_level") or "").strip()
+            risk_score = risk_assessment.get("risk_score", 0) or 0
+
+        if risk_level == "安全" or risk_score < 20:
+            return "situation"
+
+        if risk_level == "待确认" or "待确认" in risk_level:
+            return "forensic"
+
+        if risk_level in ("高危", "严重", "critical", "high") or risk_score >= 60:
+            return "emergency"
+
+        return "compliance"
+
+    @staticmethod
+    def _build_confidence_metadata(
+        parsed: dict,
+        guarded: dict,
+        risk: dict,
+        threat: dict,
+        recs: dict,
+        timeline: dict,
+    ) -> dict:
+        """构建各段落的置信度元数据（T-03）."""
+        confidence: dict[str, int] = {}
+
+        # summary
+        has_rule_hits = bool(guarded.get("attack_chain_hits"))
+        if has_rule_hits:
+            confidence["summary"] = 95
+        elif isinstance(risk, dict) and risk.get("risk_level"):
+            confidence["summary"] = 70
+        else:
+            confidence["summary"] = 50
+
+        # timeline
+        if isinstance(timeline, dict):
+            key_events = timeline.get("key_events", [])
+            if key_events:
+                event_count = len(key_events)
+                if event_count >= 5:
+                    confidence["timeline"] = 95
+                elif event_count >= 3:
+                    confidence["timeline"] = 80
+                else:
+                    confidence["timeline"] = 60
+            else:
+                confidence["timeline"] = 40
+        else:
+            confidence["timeline"] = 40
+
+        # recommendations
+        if isinstance(recs, dict):
+            rec_items = recs.get("items", recs.get("recommendations", []))
+            if isinstance(rec_items, list) and rec_items:
+                item_count = len(rec_items)
+                if item_count >= 5:
+                    confidence["recommendations"] = 90
+                elif item_count >= 3:
+                    confidence["recommendations"] = 70
+                else:
+                    confidence["recommendations"] = 50
+            else:
+                confidence["recommendations"] = 40
+        else:
+            confidence["recommendations"] = 40
+
+        # impact
+        if isinstance(threat, dict):
+            if threat.get("affected_systems"):
+                confidence["impact"] = 85
+            else:
+                confidence["impact"] = 50
+        else:
+            confidence["impact"] = 50
+
+        # evidence: 固定80
+        confidence["evidence"] = 80
+
+        return confidence
+
+    @staticmethod
+    def _score_to_level(score: int) -> str:
+        """将分数转换为等级标签."""
+        if score >= 80:
+            return "high"
+        elif score >= 60:
+            return "medium"
+        elif score >= 40:
+            return "low"
+        return "very_low"

@@ -38,6 +38,18 @@ app.add_middleware(
 )
 
 
+# SSE 响应中间件：禁止代理/nginx 缓冲流式响应
+@app.middleware("http")
+async def sse_cors_middleware(request, call_next):
+    response = await call_next(request)
+    content_type = response.headers.get("content-type", "")
+    if "text/event-stream" in content_type or "text/stream" in content_type:
+        response.headers["Cache-Control"] = "no-cache, no-transform"
+        response.headers["X-Accel-Buffering"] = "no"
+        response.headers["Connection"] = "keep-alive"
+    return response
+
+
 @app.on_event("startup")
 def startup_event() -> None:
     """应用启动时初始化数据库并注册定时任务."""

@@ -62,5 +62,46 @@ export default {
    */
   publish(id) {
     return request.post(`/reports/${id}/publish`)
-  }
+  },
+
+  /**
+   * 按主机分组获取报告列表
+   * GET /api/reports/grouped-by-host?status=
+   */
+  listGroupedByHost(status = 'all') {
+    return request.get('/reports/grouped-by-host', { params: { status } })
+  },
+
+  /**
+   * 用最新 AI 结果重新填充草稿（支持增量更新）
+   * POST /api/reports/{id}/regenerate-from-ai?sections=
+   */
+  regenerateFromAi(reportId, sections = null) {
+    const params = {}
+    if (sections && sections.length > 0) {
+      params.sections = sections.join(',')
+    }
+    return request.post(`/reports/${reportId}/regenerate-from-ai`, null, { params })
+  },
+
+  /**
+   * 版本差异对比
+   * GET /api/reports/{id}/diff
+   */
+  diffReport(reportId) {
+    return request.get(`/reports/${reportId}/diff`)
+  },
+
+  /**
+   * 获取导出 URL（直接打开链接）
+   */
+  getDocxExportUrl(reportId) { return `/api/reports/${reportId}/export/docx` },
+  getMarkdownExportUrl(reportId) { return `/api/reports/${reportId}/export/markdown` },
+  getJsonExportUrl(reportId) { return `/api/reports/${reportId}/export/json` },
+
+  /**
+   * 获取审计日志
+   * GET /api/reports/{id}/audit-logs
+   */
+  getAuditLogs(reportId) { return request.get(`/reports/${reportId}/audit-logs`) }
 }
