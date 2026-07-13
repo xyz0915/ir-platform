@@ -1,6 +1,6 @@
 <template>
   <div class="page-container">
-    <h2 class="page-title mb-20">AI 分析配置</h2>
+    <h2 class="page-title mb-20">AI 分析</h2>
 
     <el-tabs v-model="activeTab" class="ai-tabs">
       <!-- ============================================================ -->

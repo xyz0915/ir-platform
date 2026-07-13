@@ -236,15 +236,21 @@ function handleCommand(command) {
   font-size: 15px;
   font-weight: 700;
   color: var(--color-fg-default);
-  margin-right: 16px;
+  margin-right: 24px;
   flex-shrink: 0;
 }
 
 /* ===== 一级导航标签 ===== */
+.nav-tabs {
+  display: inline-flex;
+  position: relative;
+  height: 52px;
+}
 .nav-tab {
   position: relative;
-  padding: 14px 12px;
-  font-size: 13px;
+  height: 52px;
+  padding: 0 20px;
+  font-size: 14px;
   color: var(--color-fg-muted);
   cursor: pointer;
   white-space: nowrap;
@@ -252,7 +258,7 @@ function handleCommand(command) {
   transition: color 0.15s, background 0.15s;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
 }
 
 .nav-tab:hover {
