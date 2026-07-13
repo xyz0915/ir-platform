@@ -626,6 +626,38 @@ DDL_STATEMENTS = [
         UNIQUE(policy_id, rule_id)
     )
     """,
+    # false_positive_patterns — 误报自学习模式表
+    """
+    CREATE TABLE IF NOT EXISTS false_positive_patterns (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        rule_name       TEXT,
+        source_process  TEXT,
+        source_ip       TEXT,
+        host_id         INTEGER,
+        reason          TEXT,
+        created_by      TEXT,
+        hit_count       INTEGER DEFAULT 0,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    # incident_correlations — 事件归并表
+    """
+    CREATE TABLE IF NOT EXISTS incident_correlations (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        title           TEXT NOT NULL,
+        description     TEXT,
+        severity        TEXT DEFAULT 'medium',
+        host_ids        TEXT,
+        alert_ids       TEXT,
+        timeline_json   TEXT,
+        kill_chain      TEXT,
+        mitre_ids       TEXT,
+        recommendations TEXT,
+        status          TEXT DEFAULT 'open',
+        created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
 ]
 
 
