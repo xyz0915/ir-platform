@@ -283,12 +283,15 @@ function statusLabel(s) {
 }
 function formatTime(iso) {
   if (!iso) return ''
-  const d = new Date(iso)
+  // SQLite datetime('now') 存储 UTC，加上 Z 标识避免浏览器按本地时区解析
+  const utc = iso.includes('T') ? iso : iso.replace(' ', 'T')
+  const d = new Date(utc.endsWith('Z') ? utc : utc + 'Z')
   const now = new Date()
   const diff = Math.floor((now - d) / 1000)
   if (diff < 60) return '刚刚'
   if (diff < 3600) return Math.floor(diff / 60) + ' 分钟前'
   if (diff < 86400) return Math.floor(diff / 3600) + ' 小时前'
+  // 超过 24 小时显示具体日期时间（已转本地时区）
   return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
