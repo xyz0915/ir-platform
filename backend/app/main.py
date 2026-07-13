@@ -44,22 +44,32 @@ def startup_event() -> None:
     logger.info("Starting IR Platform backend...")
     init_db()
 
-    # ── 默认策略初始化 ──
+    # ── 默认策略初始化/更新 ──
     try:
         from app.models.policy import DetectionPolicy
         from app.models.rule import Rule
         policies = DetectionPolicy.get_all()
+        all_rules = Rule.list(enabled=True)
+        rule_ids = [r["id"] for r in all_rules]
         if not policies:
+            # 首次启动：创建默认策略并激活
             pid = DetectionPolicy.create(
                 name="默认策略（全量检测）",
                 description="涵盖全部检测规则，适用于首次全量分析和日常全面巡检。使用全部规则，RAG 语义分析开启，攻击链检测开启。",
                 enable_rag=1, enable_attack_chain=1,
             )
             if pid:
-                all_rules = Rule.list(enabled=True)
-                DetectionPolicy.set_rules(pid, [r["id"] for r in all_rules])
+                DetectionPolicy.set_rules(pid, rule_ids)
                 DetectionPolicy.activate(pid)
-                logger.info("Created default policy with %d rules", len(all_rules))
+                logger.info("Created default policy with %d rules", len(rule_ids))
+        else:
+            # 后续启动：找到原始默认策略（不含"副本"）并更新其规则
+            default = next((p for p in policies if "默认" in p.get("name", "") and "副本" not in p.get("name", "")), None)
+            if default:
+                cur = default.get("rule_count", 0)
+                if cur != len(rule_ids):
+                    DetectionPolicy.set_rules(default["id"], rule_ids)
+                    logger.info("Updated default policy(ID=%d): %d→%d rules", default["id"], cur, len(rule_ids))
     except Exception as e:
         logger.warning("Default policy init skipped: %s", e)
 

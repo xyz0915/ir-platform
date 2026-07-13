@@ -67,7 +67,7 @@
         <div class="card">
           <div class="rule-head">
             <span style="font-weight:600;font-size:14px">📏 规则选择</span>
-            <span style="font-size:12px;color:#6b7280">已选 <strong style="color:#059669">{{ selectedRuleIds.length }}</strong> 条 / 共 <strong>{{ ruleTotal }}</strong> 条</span>
+            <span style="font-size:12px;color:#6b7280">已选 <strong style="color:#059669">{{ selectedRuleIds.length }}</strong> 条 / 策略含 <strong>{{ detail?.rule_count || 0 }}</strong> 条</span>
           </div>
 
           <div class="rule-filter">
