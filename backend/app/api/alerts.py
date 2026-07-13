@@ -81,7 +81,7 @@ def alert_stats(
 
 @router.get("/alerts/stats/trend")
 def alert_trend(hours: int = 24, current_user: dict = Depends(get_current_user)):
-    return {"success": True, "data": Alert.get_trend(hours=hours)}
+    return {"success": True, "data": Alert.get_trend(hours=hours, granularity="auto")}
 
 
 @router.websocket("/ws/alerts")

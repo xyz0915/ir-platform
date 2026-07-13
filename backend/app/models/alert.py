@@ -233,24 +233,67 @@ class Alert:
             return {"total": 0, "open": 0, "critical": 0, "today": 0}
 
     @staticmethod
-    def get_trend(hours: int = 24) -> list:
-        """获取告警趋势（按小时聚合）. """
+    def get_trend(hours: int = 24, granularity: str = "auto") -> list:
+        """获取告警趋势聚合.
+
+        Args:
+            hours: 时间窗口（小时）
+            granularity: 聚合粒度, 'hour' | 'day' | 'auto'
+                - auto: <=48h 用小时, >48h 用天
+        """
+        if granularity == "auto":
+            granularity = "hour" if hours <= 48 else "day"
         try:
             with get_connection() as conn:
+                if granularity == "day":
+                    bucket_fmt = "%Y-%m-%d"
+                    label_fmt = "%m-%d"
+                else:
+                    bucket_fmt = "%Y-%m-%d %H:00"
+                    label_fmt = "%H:00"
+
                 rows = conn.execute(
-                    """SELECT strftime('%Y-%m-%d %H:00', first_seen_at) as hour,
-                              COUNT(*) as cnt, severity
-                       FROM alerts WHERE first_seen_at >= datetime('now', ? || ' hours')
-                       GROUP BY hour, severity ORDER BY hour""",
+                    f"""SELECT strftime('{bucket_fmt}', first_seen_at) as bucket,
+                               COUNT(*) as cnt, severity
+                        FROM alerts WHERE first_seen_at >= datetime('now', ? || ' hours')
+                        GROUP BY bucket, severity ORDER BY bucket""",
                     [f'-{hours}']
                 ).fetchall()
+
                 trend = {}
                 for r in rows:
-                    h = r["hour"]
-                    if h not in trend:
-                        trend[h] = {"hour": h, "critical": 0, "high": 0, "medium": 0, "total": 0}
-                    trend[h][r["severity"]] = trend[h].get(r["severity"], 0) + r["cnt"]
-                    trend[h]["total"] += r["cnt"]
-                return sorted(trend.values(), key=lambda x: x["hour"])
+                    b = r["bucket"]
+                    if b not in trend:
+                        trend[b] = {"bucket": b, "label": b[-5:] if granularity == "hour" else b[-5:],
+                                    "critical": 0, "high": 0, "medium": 0, "low": 0, "total": 0}
+                    sev = r["severity"]
+                    if sev in ("critical", "high", "medium", "low"):
+                        trend[b][sev] += r["cnt"]
+                    trend[b]["total"] += r["cnt"]
+
+                # 没数据的桶也补 0
+                from datetime import datetime, timedelta
+                now = datetime.now()
+                filled = []
+                if granularity == "day":
+                    n_buckets = (hours // 24) + 1
+                    for i in range(n_buckets - 1, -1, -1):
+                        d = (now - timedelta(days=i)).strftime("%Y-%m-%d")
+                        item = trend.get(d)
+                        if not item:
+                            item = {"bucket": d, "label": d[-5:],
+                                    "critical": 0, "high": 0, "medium": 0, "low": 0, "total": 0}
+                        filled.append(item)
+                else:
+                    n_buckets = hours + 1
+                    for i in range(n_buckets - 1, -1, -1):
+                        d = (now - timedelta(hours=i)).strftime("%Y-%m-%d %H:00")
+                        item = trend.get(d)
+                        if not item:
+                            item = {"bucket": d, "label": d[-5:],
+                                    "critical": 0, "high": 0, "medium": 0, "low": 0, "total": 0}
+                        filled.append(item)
+
+                return filled
         except Exception:
             return []

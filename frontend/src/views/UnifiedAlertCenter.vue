@@ -311,20 +311,58 @@ function renderCharts(trendData) {
   if (trendChartRef.value) {
     trendChart?.dispose()
     trendChart = echarts.init(trendChartRef.value)
-    const hours = trendData?.length ? trendData.map(h => h.hour.slice(-5)) : []
+    // 后端已自动补全空桶，直接用 bucket/label
+    const hours = trendData?.length ? trendData.map(h => h.label) : []
     const critical = trendData?.length ? trendData.map(h => h.critical || 0) : []
     const high = trendData?.length ? trendData.map(h => h.high || 0) : []
     const medium = trendData?.length ? trendData.map(h => h.medium || 0) : []
+    const low = trendData?.length ? trendData.map(h => h.low || 0) : []
     trendChart.setOption({
-      tooltip: { trigger: 'axis', backgroundColor: '#1a1f2e', borderColor: '#2d3548', textStyle: { color: '#e0e4ea', fontSize: 11 } },
-      legend: { data: ['严重', '高危', '中低危'], textStyle: { color: '#8b929a', fontSize: 10 }, bottom: 0, itemWidth: 10, itemHeight: 8 },
-      grid: { left: 36, right: 8, top: 6, bottom: 28 },
-      xAxis: { type: 'category', data: hours, axisLabel: { color: '#6e7681', fontSize: 9, interval: 3 }, axisLine: { lineStyle: { color: '#242b3d' } }, axisTick: { show: false } },
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        backgroundColor: '#1a1f2e', borderColor: '#2d3548', textStyle: { color: '#e0e4ea', fontSize: 11 },
+      },
+      legend: { data: ['严重', '高危', '中危', '低危'], textStyle: { color: '#8b929a', fontSize: 10 }, bottom: 30, itemWidth: 10, itemHeight: 8 },
+      grid: { left: 36, right: 12, top: 6, bottom: 60 },
+      dataZoom: [
+        {
+          type: 'inside',       // 鼠标滚轮 + 拖拽
+          xAxisIndex: 0,
+          start: 0,
+          end: 100,
+          zoomOnMouseWheel: true,
+          moveOnMouseMove: true,
+          moveOnMouseWheel: false,
+        },
+        {
+          type: 'slider',       // 底部滑块
+          xAxisIndex: 0,
+          start: 0,
+          end: 100,
+          height: 18,
+          bottom: 6,
+          borderColor: '#2d3548',
+          backgroundColor: 'rgba(45,53,72,0.3)',
+          fillerColor: 'rgba(88,166,255,0.15)',
+          handleStyle: { color: '#58a6ff', borderColor: '#58a6ff' },
+          textStyle: { color: '#6e7681', fontSize: 10 },
+          dataBackground: { lineStyle: { color: '#3d475e' }, areaStyle: { color: 'rgba(88,166,255,0.1)' } },
+          selectedDataBackground: { lineStyle: { color: '#58a6ff' }, areaStyle: { color: 'rgba(88,166,255,0.2)' } },
+        }
+      ],
+      xAxis: {
+        type: 'category', data: hours,
+        axisLabel: { color: '#6e7681', fontSize: 9, interval: 'auto' },
+        axisLine: { lineStyle: { color: '#242b3d' } },
+        axisTick: { show: false },
+      },
       yAxis: { type: 'value', splitLine: { lineStyle: { color: '#1e2433', type: 'dashed' } }, axisLabel: { color: '#6e7681', fontSize: 9 } },
       series: [
-        { name: '严重', type: 'bar', stack: 't', data: critical, itemStyle: { color: '#f85149', borderRadius: [2, 2, 0, 0] }, barWidth: '60%' },
+        { name: '严重', type: 'bar', stack: 't', data: critical, itemStyle: { color: '#f85149', borderRadius: [2, 2, 0, 0] }, barWidth: '55%' },
         { name: '高危', type: 'bar', stack: 't', data: high, itemStyle: { color: '#d4a72c' } },
-        { name: '中低危', type: 'bar', stack: 't', data: medium, itemStyle: { color: '#58a6ff', borderRadius: [0, 0, 2, 2] } },
+        { name: '中危', type: 'bar', stack: 't', data: medium, itemStyle: { color: '#58a6ff' } },
+        { name: '低危', type: 'bar', stack: 't', data: low, itemStyle: { color: '#6e7681', borderRadius: [0, 0, 2, 2] } },
       ]
     })
   }
@@ -449,7 +487,7 @@ onUnmounted(() => {
 .mid-panel { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 14px; }
 .p-head { font-size: 13px; font-weight: 600; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
 .p-badge { font-size: 10px; color: #9ca3af; font-weight: 400; }
-.chart-box { width: 100%; height: 160px; }
+.chart-box { width: 100%; height: 180px; }
 
 .host-scroll { max-height: 180px; overflow-y: auto; }
 .h-item { display: flex; align-items: center; gap: 6px; padding: 5px 6px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: .15s; }
