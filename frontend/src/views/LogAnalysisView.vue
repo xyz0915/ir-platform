@@ -12,9 +12,9 @@
     <div class="kpi-row">
       <div class="kpi"><div class="k-label">📦 总日志</div><div class="k-val blue">{{ stats.total }}</div></div>
       <div class="kpi"><div class="k-label">🚨 严重</div><div class="k-val critical">{{ stats.by_severity?.critical || 0 }}</div></div>
-      <div class="kpi"><div class="k-label">🟡 高危</div><div class="k-val high">{{ stats.by_severity?.high || 0 }}</div></div>
-      <div class="kpi"><div class="k-label">🔑 登录失败</div><div class="k-val high">{{ stats.by_type?.failed_logon || 0 }}</div></div>
-      <div class="kpi"><div class="k-label">⚙️ 进程创建</div><div class="k-val blue">{{ stats.by_type?.process_creation || 0 }}</div></div>
+      <div class="kpi"><div class="k-label">🟡 高危+中危</div><div class="k-val high">{{ (stats.by_severity?.high||0) + (stats.by_severity?.medium||0) }}</div></div>
+      <div class="kpi"><div class="k-label">🔑 登录成功</div><div class="k-val medium">{{ byTypeMatch('logon') }}</div></div>
+      <div class="kpi"><div class="k-label">⚙️ 服务状态</div><div class="k-val blue">{{ byTypeMatch('service') }}</div></div>
       <div class="kpi"><div class="k-label">🎯 高危标签</div><div class="k-val critical">{{ alertTags }}</div></div>
     </div>
 
@@ -65,35 +65,32 @@
     <div class="table-wrap">
       <el-table :data="items" v-loading="loading" stripe border size="small" :max-height="420"
         @row-click="openDetail" style="width:100%">
-        <el-table-column label="时间" width="140">
-          <template #default="{row}"><span class="t-time">{{ row.timestamp ? row.timestamp.slice(0,19).replace('T',' ') : '-' }}</span></template>
+        <el-table-column label="时间" width="130">
+          <template #default="{row}"><span class="t-time">{{ row.timestamp ? row.timestamp.slice(0,19).replace('T',' ') : (row.created_at ? row.created_at.slice(11,19) : '-') }}</span></template>
         </el-table-column>
-        <el-table-column label="事件类型" width="110">
-          <template #default="{row}"><el-tag :type="sevType(row.severity)" size="small" effect="dark" style="width:100%">{{ row.event_label || row.event_type || '未知事件' }}</el-tag></template>
+        <el-table-column label="事件类型" width="105">
+          <template #default="{row}"><el-tag :type="sevType(row.severity)" size="small" effect="dark" style="width:98px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block">{{ sevLabel(row.severity) }}</el-tag></template>
         </el-table-column>
-        <el-table-column label="ID" width="50">
+        <el-table-column label="ID" width="45">
           <template #default="{row}"><span class="pivot" @click.stop="pivot('event_id', row.event_id)">{{ row.event_id || '-' }}</span></template>
         </el-table-column>
-        <el-table-column label="严重" width="55">
-          <template #default="{row}"><span :class="'sev-dot ' + row.severity" /> <span class="sev-text">{{ sevLabel(row.severity) }}</span></template>
+        <el-table-column label="主机" width="110">
+          <template #default="{row}"><span class="pivot" @click.stop="pivot('hostname', row.hostname)">{{ (row.hostname || '').substring(0,14) || '-' }}</span></template>
         </el-table-column>
-        <el-table-column label="主机" width="100">
-          <template #default="{row}"><span class="pivot" @click.stop="pivot('hostname', row.hostname)">{{ row.hostname || '-' }}</span></template>
-        </el-table-column>
-        <el-table-column label="来源 IP" width="110">
+        <el-table-column label="来源 IP" width="105">
           <template #default="{row}"><span class="pivot" @click.stop="pivot('source_ip', row.source_ip)">{{ row.source_ip || '-' }}</span></template>
         </el-table-column>
-        <el-table-column label="用户" width="80">
-          <template #default="{row}"><span class="pivot" @click.stop="pivot('user_name', row.user_name)">{{ row.user_name || '-' }}</span></template>
+        <el-table-column label="用户" width="70">
+          <template #default="{row}"><span class="pivot" @click.stop="pivot('user_name', row.user_name)">{{ (row.user_name || '-').substring(0,8) }}</span></template>
         </el-table-column>
         <el-table-column label="进程" width="100">
-          <template #default="{row}"><span class="pivot" @click.stop="pivot('process_name', row.process_name)">{{ row.process_name || '-' }}</span></template>
+          <template #default="{row}"><span class="pivot" @click.stop="pivot('process_name', row.process_name)">{{ (row.process_name || '-').substring(0,16) }}</span></template>
         </el-table-column>
-        <el-table-column label="描述/命令行" min-width="200">
+        <el-table-column label="描述" min-width="180">
           <template #default="{row}">
-            <div class="t-desc">{{ row.command_line || row.description || (row.process_name + '@' + (row.hostname || '')) || '-' }}</div>
+            <div class="t-desc">{{ row.command_line || row.description || (row.process_name||'') + '@' + (row.hostname||'').substring(0,8) }}</div>
             <div v-if="row.tags" class="t-tags">
-              <el-tag v-for="t in (row.tags||'').split(',').filter(Boolean)" :key="t" size="small" :type="tagType(t)" effect="plain" style="margin-right:2px">{{ t }}</el-tag>
+              <el-tag v-for="t in (row.tags||'').split(',').filter(Boolean).slice(0,2)" :key="t" size="small" :type="tagType(t)" effect="plain" style="margin-right:2px">{{ t }}</el-tag>
             </div>
           </template>
         </el-table-column>
@@ -200,12 +197,19 @@ const dateShortcuts = [
 ]
 
 function sevType(s) { return { critical: 'danger', high: 'warning', medium: 'primary', low: 'info' }[s] || 'info' }
-function sevLabel(s) { return { critical: '严重', high: '高危', medium: '中危', low: '低危', info: '信息' }[s] || s }
+function sevLabel(s) { return { critical: '严重', high: '高危', medium: '中危', low: '低危', info: '信息' }[s] || s || '信息' }
+function byTypeMatch(keyword) {
+  const byType = stats.value.by_type || {}
+  let total = 0
+  for (const [k, v] of Object.entries(byType)) {
+    if (k.includes(keyword) || k.includes(keyword.toLowerCase())) total += v
+  }
+  return total
+}
 function tagType(t) {
-  // 安全标签按关键词着色
   if (/mimikatz|credential|procdump|sekurlsa/.test(t)) return 'danger'
   if (/powershell|certutil|wevtutil/.test(t)) return 'warning'
-  if (/psexec|wm ic|winrm/.test(t)) return 'warning'
+  if (/psexec|wmic|winrm/.test(t)) return 'warning'
   return 'info'
 }
 
@@ -214,8 +218,9 @@ async function fetchStats() {
   try {
     const res = await getLogSummary()
     stats.value = res.data || { total: 0, by_severity: {}, by_type: {} }
-    const tags = (stats.value.by_type || {})
-    alertTags.value = (tags.audit_log_cleared || 0) + (tags.process_creation_alert || 0)
+    // 高危标签取 severity 中的 critical+high 总数
+    const sev = stats.value.by_severity || {}
+    alertTags.value = (sev.critical || 0) + (sev.high || 0)
   } catch (e) { console.error(e) }
 }
 
@@ -238,11 +243,25 @@ async function search() {
 
 async function fetchTimeline() {
   try {
-    const params = { interval: 'hour', date_from: new Date(Date.now() - 86400000 * 7).toISOString() }
-    const res = await getLogTimeline(params)
+    const res = await getLogTimeline({ interval: 'hour' })
     const data = res.data || []
-    await nextTick()
-    renderTimeline(data)
+    if (data.length === 0) {
+      // 后端如果还是空，构造 24h 展示数据
+      const now = new Date()
+      const fake = []
+      for (let i = 23; i >= 0; i--) {
+        const d = new Date(now - i * 3600000)
+        fake.push({
+          label: String(d.getHours()).padStart(2,'0')+':00',
+          critical: 0, high: 0, medium: 0, total: 0
+        })
+      }
+      await nextTick()
+      renderTimeline(fake)
+    } else {
+      await nextTick()
+      renderTimeline(data)
+    }
   } catch (e) { console.error(e) }
 }
 
@@ -300,52 +319,54 @@ const timelineRef = ref(null), pieRef = ref(null)
 let timelineChart = null, pieChart = null
 
 function renderTimeline(data) {
-  if (timelineRef.value) {
-    timelineChart?.dispose()
-    timelineChart = echarts.init(timelineRef.value)
-    const labels = data.map(d => d.label)
-    const critical = data.map(d => d.critical || 0)
-    const high = data.map(d => d.high || 0)
-    const medium = data.map(d => d.medium || 0)
-    timelineChart.setOption({
-      tooltip: { trigger: 'axis', backgroundColor: '#1a1f2e', borderColor: '#2d3548', textStyle: { color: '#e0e4ea' } },
-      legend: { data: ['严重','高危','中危'], textStyle: { color: '#8b929a', fontSize: 10 }, bottom: 0, itemWidth: 8, itemHeight: 6 },
-      grid: { left: 32, right: 8, top: 6, bottom: 26 },
-      xAxis: { type: 'category', data: labels, axisLabel: { color: '#6e7681', fontSize: 9 }, axisLine: { lineStyle: { color: '#242b3d' } } },
-      yAxis: { type: 'value', splitLine: { lineStyle: { color: '#1e2433', type: 'dashed' } }, axisLabel: { color: '#6e7681', fontSize: 9 } },
-      dataZoom: [{ type: 'inside', xAxisIndex: 0, start: 0, end: 100 }],
-      series: [
-        { name: '严重', type: 'bar', stack: 't', data: critical, itemStyle: { color: '#f85149', borderRadius: [2,2,0,0] }, barWidth: '60%' },
-        { name: '高危', type: 'bar', stack: 't', data: high, itemStyle: { color: '#d4a72c' } },
-        { name: '中危', type: 'bar', stack: 't', data: medium, itemStyle: { color: '#58a6ff', borderRadius: [0,0,2,2] } },
-      ]
-    })
-  }
+  if (!timelineRef.value) return
+  timelineChart?.dispose()
+  timelineChart = echarts.init(timelineRef.value)
+  const labels = data.map(d => d.label)
+  const critical = data.map(d => d.critical || 0)
+  const high = data.map(d => d.high || 0)
+  const medium = data.map(d => d.medium || 0)
+  timelineChart.setOption({
+    tooltip: { trigger: 'axis', backgroundColor: '#1a1f2e', borderColor: '#2d3548', textStyle: { color: '#e0e4ea' } },
+    grid: { left: 32, right: 8, top: 6, bottom: 26 },
+    xAxis: { type: 'category', data: labels, axisLabel: { color: '#6e7681', fontSize: 9 }, axisLine: { lineStyle: { color: '#242b3d' } } },
+    yAxis: { type: 'value', splitLine: { lineStyle: { color: '#1e2433', type: 'dashed' } }, axisLabel: { color: '#6e7681', fontSize: 9 } },
+    dataZoom: [{ type: 'inside', xAxisIndex: 0, start: 0, end: 100 }],
+    series: [
+      { name: '严重', type: 'bar', stack: 't', data: critical, itemStyle: { color: '#f85149', borderRadius: [2,2,0,0] }, barWidth: '60%' },
+      { name: '高危', type: 'bar', stack: 't', data: high, itemStyle: { color: '#d4a72c' } },
+      { name: '中危', type: 'bar', stack: 't', data: medium, itemStyle: { color: '#58a6ff', borderRadius: [0,0,2,2] } },
+    ]
+  })
+}
 
-  // 饼图：直接用 stats 的 by_type
-  if (pieRef.value) {
-    pieChart?.dispose()
-    pieChart = echarts.init(pieRef.value)
-    const byType = stats.value.by_type || {}
-    const entries = Object.entries(byType).sort((a,b) => b[1] - a[1]).slice(0, 10)
-    const colors = ['#f85149','#d4a72c','#58a6ff','#2da44e','#6e7681','#f0883e','#a371f7','#8b929a','#3d475e','#1f6feb']
-    pieChart.setOption({
-      tooltip: { trigger: 'item', backgroundColor: '#1a1f2e', borderColor: '#2d3548', textStyle: { color: '#e0e4ea' }, formatter: '{b}: {c} 条 ({d}%)' },
-      series: [{
-        type: 'pie', radius: ['45%','68%'], center: ['50%','48%'],
-        itemStyle: { borderRadius: 3, borderColor: '#0f1219', borderWidth: 2 },
-        label: { show: true, formatter: '{b}', fontSize: 9, color: '#c8cdd5' },
-        data: entries.map(([k, v], i) => ({
-          name: typeOptions[k] || k, value: v, itemStyle: { color: colors[i % colors.length] }
-        })),
-      }]
-    })
-  }
+function renderPie() {
+  if (!pieRef.value) return
+  pieChart?.dispose()
+  pieChart = echarts.init(pieRef.value)
+  const byType = stats.value.by_type || {}
+  const entries = Object.entries(byType).sort((a,b) => b[1] - a[1]).slice(0, 10)
+  const colors = ['#f85149','#d4a72c','#58a6ff','#2da44e','#6e7681','#f0883e','#a371f7','#8b929a','#3d475e','#1f6feb']
+  pieChart.setOption({
+    tooltip: { trigger: 'item', backgroundColor: '#1a1f2e', borderColor: '#2d3548', textStyle: { color: '#e0e4ea' }, formatter: '{b}: {c} 条 ({d}%)' },
+    series: [{
+      type: 'pie', radius: ['45%','68%'], center: ['50%','48%'],
+      itemStyle: { borderRadius: 3, borderColor: '#0f1219', borderWidth: 2 },
+      label: { show: true, formatter: '{b}', fontSize: 9, color: '#c8cdd5' },
+      data: entries.length ? entries.map(([k, v], i) => ({
+        name: typeOptions[k] || k, value: v, itemStyle: { color: colors[i % colors.length] }
+      })) : [{ name: '暂无数据', value: 1, itemStyle: { color: '#6e7681' } }],
+    }]
+  })
 }
 
 async function fetchAll() {
   loading.value = true
   await Promise.all([fetchStats(), search(), fetchTimeline()])
+  await nextTick()
+  setTimeout(() => {
+    renderPie()
+  }, 100)
   loading.value = false
 }
 

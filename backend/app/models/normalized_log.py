@@ -187,31 +187,31 @@ class NormalizedLog:
     @staticmethod
     def get_timeline(host_id: Optional[int] = None, interval: str = "hour",
                      date_from: Optional[str] = None, date_to: Optional[str] = None) -> list:
-        """时间线聚合."""
+        """时间线聚合（使用 COALESCE 以 created_at 兜底空 timestamp）."""
         try:
             conditions = []
             params = []
             if host_id is not None:
                 conditions.append("host_id=?")
                 params.append(host_id)
+            time_col = "COALESCE(NULLIF(timestamp,''), created_at)"
             if date_from:
-                conditions.append("timestamp >= ?")
+                conditions.append(f"{time_col} >= ?")
                 params.append(date_from)
             if date_to:
-                conditions.append("timestamp <= ?")
+                conditions.append(f"{time_col} <= ?")
                 params.append(date_to)
 
             where = " AND ".join(conditions)
             where_clause = f" WHERE {where}" if where else ""
 
-            import sqlite3
             with get_connection() as conn:
                 if interval == "day":
                     fmt = "%Y-%m-%d"
                 else:
                     fmt = "%Y-%m-%d %H:00"
                 rows = conn.execute(
-                    f"""SELECT strftime('{fmt}', timestamp) as bucket,
+                    f"""SELECT strftime('{fmt}', {time_col}) as bucket,
                                COUNT(*) as cnt, severity
                         FROM normalized_logs{where_clause}
                         GROUP BY bucket, severity ORDER BY bucket""",
@@ -226,7 +226,15 @@ class NormalizedLog:
                     if sev in ("critical", "high", "medium", "low"):
                         trend[b][sev] = trend[b].get(sev, 0) + r["cnt"]
                     trend[b]["total"] += r["cnt"]
-                return sorted(trend.values(), key=lambda x: x["bucket"])
+                result = sorted(trend.values(), key=lambda x: x["bucket"])
+                # 至少返回最近24小时的数据（补0）
+                if not result:
+                    from datetime import datetime, timedelta
+                    now = datetime.now()
+                    for i in range(23, -1, -1):
+                        d = (now - timedelta(hours=i)).strftime("%m-%d %H:00")
+                        result.append({"bucket": d, "label": d[-5:], "critical": 0, "high": 0, "medium": 0, "total": 0})
+                return result
         except Exception as e:
             logger.error("NormalizedLog.get_timeline failed: %s", e)
             return []
