@@ -395,5 +395,12 @@ function handleCommand(command) {
 .main-content {
   flex: 1;
   overflow-y: auto;
+  padding: 24px;
+  max-width: 1440px;
+  width: 100%;
+  margin: 0 auto;
+}
+@media (max-width: 767px) {
+  .main-content { padding: 16px; }
 }
 </style>

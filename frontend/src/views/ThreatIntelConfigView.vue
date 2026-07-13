@@ -1,7 +1,11 @@
 <template>
   <div class="ti-config">
     <div class="card-box">
-      <h2 class="page-title">威胁情报外联配置</h2>
+      <h2 class="page-title">
+        <span class="title-emoji">🌐</span>
+        <span>威胁情报外联配置</span>
+        <el-tag class="title-tag" type="warning" effect="plain" size="small">🔌 外部数据源</el-tag>
+      </h2>
 
       <el-row :gutter="20">
         <!-- 运行策略 -->

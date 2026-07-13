@@ -1,6 +1,10 @@
 <template>
   <div class="page-container">
-    <h2 class="page-title mb-20">AI 分析</h2>
+    <h2 class="page-title mb-20">
+      <span class="title-emoji">🧠</span>
+      <span>AI 分析</span>
+      <el-tag class="title-tag" type="success" effect="plain" size="small">✨ 智能辅助</el-tag>
+    </h2>
 
     <el-tabs v-model="activeTab" class="ai-tabs">
       <!-- ============================================================ -->
@@ -1523,7 +1527,12 @@ function isTextLong(text) {
   font-size: 20px;
   font-weight: 600;
   color: #303133;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
+.title-emoji { font-size: 22px; }
+.title-tag { margin-left: 4px; }
 
 /* ============================================================
    P2-05: Ollama Hint

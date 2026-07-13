@@ -2,7 +2,11 @@
   <div class="whitelist-view">
     <div class="card-box">
       <div class="flex-between mb-16">
-        <h2 class="page-title">白名单配置</h2>
+        <h2 class="page-title">
+          <span class="title-emoji">✅</span>
+          <span>白名单配置</span>
+          <el-tag class="title-tag" type="success" effect="plain" size="small">🛡️ 信任列表</el-tag>
+        </h2>
         <el-button type="primary" size="small" @click="showAddDialog = true">添加白名单</el-button>
       </div>
 

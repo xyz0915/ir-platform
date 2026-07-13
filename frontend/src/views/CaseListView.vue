@@ -2,7 +2,11 @@
   <div class="page-container">
     <div class="card-box">
       <div class="flex-between mb-20">
-        <h2 class="page-title">案件管理</h2>
+        <h2 class="page-title">
+          <span class="title-emoji">📁</span>
+          <span>案件管理</span>
+          <el-tag class="title-tag" type="warning" effect="plain" size="small">🚨 应急核心</el-tag>
+        </h2>
         <el-button type="primary" @click="showCreateDialog">
           <el-icon><Plus /></el-icon> 新建案件
         </el-button>

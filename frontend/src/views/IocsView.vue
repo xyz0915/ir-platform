@@ -2,7 +2,11 @@
   <div class="ioc-view">
     <div class="card-box">
       <div class="flex-between mb-16">
-        <h2 class="page-title">IOC 指标管理</h2>
+        <h2 class="page-title">
+          <span class="title-emoji">⚡</span>
+          <span>IOC 指标管理</span>
+          <el-tag class="title-tag" type="danger" effect="plain" size="small">🎯 威胁情报</el-tag>
+        </h2>
         <div>
           <el-button
             type="warning"

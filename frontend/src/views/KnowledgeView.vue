@@ -2,7 +2,11 @@
   <div class="knowledge-view">
     <div class="card-box">
       <div class="flex-between mb-16">
-        <h2 class="page-title">知识库管理</h2>
+        <h2 class="page-title">
+          <span class="title-emoji">📚</span>
+          <span>知识库管理</span>
+          <el-tag class="title-tag" type="info" effect="plain" size="small">💡 经验沉淀</el-tag>
+        </h2>
         <div class="action-buttons">
           <el-button type="primary" size="small" @click="showImportDialog = true">
             <el-icon><Upload /></el-icon> 手动导入
