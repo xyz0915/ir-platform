@@ -17,6 +17,153 @@ from app.models.remediation_checklist import RemediationChecklist
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# ── 加载 DDL 确保 incident_reports 表存在 ──
+import app.database as db
+import sqlite3
+
+_REPORT_TABLE = """
+CREATE TABLE IF NOT EXISTS incident_reports (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    title           TEXT NOT NULL,
+    report_type     TEXT DEFAULT 'emergency',
+    audience        TEXT DEFAULT 'leader',
+    status          TEXT DEFAULT 'draft',
+    summary         TEXT DEFAULT '',
+    impact_scope    TEXT DEFAULT '{}',
+    timeline_json   TEXT DEFAULT '[]',
+    mitre_cover     TEXT DEFAULT '[]',
+    evidence        TEXT DEFAULT '',
+    recommendations TEXT DEFAULT '{}',
+    case_id         INTEGER,
+    host_id         INTEGER,
+    created_by      TEXT DEFAULT '',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+)
+"""
+try:
+    with db.get_connection() as conn:
+        conn.execute(_REPORT_TABLE)
+        conn.commit()
+except Exception:
+    pass
+
+
+# ── 报告 CRUD ──
+
+@router.get("/reports")
+def list_reports(status: str = "all", page: int = 1, page_size: int = 50):
+    """报告列表."""
+    try:
+        with db.get_connection() as conn:
+            conditions = ["1=1"]
+            params = []
+            if status != "all":
+                conditions.append("status=?")
+                params.append(status)
+            where = " AND ".join(conditions)
+            total = conn.execute(f"SELECT COUNT(*) FROM incident_reports WHERE {where}", params).fetchone()[0]
+            offset = (page - 1) * page_size
+            rows = conn.execute(
+                f"SELECT * FROM incident_reports WHERE {where} ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+                params + [page_size, offset]
+            ).fetchall()
+            return {"success": True, "data": {"items": [dict(r) for r in rows], "total": total}}
+    except Exception as e:
+        logger.error("list_reports failed: %s", e)
+        return {"success": False, "data": {"items": [], "total": 0}}
+
+
+@router.get("/reports/{report_id}")
+def get_report(report_id: int):
+    """报告详情."""
+    try:
+        with db.get_connection() as conn:
+            row = conn.execute("SELECT * FROM incident_reports WHERE id=?", [report_id]).fetchone()
+            if not row:
+                raise HTTPException(404, "报告不存在")
+            return {"success": True, "data": dict(row)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("get_report failed: %s", e)
+        raise HTTPException(500, "查询失败")
+
+
+@router.post("/reports")
+def create_report(title: str = "未命名报告", report_type: str = "emergency",
+                   audience: str = "leader", case_id: int = 0, host_id: int = 0,
+                   created_by: str = ""):
+    """新建报告."""
+    try:
+        from datetime import datetime
+        now = datetime.now().isoformat()
+        with db.get_connection() as conn:
+            cur = conn.execute(
+                """INSERT INTO incident_reports (title, report_type, audience, status,
+                   case_id, host_id, created_by, created_at, updated_at)
+                   VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?)""",
+                [title, report_type, audience, case_id or None, host_id or None, created_by, now, now]
+            )
+            conn.commit()
+            return {"success": True, "data": {"id": cur.lastrowid}}
+    except Exception as e:
+        logger.error("create_report failed: %s", e)
+        raise HTTPException(500, "创建失败")
+
+
+@router.put("/reports/{report_id}")
+def update_report(report_id: int, title: str = None, summary: str = None,
+                   evidence: str = None, report_type: str = None, audience: str = None,
+                   status: str = None):
+    """更新报告."""
+    try:
+        from datetime import datetime
+        updates = {}
+        if title is not None: updates["title"] = title
+        if summary is not None: updates["summary"] = summary
+        if evidence is not None: updates["evidence"] = evidence
+        if report_type is not None: updates["report_type"] = report_type
+        if audience is not None: updates["audience"] = audience
+        if status is not None: updates["status"] = status
+        if not updates:
+            return {"success": True}
+        updates["updated_at"] = datetime.now().isoformat()
+        set_clause = ", ".join(f"{k}=?" for k in updates)
+        params = list(updates.values()) + [report_id]
+        with db.get_connection() as conn:
+            conn.execute(f"UPDATE incident_reports SET {set_clause} WHERE id=?", params)
+            conn.commit()
+            return {"success": True}
+    except Exception as e:
+        logger.error("update_report failed: %s", e)
+        raise HTTPException(500, "更新失败")
+
+
+@router.delete("/reports/{report_id}")
+def delete_report(report_id: int):
+    """删除报告."""
+    try:
+        with db.get_connection() as conn:
+            conn.execute("DELETE FROM incident_reports WHERE id=?", [report_id])
+            conn.commit()
+            return {"success": True}
+    except Exception as e:
+        logger.error("delete_report failed: %s", e)
+        raise HTTPException(500, "删除失败")
+
+
+@router.post("/reports/{report_id}/submit")
+def submit_report(report_id: int):
+    """草稿→待审."""
+    return update_report(report_id, status="review")
+
+
+@router.post("/reports/{report_id}/publish")
+def publish_report(report_id: int):
+    """待审→已发."""
+    return update_report(report_id, status="published")
+
 
 @router.get("/hosts/{host_id}/report")
 def get_html_report(host_id: int, report_level: str = "technical"):
