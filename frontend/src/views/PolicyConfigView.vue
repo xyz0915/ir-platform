@@ -85,19 +85,27 @@
             <el-button size="small" type="success" @click="saveRules" :disabled="!dirtyRules">保存规则选择</el-button>
           </div>
 
-          <el-table :data="rules" stripe border size="small" @selection-change="onRuleSelect" style="margin-top:8px">
-            <el-table-column type="selection" width="36" :selectable="() => true" />
-            <el-table-column label="规则名称" min-width="200">
-              <template #default="{row}"><span style="font-weight:500">{{ row.label || row.name }}</span><br><span style="font-size:11px;color:#6b7280">{{ row.name }}</span></template>
+          <el-table :data="rules" stripe border size="small" @selection-change="onRuleSelect" style="margin-top:8px" :row-class-name="rowClass">
+            <el-table-column type="selection" width="40" :selectable="() => true" />
+            <el-table-column label="是否检测" width="80" align="center">
+              <template #default="{row}">
+                <el-checkbox v-model="row._checked" @change="onRuleCheck(row, $event)" />
+              </template>
             </el-table-column>
-            <el-table-column label="严重度" width="70">
-              <template #default="{row}"><el-tag :type="sevType(row.severity)" size="small">{{ row.severity }}</el-tag></template>
+            <el-table-column label="规则名称" min-width="240">
+              <template #default="{row}">
+                <div style="font-weight:600;font-size:13px;color:#1f2937;line-height:1.5">{{ row.label || row.name }}</div>
+                <div style="font-size:11px;color:#6b7280;line-height:1.4;margin-top:2px;font-family:monospace">{{ row.name }}</div>
+              </template>
             </el-table-column>
-            <el-table-column label="分类" width="80">
-              <template #default="{row}">{{ row.category || '-' }}</template>
+            <el-table-column label="严重度" width="80" align="center">
+              <template #default="{row}"><el-tag :type="sevType(row.severity)" size="small">{{ sevLabel(row.severity) }}</el-tag></template>
             </el-table-column>
-            <el-table-column label="类型" width="80">
-              <template #default="{row}">{{ row.rule_type || '-' }}</template>
+            <el-table-column label="分类" width="110" align="center">
+              <template #default="{row}"><el-tag size="small" effect="plain" :type="catType(row.category)">{{ catLabel(row.category) }}</el-tag></template>
+            </el-table-column>
+            <el-table-column label="类型" width="110" align="center">
+              <template #default="{row}"><el-tag size="small" :type="typeType(row.rule_type)">{{ typeLabel(row.rule_type) }}</el-tag></template>
             </el-table-column>
           </el-table>
           <div class="rule-page">
@@ -169,7 +177,29 @@ const filterKeyword = ref('')
 const categories = ['process', 'connection', 'logon', 'file', 'persistence', 'ioc', 'webshell', 'memory']
 
 function sevType(s) { return { critical: 'danger', high: 'warning', medium: 'primary' }[s] || 'info' }
+function sevLabel(s) { return { critical: '严重', high: '高危', medium: '中危', low: '低危' }[s] || s || '信息' }
+const CAT_LABELS = { process: '进程行为', connection: '网络连接', logon: '登录事件', file: '文件操作', persistence: '持久化', ioc: 'IOC', webshell: 'WebShell', memory: '内存', behavior: '行为', discovery: '发现' }
+const TYPE_LABELS = { regex: '正则匹配', list: '列表匹配', behavior: '行为分析', threshold: '阈值检测', attack_chain: '攻击链', composite: '复合规则' }
+function catLabel(c) { return CAT_LABELS[c] || c || '-' }
+function typeLabel(t) { return TYPE_LABELS[t] || t || '-' }
+function catType(c) {
+  const m = { process: 'primary', connection: 'warning', logon: 'success', file: 'info', persistence: 'danger', ioc: 'danger', webshell: 'danger', memory: 'warning' }
+  return m[c] || ''
+}
+function typeType(t) {
+  const m = { regex: '', list: 'info', behavior: 'primary', threshold: 'warning', attack_chain: 'danger', composite: 'success' }
+  return m[t] || ''
+}
 function markDirty() { dirty.value = true }
+function onRuleCheck(row, checked) {
+  selectedRuleIds.value = checked
+    ? Array.from(new Set([...selectedRuleIds.value, row.id]))
+    : selectedRuleIds.value.filter(id => id !== row.id)
+  dirtyRules.value = true
+}
+function rowClass({ row }) {
+  return row._checked ? 'rule-row-checked' : ''
+}
 
 async function loadPolicies() {
   const res = await getPolicies()
@@ -215,7 +245,15 @@ async function fetchRules() {
 }
 
 function onRuleSelect(selection) {
-  selectedRuleIds.value = selection.map(r => r.id)
+  // Element Plus el-table 切换分页时会重置 selection，配合 _checked 字段做最终同步
+  const pageIds = rules.value.map(r => r.id)
+  const pageSelectedIds = selection.map(r => r.id)
+  // 当前页已选的 id = 来自 selectedRuleIds 且在当前页里的
+  const fromOtherPages = selectedRuleIds.value.filter(id => !pageIds.includes(id))
+  const newSelected = Array.from(new Set([...fromOtherPages, ...pageSelectedIds]))
+  // 同步每行 _checked
+  rules.value.forEach(r => { r._checked = newSelected.includes(r.id) })
+  selectedRuleIds.value = newSelected
   dirtyRules.value = true
 }
 
@@ -335,4 +373,11 @@ onMounted(loadPolicies)
 .rule-page { display: flex; justify-content: center; margin-top: 10px; }
 
 .info-tip { font-size: 11px; color: #92400e; background: #fffbeb; border-left: 3px solid #f59e0b; padding: 10px 14px; border-radius: 0 6px 6px 0; line-height: 1.5; }
+
+/* 规则表样式优化 */
+:deep(.el-table) { font-size: 12px; }
+:deep(.el-table .el-table__cell) { padding: 8px 0; }
+:deep(.rule-row-checked) { background: #ecfdf5 !important; }
+:deep(.rule-row-checked:hover > td) { background: #d1fae5 !important; }
+:deep(.el-table .el-table__row:hover > td) { background: #f9fafb !important; }
 </style>
