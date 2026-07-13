@@ -99,9 +99,10 @@ const navGroups = [
   {
     emoji: '📄',
     label: '报告输出',
-    path: '',
+    path: '/reports',
+    activeMatch: '/reports',
     children: [
-      { emoji: '📝', label: '分析报告', path: '/hosts/:id/report', activeMatch: '/report' },
+      { emoji: '📋', label: '报告列表', path: '/reports' },
     ],
   },
   {
