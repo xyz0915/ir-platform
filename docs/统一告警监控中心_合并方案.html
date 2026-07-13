@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>统一告警监控中心</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', -apple-system, sans-serif; background: #0f1219; color: #e0e4ea; min-height: 100vh; }
+
+/* ===== 全局布局 ===== */
+.app-container { max-width: 1440px; margin: 0 auto; padding: 20px 24px; }
+
+/* ===== 顶栏 ===== */
+.top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+.top-bar h1 { font-size: 22px; font-weight: 600; }
+.top-bar h1 span { font-size: 14px; font-weight: 400; color: #8b929a; margin-left: 10px; }
+.top-right { display: flex; align-items: center; gap: 12px; }
+.time-badge { font-size: 13px; color: #8b929a; background: #1a1f2e; padding: 6px 14px; border-radius: 6px; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+.status-dot.online { background: #2da44e; box-shadow: 0 0 6px #2da44e66; }
+.refresh-btn { background: #1e2433; border: 1px solid #2d3548; color: #c8cdd5; padding: 6px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: .2s; }
+.refresh-btn:hover { background: #2d3548; border-color: #3d475e; }
+
+/* ===== 统计卡片行 ===== */
+.stats-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 20px; }
+.stat-card { background: #1a1f2e; border: 1px solid #242b3d; border-radius: 10px; padding: 16px 18px; transition: .25s; cursor: default; }
+.stat-card:hover { border-color: #3d475e; transform: translateY(-1px); }
+.stat-card .label { font-size: 12px; color: #8b929a; margin-bottom: 6px; }
+.stat-card .value { font-size: 26px; font-weight: 700; }
+.stat-card .value.critical { color: #f85149; }
+.stat-card .value.high { color: #d4a72c; }
+.stat-card .value.green { color: #2da44e; }
+.stat-card .value.info { color: #58a6ff; }
+.stat-card .sub { font-size: 11px; color: #6e7681; margin-top: 4px; }
+
+/* ===== 中间区域：两张图 + 主机 ===== */
+.mid-section { display: grid; grid-template-columns: 1.5fr 1fr 0.9fr; gap: 12px; margin-bottom: 20px; }
+.mid-panel { background: #1a1f2e; border: 1px solid #242b3d; border-radius: 10px; padding: 16px; }
+.mid-panel .panel-title { font-size: 13px; font-weight: 600; color: #8b929a; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+.mid-panel .panel-title .badge { font-size: 11px; background: #242b3d; padding: 2px 8px; border-radius: 10px; color: #8b929a; font-weight: 400; }
+.chart-container { width: 100%; height: 170px; }
+
+/* ===== 主机在线面板 ===== */
+.host-list { display: flex; flex-direction: column; gap: 6px; }
+.host-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; transition: .2s; font-size: 13px; }
+.host-item:hover { background: #242b3d; }
+.host-item .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.host-item .dot.on { background: #2da44e; box-shadow: 0 0 4px #2da44e66; }
+.host-item .dot.off { background: #484f58; }
+.host-item .host-name { flex: 1; color: #e0e4ea; }
+.host-item .host-ip { font-size: 11px; color: #6e7681; }
+.host-item .alert-count { font-size: 11px; background: #242b3d; padding: 1px 8px; border-radius: 10px; color: #d4a72c; }
+
+/* ===== 筛选栏 ===== */
+.filter-bar { background: #1a1f2e; border: 1px solid #242b3d; border-radius: 10px; padding: 12px 16px; margin-bottom: 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.filter-bar select, .filter-bar input { background: #0f1219; border: 1px solid #2d3548; color: #e0e4ea; padding: 5px 10px; border-radius: 5px; font-size: 13px; outline: none; }
+.filter-bar select:focus, .filter-bar input:focus { border-color: #58a6ff; }
+.filter-bar input { width: 180px; }
+.filter-bar .reset-btn { background: transparent; border: 1px solid #2d3548; color: #8b929a; padding: 5px 12px; border-radius: 5px; cursor: pointer; font-size: 12px; }
+.filter-bar .reset-btn:hover { border-color: #f85149; color: #f85149; }
+.filter-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.filter-tag { display: flex; align-items: center; gap: 4px; background: #242b3d; padding: 2px 8px; border-radius: 4px; font-size: 12px; color: #c8cdd5; }
+.filter-tag .close { cursor: pointer; color: #6e7681; font-size: 14px; line-height: 1; }
+.filter-tag .close:hover { color: #f85149; }
+
+/* ===== 告警表格 ===== */
+.alert-table-wrap { background: #1a1f2e; border: 1px solid #242b3d; border-radius: 10px; overflow: hidden; }
+.alert-table { width: 100%; border-collapse: collapse; }
+.alert-table th { text-align: left; padding: 10px 14px; font-size: 12px; font-weight: 600; color: #8b929a; border-bottom: 1px solid #242b3d; background: #0f1219; white-space: nowrap; }
+.alert-table td { padding: 9px 14px; font-size: 13px; border-bottom: 1px solid #1e2433; }
+.alert-table tr:hover td { background: #1e2433; }
+.alert-table tr:last-child td { border-bottom: none; }
+
+.sev-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.sev-badge.critical { background: #f8514933; color: #f85149; }
+.sev-badge.high { background: #d4a72c33; color: #d4a72c; }
+.sev-badge.medium { background: #58a6ff33; color: #58a6ff; }
+.sev-badge.low { background: #6e768133; color: #8b929a; }
+
+.status-tag { font-size: 11px; padding: 2px 8px; border-radius: 4px; }
+.status-tag.open { background: #f8514922; color: #f85149; }
+.status-tag.acknowledged { background: #d4a72c22; color: #d4a72c; }
+.status-tag.resolved { background: #2da44e22; color: #2da44e; }
+.status-tag.dismissed { color: #6e7681; }
+
+.alert-title { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e0e4ea; cursor: pointer; }
+.alert-title:hover { color: #58a6ff; }
+
+.action-btns { display: flex; gap: 4px; }
+.action-btn { font-size: 11px; padding: 3px 10px; border-radius: 4px; border: 1px solid #2d3548; background: transparent; color: #8b929a; cursor: pointer; transition: .2s; }
+.action-btn:hover { background: #242b3d; }
+.action-btn.ack:hover { border-color: #d4a72c; color: #d4a72c; }
+.action-btn.resolve:hover { border-color: #2da44e; color: #2da44e; }
+.action-btn.dismiss:hover { border-color: #6e7681; color: #6e7681; }
+
+.batch-bar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid #242b3d; }
+.batch-bar .info { font-size: 12px; color: #8b929a; }
+.batch-bar .batch-btn { font-size: 12px; padding: 4px 14px; border-radius: 5px; border: none; cursor: pointer; }
+.batch-btn.primary { background: #238636; color: #fff; }
+.batch-btn.primary:hover { background: #2ea043; }
+.batch-btn.warning { background: #9e6a03; color: #fff; }
+.batch-btn.warning:hover { background: #bb8009; }
+
+/* ===== 分页 ===== */
+.pagination { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-top: 1px solid #242b3d; }
+.pagination .total { font-size: 12px; color: #8b929a; }
+.page-btns { display: flex; gap: 4px; }
+.page-btn { width: 30px; height: 30px; border: 1px solid #2d3548; background: transparent; color: #c8cdd5; border-radius: 5px; cursor: pointer; font-size: 13px; transition: .2s; }
+.page-btn:hover { background: #242b3d; }
+.page-btn.active { background: #238636; border-color: #238636; color: #fff; }
+
+/* ===== 底部浮窗 ===== */
+.toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.toast { display: flex; align-items: center; gap: 10px; background: #1a1f2e; border: 1px solid #2d3548; border-radius: 8px; padding: 10px 16px; box-shadow: 0 4px 20px rgba(0,0,0,.4); pointer-events: auto; animation: slideIn .3s ease-out; min-width: 280px; }
+.toast.critical { border-left: 3px solid #f85149; }
+.toast.high { border-left: 3px solid #d4a72c; }
+.toast.medium { border-left: 3px solid #58a6ff; }
+.toast .toast-icon { font-size: 18px; }
+.toast .toast-body { flex: 1; }
+.toast .toast-title { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+.toast .toast-time { font-size: 11px; color: #6e7681; }
+.toast .toast-close { cursor: pointer; color: #6e7681; font-size: 16px; }
+@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+</style>
+</head>
+<body>
+
+<div class="app-container">
+
+  <!-- ===== 顶栏 ===== -->
+  <div class="top-bar">
+    <h1>🛡️ 统一告警监控中心 <span>Integrated Alert & Monitoring Center</span></h1>
+    <div class="top-right">
+      <span class="time-badge"><span class="status-dot online"></span> Agent 在线 · 4 台</span>
+      <span class="time-badge" id="currentTime">--</span>
+      <button class="refresh-btn" onclick="simulateNewAlert()">⚡ 模拟告警</button>
+    </div>
+  </div>
+
+  <!-- ===== 统计卡片 ===== -->
+  <div class="stats-row">
+    <div class="stat-card"><div class="label">🚨 待处理告警</div><div class="value critical">24</div><div class="sub">较昨日 ↑ 37.5%</div></div>
+    <div class="stat-card"><div class="label">📥 今日新增</div><div class="value high">47</div><div class="sub">近1小时 8 条</div></div>
+    <div class="stat-card"><div class="label">✅ 已处置</div><div class="value green">163</div><div class="sub">处置率 87.2%</div></div>
+    <div class="stat-card"><div class="label">📊 规则命中</div><div class="value info">1,284</div><div class="sub">过去 24 小时</div></div>
+    <div class="stat-card"><div class="label">💻 监控主机</div><div class="value green">12</div><div class="sub">在线 4 / 离线 8</div></div>
+    <div class="stat-card"><div class="label">⚡ 事件速率</div><div class="value info">3.2/s</div><div class="sub">峰值 12.7/s</div></div>
+  </div>
+
+  <!-- ===== 图表 + 主机 ===== -->
+  <div class="mid-section">
+    <div class="mid-panel">
+      <div class="panel-title">📈 告警趋势 <span class="badge">过去 30 分钟</span></div>
+      <div class="chart-container" id="trendChart"></div>
+    </div>
+    <div class="mid-panel">
+      <div class="panel-title">🧩 严重度分布 <span class="badge">按告警等级</span></div>
+      <div class="chart-container" id="pieChart"></div>
+    </div>
+    <div class="mid-panel">
+      <div class="panel-title">🖥️ 主机在线 <span class="badge">实时</span></div>
+      <div class="host-list">
+        <div class="host-item"><span class="dot on"></span><span class="host-name">WEB-SRV-01</span><span class="host-ip">192.168.1.50</span><span class="alert-count">3</span></div>
+        <div class="host-item"><span class="dot on"></span><span class="host-name">DB-SRV-02</span><span class="host-ip">192.168.1.60</span><span class="alert-count">1</span></div>
+        <div class="host-item"><span class="dot on"></span><span class="host-name">AD-01</span><span class="host-ip">192.168.1.10</span><span class="alert-count">8</span></div>
+        <div class="host-item"><span class="dot on"></span><span class="host-name">FILESRV-01</span><span class="host-ip">192.168.1.80</span><span class="alert-count">0</span></div>
+        <div class="host-item"><span class="dot off"></span><span class="host-name">TEST-PC-01</span><span class="host-ip">192.168.1.100</span><span class="alert-count" style="color:#6e7681">-</span></div>
+        <div class="host-item"><span class="dot off"></span><span class="host-name">DEV-01</span><span class="host-ip">192.168.1.120</span><span class="alert-count" style="color:#6e7681">-</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 筛选栏 ===== -->
+  <div class="filter-bar">
+    <select style="width:100px"><option>全部严重度</option><option>严重</option><option>高危</option><option>中危</option><option>低危</option></select>
+    <select style="width:100px"><option>全部状态</option><option>未处理</option><option>已确认</option><option>已解决</option><option>已忽略</option></select>
+    <select style="width:140px"><option>全部主机</option><option>WEB-SRV-01</option><option>DB-SRV-02</option><option>AD-01</option></select>
+    <input type="text" placeholder="🔍 搜索标题 / 规则 / 进程 / IP...">
+    <select style="width:130px"><option>近 24 小时</option><option>近 7 天</option><option>近 30 天</option><option>自定义</option></select>
+    <button class="reset-btn">↺ 重置</button>
+    <div class="filter-tags">
+      <span class="filter-tag">严重度: 严重 <span class="close" onclick="this.parentElement.remove()">×</span></span>
+      <span class="filter-tag">状态: 未处理 <span class="close" onclick="this.parentElement.remove()">×</span></span>
+    </div>
+  </div>
+
+  <!-- ===== 批量操作栏 ===== -->
+  <div class="batch-bar">
+    <input type="checkbox" id="selectAll" style="accent-color:#238636">
+    <label for="selectAll" style="font-size:13px;cursor:pointer">全选</label>
+    <span class="info">已选 <strong id="selectedCount">0</strong> 条</span>
+    <button class="batch-btn warning" onclick="alert('✅ 已确认选中告警')">✅ 批量确认</button>
+    <button class="batch-btn primary" onclick="alert('✅ 已解决选中告警')">✅ 批量解决</button>
+    <button class="batch-btn" style="background:#da3633;color:#fff" onclick="alert('已忽略选中告警')">⛔ 批量忽略</button>
+  </div>
+
+  <!-- ===== 告警表格 ===== -->
+  <div class="alert-table-wrap">
+    <table class="alert-table">
+      <thead>
+        <tr><th style="width:32px"><input type="checkbox" style="accent-color:#238636"></th><th>严重度</th><th>时间</th><th>标题</th><th>规则</th><th>主机</th><th>状态</th><th>次数</th><th>操作</th></tr>
+      </thead>
+      <tbody id="alertBody">
+        <tr>
+          <td><input type="checkbox" style="accent-color:#238636" onchange="updateCount()"></td>
+          <td><span class="sev-badge critical">■ 严重</span></td>
+          <td style="white-space:nowrap;color:#8b929a;font-size:12px">08:29:12</td>
+          <td><div class="alert-title">certutil.exe 远程下载载荷 - urlcache 参数</div></td>
+          <td style="color:#58a6ff;font-size:12px">certutil_download</td>
+          <td style="color:#c8cdd5;font-size:12px">AD-01</td>
+          <td><span class="status-tag open">未处理</span></td>
+          <td style="color:#8b929a">3</td>
+          <td><div class="action-btns"><button class="action-btn ack" onclick="ackRow(this)">确认</button><button class="action-btn resolve" onclick="resolveRow(this)">解决</button></div></td>
+        </tr>
+        <tr>
+          <td><input type="checkbox" style="accent-color:#238636" onchange="updateCount()"></td>
+          <td><span class="sev-badge critical">■ 严重</span></td>
+          <td style="white-space:nowrap;color:#8b929a;font-size:12px">08:19:55</td>
+          <td><div class="alert-title">powershell -enc 编码命令执行 (进程链: winword→cmd→powershell)</div></td>
+          <td style="color:#58a6ff;font-size:12px">powershell_encoded</td>
+          <td style="color:#c8cdd5;font-size:12px">WEB-SRV-01</td>
+          <td><span class="status-tag open">未处理</span></td>
+          <td style="color:#8b929a">7</td>
+          <td><div class="action-btns"><button class="action-btn ack" onclick="ackRow(this)">确认</button><button class="action-btn resolve" onclick="resolveRow(this)">解决</button></div></td>
+        </tr>
+        <tr>
+          <td><input type="checkbox" style="accent-color:#238636" onchange="updateCount()"></td>
+          <td><span class="sev-badge high">■ 高危</span></td>
+          <td style="white-space:nowrap;color:#8b929a;font-size:12px">08:05:03</td>
+          <td><div class="alert-title">lsass.exe 异常访问 - 可能是凭据转储行为</div></td>
+          <td style="color:#58a6ff;font-size:12px">credential_dump</td>
+          <td style="color:#c8cdd5;font-size:12px">DB-SRV-02</td>
+          <td><span class="status-tag acknowledged">已确认</span></td>
+          <td style="color:#8b929a">2</td>
+          <td><div class="action-btns"><button class="action-btn resolve" onclick="resolveRow(this)">解决</button></div></td>
+        </tr>
+        <tr>
+          <td><input type="checkbox" style="accent-color:#238636" onchange="updateCount()"></td>
+          <td><span class="sev-badge high">■ 高危</span></td>
+          <td style="white-space:nowrap;color:#8b929a;font-size:12px">07:52:18</td>
+          <td><div class="alert-title">注册表 Run 键新增可疑启动项</div></td>
+          <td style="color:#58a6ff;font-size:12px">registry_persistence</td>
+          <td style="color:#c8cdd5;font-size:12px">AD-01</td>
+          <td><span class="status-tag open">未处理</span></td>
+          <td style="color:#8b929a">1</td>
+          <td><div class="action-btns"><button class="action-btn ack" onclick="ackRow(this)">确认</button><button class="action-btn resolve" onclick="resolveRow(this)">解决</button></div></td>
+        </tr>
+        <tr>
+          <td><input type="checkbox" style="accent-color:#238636" onchange="updateCount()"></td>
+          <td><span class="sev-badge medium">■ 中危</span></td>
+          <td style="white-space:nowrap;color:#8b929a;font-size:12px">07:38:44</td>
+          <td><div class="alert-title">系统服务启动类型被禁用 - Windows Defender</div></td>
+          <td style="color:#58a6ff;font-size:12px">antivirus_tamper</td>
+          <td style="color:#c8cdd5;font-size:12px">TEST-PC-01</td>
+          <td><span class="status-tag resolved">已解决</span></td>
+          <td style="color:#8b929a">1</td>
+          <td><div class="action-btns"><span style="color:#6e7681;font-size:12px">已闭环</span></div></td>
+        </tr>
+        <tr>
+          <td><input type="checkbox" style="accent-color:#238636" onchange="updateCount()"></td>
+          <td><span class="sev-badge low">■ 低危</span></td>
+          <td style="white-space:nowrap;color:#8b929a;font-size:12px">07:12:09</td>
+          <td><div class="alert-title">新网络连接 - SSH 外连至 203.0.113.42</div></td>
+          <td style="color:#58a6ff;font-size:12px">network_scan</td>
+          <td style="color:#c8cdd5;font-size:12px">FILESRV-01</td>
+          <td><span class="status-tag dismissed">已忽略</span></td>
+          <td style="color:#8b929a">1</td>
+          <td><div class="action-btns"><span style="color:#6e7681;font-size:12px">已忽略</span></div></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- ===== 分页 ===== -->
+    <div class="pagination">
+      <span class="total">共 24 条告警，显示 1-6 条</span>
+      <div class="page-btns">
+        <button class="page-btn active">1</button>
+        <button class="page-btn">2</button>
+        <button class="page-btn">3</button>
+        <button class="page-btn">4</button>
+        <button class="page-btn">›</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Toast 容器 ===== -->
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+// ===== 时钟 =====
+function updateClock() {
+  document.getElementById('currentTime').textContent = new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+setInterval(updateClock, 1000); updateClock();
+
+// ===== 趋势图 =====
+(function() {
+  const c = echarts.init(document.getElementById('trendChart'));
+  const now = new Date();
+  const labels = Array.from({length: 30}, (_, i) => {
+    const d = new Date(now - (30 - i) * 60000);
+    return d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+  });
+  const critical = Array.from({length: 30}, () => Math.floor(Math.random() * 5));
+  const high = Array.from({length: 30}, () => Math.floor(Math.random() * 8) + 2);
+  c.setOption({
+    tooltip: { trigger: 'axis', theme: 'dark', backgroundColor: '#1a1f2e', borderColor: '#2d3548', textStyle: { color: '#e0e4ea', fontSize: 12 } },
+    legend: { data: ['严重', '高危', '中低危'], textStyle: { color: '#8b929a', fontSize: 11 }, bottom: 0 },
+    grid: { left: 35, right: 8, top: 8, bottom: 28 },
+    xAxis: { type: 'category', data: labels, axisLabel: { color: '#6e7681', fontSize: 10, interval: 4 }, axisLine: { lineStyle: { color: '#242b3d' } }, axisTick: { show: false } },
+    yAxis: { type: 'value', splitLine: { lineStyle: { color: '#1e2433', type: 'dashed' } }, axisLabel: { color: '#6e7681', fontSize: 10 } },
+    series: [
+      { name: '严重', type: 'bar', stack: 'total', data: critical, itemStyle: { color: '#f85149', borderRadius: [2, 2, 0, 0] }, barWidth: 6 },
+      { name: '高危', type: 'bar', stack: 'total', data: high, itemStyle: { color: '#d4a72c', borderRadius: 0 } },
+      { name: '中低危', type: 'bar', stack: 'total', data: Array.from({length: 30}, () => Math.floor(Math.random() * 10)), itemStyle: { color: '#58a6ff', borderRadius: [0, 0, 2, 2] } }
+    ]
+  });
+  window.addEventListener('resize', () => c.resize());
+})();
+
+// ===== 饼图 =====
+(function() {
+  const c = echarts.init(document.getElementById('pieChart'));
+  c.setOption({
+    tooltip: { trigger: 'item', backgroundColor: '#1a1f2e', borderColor: '#2d3548', textStyle: { color: '#e0e4ea' }, formatter: '{b}: {c} 条 ({d}%)' },
+    series: [{
+      type: 'pie', radius: ['45%', '70%'], center: ['50%', '48%'],
+      avoidLabelOverlap: true,
+      label: { show: true, formatter: '{b}', fontSize: 11, color: '#c8cdd5' },
+      emphasis: { label: { fontSize: 13, fontWeight: 'bold' } },
+      itemStyle: { borderRadius: 4, borderColor: '#0f1219', borderWidth: 2 },
+      data: [
+        { name: '严重', value: 4, itemStyle: { color: '#f85149' } },
+        { name: '高危', value: 11, itemStyle: { color: '#d4a72c' } },
+        { name: '中危', value: 7, itemStyle: { color: '#58a6ff' } },
+        { name: '低危', value: 2, itemStyle: { color: '#6e7681' } },
+      ]
+    }]
+  });
+  window.addEventListener('resize', () => c.resize());
+})();
+
+// ===== 选中计数 =====
+function updateCount() {
+  const checks = document.querySelectorAll('#alertBody input[type=checkbox]');
+  const count = [...checks].filter(c => c.checked).length;
+  document.getElementById('selectedCount').textContent = count;
+}
+
+// ===== 行内操作 =====
+function ackRow(btn) {
+  const td = btn.closest('td');
+  td.innerHTML = '<button class="action-btn resolve" onclick="resolveRow(this)">解决</button>';
+  const statusSpan = btn.closest('tr').querySelector('.status-tag');
+  statusSpan.className = 'status-tag acknowledged';
+  statusSpan.textContent = '已确认';
+}
+
+function resolveRow(btn) {
+  const td = btn.closest('td');
+  td.innerHTML = '<span style="color:#6e7681;font-size:12px">已闭环</span>';
+  const statusSpan = btn.closest('tr').querySelector('.status-tag');
+  statusSpan.className = 'status-tag resolved';
+  statusSpan.textContent = '已解决';
+}
+
+// ===== 模拟新告警浮窗 =====
+const sampleAlerts = [
+  { sev: 'critical', icon: '🚨', title: 'certutil 远程下载执行 - WebShell 后利用', rule: 'certutil_download' },
+  { sev: 'critical', icon: '🚨', title: 'LSASS 内存转储 - Mimikatz 或类似工具', rule: 'credential_dump' },
+  { sev: 'high', icon: '⚠️', title: '计划任务新增 - 指向 PowerShell 编码命令', rule: 'schtasks_abuse' },
+  { sev: 'high', icon: '⚠️', title: '系统防火墙规则被删除 - 防御绕过行为', rule: 'defense_evasion' },
+  { sev: 'medium', icon: '🔵', title: '新用户添加至 Administrators 组', rule: 'user_privilege_escalation' },
+  { sev: 'low', icon: 'ℹ️', title: 'DNS 查询异常域名 - 可能是 DGA', rule: 'dga_detection' },
+];
+
+function simulateNewAlert() {
+  const alert = sampleAlerts[Math.floor(Math.random() * sampleAlerts.length)];
+  const container = document.getElementById('toastContainer');
+  const toast = document.createElement('div');
+  toast.className = `toast ${alert.sev}`;
+  toast.innerHTML = `
+    <span class="toast-icon">${alert.icon}</span>
+    <div class="toast-body">
+      <div class="toast-title">${alert.title}</div>
+      <div class="toast-time">${alert.rule} · 刚刚 · ${['AD-01','WEB-SRV-01','DB-SRV-02'][Math.floor(Math.random()*3)]}</div>
+    </div>
+    <span class="toast-close" onclick="this.closest('.toast').remove()">×</span>
+  `;
+  container.appendChild(toast);
+  setTimeout(() => { if (toast.parentElement) toast.remove(); }, 6000);
+}
+
+// 自动模拟
+setInterval(() => {
+  if (Math.random() > 0.55) simulateNewAlert();
+}, 18000);
+
+// 全选
+document.getElementById('selectAll').addEventListener('change', function() {
+  document.querySelectorAll('#alertBody input[type=checkbox]').forEach(c => c.checked = this.checked);
+  updateCount();
+});
+</script>
+
+</body>
+</html>

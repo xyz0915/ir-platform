@@ -76,12 +76,7 @@ const routes = [
       {
         path: 'alerts',
         name: 'AlertCenter',
-        component: () => import('@/views/AlertCenterView.vue')
-      },
-      {
-        path: 'realtime',
-        name: 'RealTimeMonitor',
-        component: () => import('@/views/RealTimeMonitorView.vue')
+        component: () => import('@/views/UnifiedAlertCenter.vue')
       }
     ]
   }
