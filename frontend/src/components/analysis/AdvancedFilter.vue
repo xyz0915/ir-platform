@@ -1,15 +1,26 @@
 <template>
   <div class="af">
-    <div class="af-header" @click="collapsed = !collapsed">
+    <div
+      class="af-header"
+      role="button"
+      :aria-expanded="!collapsed"
+      tabindex="0"
+      @click="collapsed = !collapsed"
+      @keydown.enter.prevent="collapsed = !collapsed"
+      @keydown.space.prevent="collapsed = !collapsed"
+    >
       <span class="af-title">高级筛选</span>
+      <span class="af-toggle-label">{{ collapsed ? '点击展开' : '点击收起' }}</span>
       <span class="af-active-count" v-if="activeCount > 0">{{ activeCount }} 个筛选活跃</span>
-      <svg
-        class="af-chevron"
-        :class="{ rotated: !collapsed }"
-        width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-      >
-        <polyline points="6 9 12 15 18 9"/>
-      </svg>
+      <span class="af-chevron-wrap">
+        <svg
+          class="af-chevron"
+          :class="{ rotated: !collapsed }"
+          width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        >
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      </span>
     </div>
     <div v-show="!collapsed" class="af-body">
       <!-- Row 1: 时间范围 -->
@@ -172,12 +183,22 @@ function onConfidenceChange(e) {
   transition: background 0.15s;
 }
 .af-header:hover {
-  background: var(--color-canvas-subtle, #fafafa);
+  background: var(--color-canvas-subtle, #f5f5f5);
+}
+.af-header:focus-visible {
+  outline: 2px solid var(--color-accent-fg, #2563eb);
+  outline-offset: -2px;
 }
 .af-title {
   font-size: 12px;
   font-weight: 500;
   color: var(--color-fg-default, #111111);
+}
+.af-toggle-label {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--color-fg-light, #a3a3a3);
+  white-space: nowrap;
 }
 .af-active-count {
   font-size: 11px;
@@ -187,8 +208,20 @@ function onConfidenceChange(e) {
   padding: 1px 6px;
   border-radius: 4px;
 }
-.af-chevron {
+.af-chevron-wrap {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+.af-header:hover .af-chevron-wrap {
+  background: var(--color-border-default, #e5e5e5);
+}
+.af-chevron {
   color: var(--color-fg-subtle, #888888);
   transition: transform 0.2s;
 }
