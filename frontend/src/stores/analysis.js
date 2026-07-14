@@ -39,6 +39,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const selectedEvent = ref(null)
   const selectedEventIds = ref([])
   const timelineData = ref([])
+  const timelineEvents = ref([])
   const detailVisible = ref(false)
 
   // ── 筛选参数构建 ──
@@ -81,13 +82,16 @@ export const useAnalysisStore = defineStore('analysis', () => {
     try {
       const res = await getTimelineData(buildParams())
       timelineData.value = res.data.chains || []
+      timelineEvents.value = res.data.events || []
     } catch (e) {
       timelineData.value = []
+      timelineEvents.value = []
     }
   }
 
   // ── Action：获取事件详情 ──
   async function fetchEventDetail(id) {
+    if (!id) return
     try {
       const res = await getEventDetail(id)
       selectedEvent.value = res.data
@@ -156,6 +160,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     selectedEvent,
     selectedEventIds,
     timelineData,
+    timelineEvents,
     detailVisible,
     // actions
     fetchEvents,

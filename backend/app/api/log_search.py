@@ -1,6 +1,6 @@
 """日志检索 API 路由模块.
 
-提供 8 个端点（前缀 /api/logs）:
+提供 8 个端点（前缀 /api/log-search）:
   POST   /import                 导入 Agent JSON
   GET    /imports                导入记录列表（分页+筛选）
   GET    /imports/{id}           导入详情
