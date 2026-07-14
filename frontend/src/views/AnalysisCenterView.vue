@@ -1,31 +1,11 @@
 <template>
   <div class="analysis-center">
-    <!-- Sidebar -->
-    <aside class="sidebar">
-      <div class="sidebar-header">
-        <span class="sidebar-title">分析中心</span>
-      </div>
-      <nav class="sidebar-nav">
-        <div
-          v-for="item in navItems"
-          :key="item.key"
-          :class="['nav-item', { active: activeNav === item.key }]"
-          @click="activeNav = item.key"
-        >
-          <span class="nav-dot" />
-          <span class="nav-label">{{ item.label }}</span>
-        </div>
-      </nav>
-    </aside>
-
     <!-- Main area -->
     <div class="main-area">
       <!-- Topbar -->
       <div class="topbar">
         <div class="breadcrumbs">
           <span class="breadcrumb-item">分析中心</span>
-          <span class="breadcrumb-sep">/</span>
-          <span class="breadcrumb-item active">事件调查</span>
         </div>
       </div>
 
@@ -104,7 +84,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useAnalysisStore } from '@/stores/analysis'
 import SmartSearchBar from '@/components/analysis/SmartSearchBar.vue'
 import AttackChainTimeline from '@/components/analysis/AttackChainTimeline.vue'
@@ -112,14 +92,6 @@ import EventTable from '@/components/analysis/EventTable.vue'
 import EventDetailPanel from '@/components/analysis/EventDetailPanel.vue'
 
 const store = useAnalysisStore()
-const activeNav = ref('events')
-
-const navItems = [
-  { key: 'events', label: '事件调查' },
-  { key: 'timeline', label: '攻击链' },
-  { key: 'iocs', label: 'IOC 分析' },
-  { key: 'reports', label: '报告' },
-]
 
 const highPriorityCount = computed(() => {
   if (!store.events) return 0
@@ -210,78 +182,10 @@ function onCloseDetail() {
 <style scoped>
 .analysis-center {
   display: flex;
+  flex-direction: column;
   height: calc(100vh - 52px);
   background: var(--color-canvas-subtle);
-}
-
-/* ===== Sidebar ===== */
-.sidebar {
-  width: 240px;
-  flex-shrink: 0;
-  background: var(--color-canvas-default);
-  border-right: 0.5px solid var(--color-border-default);
-  display: flex;
-  flex-direction: column;
-}
-
-.sidebar-header {
-  padding: 20px 16px;
-  border-bottom: 0.5px solid var(--color-border-default);
-}
-
-.sidebar-title {
-  font-size: 16px;
-  font-weight: 500;
-  color: var(--color-fg-default);
-}
-
-.sidebar-nav {
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-radius: var(--r-btn);
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 400;
-  color: var(--color-fg-muted);
-  transition: all 0.15s;
-  border-left: 3px solid transparent;
-}
-
-.nav-item:hover {
-  background: var(--color-canvas-inset);
-  color: var(--color-fg-default);
-}
-
-.nav-item.active {
-  color: var(--color-accent-fg);
-  font-weight: 500;
-  background: var(--color-accent-subtle);
-  border-left-color: var(--color-accent-fg);
-}
-
-.nav-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-border-default);
-  flex-shrink: 0;
-}
-
-.nav-item.active .nav-dot {
-  background: var(--color-accent-fg);
-}
-
-.nav-label {
-  font-size: 13px;
+  overflow: hidden;
 }
 
 /* ===== Main Area ===== */
