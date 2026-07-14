@@ -59,6 +59,63 @@ def list_rules(
     return {"code": 0, "data": rules, "message": "success"}
 
 
+@router.get("/selector")
+def list_rules_for_selector(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    category: str = Query(None, description="规则类别"),
+    severity: str = Query(None, description="严重度"),
+    keyword: str = Query(None, description="关键字搜索"),
+    current_user: dict = Depends(get_current_user),
+):
+    """策略配置中的规则选择器 — 支持分页、类别、严重度、关键字筛选."""
+    try:
+        with get_connection() as conn:
+            conditions: list[str] = ["1=1"]
+            params: list = []
+
+            if category:
+                conditions.append("category = ?")
+                params.append(category)
+            if severity:
+                conditions.append("severity = ?")
+                params.append(severity)
+            if keyword:
+                conditions.append("(name LIKE ? OR label LIKE ? OR description LIKE ?)")
+                like = f"%{keyword}%"
+                params.extend([like, like, like])
+
+            where = " AND ".join(conditions)
+
+            # 总数
+            total = conn.execute(
+                f"SELECT COUNT(*) as cnt FROM rules WHERE {where}", params
+            ).fetchone()["cnt"]
+
+            # 分页数据
+            offset = (page - 1) * page_size
+            rows = conn.execute(
+                f"SELECT * FROM rules WHERE {where} ORDER BY category, severity DESC, created_at LIMIT ? OFFSET ?",
+                [*params, page_size, offset],
+            ).fetchall()
+
+            items = []
+            for row in rows:
+                item = dict(row)
+                if item.get("condition"):
+                    try:
+                        item["condition"] = json.loads(item["condition"])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                item["enabled"] = bool(item.get("enabled"))
+                items.append(item)
+
+            return {"code": 0, "data": {"items": items, "total": total}}
+    except Exception as e:
+        logger.error("rules/selector failed: %s", e)
+        return {"code": -1, "data": {"items": [], "total": 0}, "message": str(e)}
+
+
 @router.post("")
 def create_rule(
     rule: RuleCreate,
