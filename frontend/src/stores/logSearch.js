@@ -58,8 +58,10 @@ export const useLogSearchStore = defineStore('logSearch', {
         const raw = res.success !== undefined ? res.data : (res.data || [])
         this.casesWithHosts = raw.map(c => ({
           ...c,
+          id: c.value,  // 兼容：API 返回 value，前端用 c.id
           hosts: (c.children || c.hosts || []).map(h => ({
             ...h,
+            id: h.value,  // 兼容：API 返回 value，前端 click host 用 h.id
             hostname: h.label?.split(' ')[0] || h.hostname,
             ip: h.ip || h.ip_address || '',
           })),
