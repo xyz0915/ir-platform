@@ -50,12 +50,20 @@ def import_json(
     """
     # 校验 JSON 合法性
     try:
-        json.loads(raw_json)
+        parsed = json.loads(raw_json)
     except (json.JSONDecodeError, TypeError) as exc:
         raise ValueError(f"raw_json 不是合法 JSON: {exc}") from exc
 
     if collector_type not in COLLECTOR_TYPES:
         raise ValueError(f"不支持的 collector_type: {collector_type}，可选: {COLLECTOR_TYPES}")
+
+    # 计算实际条目数
+    if isinstance(parsed, list):
+        item_count = len(parsed)
+    elif isinstance(parsed, dict):
+        item_count = 1
+    else:
+        item_count = 1
 
     batch_id = batch_id or str(uuid.uuid4())
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -64,10 +72,10 @@ def import_json(
         cursor = conn.execute(
             """
             INSERT INTO agent_imports
-                (import_batch_id, case_id, host_id, collector_type, raw_json, imported_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (import_batch_id, case_id, host_id, collector_type, raw_json, item_count, imported_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (batch_id, case_id, host_id, collector_type, raw_json, now),
+            (batch_id, case_id, host_id, collector_type, raw_json, item_count, now),
         )
         import_id = cursor.lastrowid
 
@@ -108,25 +116,34 @@ def import_batch(
 
                 # 校验 JSON
                 try:
-                    json.loads(raw_json)
+                    parsed = json.loads(raw_json)
                 except (json.JSONDecodeError, TypeError) as exc:
                     logger.warning("批量导入跳过非法 JSON: %s", exc)
                     continue
+
+                # 计算实际条目数
+                if isinstance(parsed, list):
+                    item_count = len(parsed)
+                elif isinstance(parsed, dict):
+                    item_count = 1
+                else:
+                    item_count = 1
 
                 cursor = conn.execute(
                     """
                     INSERT INTO agent_imports
                         (import_batch_id, case_id, host_id, collector_type,
-                         collector_name, raw_json, imported_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                         collector_name, raw_json, item_count, imported_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (batch_id, case_id, host_id, collector_type,
-                     collector_name, raw_json, now),
+                     collector_name, raw_json, item_count, now),
                 )
                 results.append({
                     "id": cursor.lastrowid,
                     "imported_at": now,
                     "collector_type": collector_type,
+                    "item_count": item_count,
                 })
             conn.commit()
         except Exception:
