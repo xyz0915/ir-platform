@@ -383,11 +383,11 @@ def event_stats(
         # 命中不同规则数
         distinct_rules = 0
         if matched_total > 0:
-            distinct_rules_where = f"{matched_where}" if where == "WHERE 1=1" else matched_where
+            distinct_rules_where = matched_where  # 已含 WHERE 关键字
             row = conn.execute(
                 f"SELECT COUNT(DISTINCT json_extract(je.value, '$.rule_id')) as cnt "
                 f"FROM security_events se, json_each(se.matched_rules) je "
-                f"{distinct_rules_where[6:]}",  # 去掉 "WHERE " 或保持
+                f"{distinct_rules_where}",
                 matched_params,
             ).fetchone()
             distinct_rules = row["cnt"] if row else 0
