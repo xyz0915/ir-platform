@@ -89,6 +89,8 @@ def list_cases_with_hosts(current_user: dict = Depends(get_current_user)):
             result = [
                 {
                     "value": c["id"],
+                    "name": c["name"],
+                    "case_number": c["case_number"],
                     "label": f"{c['name']} ({c['case_number'] or 'N/A'})",
                     "log_count": case_log_counts.get(c["id"], 0),
                     "event_count": case_event_counts.get(c["id"], 0),

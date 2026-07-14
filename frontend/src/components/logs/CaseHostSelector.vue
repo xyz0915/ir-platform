@@ -4,8 +4,8 @@
     <div class="case-strip">
       <div class="case-info">
         <div class="case-header">
-          <span class="case-id-label">{{ currentCase?.case_id || currentCase?.name || '选择案件' }}</span>
-          <span class="case-desc">{{ currentCase?.description || '' }}</span>
+          <span class="case-id-label">{{ currentCase?.name || currentCase?.label || '选择案件' }}</span>
+          <span v-if="currentCase?.case_number" class="case-desc">{{ currentCase.case_number }}</span>
         </div>
         <div class="case-stats">
           <span class="stat-item">
@@ -62,13 +62,15 @@
           @click="switchCase(c)"
         >
           <div class="case-item-header">
-            <span class="case-item-id">{{ c.case_id || c.name }}</span>
-            <span class="case-item-desc">{{ c.description }}</span>
+            <span class="case-item-id">{{ c.name || c.label || ('案件 #' + c.value) }}</span>
+            <span v-if="c.case_number" class="case-item-desc">{{ c.case_number }}</span>
           </div>
           <div class="case-item-stats">
             <span>{{ (c.hosts || []).length }} 主机</span>
             <span>|</span>
             <span>{{ c.log_count || 0 }} 日志</span>
+            <span>|</span>
+            <span>{{ c.event_count || 0 }} 事件</span>
           </div>
         </div>
       </div>
@@ -290,12 +292,17 @@ function switchCase(c) {
 
 .case-item-id {
   font-weight: 600;
-  font-size: 13px;
+  font-size: 14px;
+  color: var(--color-fg-default);
 }
 
 .case-item-desc {
   font-size: 11px;
-  color: var(--color-fg-muted);
+  color: var(--color-accent-fg);
+  background: var(--color-canvas-subtle);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: monospace;
 }
 
 .case-item-stats {
