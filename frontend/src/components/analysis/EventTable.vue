@@ -37,9 +37,17 @@
       </el-table-column>
 
       <!-- 主机 -->
-      <el-table-column label="主机" width="100" sortable="custom" prop="host_id">
+      <el-table-column label="主机" width="140" sortable="custom" prop="host_id">
         <template #default="{ row }">
-          #{{ row.host_id }}
+          <span class="host-name">{{ row.hostname || ('#主机' + row.host_id) }}</span>
+          <span v-if="row.ip_address" class="host-ip">({{ row.ip_address }})</span>
+        </template>
+      </el-table-column>
+
+      <!-- 案件名称 -->
+      <el-table-column label="案件" width="120" prop="case_name">
+        <template #default="{ row }">
+          <span :title="'案件ID: ' + row.case_id" class="case-name-text">{{ row.case_name || ('案件#' + row.case_id) }}</span>
         </template>
       </el-table-column>
 
@@ -367,4 +375,8 @@ function onAction(id, status) {
   gap: 4px;
   white-space: nowrap;
 }
+
+.case-name-text { font-size: 12px; color: var(--color-text-primary); }
+.host-name { font-weight: 500; font-size: 12px; }
+.host-ip { font-size: 11px; color: var(--color-text-tertiary); margin-left: 4px; }
 </style>

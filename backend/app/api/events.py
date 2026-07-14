@@ -161,11 +161,18 @@ def list_events(
 
     with get_connection() as conn:
         # 总数
-        count_sql = f"SELECT COUNT(*) as cnt FROM security_events {where}"
+        count_sql = f"SELECT COUNT(*) as cnt FROM security_events se {where}"
         total = conn.execute(count_sql, params).fetchone()["cnt"]
 
         # 数据
-        data_sql = f"SELECT * FROM security_events {where} ORDER BY {sort_field} {sort_order} LIMIT ? OFFSET ?"
+        data_sql = f"""
+            SELECT se.*, h.hostname, h.ip_address, c.name as case_name, c.case_number
+            FROM security_events se
+            LEFT JOIN hosts h ON h.id = se.host_id
+            LEFT JOIN cases c ON c.id = h.case_id
+            {where}
+            ORDER BY se.{sort_field} {sort_order} LIMIT ? OFFSET ?
+        """
         data_params = params + [page_size, offset]
         rows = conn.execute(data_sql, data_params).fetchall()
 
@@ -231,7 +238,13 @@ def event_stats(
 def get_event(event_id: str, current_user: dict = Depends(get_current_user)):
     """事件详情."""
     with get_connection() as conn:
-        row = conn.execute("SELECT * FROM security_events WHERE id = ?", (event_id,)).fetchone()
+        row = conn.execute("""
+            SELECT se.*, h.hostname, h.ip_address, c.name as case_name, c.case_number
+            FROM security_events se
+            LEFT JOIN hosts h ON h.id = se.host_id
+            LEFT JOIN cases c ON c.id = h.case_id
+            WHERE se.id = ?
+        """, (event_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="事件不存在")
     return success(_row_to_dict(row))

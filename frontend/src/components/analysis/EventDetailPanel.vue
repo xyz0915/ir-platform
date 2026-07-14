@@ -27,15 +27,15 @@
       </div>
       <div class="info-row">
         <span class="info-label">主机</span>
-        <span class="info-value">#{{ event.host_id }}</span>
+        <span class="info-value">{{ event.hostname || ('#主机' + event.host_id) }}</span>
       </div>
       <div class="info-row">
         <span class="info-label">采集器</span>
         <span class="info-value">{{ event.source_collector || '—' }}</span>
       </div>
       <div class="info-row" v-if="event.case_id">
-        <span class="info-label">案件 ID</span>
-        <span class="info-value">{{ event.case_id }}</span>
+        <span class="info-label">案件</span>
+        <span class="info-value">{{ event.case_name || ('案件#' + event.case_id) }}</span>
       </div>
       <div class="info-row" v-if="event.import_id">
         <span class="info-label">日志 ID</span>
@@ -55,6 +55,22 @@
         <span class="info-label">负责人</span>
         <span class="info-value">{{ event.assignee || '未指派' }}</span>
       </div>
+    </div>
+
+    <!-- 匹配规则 -->
+    <div class="detail-section" v-if="event.rule_name || event.matched_rules">
+      <div class="section-title">匹配规则</div>
+      <div v-if="event.rule_name" class="rule-item">
+        <span class="rule-name">{{ event.rule_name }}</span>
+      </div>
+      <div v-if="event.matched_rules && event.matched_rules.length > 0">
+        <div v-for="(rule, i) in event.matched_rules" :key="i" class="rule-item">
+          <span class="rule-name">{{ rule.name || rule.rule_id || ('规则 #' + (i + 1)) }}</span>
+          <span v-if="rule.description" class="rule-desc">{{ rule.description }}</span>
+          <span v-if="rule.severity" class="rule-sev" :style="{ color: sevColor(rule.severity) }">{{ rule.severity }}</span>
+        </div>
+      </div>
+      <div v-else class="rule-none">无匹配规则（基于模型推断）</div>
     </div>
 
     <!-- 处置操作 -->
@@ -162,23 +178,21 @@
       </div>
     </div>
 
-    <!-- 查看原始日志（条件渲染） -->
-    <div class="detail-section" v-if="event.import_id">
-      <div class="section-title">原始日志</div>
-      <el-button
-        link
-        type="primary"
-        size="small"
-        @click="viewRawLog"
-      >
-        查看原始日志 →
-      </el-button>
+    <!-- 查看原始日志 -->
+    <div class="detail-section" v-if="event.host_id">
+      <div class="section-title">关联数据</div>
+      <div class="action-buttons">
+        <el-button size="small" type="primary" @click="viewLog">
+          <el-icon><Search /></el-icon>
+          查看原始日志
+        </el-button>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { Close } from '@element-plus/icons-vue'
+import { Close, Search } from '@element-plus/icons-vue'
 
 const props = defineProps({
   event: { type: Object, default: () => ({}) },
@@ -239,11 +253,11 @@ function onViewRelated(relatedId) {
   emit('view-related', [relatedId])
 }
 
-function viewRawLog() {
+function viewLog() {
   const caseId = props.event.case_id || ''
   const hostId = props.event.host_id || ''
-  const importId = props.event.import_id || ''
-  window.open(`/log-search?case_id=${caseId}&host_id=${hostId}&import_id=${importId}`, '_blank')
+  const query = props.event.hostname || `host_id:${hostId}`
+  window.open(`/log-search?case_id=${caseId}&host_id=${hostId}&keyword=${encodeURIComponent(query)}`, '_blank')
 }
 </script>
 
@@ -358,4 +372,10 @@ function viewRawLog() {
   flex-direction: column;
   gap: 2px;
 }
+
+.rule-item { padding: 6px 8px; background: var(--color-background-secondary); border-radius: 4px; margin-bottom: 4px; }
+.rule-name { font-weight: 500; font-size: 12px; }
+.rule-desc { display: block; font-size: 11px; color: var(--color-text-secondary); margin-top: 2px; }
+.rule-sev { font-size: 10px; margin-left: 6px; }
+.rule-none { font-size: 11px; color: var(--color-text-tertiary); }
 </style>
