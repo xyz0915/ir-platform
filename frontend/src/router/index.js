@@ -97,6 +97,16 @@ const routes = [
         path: 'ai-advanced',
         name: 'AiAdvanced',
         component: () => import('@/views/AiAdvancedView.vue')
+      },
+      {
+        path: 'analysis-center',
+        name: 'AnalysisCenter',
+        component: () => import('@/views/AnalysisCenterView.vue')
+      },
+      {
+        path: 'log-search',
+        name: 'LogSearch',
+        component: () => import('@/views/LogSearchView.vue')
       }
     ]
   }

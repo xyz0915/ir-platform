@@ -640,6 +640,67 @@ DDL_STATEMENTS = [
         created_at      TEXT NOT NULL DEFAULT (datetime('now'))
     )
     """,
+    # security_events — 安全事件表（分析中心核心表）
+    """
+    CREATE TABLE IF NOT EXISTS security_events (
+        id                  TEXT    PRIMARY KEY,
+        timestamp           TEXT    NOT NULL,
+        host_id             INTEGER NOT NULL,
+        event_type          TEXT    NOT NULL,
+        severity            TEXT    NOT NULL DEFAULT 'info',
+        source_collector    TEXT    NOT NULL DEFAULT '',
+        event_key           TEXT    NOT NULL,
+        attack_chain_id     TEXT,
+        attack_stage        TEXT,
+        ioc_matches         TEXT    DEFAULT '[]',
+        evidence            TEXT    DEFAULT '{}',
+        status              TEXT    NOT NULL DEFAULT 'pending',
+        assignee            TEXT,
+        related_events      TEXT    DEFAULT '[]',
+        created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at          TEXT    NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    # security_events 索引
+    """
+    CREATE INDEX IF NOT EXISTS idx_security_events_timestamp ON security_events(timestamp)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_security_events_host_id ON security_events(host_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_security_events_event_type ON security_events(event_type)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_security_events_severity ON security_events(severity)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_security_events_status ON security_events(status)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_security_events_attack_stage ON security_events(attack_stage)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_security_events_attack_chain_id ON security_events(attack_chain_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_security_events_assignee ON security_events(assignee)
+    """,
+    # status_history — 状态变更审计表
+    """
+    CREATE TABLE IF NOT EXISTS status_history (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id        TEXT    NOT NULL REFERENCES security_events(id) ON DELETE CASCADE,
+        old_status      TEXT,
+        new_status      TEXT    NOT NULL,
+        operator        TEXT    NOT NULL DEFAULT '',
+        comment         TEXT    DEFAULT '',
+        created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_status_history_event_id ON status_history(event_id)
+    """,
     # incident_correlations — 事件归并表
     """
     CREATE TABLE IF NOT EXISTS incident_correlations (
@@ -657,6 +718,63 @@ DDL_STATEMENTS = [
         created_at      TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
     )
+    """,
+    # agent_imports — Agent JSON 导入记录表（日志检索模块 v2）
+    """
+    CREATE TABLE IF NOT EXISTS agent_imports (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        import_batch_id TEXT    NOT NULL DEFAULT (''),
+        case_id         INTEGER DEFAULT NULL,
+        host_id         INTEGER NOT NULL,
+        collector_type  TEXT    NOT NULL,
+        collector_name  TEXT    DEFAULT '',
+        raw_json        TEXT    NOT NULL,
+        item_count      INTEGER DEFAULT 1,
+        imported_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+        event_id        TEXT    DEFAULT NULL,
+        event_created   INTEGER DEFAULT 0
+    )
+    """,
+    # agent_imports 索引
+    """
+    CREATE INDEX IF NOT EXISTS idx_agent_imports_host ON agent_imports(host_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_agent_imports_collector ON agent_imports(collector_type)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_agent_imports_time ON agent_imports(imported_at)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_agent_imports_batch ON agent_imports(import_batch_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_agent_imports_event ON agent_imports(event_id)
+    """,
+    # agent_imports_fts — FTS5 全文索引虚拟表
+    """
+    CREATE VIRTUAL TABLE IF NOT EXISTS agent_imports_fts USING fts5(
+        raw_json, content='agent_imports', content_rowid='id', tokenize='unicode61'
+    )
+    """,
+    # 自动同步触发器：新增 → FTS5 插入
+    """
+    CREATE TRIGGER IF NOT EXISTS agent_imports_ai AFTER INSERT ON agent_imports BEGIN
+        INSERT INTO agent_imports_fts(rowid, raw_json) VALUES (new.id, new.raw_json);
+    END
+    """,
+    # 自动同步触发器：删除 → FTS5 删除
+    """
+    CREATE TRIGGER IF NOT EXISTS agent_imports_ad AFTER DELETE ON agent_imports BEGIN
+        INSERT INTO agent_imports_fts(agent_imports_fts, rowid, raw_json) VALUES('delete', old.id, old.raw_json);
+    END
+    """,
+    # 自动同步触发器：更新 → FTS5 先删后插
+    """
+    CREATE TRIGGER IF NOT EXISTS agent_imports_au AFTER UPDATE ON agent_imports BEGIN
+        INSERT INTO agent_imports_fts(agent_imports_fts, rowid, raw_json) VALUES('delete', old.id, old.raw_json);
+        INSERT INTO agent_imports_fts(rowid, raw_json) VALUES (new.id, new.raw_json);
+    END
     """,
 ]
 

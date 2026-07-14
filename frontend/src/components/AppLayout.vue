@@ -84,6 +84,7 @@ const navGroups = [
     children: [
       { emoji: '📈', label: '全局态势', path: '/' },
       { emoji: '🚨', label: '告警监控', path: '/alerts', badge: true, activeMatch: '/alerts' },
+      { emoji: '🔍', label: '日志检索', path: '/log-search', activeMatch: '/log-search' },
       { emoji: '📋', label: '日志分析', path: '/logs', activeMatch: '/logs' },
     ],
   },
@@ -112,6 +113,7 @@ const navGroups = [
     children: [
       { emoji: '🧠', label: 'AI 分析', path: '/ai' },
       { emoji: '🔬', label: 'AI 实验室', path: '/ai-advanced', activeMatch: '/ai-advanced' },
+      { emoji: '🔍', label: '分析中心', path: '/analysis-center', activeMatch: '/analysis-center' },
       { emoji: '📚', label: '知识库', path: '/knowledge', activeMatch: '/knowledge' },
     ],
   },
@@ -146,6 +148,7 @@ const routeMeta = computed(() => {
     'Dashboard': { title: '全局态势', subtitle: '应急响应全局态势感知' },
     'AlertCenter': { title: '告警监控', subtitle: '一体化告警监控与处置中心' },
     'LogAnalysis': { title: '日志分析', subtitle: '事件日志分析与检索' },
+    'LogSearch': { title: '日志检索', subtitle: 'Agent 原始数据全文检索与分析' },
     'CaseList': { title: '案件管理', subtitle: '应急响应案件总览与调度' },
     'CaseDetail': { title: '案件详情', subtitle: '' },
     'HostDetail': { title: '主机详情', subtitle: '' },
@@ -158,6 +161,7 @@ const routeMeta = computed(() => {
     'Knowledge': { title: '知识库管理', subtitle: '安全知识沉淀与检索' },
     'PolicyConfig': { title: '策略配置', subtitle: '检测策略管理与规则选择' },
     'AiAdvanced': { title: 'AI 实验室', subtitle: '高级关联功能 · 智能辅助分析与研判' },
+    'AnalysisCenter': { title: '分析中心', subtitle: '一站式事件调查工作台 · 攻击链可视化' },
   }
   return names[route.name] || { title: '应急响应平台', subtitle: '' }
 })
