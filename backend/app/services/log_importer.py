@@ -563,7 +563,8 @@ def search(
         params.append(start_time or default_start)
 
     if case_id is not None:
-        conditions.append("ai.case_id = ?")
+        # 修复：ai.case_id 在迁移数据中为 NULL，改用 host.case_id 间接匹配
+        conditions.append("ai.host_id IN (SELECT id FROM hosts WHERE case_id=?)")
         params.append(case_id)
     if host_id is not None:
         conditions.append("ai.host_id = ?")
@@ -584,12 +585,7 @@ def search(
     with get_connection() as conn:
         # 总条数
         count_row = conn.execute(
-            f"""
-            SELECT COUNT(*) as cnt
-            FROM agent_imports ai
-            {join_fts}
-            WHERE {where_clause}
-            """,
+            f"SELECT COUNT(*) as cnt FROM agent_imports ai WHERE {where_clause}",
             params,
         ).fetchone()
         total = count_row["cnt"] if count_row else 0
@@ -599,9 +595,8 @@ def search(
             f"""
             SELECT ai.*, h.hostname, h.ip_address, c.name as case_name
             FROM agent_imports ai
-            {join_fts}
             LEFT JOIN hosts h ON h.id = ai.host_id
-            LEFT JOIN cases c ON c.id = ai.case_id
+            LEFT JOIN cases c ON c.id = h.case_id
             WHERE {where_clause}
             ORDER BY ai.imported_at DESC
             LIMIT ? OFFSET ?
