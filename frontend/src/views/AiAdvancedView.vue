@@ -705,10 +705,10 @@ onUnmounted(() => {
 .rank-table tr:hover td { background: #f9fafb; }
 .bar-bg { height: 8px; border-radius: 4px; background: #f3f4f6; overflow: hidden; width: 100px; display: inline-block; vertical-align: middle; }
 .bar-fill { height: 100%; border-radius: 4px; display: block; }
-.bar-fill.critical { background: linear-gradient(90deg, #dc2626, #ef4444); }
-.bar-fill.high { background: linear-gradient(90deg, #d97706, #f59e0b); }
-.bar-fill.medium { background: linear-gradient(90deg, #3b82f6, #60a5fa); }
-.bar-fill.low { background: linear-gradient(90deg, #6b7280, #9ca3af); }
+.bar-fill.critical { background: #dc2626; }
+.bar-fill.high { background: #d97706; }
+.bar-fill.medium { background: #3b82f6; }
+.bar-fill.low { background: #6b7280; }
 
 .risk-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
 .r-chart { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; }

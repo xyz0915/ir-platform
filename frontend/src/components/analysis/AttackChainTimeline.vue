@@ -35,7 +35,7 @@
             :y1="rowHeight / 2"
             :x2="eventX(chain.events[chain.events.length - 1])"
             :y2="rowHeight / 2"
-            stroke="#d1d5db"
+            stroke="#e5e5e5"
             stroke-width="1"
           />
         </svg>
@@ -56,23 +56,19 @@
         />
       </div>
 
-      <!-- ★ 事件密度回退视图（chains 为空时显示） -->
+      <!-- 事件密度图（chains 为空时显示） -->
       <div v-if="chains.length === 0 && events.length > 0" class="density-row">
         <div class="density-label">事件密度</div>
-        <svg class="density-svg" :width="canvasWidth" :height="80" :viewBox="`0 0 ${canvasWidth} 80`">
-          <rect
+        <div class="density-chart">
+          <div
             v-for="(bar, idx) in densityBars"
             :key="idx"
-            :x="bar.x"
-            :y="bar.y"
-            :width="bar.width"
-            :height="bar.height"
-            :fill="bar.color"
+            class="density-bar"
+            :style="{ left: bar.x + 'px', width: bar.width + 'px', height: bar.height + 'px', bottom: '0', backgroundColor: bar.color }"
             :title="bar.tooltip"
             @click.stop="$emit('select-event', bar.eventId)"
-            style="cursor: pointer"
           />
-        </svg>
+        </div>
       </div>
 
       <!-- X 轴时间刻度 -->
@@ -107,6 +103,12 @@
         />
       </div>
     </div>
+
+    <!-- 状态栏 -->
+    <div class="status-bar">
+      <span class="status-text">系统状态: 运行中</span>
+      <span class="status-events">事件: {{ allEvents.length }}</span>
+    </div>
   </div>
 </template>
 
@@ -132,28 +134,28 @@ const rowHeight = 28
 
 // 严重等级颜色
 const SEV_COLORS = {
-  critical: '#DC2626',
-  high: '#EF4444',
-  medium: '#EAB308',
-  low: '#3B82F6',
-  info: '#9CA3AF',
+  critical: '#dc2626',
+  high: '#dc2626',
+  medium: '#d97706',
+  low: '#2563eb',
+  info: '#a3a3a3',
 }
 
 // ATT&CK 阶段颜色
 const STAGE_COLORS = {
-  initial_access: '#FFE0E0',
-  execution: '#FFF3E0',
-  persistence: '#FFFDE7',
-  privilege_escalation: '#F3E5F5',
-  defense_evasion: '#E8EAF6',
-  credential_access: '#E0F2F1',
-  discovery: '#E8F5E9',
-  lateral_movement: '#FFF3E0',
-  collection: '#FCE4EC',
-  command_and_control: '#EFEBE9',
-  exfiltration: '#FFEBEE',
-  impact: '#FFCDD2',
-  unknown: '#F5F5F5',
+  initial_access: '#f5f5f5',
+  execution: '#f5f5f5',
+  persistence: '#f5f5f5',
+  privilege_escalation: '#f5f5f5',
+  defense_evasion: '#f5f5f5',
+  credential_access: '#f5f5f5',
+  discovery: '#f5f5f5',
+  lateral_movement: '#f5f5f5',
+  collection: '#f5f5f5',
+  command_and_control: '#f5f5f5',
+  exfiltration: '#f5f5f5',
+  impact: '#f5f5f5',
+  unknown: '#f5f5f5',
 }
 
 const STAGE_LABELS = {
@@ -203,7 +205,7 @@ const timeRange = computed(() => {
   return { min, max }
 })
 
-// ★ 事件密度柱状图（chains 为空时渲染）
+// 事件密度柱状图（chains 为空时渲染）
 const densityBars = computed(() => {
   if (props.chains.length > 0 || props.events.length === 0) return []
   const sorted = [...props.events].sort((a, b) =>
@@ -227,16 +229,15 @@ const densityBars = computed(() => {
 
   const maxCount = Math.max(...buckets.map(b => b.length), 1)
   const width = Math.max(1, canvasWidth.value / bucketCount - 1)
-  const heightMax = 64
+  const heightMax = 60
 
   return buckets.map((items, idx) => {
     const count = items.length
-    const x = (idx / bucketCount) * canvasWidth.value
+    const x = (idx / bucketCount) * (canvasWidth.value - 0)
     const h = count > 0 ? (count / maxCount) * heightMax : 0
-    const y = 80 - h
     const color = count > 0 ? severityColor(items[0].severity) : 'transparent'
     return {
-      x, y, width, height: h, color,
+      x, width, height: h, color,
       tooltip: count > 0
         ? `${items.length} events @ ${new Date(items[0].timestamp).toLocaleString('zh-CN')}`
         : '',
@@ -278,7 +279,7 @@ function chainRowTop(chain) {
 
 // 严重等级颜色
 function severityColor(sev) {
-  return SEV_COLORS[sev] || '#9CA3AF'
+  return SEV_COLORS[sev] || '#a3a3a3'
 }
 
 // 时间格式化
@@ -320,7 +321,7 @@ const stageBands = computed(() => {
       bands.push({
         left,
         width: 10,
-        color: STAGE_COLORS[stage] || '#F5F5F5',
+        color: STAGE_COLORS[stage] || '#f5f5f5',
         label: STAGE_LABELS[stage] || stage,
       })
     }
@@ -409,7 +410,7 @@ function selectEvent(eventId) {
   position: absolute;
   left: 2px;
   font-size: 10px;
-  color: #6b7280;
+  color: var(--color-fg-subtle, #888888);
   width: 56px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -432,7 +433,6 @@ function selectEvent(eventId) {
   cursor: pointer;
   z-index: 3;
   border: 2px solid #fff;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
   transition: transform 0.15s;
 }
 
@@ -443,7 +443,7 @@ function selectEvent(eventId) {
 
 .event-node.active {
   transform: scale(1.5);
-  border-color: #059669;
+  border-color: var(--color-accent-fg, #2563eb);
   z-index: 4;
 }
 
@@ -451,7 +451,7 @@ function selectEvent(eventId) {
   position: absolute;
   bottom: 0;
   height: 20px;
-  border-top: 1px solid #e5e7eb;
+  border-top: 0.5px solid var(--color-border-default, #e5e5e5);
 }
 
 .time-tick {
@@ -459,46 +459,59 @@ function selectEvent(eventId) {
   top: 0;
   transform: translateX(-50%);
   font-size: 9px;
-  color: #9ca3af;
+  color: var(--color-fg-subtle, #888888);
   white-space: nowrap;
+  font-weight: 400;
 }
 
 .density-row {
   position: absolute;
   top: 0;
-  left: 90px;
+  left: 0;
   right: 0;
-  height: 80px;
+  bottom: 24px;
   z-index: 1;
 }
 
 .density-label {
   position: absolute;
   top: 4px;
-  left: 0;
+  left: 4px;
   font-size: 11px;
-  color: var(--color-text-secondary);
+  font-weight: 400;
+  color: var(--color-fg-subtle, #888888);
   background: rgba(255, 255, 255, 0.85);
-  padding: 0 4px;
-  border-radius: 3px;
+  padding: 2px 6px;
+  border-radius: var(--r-btn, 6px);
   z-index: 2;
 }
 
-.density-svg {
+.density-chart {
   position: absolute;
-  top: 0;
+  bottom: 0;
   left: 0;
-  border-bottom: 1px dashed #e5e7eb;
+  right: 0;
+  height: 64px;
+  display: flex;
+  align-items: flex-end;
 }
 
-.density-svg rect:hover {
+.density-bar {
+  position: absolute;
+  border-radius: 2px 2px 0 0;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  min-height: 1px;
+}
+
+.density-bar:hover {
   opacity: 0.7;
 }
 
 .timeline-minimap {
   height: 20px;
-  background: #f3f4f6;
-  border-top: 1px solid #e5e7eb;
+  background: var(--color-canvas-inset, #f5f5f5);
+  border-top: 0.5px solid var(--color-border-default, #e5e5e5);
   padding: 2px 0;
 }
 
@@ -521,8 +534,23 @@ function selectEvent(eventId) {
   position: absolute;
   top: 0;
   height: 100%;
-  border: 1px solid #059669;
-  background: rgba(5, 150, 105, 0.1);
+  border: 0.5px solid var(--color-accent-fg, #2563eb);
+  background: rgba(37, 99, 235, 0.1);
   cursor: grab;
+}
+
+/* 状态栏 */
+.status-bar {
+  flex-shrink: 0;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  background: var(--color-canvas-inset, #f5f5f5);
+  border-top: 0.5px solid var(--color-border-default, #e5e5e5);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--color-fg-subtle, #888888);
 }
 </style>

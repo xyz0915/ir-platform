@@ -3,68 +3,55 @@
     <!-- 加载态 - 骨架屏 -->
     <div v-if="loading" class="skeleton-list">
       <div v-for="n in 3" :key="n" class="skeleton-card">
-        <el-skeleton animated>
-          <template #template>
-            <div class="skeleton-body">
-              <el-skeleton-item variant="text" style="width: 40%; height: 16px; margin-bottom: 8px;" />
-              <el-skeleton-item variant="text" style="width: 60%; height: 12px; margin-bottom: 4px;" />
-              <el-skeleton-item variant="text" style="width: 30%; height: 12px;" />
-            </div>
-          </template>
-        </el-skeleton>
+        <div class="skeleton-body">
+          <div class="skeleton-line skeleton-line-40" />
+          <div class="skeleton-line skeleton-line-60" />
+          <div class="skeleton-line skeleton-line-30" />
+        </div>
       </div>
     </div>
 
     <!-- 空结果 -->
     <div v-else-if="items.length === 0" class="empty-state">
-      <el-empty description="未找到匹配的日志记录" />
+      <div class="empty-icon">
+        <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+          <rect x="8" y="6" width="24" height="28" rx="3" stroke="currentColor" stroke-width="1.5" fill="none"/>
+          <path d="M16 16h8M16 21h8M16 26h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div class="empty-title">未找到匹配的日志记录</div>
     </div>
 
     <!-- 结果卡片列表 -->
     <div v-else class="card-list">
-      <el-card
+      <div
         v-for="item in items"
         :key="item.id"
         :class="['log-card', severityCardClass(item.severity)]"
-        shadow="hover"
       >
         <!-- 跳转主机详情 -->
         <div class="card-top-right">
-          <el-button
-            link
-            size="small"
-            type="primary"
-            @click="goToHost(item)"
-          >
+          <button class="btn btn-link btn-xs" @click="goToHost(item)">
             跳转主机详情
-          </el-button>
+          </button>
         </div>
 
         <div class="card-header">
           <div class="card-meta">
-            <el-tag size="small" effect="plain" type="info">
-              {{ item.case_name || `案件 #${item.case_id}` }}
-            </el-tag>
-            <el-tag size="small" effect="plain" type="info">
-              {{ item.hostname || `主机 #${item.host_id}` }}
-            </el-tag>
-            <el-tag size="small" effect="plain">
-              {{ item.collector_type }}
-            </el-tag>
+            <span class="meta-tag">{{ item.case_name || `案件 #${item.case_id}` }}</span>
+            <span class="meta-tag">{{ item.hostname || `主机 #${item.host_id}` }}</span>
+            <span class="meta-tag">{{ item.collector_type }}</span>
             <span class="card-time">{{ formatTime(item.imported_at) }}</span>
           </div>
           <div class="card-severity">
-            <span class="severity-dot" :style="{ backgroundColor: severityDotColor(item.severity) }" />
-            <el-tag
-              :type="severityTagType(item.severity)"
-              size="small"
+            <span
+              class="severity-badge"
+              :class="'badge-' + (item.severity || 'info')"
             >
               {{ item.severity || 'info' }}
-            </el-tag>
+            </span>
             <!-- IOC 命中标记 -->
-            <el-tag v-if="item.ioc_hit" size="small" type="danger" effect="dark" class="ioc-hit-tag">
-              IOC
-            </el-tag>
+            <span v-if="item.ioc_hit" class="ioc-hit-tag">IOC</span>
           </div>
         </div>
 
@@ -75,28 +62,24 @@
 
         <!-- 操作按钮 -->
         <div class="card-actions">
-          <el-button size="small" text @click="$emit('view-detail', item)">查看详情</el-button>
-          <el-button size="small" text @click="copyJson(item)">复制 JSON</el-button>
+          <button class="btn btn-text" @click="$emit('view-detail', item)">查看详情</button>
+          <button class="btn btn-text" @click="copyJson(item)">复制 JSON</button>
 
           <template v-if="item.event_created && item.event_id">
-            <el-button size="small" type="success" disabled>
+            <button class="btn btn-text btn-disabled" disabled>
               已生成事件
-            </el-button>
-            <el-button size="small" link type="primary" @click="goToAnalysis(item)">
-              · 查看分析中心
-            </el-button>
+            </button>
+            <button class="btn btn-link" @click="goToAnalysis(item)">
+              查看分析中心
+            </button>
           </template>
           <template v-else>
-            <el-button
-              size="small"
-              type="primary"
-              @click="$emit('generate-event', item)"
-            >
-              + 一键生成事件
-            </el-button>
+            <button class="btn btn-primary btn-sm" @click="$emit('generate-event', item)">
+              一键生成事件
+            </button>
           </template>
         </div>
-      </el-card>
+      </div>
     </div>
 
     <!-- 分页器 -->
@@ -153,13 +136,8 @@ function severityCardClass(severity) {
 }
 
 function severityDotColor(severity) {
-  const map = { critical: '#DC2626', high: '#EF4444', medium: '#EAB308', low: '#3B82F6', info: '#9CA3AF' }
-  return map[severity] || '#9CA3AF'
-}
-
-function severityTagType(severity) {
-  const map = { critical: 'danger', high: 'danger', medium: 'warning', low: 'primary', info: 'info' }
-  return map[severity] || 'info'
+  const map = { critical: '#dc2626', high: '#dc2626', medium: '#d97706', low: '#2563eb', info: '#a3a3a3' }
+  return map[severity] || '#a3a3a3'
 }
 
 function formatTime(ts) {
@@ -215,7 +193,7 @@ function onPageChange() {
   position: relative;
 }
 
-/* 骨架屏 */
+/* ===== 骨架屏 ===== */
 .skeleton-list {
   display: flex;
   flex-direction: column;
@@ -223,23 +201,54 @@ function onPageChange() {
 }
 
 .skeleton-card {
-  border: 1px solid var(--color-border-default);
-  border-radius: 8px;
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  border-radius: var(--r-card, 10px);
   padding: 16px;
+  background: var(--color-canvas-default, #ffffff);
 }
 
 .skeleton-body {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
 }
 
-/* 空状态 */
+.skeleton-line {
+  height: 12px;
+  background: var(--color-canvas-inset, #f5f5f5);
+  border-radius: 4px;
+  animation: skeleton-pulse 1.5s infinite;
+}
+
+.skeleton-line-40 { width: 40%; }
+.skeleton-line-60 { width: 60%; }
+.skeleton-line-30 { width: 30%; }
+
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+/* ===== 空状态 ===== */
 .empty-state {
-  padding: 40px 0;
+  text-align: center;
+  padding: 48px 20px;
+  color: var(--color-fg-subtle, #888888);
 }
 
-/* 卡片列表 */
+.empty-icon {
+  font-size: 40px;
+  margin-bottom: 12px;
+  opacity: 0.4;
+}
+
+.empty-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-fg-muted, #555555);
+}
+
+/* ===== 卡片列表 ===== */
 .card-list {
   display: flex;
   flex-direction: column;
@@ -248,119 +257,251 @@ function onPageChange() {
 
 .log-card {
   position: relative;
-  border-left: 3px solid transparent;
+  background: var(--color-canvas-default, #ffffff);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  border-radius: var(--r-card, 10px);
+  padding: 16px;
+  transition: border-color 0.15s;
+}
+
+.log-card:hover {
+  border-color: var(--color-accent-fg, #2563eb);
 }
 
 .log-card.card-high {
-  border-left-color: #EF4444;
-  background: #FFF8F8;
+  border-left: 3px solid var(--color-risk-critical, #dc2626);
 }
 
 .log-card.card-medium {
-  border-left-color: #EAB308;
+  border-left: 3px solid var(--color-risk-medium, #d97706);
 }
 
 .log-card.card-low {
-  border-left-color: #3B82F6;
+  border-left: 3px solid var(--color-risk-low, #2563eb);
 }
 
 .card-top-right {
   position: absolute;
   top: 8px;
-  right: 8px;
+  right: 12px;
 }
 
 .card-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
+  align-items: flex-start;
+  margin-bottom: 12px;
 }
 
 .card-meta {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
+}
+
+.meta-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 400;
+  border-radius: 4px;
+  background: var(--color-canvas-inset, #f5f5f5);
+  color: var(--color-fg-muted, #555555);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
 }
 
 .card-time {
   font-size: 11px;
-  color: var(--color-fg-muted);
+  font-weight: 400;
+  color: var(--color-fg-subtle, #888888);
   font-family: monospace;
 }
 
 .card-severity {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
-.severity-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  display: inline-block;
+/* ===== Severity Badges ===== */
+.severity-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 400;
+  border-radius: 4px;
+  line-height: 1.4;
+}
+
+.severity-badge.badge-critical,
+.severity-badge.badge-high {
+  background: var(--color-danger-subtle, #fef2f2);
+  color: var(--color-risk-critical, #dc2626);
+  border: 0.5px solid rgba(220, 38, 38, 0.2);
+}
+
+.severity-badge.badge-medium {
+  background: var(--color-warning-subtle, #fffbeb);
+  color: var(--color-risk-medium, #d97706);
+  border: 0.5px solid rgba(217, 119, 6, 0.2);
+}
+
+.severity-badge.badge-low {
+  background: var(--color-accent-subtle, #eff6ff);
+  color: var(--color-risk-low, #2563eb);
+  border: 0.5px solid rgba(37, 99, 235, 0.2);
+}
+
+.severity-badge.badge-info {
+  background: var(--color-canvas-inset, #f5f5f5);
+  color: var(--color-fg-subtle, #888888);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
 }
 
 .ioc-hit-tag {
-  margin-left: 2px;
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 500;
+  border-radius: 4px;
+  background: var(--color-danger-fg, #dc2626);
+  color: #ffffff;
 }
 
-/* JSON 预览 */
+/* ===== JSON 预览 ===== */
 .card-preview {
-  background: var(--color-canvas-subtle);
-  border: 1px solid var(--color-border-default);
-  border-radius: 4px;
-  padding: 8px 10px;
+  background: var(--color-canvas-inset, #f5f5f5);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  border-radius: var(--r-btn, 6px);
+  padding: 8px 12px;
   max-height: 80px;
   overflow: hidden;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
 }
 
 .json-preview {
   margin: 0;
-  font-size: 10px;
+  font-size: 11px;
+  font-weight: 400;
   font-family: 'Courier New', monospace;
   white-space: pre-wrap;
   word-break: break-all;
   line-height: 1.4;
-  color: var(--color-fg-muted);
+  color: var(--color-fg-default, #111111);
 }
 
 :deep(.ioc-highlight) {
-  background: #FEE2E2;
-  font-weight: 700;
-  color: #DC2626;
+  background: var(--color-danger-subtle, #fef2f2);
+  font-weight: 500;
+  color: var(--color-danger-fg, #dc2626);
   padding: 0 2px;
   border-radius: 2px;
 }
 
-/* 操作按钮 */
+/* ===== 操作按钮 ===== */
 .card-actions {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
-/* 分页器 */
+/* ===== Buttons ===== */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 400;
+  border-radius: var(--r-btn, 6px);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  background: var(--color-canvas-default, #ffffff);
+  color: var(--color-fg-default, #111111);
+  cursor: pointer;
+  transition: all 0.15s;
+  line-height: 1.4;
+  font-family: inherit;
+}
+
+.btn:hover {
+  background: var(--color-canvas-inset, #f5f5f5);
+}
+
+.btn-text {
+  border: none;
+  background: transparent;
+  color: var(--color-accent-fg, #2563eb);
+  padding: 4px 8px;
+}
+
+.btn-text:hover {
+  background: var(--color-accent-subtle, #eff6ff);
+}
+
+.btn-link {
+  border: none;
+  background: transparent;
+  color: var(--color-accent-fg, #2563eb);
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.btn-link:hover {
+  text-decoration: underline;
+}
+
+.btn-primary {
+  background: var(--color-accent-fg, #2563eb);
+  color: #ffffff;
+  border-color: var(--color-accent-fg, #2563eb);
+}
+
+.btn-primary:hover {
+  opacity: 0.9;
+  background: var(--color-accent-fg, #2563eb);
+}
+
+.btn-sm {
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+.btn-xs {
+  padding: 2px 6px;
+  font-size: 11px;
+}
+
+.btn-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  color: var(--color-fg-subtle, #888888);
+}
+
+/* ===== 分页器 ===== */
 .pagination-bar {
   display: flex;
   justify-content: center;
   padding: 16px 0;
 }
 
-/* 复制提示 */
+/* ===== 复制提示 ===== */
 .copy-toast {
   position: fixed;
   bottom: 40px;
   left: 50%;
   transform: translateX(-50%);
-  background: var(--color-fg-default);
-  color: var(--color-canvas-default);
+  background: var(--color-fg-default, #111111);
+  color: var(--color-canvas-default, #ffffff);
   padding: 8px 16px;
-  border-radius: 6px;
+  border-radius: var(--r-btn, 6px);
   font-size: 12px;
+  font-weight: 400;
   z-index: 9999;
   animation: fadeInOut 2s ease;
 }

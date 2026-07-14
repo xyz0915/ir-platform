@@ -122,11 +122,11 @@ const navGroups = [
     label: '检测配置',
     path: '',
     children: [
-      { emoji: '📏', label: '规则管理', path: '/rules' },
-      { emoji: '🎯', label: '策略配置', path: '/policies' },
-      { emoji: '✅', label: '白名单', path: '/whitelist' },
-      { emoji: '⚡', label: 'IOC 指标', path: '/iocs' },
-      { emoji: '🌐', label: '威胁情报', path: '/threat-intel-config' },
+      { icon: 'rules', label: '规则管理', path: '/rules' },
+      { icon: 'policies', label: '策略配置', path: '/policies' },
+      { icon: 'whitelist', label: '白名单', path: '/whitelist' },
+      { icon: 'iocs', label: 'IOC 指标', path: '/iocs' },
+      { icon: 'threat', label: '威胁情报', path: '/threat-intel-config' },
     ],
   },
 ]

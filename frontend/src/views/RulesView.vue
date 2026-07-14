@@ -5,7 +5,7 @@
         <h2 class="page-title">
           <span class="title-emoji">📏</span>
           <span>规则管理</span>
-          <el-tag class="title-tag" type="primary" effect="plain" size="small">⚙️ 核心引擎</el-tag>
+          <el-tag class="title-tag" type="primary" effect="plain" size="small">核心引擎</el-tag>
         </h2>
         <div class="toolbar">
           <el-input

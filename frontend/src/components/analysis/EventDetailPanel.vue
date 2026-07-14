@@ -3,57 +3,60 @@
     <!-- 标题栏 -->
     <div class="detail-header">
       <div class="header-left">
-        <span class="severity-badge" :style="{ backgroundColor: sevColor(event.severity) }">
+        <span class="severity-badge" :class="'badge-' + (event.severity || 'info')">
           {{ event.severity }}
         </span>
         <span class="event-id" :title="event.id">
           {{ event.id ? event.id.substring(0, 12) + '...' : '' }}
         </span>
       </div>
-      <el-button text size="small" @click="$emit('close')">
-        <el-icon><Close /></el-icon>
-      </el-button>
+      <button class="close-btn" @click="$emit('close')">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path d="M1 1L13 13M13 1L1 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </button>
     </div>
 
     <!-- 基本信息 -->
     <div class="detail-section">
-      <div class="info-row">
-        <span class="info-label">时间</span>
-        <span class="info-value">{{ formatTime(event.timestamp) }}</span>
+      <div class="section-title">基本信息</div>
+      <div class="detail-row">
+        <span class="detail-label">时间</span>
+        <span class="detail-value">{{ formatTime(event.timestamp) }}</span>
       </div>
-      <div class="info-row">
-        <span class="info-label">类型</span>
-        <span class="info-value">{{ eventTypeLabel(event.event_type) }}</span>
+      <div class="detail-row">
+        <span class="detail-label">类型</span>
+        <span class="detail-value">{{ eventTypeLabel(event.event_type) }}</span>
       </div>
-      <div class="info-row">
-        <span class="info-label">主机</span>
-        <span class="info-value">{{ event.hostname || ('#主机' + event.host_id) }}</span>
+      <div class="detail-row">
+        <span class="detail-label">主机</span>
+        <span class="detail-value">{{ event.hostname || ('#主机' + event.host_id) }}</span>
       </div>
-      <div class="info-row">
-        <span class="info-label">采集器</span>
-        <span class="info-value">{{ event.source_collector || '—' }}</span>
+      <div class="detail-row">
+        <span class="detail-label">采集器</span>
+        <span class="detail-value">{{ event.source_collector || '—' }}</span>
       </div>
-      <div class="info-row" v-if="event.case_id">
-        <span class="info-label">案件</span>
-        <span class="info-value">{{ event.case_name || ('案件#' + event.case_id) }}</span>
+      <div class="detail-row" v-if="event.case_id">
+        <span class="detail-label">案件</span>
+        <span class="detail-value">{{ event.case_name || ('案件#' + event.case_id) }}</span>
       </div>
-      <div class="info-row" v-if="event.import_id">
-        <span class="info-label">日志 ID</span>
-        <span class="info-value">{{ event.import_id }}</span>
+      <div class="detail-row" v-if="event.import_id">
+        <span class="detail-label">日志 ID</span>
+        <span class="detail-value">{{ event.import_id }}</span>
       </div>
-      <div class="info-row">
-        <span class="info-label">攻击链</span>
-        <span class="info-value">{{ event.attack_chain_id || '—' }}</span>
+      <div class="detail-row">
+        <span class="detail-label">攻击链</span>
+        <span class="detail-value">{{ event.attack_chain_id || '—' }}</span>
       </div>
-      <div class="info-row">
-        <span class="info-label">ATT&CK</span>
-        <span class="info-value">
+      <div class="detail-row">
+        <span class="detail-label">ATT&CK</span>
+        <span class="detail-value">
           {{ event.attack_stage ? stageLabel(event.attack_stage) : '—' }}
         </span>
       </div>
-      <div class="info-row">
-        <span class="info-label">负责人</span>
-        <span class="info-value">{{ event.assignee || '未指派' }}</span>
+      <div class="detail-row">
+        <span class="detail-label">负责人</span>
+        <span class="detail-value">{{ event.assignee || '未指派' }}</span>
       </div>
     </div>
 
@@ -61,68 +64,67 @@
     <div class="detail-section" v-if="event.rule_name || event.matched_rules">
       <div class="section-title">匹配规则</div>
       <div v-if="event.rule_name" class="rule-item">
-        <span class="rule-name">{{ event.rule_name }}</span>
+        <span class="detail-value">{{ event.rule_name }}</span>
       </div>
       <div v-if="event.matched_rules && event.matched_rules.length > 0">
         <div v-for="(rule, i) in event.matched_rules" :key="i" class="rule-item">
-          <span class="rule-name">{{ rule.name || rule.rule_id || ('规则 #' + (i + 1)) }}</span>
+          <span class="detail-value">{{ rule.name || rule.rule_id || ('规则 #' + (i + 1)) }}</span>
           <span v-if="rule.description" class="rule-desc">{{ rule.description }}</span>
-          <span v-if="rule.severity" class="rule-sev" :style="{ color: sevColor(rule.severity) }">{{ rule.severity }}</span>
         </div>
       </div>
       <div v-else class="rule-none">无匹配规则（基于模型推断）</div>
     </div>
 
-    <!-- 处置操作 -->
-    <div class="detail-section">
-      <div class="section-title">处置操作</div>
-      <div class="action-buttons">
-        <el-button
-          v-if="event.status === 'pending'"
-          size="small"
-          type="primary"
-          @click="onStatusChange('triaging')"
-        >
-          开始分诊
-        </el-button>
-        <el-button
-          v-if="event.status === 'triaging'"
-          size="small"
-          type="warning"
-          @click="onStatusChange('investigating')"
-        >
-          进入调查
-        </el-button>
-        <el-button
-          v-if="event.status === 'investigating'"
-          size="small"
-          type="success"
-          @click="onStatusChange('resolved')"
-        >
-          标记解决
-        </el-button>
-        <el-button
-          v-if="event.status !== 'rejected' && event.status !== 'resolved'"
-          size="small"
-          type="danger"
-          plain
-          @click="onStatusChange('rejected')"
-        >
-          标记误报
-        </el-button>
-        <el-button
-          v-if="event.status === 'resolved'"
-          size="small"
-          type="warning"
-          plain
-          @click="onStatusChange('investigating')"
-        >
-          重新开案
-        </el-button>
+    <!-- 原始命令 -->
+    <div class="detail-section" v-if="event.evidence?.command_line || event.evidence?.process_cmdline">
+      <div class="section-title">原始命令</div>
+      <div class="cmd-block">
+        <code class="cmd-code">{{ event.evidence.command_line || event.evidence.process_cmdline }}</code>
       </div>
     </div>
 
-    <!-- 证据 JSON -->
+    <!-- 处置操作 -->
+    <div class="detail-section">
+      <div class="action-buttons">
+        <button
+          v-if="event.status === 'pending'"
+          class="btn btn-primary"
+          @click="onStatusChange('triaging')"
+        >
+          开始分诊
+        </button>
+        <button
+          v-if="event.status === 'triaging'"
+          class="btn btn-warning"
+          @click="onStatusChange('investigating')"
+        >
+          进入调查
+        </button>
+        <button
+          v-if="event.status === 'investigating'"
+          class="btn btn-success"
+          @click="onStatusChange('resolved')"
+        >
+          标记解决
+        </button>
+        <button
+          v-if="event.status !== 'rejected' && event.status !== 'resolved'"
+          class="btn btn-danger"
+          @click="onStatusChange('rejected')"
+        >
+          标记误报
+        </button>
+        <button
+          v-if="event.status === 'resolved'"
+          class="btn btn-warning"
+          @click="onStatusChange('investigating')"
+        >
+          重新开案
+        </button>
+      </div>
+    </div>
+
+    <!-- 原始证据 -->
     <div class="detail-section">
       <div class="section-title">原始证据</div>
       <div class="json-viewer">
@@ -134,19 +136,17 @@
     <div class="detail-section" v-if="event.ioc_matches && event.ioc_matches.length > 0">
       <div class="section-title">IOC 匹配 ({{ event.ioc_matches.length }})</div>
       <div class="ioc-list">
-        <el-tag
+        <span
           v-for="ioc in event.ioc_matches"
           :key="ioc"
-          size="small"
-          type="danger"
           class="ioc-tag"
         >
           {{ ioc }}
-        </el-tag>
+        </span>
       </div>
     </div>
 
-    <!-- 处置建议（静态） -->
+    <!-- 处置建议 -->
     <div class="detail-section">
       <div class="section-title">处置建议</div>
       <div class="suggestion-text">
@@ -166,34 +166,34 @@
     <div class="detail-section" v-if="event.related_events && event.related_events.length > 0">
       <div class="section-title">关联事件 ({{ event.related_events.length }})</div>
       <div class="related-list">
-        <el-button
+        <button
           v-for="rid in event.related_events"
           :key="rid"
-          link
-          size="small"
+          class="btn btn-link"
           @click="onViewRelated(rid)"
         >
           {{ rid.substring(0, 12) + '...' }}
-        </el-button>
+        </button>
       </div>
     </div>
 
-    <!-- 查看原始日志 -->
+    <!-- 关联数据 -->
     <div class="detail-section" v-if="event.host_id">
       <div class="section-title">关联数据</div>
       <div class="action-buttons">
-        <el-button size="small" type="primary" @click="viewLog">
-          <el-icon><Search /></el-icon>
+        <button class="btn btn-primary" @click="viewLog">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="margin-right: 4px;">
+            <circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.3"/>
+            <path d="M9.5 9.5L13 13" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+          </svg>
           查看原始日志
-        </el-button>
+        </button>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { Close, Search } from '@element-plus/icons-vue'
-
 const props = defineProps({
   event: { type: Object, default: () => ({}) },
 })
@@ -201,8 +201,8 @@ const props = defineProps({
 const emit = defineEmits(['close', 'update-status', 'assign', 'view-related'])
 
 const SEV_COLORS = {
-  critical: '#DC2626', high: '#EF4444', medium: '#EAB308',
-  low: '#3B82F6', info: '#9CA3AF',
+  critical: '#dc2626', high: '#dc2626', medium: '#d97706',
+  low: '#2563eb', info: '#a3a3a3',
 }
 const STAGE_LABELS = {
   initial_access: '初始访问', execution: '执行', persistence: '持久化',
@@ -225,7 +225,7 @@ const EVENT_TYPE_LABELS = {
   pipe_connect: '管道连接', driver_load: '驱动加载',
 }
 
-function sevColor(s) { return SEV_COLORS[s] || '#9CA3AF' }
+function sevColor(s) { return SEV_COLORS[s] || '#a3a3a3' }
 function stageLabel(s) { return STAGE_LABELS[s] || s }
 function eventTypeLabel(t) { return EVENT_TYPE_LABELS[t] || t }
 
@@ -266,15 +266,16 @@ function viewLog() {
   height: 100%;
   display: flex;
   flex-direction: column;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 400;
 }
 
 .detail-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
-  border-bottom: 1px solid #e5e7eb;
+  padding: 12px 16px;
+  border-bottom: 0.5px solid var(--color-border-default, #e5e5e5);
   flex-shrink: 0;
 }
 
@@ -285,71 +286,207 @@ function viewLog() {
 }
 
 .severity-badge {
-  padding: 1px 6px;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
   border-radius: 4px;
   color: #fff;
-  font-size: 10px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.severity-badge.badge-critical,
+.severity-badge.badge-high {
+  background: var(--color-danger-fg, #dc2626);
+}
+
+.severity-badge.badge-medium {
+  background: var(--color-warning-fg, #d97706);
+}
+
+.severity-badge.badge-low {
+  background: var(--color-accent-fg, #2563eb);
+}
+
+.severity-badge.badge-info {
+  background: var(--color-fg-subtle, #888888);
 }
 
 .event-id {
   font-size: 11px;
-  color: #6b7280;
-  font-family: monospace;
+  font-weight: 400;
+  color: var(--color-fg-subtle, #888888);
+  font-family: 'Courier New', monospace;
 }
 
+.close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--color-fg-subtle, #888888);
+  cursor: pointer;
+  border-radius: var(--r-btn, 6px);
+  transition: all 0.15s;
+}
+
+.close-btn:hover {
+  background: var(--color-canvas-inset, #f5f5f5);
+  color: var(--color-fg-default, #111111);
+}
+
+/* ===== Section ===== */
 .detail-section {
-  padding: 8px 12px;
-  border-bottom: 1px solid #f3f4f6;
+  padding: 12px 16px;
+  border-bottom: 0.5px solid var(--color-border-default, #e5e5e5);
+  background: var(--color-canvas-default, #ffffff);
 }
 
 .section-title {
   font-size: 11px;
-  font-weight: 600;
-  color: #374151;
-  margin-bottom: 6px;
+  font-weight: 500;
+  color: var(--color-fg-subtle, #888888);
+  margin-bottom: 12px;
 }
 
-.info-row {
+/* ===== Detail Row ===== */
+.detail-row {
   display: flex;
-  margin-bottom: 4px;
+  margin-bottom: 8px;
+  align-items: flex-start;
 }
 
-.info-label {
-  width: 60px;
+.detail-row:last-child {
+  margin-bottom: 0;
+}
+
+.detail-label {
+  width: 64px;
   flex-shrink: 0;
-  color: #9ca3af;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--color-fg-subtle, #888888);
+  line-height: 1.5;
 }
 
-.info-value {
-  color: #374151;
+.detail-value {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--color-fg-default, #111111);
   flex: 1;
   word-break: break-all;
+  line-height: 1.5;
 }
 
+/* ===== Action Buttons ===== */
 .action-buttons {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
 }
 
+/* ===== Buttons ===== */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 400;
+  border-radius: var(--r-btn, 6px);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  background: var(--color-canvas-default, #ffffff);
+  color: var(--color-fg-default, #111111);
+  cursor: pointer;
+  transition: all 0.15s;
+  line-height: 1.4;
+}
+
+.btn:hover {
+  background: var(--color-canvas-inset, #f5f5f5);
+}
+
+.btn-primary {
+  background: var(--color-accent-fg, #2563eb);
+  color: #ffffff;
+  border-color: var(--color-accent-fg, #2563eb);
+}
+
+.btn-primary:hover {
+  opacity: 0.9;
+  background: var(--color-accent-fg, #2563eb);
+}
+
+.btn-success {
+  background: var(--color-success-fg, #16a34a);
+  color: #ffffff;
+  border-color: var(--color-success-fg, #16a34a);
+}
+
+.btn-success:hover {
+  opacity: 0.9;
+  background: var(--color-success-fg, #16a34a);
+}
+
+.btn-warning {
+  background: var(--color-warning-fg, #d97706);
+  color: #ffffff;
+  border-color: var(--color-warning-fg, #d97706);
+}
+
+.btn-warning:hover {
+  opacity: 0.9;
+  background: var(--color-warning-fg, #d97706);
+}
+
+.btn-danger {
+  background: transparent;
+  color: var(--color-danger-fg, #dc2626);
+  border-color: var(--color-danger-fg, #dc2626);
+}
+
+.btn-danger:hover {
+  background: var(--color-danger-subtle, #fef2f2);
+}
+
+.btn-link {
+  border: none;
+  background: transparent;
+  color: var(--color-accent-fg, #2563eb);
+  padding: 4px 0;
+  font-size: 12px;
+  cursor: pointer;
+  display: block;
+  text-align: left;
+}
+
+.btn-link:hover {
+  text-decoration: underline;
+}
+
+/* ===== JSON Viewer ===== */
 .json-viewer {
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
-  border-radius: 4px;
+  background: var(--color-canvas-inset, #f5f5f5);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  border-radius: var(--r-btn, 6px);
   max-height: 200px;
   overflow: auto;
 }
 
 .json-content {
   margin: 0;
-  padding: 8px;
+  padding: 8px 12px;
   font-size: 11px;
+  font-weight: 400;
   font-family: 'Courier New', monospace;
   white-space: pre-wrap;
   word-break: break-all;
+  color: var(--color-fg-default, #111111);
 }
 
+/* ===== IOC Tags ===== */
 .ioc-list {
   display: flex;
   flex-wrap: wrap;
@@ -357,25 +494,71 @@ function viewLog() {
 }
 
 .ioc-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 400;
+  border-radius: 4px;
+  background: var(--color-danger-subtle, #fef2f2);
+  color: var(--color-danger-fg, #dc2626);
+  border: 0.5px solid rgba(220, 38, 38, 0.2);
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .suggestion-text {
-  color: #6b7280;
-  line-height: 1.5;
+  color: var(--color-fg-muted, #555555);
+  line-height: 1.6;
+  font-size: 13px;
+  font-weight: 400;
 }
 
 .related-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 
-.rule-item { padding: 6px 8px; background: var(--color-background-secondary); border-radius: 4px; margin-bottom: 4px; }
-.rule-name { font-weight: 500; font-size: 12px; }
-.rule-desc { display: block; font-size: 11px; color: var(--color-text-secondary); margin-top: 2px; }
-.rule-sev { font-size: 10px; margin-left: 6px; }
-.rule-none { font-size: 11px; color: var(--color-text-tertiary); }
+.rule-item {
+  padding: 8px 12px;
+  background: var(--color-canvas-inset, #f5f5f5);
+  border-radius: var(--r-btn, 6px);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  margin-bottom: 4px;
+}
+
+.rule-desc {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--color-fg-subtle, #888888);
+  margin-top: 4px;
+}
+
+.rule-none {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--color-fg-light, #a3a3a3);
+}
+
+/* ===== Command Code Block ===== */
+.cmd-block {
+  background: #1e1e1e;
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  border-radius: var(--r-btn, 6px);
+  padding: 12px;
+  overflow-x: auto;
+}
+
+.cmd-code {
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  font-weight: 400;
+  color: #e5e5e5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.5;
+}
 </style>

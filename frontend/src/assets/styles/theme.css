@@ -1,111 +1,116 @@
 /* ==========================================================================
- * NSFOCUS / 绿盾 设计令牌 + 亮/暗双主题
- * - :root 定义亮色（默认）令牌
- * - html.dark 定义暗色令牌
- * - 业务与组件样式统一引用 var(--color-*) / Element Plus 变量
+ * 设计令牌 — 黑/白/灰中性色系
+ * :root 定义亮色（默认）令牌
+ * html.dark 定义暗色令牌
  * ========================================================================== */
 
 /* ---------- 亮色（默认） ---------- */
 :root {
-  /* 画布 */
   --color-canvas-default: #ffffff;
-  --color-canvas-subtle: #f5f7fa;
-  --color-canvas-inset: #eef2f5;
+  --color-canvas-subtle: #fafafa;
+  --color-canvas-inset: #f5f5f5;
 
-  /* 前景文字 */
-  --color-fg-default: #1f2328;
-  --color-fg-muted: #656d76;
-  --color-fg-subtle: #8d9299;
+  --color-fg-default: #111111;
+  --color-fg-muted: #555555;
+  --color-fg-subtle: #888888;
+  --color-fg-light: #a3a3a3;
 
-  /* 边框 */
-  --color-border-default: #d0d7de;
-  --color-border-muted: #c8e6c9;
+  --color-border-default: #e5e5e5;
 
-  /* 强调色（Accent）— 主色：NSFOCUS 绿 */
-  --color-accent-fg: #2e7d32;
-  --color-accent-emphasis: #2e7d32;
-  --color-accent-subtle: #e8f5e9;
+  /* 主题色 */
+  --color-accent-fg: #2563eb;
+  --color-accent-emphasis: #2563eb;
+  --color-accent-subtle: #eff6ff;
 
-  /* 语义色 — success 保持绿色，danger 保持红色，warning 保持橙色 */
-  --color-success-fg: #1b5e20;
-  --color-success-emphasis: #2e7d32;
-  --color-success-subtle: #e8f5e9;
-  --color-danger-fg: #c62828;
-  --color-danger-emphasis: #d32f2f;
-  --color-danger-subtle: #ffebee;
-  --color-warning-fg: #e65100;
-  --color-warning-emphasis: #f57c00;
-  --color-warning-subtle: #fff3e0;
+  /* 语义色 */
+  --color-danger-fg: #dc2626;
+  --color-danger-emphasis: #dc2626;
+  --color-danger-subtle: #fef2f2;
+  --color-success-fg: #16a34a;
+  --color-success-emphasis: #16a34a;
+  --color-success-subtle: #f0fdf4;
+  --color-warning-fg: #d97706;
+  --color-warning-emphasis: #d97706;
+  --color-warning-subtle: #fffbeb;
 
-  /* 风险等级 — low 为绿色（NSFOCUS 风格） */
-  --color-risk-critical: #c62828;
-  --color-risk-high: #d4380d;
-  --color-risk-medium: #f57c00;
-  --color-risk-low: #2e7d32;
-  --color-risk-info: #8d9299;
+  /* 风险等级 */
+  --color-risk-critical: #dc2626;
+  --color-risk-high: #dc2626;
+  --color-risk-medium: #d97706;
+  --color-risk-low: #2563eb;
+  --color-risk-info: #a3a3a3;
 
-  /* 侧边栏 — 亮色主题：白色，与主内容区一致 */
+  /* 侧边栏 */
   --color-sidebar-bg: #ffffff;
-  --color-sidebar-fg: #1f2328;
-  --color-sidebar-fg-muted: #656d76;
-  --color-sidebar-border: #d0d7de;
-  --color-sidebar-hover-bg: #f0f2f5;
-  --color-sidebar-active-bg: #e8f5e9;
-  --color-fg-on-emphasis: #1f2328; /* 用在激活菜单项文字和 logo 上 */
+  --color-sidebar-fg: #111111;
+  --color-sidebar-fg-muted: #555555;
+  --color-sidebar-border: #e5e5e5;
+  --color-sidebar-hover-bg: #f5f5f5;
+  --color-sidebar-active-bg: #eff6ff;
+  --color-fg-on-emphasis: #ffffff;
 
-  /* 代码块（两种主题均保持深色阅读区） */
+  /* 代码块 */
   --color-code-bg: #1e1e1e;
+
+  /* 圆角变量 */
+  --r-btn: 6px;
+  --r-card: 10px;
+  --r-container: 12px;
 
   color-scheme: light;
 }
 
 /* ---------- 暗色 ---------- */
 html.dark {
-  --color-canvas-default: #0d1f0d;
-  --color-canvas-subtle: #152515;
-  --color-canvas-inset: #0a120a;
+  --color-canvas-default: #1a1a1a;
+  --color-canvas-subtle: #222222;
+  --color-canvas-inset: #111111;
 
-  --color-fg-default: #e8f5e9;
-  --color-fg-muted: #a5d6a7;
-  --color-fg-subtle: #81c784;
+  --color-fg-default: #e5e5e5;
+  --color-fg-muted: #a3a3a3;
+  --color-fg-subtle: #888888;
+  --color-fg-light: #555555;
 
-  --color-border-default: #2e4a2e;
-  --color-border-muted: #1e3a1e;
+  --color-border-default: #333333;
 
-  --color-accent-fg: #66bb6a;
-  --color-accent-emphasis: #4caf50;
-  --color-accent-subtle: #1b3a1b;
+  --color-accent-fg: #60a5fa;
+  --color-accent-emphasis: #3b82f6;
+  --color-accent-subtle: #1e3a5f;
 
-  --color-success-fg: #66bb6a;
-  --color-success-emphasis: #4caf50;
-  --color-success-subtle: #1b3a1b;
-  --color-danger-fg: #ef5350;
-  --color-danger-emphasis: #e53935;
-  --color-danger-subtle: #3a1b1b;
-  --color-warning-fg: #ffa726;
-  --color-warning-emphasis: #fb8c00;
-  --color-warning-subtle: #3a2a1b;
+  --color-danger-fg: #f87171;
+  --color-danger-emphasis: #ef4444;
+  --color-danger-subtle: #3b1f1f;
+  --color-success-fg: #4ade80;
+  --color-success-emphasis: #22c55e;
+  --color-success-subtle: #1a3a1a;
+  --color-warning-fg: #fbbf24;
+  --color-warning-emphasis: #f59e0b;
+  --color-warning-subtle: #3a2a1a;
 
-  --color-risk-critical: #ef5350;
-  --color-risk-high: #ff7b72;
-  --color-risk-medium: #ffa726;
-  --color-risk-low: #66bb6a;
-  --color-risk-info: #a5d6a7;
+  --color-risk-critical: #f87171;
+  --color-risk-high: #f87171;
+  --color-risk-medium: #fbbf24;
+  --color-risk-low: #60a5fa;
+  --color-risk-info: #888888;
 
-  --color-sidebar-bg: #0d1f0d;
-  --color-sidebar-fg: #e8f5e9;
-  --color-sidebar-fg-muted: #a5d6a7;
-  --color-sidebar-border: rgba(255, 255, 255, 0.1);
-  --color-sidebar-hover-bg: rgba(255, 255, 255, 0.1);
-  --color-sidebar-active-bg: #4caf50;
+  --color-sidebar-bg: #1a1a1a;
+  --color-sidebar-fg: #e5e5e5;
+  --color-sidebar-fg-muted: #a3a3a3;
+  --color-sidebar-border: #333333;
+  --color-sidebar-hover-bg: #222222;
+  --color-sidebar-active-bg: #1e3a5f;
   --color-fg-on-emphasis: #ffffff;
 
-  --color-code-bg: #161b22;
+  --color-code-bg: #0d1117;
+
+  --r-btn: 6px;
+  --r-card: 10px;
+  --r-container: 12px;
 
   color-scheme: dark;
 }
 
-/* ---------- 全局平滑过渡（避免切换主题闪烁感） ---------- */
+/* ---------- 全局平滑过渡 ---------- */
 body,
 .app-header,
 .app-main,
@@ -116,5 +121,3 @@ body,
 .batch-result {
   transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
 }
-/* 侧边栏：过渡由 AppLayout.vue 的 scoped CSS 精确控制，
-   全局只跟随背景色/边框色变化，不覆盖 width/transform 动画 */

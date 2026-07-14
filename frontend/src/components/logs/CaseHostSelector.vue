@@ -9,22 +9,30 @@
         </div>
         <div class="case-stats">
           <span class="stat-item">
-            <el-icon :size="14"><Monitor /></el-icon>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <rect x="2" y="2" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.2"/>
+              <path d="M2 5h10" stroke="currentColor" stroke-width="1.2"/>
+            </svg>
             {{ (currentCase?.hosts || []).length }} 主机
           </span>
           <span class="stat-item">
-            <el-icon :size="14"><WarningFilled /></el-icon>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+              <circle cx="7" cy="7" r="3" stroke="currentColor" stroke-width="1.2"/>
+            </svg>
             {{ currentCase?.event_count || 0 }} 事件
           </span>
           <span class="stat-item">
-            <el-icon :size="14"><Document /></el-icon>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M2 4h10M2 7h10M2 10h10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+            </svg>
             {{ currentCase?.log_count || 0 }} 日志
           </span>
         </div>
       </div>
-      <el-button size="small" @click="showCaseSelector = true">
+      <button class="btn btn-outline btn-sm" @click="showCaseSelector = true">
         切换案件
-      </el-button>
+      </button>
     </div>
 
     <!-- 主机网格 -->
@@ -35,7 +43,7 @@
         :class="['host-cell', { selected: selectedHostId === host.id }]"
         @click="selectHost(host)"
       >
-        <!-- 严重度色条 -->
+        <!-- 严重度色条顶部 -->
         <div class="severity-bar" :style="{ backgroundColor: severityColor(host.severity) }" />
         <div class="host-content">
           <div class="host-name">{{ host.hostname }}</div>
@@ -53,34 +61,45 @@
     </div>
 
     <!-- 案件选择弹窗 -->
-    <el-dialog v-model="showCaseSelector" title="选择案件" width="500px">
-      <div class="case-list">
-        <div
-          v-for="c in cases"
-          :key="c.id"
-          :class="['case-item', { active: currentCaseId === c.id }]"
-          @click="switchCase(c)"
-        >
-          <div class="case-item-header">
-            <span class="case-item-id">{{ c.name || c.label || ('案件 #' + c.value) }}</span>
-            <span v-if="c.case_number" class="case-item-desc">{{ c.case_number }}</span>
-          </div>
-          <div class="case-item-stats">
-            <span>{{ (c.hosts || []).length }} 主机</span>
-            <span>|</span>
-            <span>{{ c.log_count || 0 }} 日志</span>
-            <span>|</span>
-            <span>{{ c.event_count || 0 }} 事件</span>
+    <div v-if="showCaseSelector" class="modal-overlay" @click.self="showCaseSelector = false">
+      <div class="modal">
+        <div class="modal-header">
+          <span class="modal-title">选择案件</span>
+          <button class="modal-close" @click="showCaseSelector = false">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M1 1L13 13M13 1L1 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="case-list">
+            <div
+              v-for="c in cases"
+              :key="c.id"
+              :class="['case-item', { active: currentCaseId === c.id }]"
+              @click="switchCase(c)"
+            >
+              <div class="case-item-header">
+                <span class="case-item-id">{{ c.name || c.label || ('案件 #' + c.value) }}</span>
+                <span v-if="c.case_number" class="case-item-desc">{{ c.case_number }}</span>
+              </div>
+              <div class="case-item-stats">
+                <span>{{ (c.hosts || []).length }} 主机</span>
+                <span class="stat-sep">|</span>
+                <span>{{ c.log_count || 0 }} 日志</span>
+                <span class="stat-sep">|</span>
+                <span>{{ c.event_count || 0 }} 事件</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
-    </el-dialog>
+    </div>
   </div>
 </template>
 
 <script setup>
 import { ref, computed } from 'vue'
-import { Monitor, WarningFilled, Document } from '@element-plus/icons-vue'
 
 const props = defineProps({
   cases: { type: Array, default: () => [] },
@@ -105,8 +124,8 @@ const hosts = computed(() => currentCase.value?.hosts || [])
 const selectedHostId = computed(() => props.modelValue)
 
 function severityColor(severity) {
-  const map = { critical: '#DC2626', high: '#EF4444', medium: '#EAB308', low: '#3B82F6', info: '#9CA3AF' }
-  return map[severity] || '#9CA3AF'
+  const map = { critical: '#dc2626', high: '#dc2626', medium: '#d97706', low: '#2563eb', info: '#a3a3a3' }
+  return map[severity] || '#a3a3a3'
 }
 
 function selectHost(host) {
@@ -127,26 +146,26 @@ function switchCase(c) {
 
 <style scoped>
 .case-host-selector {
-  background: var(--color-canvas-default);
-  border: 1px solid var(--color-border-default);
-  border-radius: 8px;
+  background: var(--color-canvas-default, #ffffff);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  border-radius: var(--r-card, 10px);
   overflow: hidden;
 }
 
-/* 案件条带 */
+/* ===== 案件条带 ===== */
 .case-strip {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
-  background: var(--color-canvas-subtle);
-  border-bottom: 1px solid var(--color-border-default);
+  padding: 16px 20px;
+  background: var(--color-canvas-subtle, #fafafa);
+  border-bottom: 0.5px solid var(--color-border-default, #e5e5e5);
 }
 
 .case-info {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
 }
 
 .case-header {
@@ -156,131 +175,236 @@ function switchCase(c) {
 }
 
 .case-id-label {
-  font-weight: 700;
+  font-weight: 500;
   font-size: 14px;
-  color: var(--color-fg-default);
+  color: var(--color-fg-default, #111111);
 }
 
 .case-desc {
   font-size: 12px;
-  color: var(--color-fg-muted);
+  font-weight: 400;
+  color: var(--color-fg-subtle, #888888);
 }
 
 .case-stats {
   display: flex;
-  gap: 12px;
-  font-size: 11px;
-  color: var(--color-fg-muted);
+  gap: 16px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--color-fg-muted, #555555);
 }
 
 .stat-item {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
 }
 
-/* 主机网格 */
+.stat-item svg {
+  color: var(--color-fg-subtle, #888888);
+}
+
+/* ===== Buttons ===== */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 400;
+  border-radius: var(--r-btn, 6px);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  background: var(--color-canvas-default, #ffffff);
+  color: var(--color-fg-default, #111111);
+  cursor: pointer;
+  transition: all 0.15s;
+  line-height: 1.4;
+}
+
+.btn:hover {
+  background: var(--color-canvas-inset, #f5f5f5);
+}
+
+.btn-outline {
+  background: transparent;
+  border-color: var(--color-border-default, #e5e5e5);
+}
+
+.btn-sm {
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+/* ===== 主机网格 ===== */
 .host-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 8px;
-  padding: 12px 16px;
+  padding: 16px 20px;
 }
 
 .host-cell {
   position: relative;
   display: flex;
-  border: 1px solid var(--color-border-default);
-  border-radius: 6px;
+  flex-direction: column;
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  border-radius: var(--r-card, 10px);
   overflow: hidden;
   cursor: pointer;
-  transition: box-shadow 0.15s, border-color 0.15s;
+  transition: border-color 0.15s;
+  background: var(--color-canvas-default, #ffffff);
 }
 
 .host-cell:hover {
-  border-color: var(--color-accent-fg);
-  box-shadow: 0 0 0 1px var(--color-accent-subtle);
+  border-color: var(--color-accent-fg, #2563eb);
 }
 
 .host-cell.selected {
-  border-color: var(--color-accent-fg);
-  background: var(--color-accent-subtle);
+  border-color: var(--color-accent-fg, #2563eb);
+  border-width: 1px;
+  background: var(--color-accent-subtle, #eff6ff);
 }
 
 .severity-bar {
-  width: 3px;
+  height: 2px;
   flex-shrink: 0;
 }
 
 .host-content {
   flex: 1;
-  padding: 8px 10px;
+  padding: 10px 12px;
   position: relative;
 }
 
 .host-name {
-  font-weight: 600;
-  font-size: 12px;
-  color: var(--color-fg-default);
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--color-fg-default, #111111);
   margin-bottom: 2px;
 }
 
 .host-ip {
   font-size: 11px;
-  color: var(--color-fg-muted);
+  font-weight: 400;
+  color: var(--color-fg-subtle, #888888);
   font-family: monospace;
 }
 
 .host-meta {
   display: flex;
   justify-content: space-between;
-  margin-top: 4px;
-  font-size: 10px;
-  color: var(--color-fg-muted);
+  margin-top: 8px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--color-fg-subtle, #888888);
 }
 
 .selected-badge {
   position: absolute;
   top: 4px;
   right: 4px;
-  background: var(--color-accent-fg);
+  background: var(--color-accent-fg, #2563eb);
   color: #fff;
-  font-size: 9px;
-  padding: 1px 5px;
+  font-size: 10px;
+  font-weight: 400;
+  padding: 1px 6px;
   border-radius: 4px;
-  font-weight: 600;
 }
 
 .host-empty {
   grid-column: 1 / -1;
   text-align: center;
-  padding: 20px;
-  color: var(--color-fg-muted);
-  font-size: 12px;
+  padding: 24px;
+  color: var(--color-fg-subtle, #888888);
+  font-size: 13px;
+  font-weight: 400;
 }
 
-/* 案件选择弹窗 */
-.case-list {
-  max-height: 400px;
+/* ===== Modal ===== */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal {
+  background: var(--color-canvas-default, #ffffff);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  border-radius: var(--r-container, 12px);
+  width: 500px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 0.5px solid var(--color-border-default, #e5e5e5);
+}
+
+.modal-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-fg-default, #111111);
+}
+
+.modal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--color-fg-subtle, #888888);
+  cursor: pointer;
+  border-radius: var(--r-btn, 6px);
+  transition: all 0.15s;
+}
+
+.modal-close:hover {
+  background: var(--color-canvas-inset, #f5f5f5);
+  color: var(--color-fg-default, #111111);
+}
+
+.modal-body {
+  padding: 16px 20px;
   overflow-y: auto;
+  flex: 1;
+}
+
+/* ===== Case List ===== */
+.case-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .case-item {
-  padding: 10px 14px;
-  border: 1px solid var(--color-border-default);
-  border-radius: 6px;
-  margin-bottom: 8px;
+  padding: 12px 16px;
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  border-radius: var(--r-btn, 6px);
   cursor: pointer;
-  transition: background 0.1s;
+  transition: all 0.1s;
 }
 
 .case-item:hover {
-  background: var(--color-canvas-subtle);
+  background: var(--color-canvas-subtle, #fafafa);
 }
 
 .case-item.active {
-  border-color: var(--color-accent-fg);
-  background: var(--color-accent-subtle);
+  border-color: var(--color-accent-fg, #2563eb);
+  background: var(--color-accent-subtle, #eff6ff);
 }
 
 .case-item-header {
@@ -291,24 +415,30 @@ function switchCase(c) {
 }
 
 .case-item-id {
-  font-weight: 600;
-  font-size: 14px;
-  color: var(--color-fg-default);
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--color-fg-default, #111111);
 }
 
 .case-item-desc {
   font-size: 11px;
-  color: var(--color-accent-fg);
-  background: var(--color-canvas-subtle);
+  font-weight: 400;
+  color: var(--color-accent-fg, #2563eb);
+  background: var(--color-accent-subtle, #eff6ff);
   padding: 1px 6px;
-  border-radius: 3px;
+  border-radius: 4px;
   font-family: monospace;
 }
 
 .case-item-stats {
   font-size: 11px;
-  color: var(--color-fg-muted);
+  font-weight: 400;
+  color: var(--color-fg-subtle, #888888);
   display: flex;
-  gap: 6px;
+  gap: 8px;
+}
+
+.stat-sep {
+  color: var(--color-border-default, #e5e5e5);
 }
 </style>

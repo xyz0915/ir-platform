@@ -12,13 +12,19 @@
       @sort-change="onSortChange"
     >
       <!-- 多选列 -->
-      <el-table-column type="selection" width="40" fixed />
+      <el-table-column type="selection" width="40" fixed>
+        <template #default="{ row }">
+          <span class="checkbox" :class="{ checked: props.selectedIds?.includes(row.id) }" @click.stop />
+        </template>
+      </el-table-column>
 
       <!-- 严重等级 -->
       <el-table-column label="等级" width="80" sortable="custom" prop="severity">
         <template #default="{ row }">
-          <span class="severity-dot" :style="{ backgroundColor: sevColor(row.severity) }" />
-          <span class="severity-text">{{ row.severity }}</span>
+          <div class="severity-cell">
+            <span class="severity-bar" :style="{ backgroundColor: sevColor(row.severity) }" />
+            <span class="severity-badge" :class="'badge-' + (row.severity || 'info')">{{ row.severity }}</span>
+          </div>
         </template>
       </el-table-column>
 
@@ -64,7 +70,6 @@
           <span
             v-if="row.attack_stage"
             class="stage-tag"
-            :style="{ backgroundColor: stageColor(row.attack_stage), color: '#333' }"
           >
             {{ stageLabel(row.attack_stage) }}
           </span>
@@ -75,13 +80,12 @@
       <!-- IOC 命中 -->
       <el-table-column label="IOC" width="70">
         <template #default="{ row }">
-          <el-tag
+          <span
             v-if="row.ioc_matches && row.ioc_matches.length > 0"
-            size="small"
-            type="danger"
+            class="ioc-badge"
           >
             {{ row.ioc_matches.length }}
-          </el-tag>
+          </span>
           <span v-else class="ioc-none">—</span>
         </template>
       </el-table-column>
@@ -89,9 +93,9 @@
       <!-- 状态 -->
       <el-table-column label="状态" width="100" sortable="custom" prop="status">
         <template #default="{ row }">
-          <el-tag :color="statusColor(row.status)" size="small" effect="dark">
+          <span class="status-tag" :class="'status-' + row.status">
             {{ statusLabel(row.status) }}
-          </el-tag>
+          </span>
         </template>
       </el-table-column>
 
@@ -107,42 +111,34 @@
       <el-table-column label="操作" width="200" fixed="right">
         <template #default="{ row }">
           <div class="row-actions">
-            <el-button
+            <button
               v-if="row.status === 'pending'"
-              size="small"
-              type="primary"
-              link
+              class="action-btn"
               @click.stop="onAction(row.id, 'triaging')"
             >
               分诊
-            </el-button>
-            <el-button
+            </button>
+            <button
               v-if="row.status === 'triaging'"
-              size="small"
-              type="warning"
-              link
+              class="action-btn"
               @click.stop="onAction(row.id, 'investigating')"
             >
               调查
-            </el-button>
-            <el-button
+            </button>
+            <button
               v-if="row.status === 'investigating'"
-              size="small"
-              type="success"
-              link
+              class="action-btn action-success"
               @click.stop="onAction(row.id, 'resolved')"
             >
               解决
-            </el-button>
-            <el-button
+            </button>
+            <button
               v-if="row.status !== 'rejected' && row.status !== 'resolved'"
-              size="small"
-              type="danger"
-              link
+              class="action-btn action-danger"
               @click.stop="onAction(row.id, 'rejected')"
             >
               误报
-            </el-button>
+            </button>
           </div>
         </template>
       </el-table-column>
@@ -189,20 +185,12 @@ const currentPageSize = ref(props.pagination.pageSize)
 
 // 颜色映射
 const SEV_COLORS = {
-  critical: '#DC2626', high: '#EF4444', medium: '#EAB308',
-  low: '#3B82F6', info: '#9CA3AF',
+  critical: '#dc2626', high: '#dc2626', medium: '#d97706',
+  low: '#2563eb', info: '#a3a3a3',
 }
 const STATUS_COLORS = {
-  pending: '#9CA3AF', triaging: '#3B82F6', investigating: '#F97316',
-  resolved: '#22C55E', rejected: '#EF4444',
-}
-const STAGE_COLORS = {
-  initial_access: '#FFE0E0', execution: '#FFF3E0', persistence: '#FFFDE7',
-  privilege_escalation: '#F3E5F5', defense_evasion: '#E8EAF6',
-  credential_access: '#E0F2F1', discovery: '#E8F5E9',
-  lateral_movement: '#FFF3E0', collection: '#FCE4EC',
-  command_and_control: '#EFEBE9', exfiltration: '#FFEBEE',
-  impact: '#FFCDD2', unknown: '#F5F5F5',
+  pending: '#a3a3a3', triaging: '#2563eb', investigating: '#d97706',
+  resolved: '#16a34a', rejected: '#dc2626',
 }
 const STAGE_LABELS = {
   initial_access: '初始访问', execution: '执行', persistence: '持久化',
@@ -229,9 +217,8 @@ const STATUS_LABELS = {
   resolved: '已解决', rejected: '已误报',
 }
 
-function sevColor(s) { return SEV_COLORS[s] || '#9CA3AF' }
-function statusColor(s) { return STATUS_COLORS[s] || '#9CA3AF' }
-function stageColor(s) { return STAGE_COLORS[s] || '#F5F5F5' }
+function sevColor(s) { return SEV_COLORS[s] || '#a3a3a3' }
+function statusColor(s) { return STATUS_COLORS[s] || '#a3a3a3' }
 function stageLabel(s) { return STAGE_LABELS[s] || s }
 function eventTypeLabel(t) { return EVENT_TYPE_LABELS[t] || t }
 function statusLabel(s) { return STATUS_LABELS[s] || s }
@@ -307,40 +294,147 @@ function onAction(id, status) {
   flex-direction: column;
 }
 
+/* 覆盖 el-table 样式 */
+.event-table-wrapper :deep(.el-table) {
+  --el-table-border-color: transparent;
+  --el-table-header-bg-color: var(--color-canvas-subtle, #fafafa);
+  --el-table-tr-bg-color: var(--color-canvas-default, #ffffff);
+  --el-table-row-hover-bg-color: var(--color-canvas-inset, #f5f5f5);
+  --el-table-striped-row-bg-color: var(--color-canvas-subtle, #fafafa);
+  --el-table-header-text-color: var(--color-fg-subtle, #888888);
+  --el-table-text-color: var(--color-fg-default, #111111);
+  font-size: 13px;
+  font-weight: 400;
+  border: none;
+}
+
+.event-table-wrapper :deep(.el-table th.el-table__cell) {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-fg-subtle, #888888);
+  background: var(--color-canvas-subtle, #fafafa);
+  border-bottom: 0.5px solid var(--color-border-default, #e5e5e5);
+  padding: 8px 0;
+}
+
+.event-table-wrapper :deep(.el-table td.el-table__cell) {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--color-fg-default, #111111);
+  border-bottom: 0.5px solid var(--color-border-default, #e5e5e5);
+  padding: 6px 0;
+}
+
+.event-table-wrapper :deep(.el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell) {
+  background: var(--color-canvas-subtle, #fafafa);
+}
+
+.event-table-wrapper :deep(.el-table__body tr:hover > td.el-table__cell) {
+  background: var(--color-canvas-inset, #f5f5f5);
+}
+
+/* 左侧严重度色条行 */
+.event-table-wrapper :deep(.el-table__row) {
+  border-left: 3px solid transparent;
+}
+
+/* 严重度列 */
+.severity-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.severity-bar {
+  width: 3px;
+  height: 16px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* 严重度 badge */
+.severity-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 400;
+  border-radius: 4px;
+  line-height: 1.4;
+}
+
+.badge-critical {
+  background: var(--color-danger-subtle, #fef2f2);
+  color: var(--color-risk-critical, #dc2626);
+  border: 0.5px solid rgba(220, 38, 38, 0.2);
+}
+
+.badge-high {
+  background: var(--color-danger-subtle, #fef2f2);
+  color: var(--color-risk-critical, #dc2626);
+  border: 0.5px solid rgba(220, 38, 38, 0.2);
+}
+
+.badge-medium {
+  background: var(--color-warning-subtle, #fffbeb);
+  color: var(--color-risk-medium, #d97706);
+  border: 0.5px solid rgba(217, 119, 6, 0.2);
+}
+
+.badge-low {
+  background: var(--color-accent-subtle, #eff6ff);
+  color: var(--color-risk-low, #2563eb);
+  border: 0.5px solid rgba(37, 99, 235, 0.2);
+}
+
+.badge-info {
+  background: var(--color-canvas-inset, #f5f5f5);
+  color: var(--color-fg-subtle, #888888);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+}
+
+/* Checkbox */
+.checkbox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  border-radius: 3px;
+  background: var(--color-canvas-default, #ffffff);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.checkbox.checked {
+  background: var(--color-accent-fg, #2563eb);
+  border-color: var(--color-accent-fg, #2563eb);
+}
+
 .table-footer {
   flex-shrink: 0;
   display: flex;
   justify-content: flex-end;
   padding: 8px 12px;
-  border-top: 1px solid #e5e7eb;
-  background: #fff;
-}
-
-.severity-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-right: 4px;
-  vertical-align: middle;
-}
-
-.severity-text {
-  font-size: 12px;
-  vertical-align: middle;
+  border-top: 0.5px solid var(--color-border-default, #e5e5e5);
+  background: var(--color-canvas-default, #ffffff);
 }
 
 .event-type-badge {
   font-size: 11px;
-  background: #f3f4f6;
-  padding: 2px 6px;
+  font-weight: 400;
+  background: var(--color-canvas-inset, #f5f5f5);
+  padding: 2px 8px;
   border-radius: 4px;
-  color: #374151;
+  color: var(--color-fg-default, #111111);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
 }
 
 .event-summary {
-  font-size: 12px;
-  color: #374151;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--color-fg-default, #111111);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -348,35 +442,137 @@ function onAction(id, status) {
 }
 
 .stage-tag {
-  font-size: 10px;
-  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 400;
+  padding: 1px 8px;
   border-radius: 4px;
   white-space: nowrap;
+  background: var(--color-canvas-inset, #f5f5f5);
+  color: var(--color-fg-default, #111111);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
 }
 
 .stage-none, .ioc-none {
-  color: #9ca3af;
+  color: var(--color-fg-light, #a3a3a3);
   font-size: 12px;
+  font-weight: 400;
+}
+
+.ioc-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  height: 18px;
+  font-size: 11px;
+  font-weight: 400;
+  border-radius: 4px;
+  background: var(--color-danger-subtle, #fef2f2);
+  color: var(--color-danger-fg, #dc2626);
+  border: 0.5px solid rgba(220, 38, 38, 0.2);
+}
+
+/* 状态标签 */
+.status-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 400;
+  border-radius: 4px;
+  line-height: 1.4;
+  border: 0.5px solid transparent;
+}
+
+.status-pending {
+  background: var(--color-canvas-inset, #f5f5f5);
+  color: var(--color-fg-subtle, #888888);
+  border-color: var(--color-border-default, #e5e5e5);
+}
+
+.status-triaging {
+  background: var(--color-accent-subtle, #eff6ff);
+  color: var(--color-accent-fg, #2563eb);
+  border-color: rgba(37, 99, 235, 0.2);
+}
+
+.status-investigating {
+  background: var(--color-warning-subtle, #fffbeb);
+  color: var(--color-warning-fg, #d97706);
+  border-color: rgba(217, 119, 6, 0.2);
+}
+
+.status-resolved {
+  background: var(--color-success-subtle, #f0fdf4);
+  color: var(--color-success-fg, #16a34a);
+  border-color: rgba(22, 163, 74, 0.2);
+}
+
+.status-rejected {
+  background: var(--color-danger-subtle, #fef2f2);
+  color: var(--color-danger-fg, #dc2626);
+  border-color: rgba(220, 38, 38, 0.2);
 }
 
 .assignee-name {
-  font-size: 12px;
-  color: #374151;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--color-fg-default, #111111);
 }
 
 .assignee-none {
   font-size: 12px;
-  color: #9ca3af;
+  font-weight: 400;
+  color: var(--color-fg-light, #a3a3a3);
   font-style: italic;
 }
 
 .row-actions {
   display: flex;
-  gap: 4px;
+  gap: 8px;
   white-space: nowrap;
 }
 
-.case-name-text { font-size: 12px; color: var(--color-text-primary); }
-.host-name { font-weight: 500; font-size: 12px; }
-.host-ip { font-size: 11px; color: var(--color-text-tertiary); margin-left: 4px; }
+/* 操作按钮 */
+.action-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 400;
+  border-radius: var(--r-btn, 6px);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  background: var(--color-canvas-default, #ffffff);
+  color: var(--color-fg-default, #111111);
+  cursor: pointer;
+  transition: all 0.15s;
+  line-height: 1;
+}
+
+.action-btn:hover {
+  background: var(--color-canvas-inset, #f5f5f5);
+  border-color: var(--color-accent-fg, #2563eb);
+  color: var(--color-accent-fg, #2563eb);
+}
+
+.action-btn.action-success {
+  color: var(--color-success-fg, #16a34a);
+}
+
+.action-btn.action-success:hover {
+  background: var(--color-success-subtle, #f0fdf4);
+  border-color: var(--color-success-fg, #16a34a);
+}
+
+.action-btn.action-danger {
+  color: var(--color-danger-fg, #dc2626);
+}
+
+.action-btn.action-danger:hover {
+  background: var(--color-danger-subtle, #fef2f2);
+  border-color: var(--color-danger-fg, #dc2626);
+}
+
+.case-name-text { font-size: 13px; font-weight: 400; color: var(--color-fg-default, #111111); }
+.host-name { font-weight: 500; font-size: 13px; color: var(--color-fg-default, #111111); }
+.host-ip { font-size: 11px; font-weight: 400; color: var(--color-fg-subtle, #888888); margin-left: 4px; }
 </style>
