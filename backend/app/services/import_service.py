@@ -170,6 +170,84 @@ class ImportService:
         except Exception as exc:
             logger.warning("Log normalization failed (non-blocking): %s", exc)
 
+        # ── ★ 新增：写入 agent_imports 表（日志检索模块）──
+        try:
+            from app.services.log_importer import import_batch as log_import_batch
+            # Agent JSON 中的采集器映射到 log_importer 的 collector_type
+            COLLECTOR_MAP = {
+                "processes": "processes",
+                "network_connections": "network",
+                "registry_keys": "registry",
+                "file_hashes": "files",
+                "persistence_items": "persistence",
+                "wmi_subscriptions": "wmi",
+                "startup_items": "startup",
+                "services": "services",
+                "users": "users",
+                "network_interfaces": "network",
+                "scheduled_tasks": "scheduled_tasks",
+            }
+            records_to_import = []
+            for key, collector_type in COLLECTOR_MAP.items():
+                items = data.get(key, [])
+                if not items:
+                    continue
+                if isinstance(items, dict):
+                    items = [items]
+                raw_json_str = json.dumps(items, ensure_ascii=False)
+                records_to_import.append({
+                    "collector_type": collector_type,
+                    "raw_json": raw_json_str,
+                })
+            if records_to_import:
+                # 从 host 获取 case_id
+                host_case_id = host_info.get("case_id") if host_info else None
+                log_import_batch(host_id, records_to_import, case_id=host_case_id)
+                logger.info(
+                    "Imported %d collector groups to agent_imports for host %d",
+                    len(records_to_import), host_id,
+                )
+        except Exception as exc:
+            logger.warning("agent_imports write failed (non-blocking): %s", exc)
+
+        # ── ★ 新增：触发事件归一化 → 写入 security_events（分析中心模块）──
+        try:
+            from app.services.event_normalizer import normalize_batch, bulk_insert
+            # 构造 raw_events：每条记录加 event_type 和 host_id
+            raw_events = []
+            EVENT_TYPE_MAP = {
+                "processes": "process_start",
+                "network_connections": "network_outbound",
+                "registry_keys": "registry_modify",
+                "file_hashes": "file_create",
+                "persistence_items": "persistence_register",
+                "wmi_subscriptions": "wmi_subscribe",
+                "startup_items": "persistence_register",
+                "services": "service_operation",
+                "users": "user_login",
+                "network_interfaces": "network_listen",
+            }
+            for key, event_type in EVENT_TYPE_MAP.items():
+                items = data.get(key, [])
+                if not items:
+                    continue
+                if isinstance(items, list):
+                    for item in items:
+                        if isinstance(item, dict):
+                            item["event_type"] = event_type
+                            item["host_id"] = host_id
+                            raw_events.append(item)
+            if raw_events:
+                events = normalize_batch(raw_events)
+                if events:
+                    inserted, skipped = bulk_insert(events)
+                    logger.info(
+                        "Normalized %d events (inserted=%d, skipped=%d) for host %d",
+                        len(events), inserted, skipped, host_id,
+                    )
+        except Exception as exc:
+            logger.warning("Event normalization failed (non-blocking): %s", exc)
+
         # 创建导入记录
         record = ImportRecord.create(
             host_id=host_id,
