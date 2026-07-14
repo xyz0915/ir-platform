@@ -39,15 +39,6 @@
         />
       </div>
 
-      <!-- Layer 2: 攻击链时间轴 -->
-      <div class="layer-timeline">
-        <AttackChainTimeline
-          :chains="store.timelineData"
-          :events="store.timelineEvents"
-          @select-event="onTimelineSelectEvent"
-        />
-      </div>
-
       <!-- Layer 3 + 4: 事件表 + 详情面板 -->
       <div class="layer-main">
         <div class="layer-table">
@@ -87,7 +78,6 @@
 import { computed, onMounted } from 'vue'
 import { useAnalysisStore } from '@/stores/analysis'
 import SmartSearchBar from '@/components/analysis/SmartSearchBar.vue'
-import AttackChainTimeline from '@/components/analysis/AttackChainTimeline.vue'
 import EventTable from '@/components/analysis/EventTable.vue'
 import EventDetailPanel from '@/components/analysis/EventDetailPanel.vue'
 
@@ -113,7 +103,6 @@ const completionRate = computed(() => {
 // 初始加载
 onMounted(() => {
   store.fetchEvents()
-  store.fetchTimeline()
 })
 
 // 筛选条件变更
@@ -123,18 +112,12 @@ function onFiltersChanged(newFilters) {
   clearTimeout(debounceTimer)
   debounceTimer = setTimeout(() => {
     store.fetchEvents()
-    store.fetchTimeline()
   }, 500)
 }
 
 function onReset() {
   store.resetFilters()
   store.fetchEvents()
-  store.fetchTimeline()
-}
-
-function onTimelineSelectEvent(eventId) {
-  store.fetchEventDetail(eventId)
 }
 
 function onTableSelectEvent(event) {
@@ -169,7 +152,6 @@ function onViewRelated(relatedIds) {
   if (relatedIds && relatedIds.length > 0) {
     store.setFilters({ keyword: relatedIds.join(',') })
     store.fetchEvents()
-    store.fetchTimeline()
   }
 }
 
@@ -272,14 +254,6 @@ function onCloseDetail() {
   flex-shrink: 0;
   background: var(--color-canvas-default);
   border-bottom: 0.5px solid var(--color-border-default);
-}
-
-.layer-timeline {
-  flex-shrink: 0;
-  height: 140px;
-  background: var(--color-canvas-default);
-  border-bottom: 0.5px solid var(--color-border-default);
-  overflow: hidden;
 }
 
 .layer-main {
