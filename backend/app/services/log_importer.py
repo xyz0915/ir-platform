@@ -558,7 +558,7 @@ def search(
     else:
         join_fts = ""
         # 空 keyword: 默认最近 24h
-        default_start = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+        default_start = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%d %H:%M:%S")
         conditions.append("ai.imported_at >= ?")
         params.append(start_time or default_start)
 
