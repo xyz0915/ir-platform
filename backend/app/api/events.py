@@ -359,7 +359,7 @@ def event_stats(
         ).fetchone()["cnt"]
 
         # 已匹配
-        matched_where = f"{where} AND se.matched_rules IS NOT NULL AND se.matched_rules != '[]'" if where != "1=1" else \
+        matched_where = f"{where} AND se.matched_rules IS NOT NULL AND se.matched_rules != '[]'" if where != "WHERE 1=1" else \
             "WHERE se.matched_rules IS NOT NULL AND se.matched_rules != '[]'"
         matched_params = list(params)
         matched_total = conn.execute(
@@ -368,7 +368,7 @@ def event_stats(
 
         # 今日新增
         today_start = "date('now')"
-        today_where = f"{where} AND date(se.timestamp) >= {today_start}" if where != "1=1" else \
+        today_where = f"{where} AND date(se.timestamp) >= {today_start}" if where != "WHERE 1=1" else \
             f"WHERE date(se.timestamp) >= {today_start}"
         today_new = conn.execute(
             f"SELECT COUNT(*) as cnt FROM security_events se {today_where}", params
@@ -383,7 +383,7 @@ def event_stats(
         # 命中不同规则数
         distinct_rules = 0
         if matched_total > 0:
-            distinct_rules_where = f"{matched_where}" if where == "1=1" else matched_where
+            distinct_rules_where = f"{matched_where}" if where == "WHERE 1=1" else matched_where
             row = conn.execute(
                 f"SELECT COUNT(DISTINCT json_extract(je.value, '$.rule_id')) as cnt "
                 f"FROM security_events se, json_each(se.matched_rules) je "

@@ -133,4 +133,4 @@ def build_events_where(params: dict) -> tuple[str, list]:
         sql_params.append(like_pattern)
         sql_params.append(like_pattern)
 
-    return " AND ".join(conditions), sql_params
+    return "WHERE " + " AND ".join(conditions), sql_params
