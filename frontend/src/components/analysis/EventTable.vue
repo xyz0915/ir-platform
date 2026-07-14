@@ -99,6 +99,30 @@
         </template>
       </el-table-column>
 
+      <!-- 规则匹配 -->
+      <el-table-column label="规则匹配" width="180">
+        <template #default="{ row }">
+          <div class="c-rt">
+            <template v-if="row.matched_rules && row.matched_rules.length">
+              <span
+                v-for="rule in row.matched_rules.slice(0, 2)"
+                :key="rule.rule_id"
+                class="rtag"
+                :class="'sev-' + (rule.severity || 'info')"
+                :title="rule.rule_name + ' (置信度: ' + Math.round((rule.confidence || 0) * 100) + '%)'"
+              >
+                {{ rule.rule_name }}
+                <span class="conf">{{ Math.round((rule.confidence || 0) * 100) }}%</span>
+              </span>
+              <span v-if="row.matched_rules.length > 2" class="rtag more">
+                +{{ row.matched_rules.length - 2 }}
+              </span>
+            </template>
+            <span v-else class="unmatched-badge">未匹配</span>
+          </div>
+        </template>
+      </el-table-column>
+
       <!-- 负责人 -->
       <el-table-column label="负责人" width="100" sortable="custom" prop="assignee">
         <template #default="{ row }">
@@ -575,4 +599,63 @@ function onAction(id, status) {
 .case-name-text { font-size: 13px; font-weight: 400; color: var(--color-fg-default, #111111); }
 .host-name { font-weight: 500; font-size: 13px; color: var(--color-fg-default, #111111); }
 .host-ip { font-size: 11px; font-weight: 400; color: var(--color-fg-subtle, #888888); margin-left: 4px; }
+
+/* 规则标签 */
+.c-rt {
+  display: flex;
+  gap: 4px;
+  flex-wrap: nowrap;
+  align-items: center;
+}
+.rtag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 400;
+  border-radius: 4px;
+  line-height: 1.4;
+  white-space: nowrap;
+  border: 0.5px solid transparent;
+}
+.rtag.sev-critical {
+  background: var(--color-danger-subtle, #fef2f2);
+  color: var(--color-risk-critical, #dc2626);
+  border-color: rgba(220, 38, 38, 0.2);
+}
+.rtag.sev-high {
+  background: var(--color-danger-subtle, #fef2f2);
+  color: var(--color-risk-critical, #dc2626);
+  border-color: rgba(220, 38, 38, 0.2);
+}
+.rtag.sev-medium {
+  background: var(--color-warning-subtle, #fffbeb);
+  color: var(--color-risk-medium, #d97706);
+  border-color: rgba(217, 119, 6, 0.2);
+}
+.rtag.sev-low {
+  background: var(--color-accent-subtle, #eff6ff);
+  color: var(--color-risk-low, #2563eb);
+  border-color: rgba(37, 99, 235, 0.2);
+}
+.rtag.sev-info {
+  background: var(--color-canvas-inset, #f5f5f5);
+  color: var(--color-fg-subtle, #888888);
+  border-color: var(--color-border-default, #e5e5e5);
+}
+.rtag.more {
+  background: var(--color-canvas-subtle, #fafafa);
+  color: var(--color-fg-subtle, #888888);
+  border-color: var(--color-border-default, #e5e5e5);
+}
+.rtag .conf {
+  font-size: 9px;
+  opacity: 0.7;
+}
+.unmatched-badge {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--color-fg-light, #a3a3a3);
+}
 </style>

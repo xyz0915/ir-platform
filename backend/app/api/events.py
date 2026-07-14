@@ -19,6 +19,7 @@ from app.models.security_event import (
     make_event_id,
 )
 from app.services.auth_service import get_current_user
+from app.services.event_filter_service import build_events_where
 from app.services.event_normalizer import ingest_events
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,7 @@ def error(msg: str, code: int = -1) -> dict:
 def _row_to_dict(row) -> dict:
     """将 sqlite3.Row 转换为字典（包含 JSON 反序列化）. """
     d = dict(row)
-    for field in ("ioc_matches", "evidence", "related_events"):
+    for field in ("ioc_matches", "evidence", "related_events", "matched_rules"):
         if field in d and isinstance(d[field], str):
             try:
                 d[field] = json.loads(d[field])
@@ -134,28 +135,73 @@ def list_events(
     keyword: Optional[str] = Query(None),
     start_time: Optional[str] = Query(None),
     end_time: Optional[str] = Query(None),
-    event_types: Optional[str] = Query(None),
-    severities: Optional[str] = Query(None),
-    statuses: Optional[str] = Query(None),
-    attack_stages: Optional[str] = Query(None),
+    event_types: Optional[str] = Query(None, alias="event_type"),
+    severities: Optional[str] = Query(None, alias="severity"),
+    statuses: Optional[str] = Query(None, alias="status"),
+    attack_stages: Optional[str] = Query(None, alias="attack_stage"),
     assignee: Optional[str] = Query(None),
     attack_chain_id: Optional[str] = Query(None),
+    # 新增筛选参数
+    case_id: Optional[int] = Query(None),
+    host_id: Optional[int] = Query(None),
+    filter: str = Query("all"),  # all / matched / unmatched
+    rule_id: Optional[int] = Query(None),
+    rule_category: Optional[str] = Query(None),
+    rule_confidence_min: Optional[float] = Query(None, ge=0.0, le=1.0),
+    time_range: Optional[str] = Query(None, regex="^(1h|24h|7d|all)?$"),
     sort_field: str = Query("timestamp"),
     sort_order: str = Query("desc"),
     current_user: dict = Depends(get_current_user),
 ):
-    """事件列表（支持多条件筛选 + 排序 + 分页）."""
+    """事件列表（支持全量筛选 + 排序 + 分页）. """
     valid_sort_fields = {"timestamp", "severity", "event_type", "status", "host_id"}
     if sort_field not in valid_sort_fields:
         sort_field = "timestamp"
     if sort_order not in ("asc", "desc"):
         sort_order = "desc"
 
-    where, params = _build_where_clause(
-        keyword=keyword, start_time=start_time, end_time=end_time,
-        event_types=event_types, severities=severities, statuses=statuses,
-        attack_stages=attack_stages, assignee=assignee, attack_chain_id=attack_chain_id,
-    )
+    # 统一使用 event_filter_service 构建 WHERE
+    filter_params = {
+        "case_id": case_id,
+        "host_id": host_id,
+        "filter": filter,
+        "severity": severities,
+        "event_type": event_types,
+        "rule_id": rule_id,
+        "rule_category": rule_category,
+        "rule_confidence_min": rule_confidence_min,
+        "time_range": time_range if time_range != "all" else None,
+        "keyword": keyword,
+        "start_time": start_time,
+        "end_time": end_time,
+    }
+    where, params = build_events_where(filter_params)
+
+    # Attack stage
+    if attack_stages:
+        stage_list = [s.strip() for s in attack_stages.split(",") if s.strip()]
+        if stage_list:
+            placeholders = ",".join("?" for _ in stage_list)
+            where += f" AND se.attack_stage IN ({placeholders})"
+            params.extend(stage_list)
+
+    # Status
+    if statuses:
+        stat_list = [s.strip() for s in statuses.split(",") if s.strip()]
+        if stat_list:
+            placeholders = ",".join("?" for _ in stat_list)
+            where += f" AND se.status IN ({placeholders})"
+            params.extend(stat_list)
+
+    # Assignee
+    if assignee:
+        where += " AND se.assignee = ?"
+        params.append(assignee)
+
+    # Attack chain
+    if attack_chain_id:
+        where += " AND se.attack_chain_id = ?"
+        params.append(attack_chain_id)
 
     offset = (page - 1) * page_size
 
@@ -178,56 +224,181 @@ def list_events(
         rows = conn.execute(data_sql, data_params).fetchall()
 
     items = [_row_to_dict(r) for r in rows]
+
+    # 附带统计
+    with get_connection() as conn:
+        total_all = conn.execute("SELECT COUNT(*) as cnt FROM security_events").fetchone()["cnt"]
+        total_matched = conn.execute(
+            "SELECT COUNT(*) as cnt FROM security_events WHERE matched_rules IS NOT NULL AND matched_rules != '[]'"
+        ).fetchone()["cnt"]
+        distinct_rules = conn.execute(
+            "SELECT COUNT(DISTINCT json_extract(value, '$.rule_id')) as cnt FROM security_events, json_each(matched_rules)"
+        ).fetchone()["cnt"] if total_matched > 0 else 0
+
     return success({
         "total": total,
         "page": page,
         "page_size": page_size,
         "items": items,
+        "stats": {
+            "total": total_all,
+            "matched": total_matched,
+            "unmatched": total_all - total_matched,
+            "distinct_rules_hit": distinct_rules,
+        },
     })
 
 
 # ===================================================================
-#  统计
+#  筛选元数据
+# ===================================================================
+
+@router.get("/events/filters")
+def get_event_filters(current_user: dict = Depends(get_current_user)):
+    """返回筛选面板元数据：案件列表、主机列表、规则命中统计等. """
+    with get_connection() as conn:
+        # 案件列表（含主机数）
+        cases = []
+        for r in conn.execute(
+            "SELECT c.id, c.name, COUNT(h.id) as host_count "
+            "FROM cases c LEFT JOIN hosts h ON h.case_id = c.id "
+            "GROUP BY c.id ORDER BY c.name"
+        ).fetchall():
+            cases.append(dict(r))
+
+        # 主机列表（含日志数和事件数）
+        hosts = []
+        for r in conn.execute(
+            "SELECT h.id, h.hostname, h.case_id, "
+            "COALESCE((SELECT COUNT(*) FROM security_events se WHERE se.host_id = h.id), 0) as event_count "
+            "FROM hosts h ORDER BY h.hostname"
+        ).fetchall():
+            hosts.append(dict(r))
+
+        # 命中的规则列表
+        hit_rules = []
+        for r in conn.execute(
+            "SELECT r.id, r.name, r.category, "
+            "COALESCE((SELECT COUNT(*) FROM security_events se WHERE se.matched_rules LIKE '%' || r.id || '%'), 0) as hit_count "
+            "FROM rules r WHERE r.enabled=1 ORDER BY hit_count DESC"
+        ).fetchall():
+            if r["hit_count"] > 0:
+                hit_rules.append(dict(r))
+
+        # 命中规则分类统计
+        hit_rule_categories = []
+        for r in conn.execute(
+            "SELECT r.category, COUNT(DISTINCT r.id) as count "
+            "FROM rules r WHERE r.enabled=1 "
+            "GROUP BY r.category ORDER BY count DESC"
+        ).fetchall():
+            hit_rule_categories.append(dict(r))
+
+        # 事件类型分布
+        event_type_counts = []
+        for r in conn.execute(
+            "SELECT event_type as type, COUNT(*) as count "
+            "FROM security_events GROUP BY event_type ORDER BY count DESC"
+        ).fetchall():
+            event_type_counts.append(dict(r))
+
+        # 严重度分布
+        severity_counts = []
+        for r in conn.execute(
+            "SELECT severity, COUNT(*) as count "
+            "FROM security_events GROUP BY severity ORDER BY count DESC"
+        ).fetchall():
+            severity_counts.append(dict(r))
+
+    return success({
+        "cases": cases,
+        "hosts": hosts,
+        "hit_rules": hit_rules,
+        "hit_rule_categories": hit_rule_categories,
+        "event_type_counts": event_type_counts,
+        "severity_counts": severity_counts,
+    })
+
+
+# ===================================================================
+#  统计卡片
 # ===================================================================
 
 @router.get("/events/stats")
 def event_stats(
+    case_id: Optional[int] = Query(None),
+    host_id: Optional[int] = Query(None),
+    filter: str = Query("all"),
     keyword: Optional[str] = Query(None),
     start_time: Optional[str] = Query(None),
     end_time: Optional[str] = Query(None),
-    event_types: Optional[str] = Query(None),
-    severities: Optional[str] = Query(None),
-    statuses: Optional[str] = Query(None),
-    attack_stages: Optional[str] = Query(None),
+    event_types: Optional[str] = Query(None, alias="event_type"),
+    severities: Optional[str] = Query(None, alias="severity"),
+    time_range: Optional[str] = Query(None, regex="^(1h|24h|7d|all)?$"),
     current_user: dict = Depends(get_current_user),
 ):
-    """筛选结果统计计数."""
-    where, params = _build_where_clause(
-        keyword=keyword, start_time=start_time, end_time=end_time,
-        event_types=event_types, severities=severities, statuses=statuses,
-        attack_stages=attack_stages,
-    )
+    """分析中心统计卡片数据（4 个指标: 总事件/已匹配/未匹配/规则数 + 今日新增/今日匹配）. """
+    from app.services.event_filter_service import build_events_where
+
+    filter_params = {
+        "case_id": case_id,
+        "host_id": host_id,
+        "filter": filter,
+        "severity": severities,
+        "event_type": event_types,
+        "time_range": time_range if time_range and time_range != "all" else None,
+        "keyword": keyword,
+        "start_time": start_time,
+        "end_time": end_time,
+    }
+    where, params = build_events_where(filter_params)
 
     with get_connection() as conn:
-        total = conn.execute(f"SELECT COUNT(*) as cnt FROM security_events {where}", params).fetchone()["cnt"]
+        total = conn.execute(
+            f"SELECT COUNT(*) as cnt FROM security_events se {where}", params
+        ).fetchone()["cnt"]
 
-        by_severity: dict[str, int] = {}
-        for r in conn.execute(f"SELECT severity, COUNT(*) as cnt FROM security_events {where} GROUP BY severity", params).fetchall():
-            by_severity[r["severity"]] = r["cnt"]
+        # 已匹配
+        matched_where = f"{where} AND se.matched_rules IS NOT NULL AND se.matched_rules != '[]'" if where != "1=1" else \
+            "WHERE se.matched_rules IS NOT NULL AND se.matched_rules != '[]'"
+        matched_params = list(params)
+        matched_total = conn.execute(
+            f"SELECT COUNT(*) as cnt FROM security_events se {matched_where}", matched_params
+        ).fetchone()["cnt"]
 
-        by_status: dict[str, int] = {}
-        for r in conn.execute(f"SELECT status, COUNT(*) as cnt FROM security_events {where} GROUP BY status", params).fetchall():
-            by_status[r["status"]] = r["cnt"]
+        # 今日新增
+        today_start = "date('now')"
+        today_where = f"{where} AND date(se.timestamp) >= {today_start}" if where != "1=1" else \
+            f"WHERE date(se.timestamp) >= {today_start}"
+        today_new = conn.execute(
+            f"SELECT COUNT(*) as cnt FROM security_events se {today_where}", params
+        ).fetchone()["cnt"]
 
-        by_event_type: dict[str, int] = {}
-        for r in conn.execute(f"SELECT event_type, COUNT(*) as cnt FROM security_events {where} GROUP BY event_type", params).fetchall():
-            by_event_type[r["event_type"]] = r["cnt"]
+        # 今日匹配
+        today_matched_where = f"{matched_where} AND date(se.timestamp) >= {today_start}"
+        today_matched = conn.execute(
+            f"SELECT COUNT(*) as cnt FROM security_events se {today_matched_where}", matched_params
+        ).fetchone()["cnt"]
+
+        # 命中不同规则数
+        distinct_rules = 0
+        if matched_total > 0:
+            distinct_rules_where = f"{matched_where}" if where == "1=1" else matched_where
+            row = conn.execute(
+                f"SELECT COUNT(DISTINCT json_extract(je.value, '$.rule_id')) as cnt "
+                f"FROM security_events se, json_each(se.matched_rules) je "
+                f"{distinct_rules_where[6:]}",  # 去掉 "WHERE " 或保持
+                matched_params,
+            ).fetchone()
+            distinct_rules = row["cnt"] if row else 0
 
     return success({
-        "total": total,
-        "by_severity": by_severity,
-        "by_status": by_status,
-        "by_event_type": by_event_type,
+        "total_events": total,
+        "matched_events": matched_total,
+        "unmatched_events": total - matched_total,
+        "distinct_rules_hit": distinct_rules,
+        "today_new": today_new,
+        "today_matched": today_matched,
     })
 
 
@@ -589,3 +760,86 @@ def ingest_events_api(
 
     result = ingest_events(raw_events)
     return success(result)
+
+
+# ===================================================================
+#  存量规则匹配回填
+# ===================================================================
+
+@router.post("/events/batch-match-rules")
+def batch_match_rules(
+    body: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    """对存量事件批量执行规则匹配回填.
+
+    请求体:
+        {"case_id": null, "host_id": null, "limit": 5000}
+        case_id/host_id 为 null 表示全部，可指定范围.
+        limit 控制每批处理条数，默认 5000.
+
+    响应:
+        {"processed": N, "matched": N, "elapsed_ms": N}
+    """
+    import time as time_module
+
+    from app.services.rule_matcher import match_event
+
+    case_id = body.get("case_id")
+    host_id = body.get("host_id")
+    batch_limit = body.get("limit", 5000)
+
+    where_conditions: list[str] = ["1=1"]
+    sql_params: list = []
+
+    if case_id:
+        where_conditions.append("se.host_id IN (SELECT id FROM hosts WHERE case_id=?)")
+        sql_params.append(int(case_id))
+    if host_id:
+        where_conditions.append("se.host_id = ?")
+        sql_params.append(int(host_id))
+
+    where = " AND ".join(where_conditions)
+    start_ts = time_module.time()
+    processed = 0
+    matched_total = 0
+
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"SELECT se.id, se.event_type, se.severity, se.evidence, se.host_id "
+            f"FROM security_events se WHERE {where} "
+            f"ORDER BY se.timestamp DESC LIMIT ?",
+            sql_params + [batch_limit],
+        ).fetchall()
+
+        for row in rows:
+            try:
+                event_dict = {
+                    "id": row["id"],
+                    "event_type": row["event_type"],
+                    "severity": row["severity"],
+                    "evidence": json.loads(row["evidence"]) if isinstance(row["evidence"], str) else row["evidence"],
+                    "host_id": row["host_id"],
+                }
+                matched = match_event(event_dict)
+                matched_json = json.dumps(matched, ensure_ascii=False)
+                conn.execute(
+                    "UPDATE security_events SET matched_rules = ? WHERE id = ?",
+                    (matched_json, row["id"]),
+                )
+                if matched:
+                    matched_total += 1
+                processed += 1
+            except Exception as exc:
+                logger.warning("回填匹配异常: %s, id=%s", exc, row["id"])
+                processed += 1
+
+        conn.commit()
+
+    elapsed_ms = int((time_module.time() - start_ts) * 1000)
+    logger.info("存量回填完成: processed=%d, matched=%d, elapsed=%dms", processed, matched_total, elapsed_ms)
+    return success({
+        "processed": processed,
+        "matched": matched_total,
+        "elapsed_ms": elapsed_ms,
+    })

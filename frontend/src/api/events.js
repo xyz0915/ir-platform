@@ -63,6 +63,16 @@ export function exportEventsCsv(params = {}) {
   })
 }
 
+// 筛选元数据（案件/主机/规则统计）
+export function getEventFilters(params = {}) {
+  return request.get('/analysis/events/filters', { params })
+}
+
+// 手动触发存量事件规则匹配
+export function batchMatchRules(data) {
+  return request.post('/analysis/events/batch-match-rules', data)
+}
+
 // 批量写入（内部/Agent 使用）
 export function ingestEvents(data) {
   return request.post('/analysis/events/ingest', data)

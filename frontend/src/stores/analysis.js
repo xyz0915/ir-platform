@@ -3,6 +3,7 @@ import { ref, reactive } from 'vue'
 import {
   getEvents,
   getEventStats,
+  getEventFilters,
   getEventDetail,
   updateEventStatus,
   batchUpdateStatus,
@@ -14,7 +15,7 @@ import {
 } from '@/api/events'
 
 export const useAnalysisStore = defineStore('analysis', () => {
-  // ── 状态 ──
+  // ── 原有状态 ──
   const events = ref([])
   const total = ref(0)
   const loading = ref(false)
@@ -42,7 +43,44 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const timelineEvents = ref([])
   const detailVisible = ref(false)
 
-  // ── 筛选参数构建 ──
+  // ── 新增：规则匹配降噪状态 ──
+  const items = ref([])
+  const elapsedMs = ref(0)
+
+  const ruleFilters = reactive({
+    caseId: null,
+    hostId: null,
+    viewFilter: 'matched',   // all | matched | unmatched
+    severity: [],
+    eventType: [],
+    timeRange: 'all',
+    ruleId: null,
+    ruleCategory: [],
+    confidenceMin: null,
+    keyword: '',
+    page: 1,
+    pageSize: 20,
+  })
+
+  const filterMeta = reactive({
+    cases: [],
+    hosts: [],
+    hitRules: [],
+    hitRuleCategories: [],
+    eventTypeCounts: [],
+    severityCounts: [],
+  })
+
+  const stats = reactive({
+    totalEvents: 0,
+    matchedEvents: 0,
+    unmatchedEvents: 0,
+    distinctRulesHit: 0,
+    todayNew: 0,
+    todayMatched: 0,
+  })
+
+  // ── 原有筛选参数构建 ──
   function buildParams() {
     const params = {
       page: pagination.page,
@@ -62,7 +100,26 @@ export const useAnalysisStore = defineStore('analysis', () => {
     return params
   }
 
-  // ── Action：获取事件列表 ──
+  // ── 新增：规则匹配筛选参数构建 ──
+  function buildRuleParams() {
+    const params = {
+      page: ruleFilters.page,
+      page_size: ruleFilters.pageSize,
+    }
+    if (ruleFilters.viewFilter !== 'all') params.filter = ruleFilters.viewFilter
+    if (ruleFilters.caseId) params.case_id = ruleFilters.caseId
+    if (ruleFilters.hostId) params.host_id = ruleFilters.hostId
+    if (ruleFilters.severity.length) params.severity = ruleFilters.severity.join(',')
+    if (ruleFilters.eventType.length) params.event_type = ruleFilters.eventType.join(',')
+    if (ruleFilters.timeRange !== 'all') params.time_range = ruleFilters.timeRange
+    if (ruleFilters.ruleId) params.rule_id = ruleFilters.ruleId
+    if (ruleFilters.ruleCategory.length) params.rule_category = ruleFilters.ruleCategory.join(',')
+    if (ruleFilters.confidenceMin) params.rule_confidence_min = ruleFilters.confidenceMin
+    if (ruleFilters.keyword) params.keyword = ruleFilters.keyword
+    return params
+  }
+
+  // ── 原有 Action：获取事件列表 ──
   async function fetchEvents() {
     loading.value = true
     try {
@@ -77,7 +134,92 @@ export const useAnalysisStore = defineStore('analysis', () => {
     }
   }
 
-  // ── Action：获取时间轴数据 ──
+  // ── 新增：规则匹配事件列表 ──
+  async function fetchRuleEvents() {
+    loading.value = true
+    const startTime = Date.now()
+    try {
+      const res = await getEvents(buildRuleParams())
+      items.value = res.data.items || []
+      total.value = res.data.total || 0
+      if (res.data.stats) {
+        stats.totalEvents = res.data.stats.total || stats.totalEvents
+        stats.matchedEvents = res.data.stats.matched || stats.matchedEvents
+        stats.unmatchedEvents = res.data.stats.unmatched || stats.unmatchedEvents
+        stats.distinctRulesHit = res.data.stats.distinct_rules_hit || stats.distinctRulesHit
+      }
+    } catch (e) {
+      items.value = []
+      total.value = 0
+    } finally {
+      elapsedMs.value = Date.now() - startTime
+      loading.value = false
+    }
+  }
+
+  // ── 新增：获取筛选元数据 ──
+  async function fetchFilterMeta() {
+    try {
+      const res = await getEventFilters()
+      const d = res.data
+      filterMeta.cases = d.cases || []
+      filterMeta.hosts = d.hosts || []
+      filterMeta.hitRules = d.hit_rules || []
+      filterMeta.hitRuleCategories = d.hit_rule_categories || []
+      filterMeta.eventTypeCounts = d.event_type_counts || []
+      filterMeta.severityCounts = d.severity_counts || []
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  // ── 新增：获取统计卡片 ──
+  async function fetchStats() {
+    try {
+      const params = {}
+      if (ruleFilters.caseId) params.case_id = ruleFilters.caseId
+      if (ruleFilters.hostId) params.host_id = ruleFilters.hostId
+      if (ruleFilters.viewFilter !== 'all') params.filter = ruleFilters.viewFilter
+      const res = await getEventStats(params)
+      const d = res.data
+      stats.totalEvents = d.total_events || 0
+      stats.matchedEvents = d.matched_events || 0
+      stats.unmatchedEvents = d.unmatched_events || 0
+      stats.distinctRulesHit = d.distinct_rules_hit || 0
+      stats.todayNew = d.today_new || 0
+      stats.todayMatched = d.today_matched || 0
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  // ── 新增：设置单个筛选 ──
+  function setFilter(key, value) {
+    ruleFilters[key] = value
+    if (key !== 'page' && key !== 'pageSize') {
+      ruleFilters.page = 1
+    }
+    fetchRuleEvents()
+  }
+
+  // ── 新增：重置全部筛选 ──
+  function resetRuleFilters() {
+    ruleFilters.caseId = null
+    ruleFilters.hostId = null
+    ruleFilters.viewFilter = 'matched'
+    ruleFilters.severity = []
+    ruleFilters.eventType = []
+    ruleFilters.timeRange = 'all'
+    ruleFilters.ruleId = null
+    ruleFilters.ruleCategory = []
+    ruleFilters.confidenceMin = null
+    ruleFilters.keyword = ''
+    ruleFilters.page = 1
+    ruleFilters.pageSize = 20
+    fetchRuleEvents()
+  }
+
+  // ── 原有 Action：获取时间轴数据 ──
   async function fetchTimeline() {
     try {
       const res = await getTimelineData(buildParams())
@@ -89,7 +231,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     }
   }
 
-  // ── Action：获取事件详情 ──
+  // ── 原有 Action：获取事件详情 ──
   async function fetchEventDetail(id) {
     if (!id) return
     try {
@@ -101,7 +243,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     }
   }
 
-  // ── Action：更新状态 ──
+  // ── 原有 Action：更新状态 ──
   async function updateStatus(id, status, comment = '') {
     await updateEventStatus(id, { status, comment })
     await fetchEvents()
@@ -110,33 +252,33 @@ export const useAnalysisStore = defineStore('analysis', () => {
     }
   }
 
-  // ── Action：批量更新状态 ──
+  // ── 原有 Action：批量更新状态 ──
   async function batchUpdate(ids, status, comment = '') {
     await batchUpdateStatus({ event_ids: ids, status, comment })
     selectedEventIds.value = []
     await fetchEvents()
   }
 
-  // ── Action：指派 ──
+  // ── 原有 Action：指派 ──
   async function assign(id, assignee) {
     await assignEvent(id, { assignee })
     await fetchEvents()
   }
 
-  // ── Action：批量指派 ──
+  // ── 原有 Action：批量指派 ──
   async function batchAssignAction(ids, assignee) {
     await batchAssign({ event_ids: ids, assignee })
     selectedEventIds.value = []
     await fetchEvents()
   }
 
-  // ── Action：设置筛选 ──
+  // ── 原有 Action：设置筛选 ──
   function setFilters(newFilters) {
     Object.assign(filters, newFilters)
     pagination.page = 1
   }
 
-  // ── Action：重置筛选 ──
+  // ── 原有 Action：重置筛选 ──
   function resetFilters() {
     filters.keyword = ''
     filters.timeRange = [null, null]
@@ -149,7 +291,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
   }
 
   return {
-    // state
+    // state — 原有
     events,
     total,
     loading,
@@ -162,7 +304,13 @@ export const useAnalysisStore = defineStore('analysis', () => {
     timelineData,
     timelineEvents,
     detailVisible,
-    // actions
+    // state — 新增规则匹配
+    items,
+    elapsedMs,
+    ruleFilters,
+    filterMeta,
+    stats,
+    // actions — 原有
     fetchEvents,
     fetchTimeline,
     fetchEventDetail,
@@ -173,5 +321,12 @@ export const useAnalysisStore = defineStore('analysis', () => {
     setFilters,
     resetFilters,
     buildParams,
+    // actions — 新增规则匹配
+    fetchRuleEvents,
+    fetchFilterMeta,
+    fetchStats,
+    setFilter,
+    resetRuleFilters,
+    buildRuleParams,
   }
 })

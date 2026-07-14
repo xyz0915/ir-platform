@@ -180,6 +180,7 @@ class SecurityEvent:
     status: str = "pending"
     assignee: str | None = None
     related_events: list[str] = field(default_factory=list)
+    matched_rules: list = field(default_factory=list)  # 规则匹配结果
     created_at: str = ""
     updated_at: str = ""
 
@@ -200,6 +201,7 @@ class SecurityEvent:
             "status": self.status,
             "assignee": self.assignee,
             "related_events": self.related_events,
+            "matched_rules": self.matched_rules,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -222,6 +224,7 @@ class SecurityEvent:
             status=row["status"],
             assignee=row.get("assignee"),
             related_events=json.loads(row.get("related_events", "[]")),
+            matched_rules=json.loads(row.get("matched_rules", "[]")),
             created_at=row.get("created_at", ""),
             updated_at=row.get("updated_at", ""),
         )

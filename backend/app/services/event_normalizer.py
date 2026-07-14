@@ -473,8 +473,8 @@ def bulk_insert(events: list[SecurityEvent]) -> tuple[int, int]:
                         (id, timestamp, host_id, event_type, severity,
                          source_collector, event_key, attack_chain_id, attack_stage,
                          ioc_matches, evidence, status, assignee, related_events,
-                         created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         matched_rules, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         event.id,
@@ -491,6 +491,7 @@ def bulk_insert(events: list[SecurityEvent]) -> tuple[int, int]:
                         event.status,
                         event.assignee,
                         json.dumps(event.related_events, ensure_ascii=False),
+                        json.dumps(event.matched_rules, ensure_ascii=False),
                         event.created_at,
                         event.updated_at,
                     ),
@@ -510,12 +511,42 @@ def bulk_insert(events: list[SecurityEvent]) -> tuple[int, int]:
 
 
 # ===================================================================
+#  规则匹配增强
+# ===================================================================
+
+
+def _enrich_with_matched_rules(events: list[SecurityEvent]) -> None:
+    """对事件列表执行规则匹配，填充 matched_rules 字段.
+
+    Args:
+        events: SecurityEvent 实例列表（原地修改）.
+    """
+    # 惰性导入避免循环依赖
+    from app.services.rule_matcher import match_event
+
+    for event in events:
+        try:
+            event_dict = {
+                "id": event.id,
+                "event_type": event.event_type,
+                "severity": event.severity,
+                "evidence": event.evidence,
+                "host_id": event.host_id,
+            }
+            matched = match_event(event_dict)
+            if matched:
+                event.matched_rules = matched
+        except Exception as exc:
+            logger.warning("规则匹配异常: %s, event_id=%s", exc, event.id)
+
+
+# ===================================================================
 #  Ingest 入口（便捷批量接口）
 # ===================================================================
 
 
 def ingest_events(raw_events: list[dict]) -> dict:
-    """接收 Agent 原始数据 -> 归一化 -> 批量写入.
+    """接收 Agent 原始数据 -> 归一化 -> 规则匹配 -> 批量写入.
 
     Args:
         raw_events: Agent 原始数据列表.
@@ -524,6 +555,8 @@ def ingest_events(raw_events: list[dict]) -> dict:
         { ingested_count, skipped_count }.
     """
     normalized = normalize_batch(raw_events)
+    # 规则匹配增强
+    _enrich_with_matched_rules(normalized)
     inserted, skipped = bulk_insert(normalized)
     total_skipped = len(raw_events) - len(normalized) + skipped
     return {

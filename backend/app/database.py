@@ -1138,6 +1138,18 @@ def _alter_ai_config_profiles_table(conn: sqlite3.Connection) -> None:
             logger.info("Added column '%s' to ai_config_profiles table", col_name)
 
 
+def _alter_security_events_add_matched_rules(conn: sqlite3.Connection) -> None:
+    """检测并添加 security_events 表的 matched_rules 列（分析中心规则匹配降噪）."""
+    cursor = conn.execute("PRAGMA table_info(security_events)")
+    existing_columns: set[str] = {row["name"] for row in cursor.fetchall()}
+    if 'matched_rules' not in existing_columns:
+        conn.execute("ALTER TABLE security_events ADD COLUMN matched_rules TEXT DEFAULT '[]'")
+        logger.info("Migrated: security_events.matched_rules")
+    if 'matched_at' not in existing_columns:
+        conn.execute("ALTER TABLE security_events ADD COLUMN matched_at TEXT DEFAULT NULL")
+        logger.info("Migrated: security_events.matched_at")
+
+
 def _alter_cases_priority(conn: sqlite3.Connection) -> None:
     """检测并添加 cases 表的 priority 列."""
     cursor = conn.execute("PRAGMA table_info(cases)")
@@ -1469,6 +1481,26 @@ def _alter_incident_reports_table(conn: sqlite3.Connection) -> None:
       - mode                    TEXT DEFAULT 'auto'    # 生成模式
       - report_label            TEXT                   # 额外标签
     """
+    # 检查表是否存在，不存在则创建
+    cursor = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='incident_reports'"
+    )
+    if not cursor.fetchone():
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS incident_reports (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                host_id         INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+                title           TEXT,
+                content         TEXT,
+                report_type     TEXT DEFAULT 'analysis',
+                status          TEXT DEFAULT 'draft',
+                risk_level      TEXT,
+                created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+            )"""
+        )
+        logger.info("Created incident_reports table")
+
     cursor = conn.execute("PRAGMA table_info(incident_reports)")
     existing_columns: set[str] = {row["name"] for row in cursor.fetchall()}
 
@@ -1566,6 +1598,8 @@ def init_db() -> None:
         # v1.3.0 作战化新表
         _create_agent_baselines_table(conn)
         _create_ai_evidence_refills_table(conn)
+        # 分析中心规则匹配降噪：security_events 加 matched_rules 列
+        _alter_security_events_add_matched_rules(conn)
         # cases 表扩展（优先级）
         _alter_cases_priority(conn)
         # AI 自动知识入库（knowledge_drafts 已通过 DDL 幂等创建）
