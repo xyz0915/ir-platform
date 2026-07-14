@@ -9,6 +9,7 @@ class CaseCreate(BaseModel):
     """创建案件请求模型."""
     name: str = Field(..., min_length=1, max_length=255, description="案件名称")
     case_number: Optional[str] = Field(None, max_length=100, description="案件编号")
+    priority: Optional[str] = Field(None, max_length=50, description="优先级")
     description: Optional[str] = Field(None, description="案件描述")
 
 
@@ -17,6 +18,7 @@ class CaseUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = None
     status: Optional[str] = Field(None, pattern="^(open|closed)$")
+    priority: Optional[str] = Field(None, max_length=50)
 
 
 class CaseResponse(BaseModel):
@@ -25,6 +27,7 @@ class CaseResponse(BaseModel):
     name: str
     case_number: Optional[str] = None
     description: Optional[str] = None
+    priority: Optional[str] = None
     status: str
     created_at: str
     updated_at: str

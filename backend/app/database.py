@@ -1138,6 +1138,15 @@ def _alter_ai_config_profiles_table(conn: sqlite3.Connection) -> None:
             logger.info("Added column '%s' to ai_config_profiles table", col_name)
 
 
+def _alter_cases_priority(conn: sqlite3.Connection) -> None:
+    """检测并添加 cases 表的 priority 列."""
+    cursor = conn.execute("PRAGMA table_info(cases)")
+    existing_columns: set[str] = {row["name"] for row in cursor.fetchall()}
+    if 'priority' not in existing_columns:
+        conn.execute("ALTER TABLE cases ADD COLUMN priority TEXT DEFAULT 'medium'")
+        logger.info("Migrated: cases.priority")
+
+
 def _create_agent_baselines_table(conn: sqlite3.Connection) -> None:
     """创建 agent_baselines 表（v1.3.0 支柱③ 差分基线）."""
     conn.execute(
@@ -1557,6 +1566,8 @@ def init_db() -> None:
         # v1.3.0 作战化新表
         _create_agent_baselines_table(conn)
         _create_ai_evidence_refills_table(conn)
+        # cases 表扩展（优先级）
+        _alter_cases_priority(conn)
         # AI 自动知识入库（knowledge_drafts 已通过 DDL 幂等创建）
         _init_knowledge_drafts(conn)
         conn.commit()

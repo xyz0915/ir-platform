@@ -35,6 +35,7 @@ def create_case(
             name=case.name,
             case_number=case.case_number,
             description=case.description,
+            priority=case.priority,
         )
         return {"code": 0, "data": result, "message": "success"}
     except ValueError as exc:
@@ -74,6 +75,7 @@ def update_case(
         name=case.name,
         description=case.description,
         status=case.status,
+        priority=case.priority,
     )
     return {"code": 0, "data": result, "message": "success"}
 

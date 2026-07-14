@@ -124,10 +124,11 @@
               <td class="td-mono">{{ item.case_number || '—' }}</td>
               <td class="td-muted" style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ item.description || '—' }}</td>
               <td>
-                <div class="priority">
-                  <div class="priority-dot" :class="priorityClass(item.priority)"></div>
-                  {{ item.priority || '—' }}
+                <div class="priority" v-if="item.priority">
+                  <div class="priority-dot" :class="'p-' + (item.priority || '')"></div>
+                  {{ priorityLabel(item.priority) }}
                 </div>
+                <span v-else class="td-muted">—</span>
               </td>
               <td>{{ item.host_count != null ? item.host_count : '—' }}</td>
               <td>
@@ -197,6 +198,16 @@
             <input class="input" v-model="createForm.case_number" placeholder="可选，自动分配" />
           </div>
           <div class="form-group">
+            <label class="form-label">优先级</label>
+            <select class="input" v-model="createForm.priority">
+              <option value="">请选择优先级</option>
+              <option value="critical">严重</option>
+              <option value="high">高</option>
+              <option value="medium">中</option>
+              <option value="low">低</option>
+            </select>
+          </div>
+          <div class="form-group">
             <label class="form-label">描述</label>
             <textarea class="input textarea" v-model="createForm.description" :rows="3" placeholder="案件描述"></textarea>
           </div>
@@ -233,7 +244,8 @@ const creating = ref(false)
 const createForm = reactive({
   name: '',
   case_number: '',
-  description: ''
+  description: '',
+  priority: ''
 })
 
 // New UI state
@@ -308,6 +320,7 @@ function showCreateDialog() {
   createForm.name = ''
   createForm.case_number = ''
   createForm.description = ''
+  createForm.priority = ''
   createDialogVisible.value = true
 }
 
@@ -321,7 +334,8 @@ async function handleCreate() {
     await casesApi.create({
       name: createForm.name,
       case_number: createForm.case_number || null,
-      description: createForm.description || null
+      description: createForm.description || null,
+      priority: createForm.priority || null
     })
     ElMessage.success('案件创建成功')
     createDialogVisible.value = false
@@ -404,6 +418,11 @@ function priorityClass(priority) {
   if (p === '中' || p === 'medium') return 'p-medium'
   if (p === '低' || p === 'low') return 'p-low'
   return 'p-low'
+}
+
+function priorityLabel(p) {
+  const map = { critical: '严重', high: '高', medium: '中', low: '低' }
+  return map[p] || p || '—'
 }
 </script>
 
@@ -704,9 +723,10 @@ tr.row-selected td { background: var(--color-accent-subtle, #eff6ff); }
   border-radius: 50%;
   flex-shrink: 0;
 }
-.priority-dot.p-high { background: var(--color-danger-fg, #dc2626); }
-.priority-dot.p-medium { background: var(--color-warning-fg, #d97706); }
-.priority-dot.p-low { background: var(--color-success-fg, #16a34a); }
+.priority-dot.p-critical { background: #dc2626; }
+.priority-dot.p-high { background: #d97706; }
+.priority-dot.p-medium { background: #2563eb; }
+.priority-dot.p-low { background: #16a34a; }
 
 /* Row Actions */
 .row-actions { display: flex; align-items: center; gap: 4px; }
