@@ -41,7 +41,11 @@ class Case:
         """根据 ID 获取案件."""
         with get_connection() as conn:
             row = conn.execute(
-                "SELECT * FROM cases WHERE id = ?", (case_id,)
+                """SELECT c.*,
+                          COALESCE((SELECT COUNT(*) FROM hosts WHERE case_id = c.id), 0) AS host_count,
+                          COALESCE((SELECT SUM(item_count) FROM agent_imports WHERE host_id IN (SELECT id FROM hosts WHERE case_id = c.id)), 0) AS log_count
+                     FROM cases c WHERE c.id = ?""",
+                (case_id,),
             ).fetchone()
             return dict(row) if row else None
 
@@ -53,6 +57,13 @@ class Case:
             {"items": [...], "total": N}
         """
         offset = (page - 1) * size
+        # 统一查询：LEFT JOIN 聚合 host_count + log_count
+        base_sql = """
+            SELECT c.*,
+                   COALESCE((SELECT COUNT(*) FROM hosts WHERE case_id = c.id), 0) AS host_count,
+                   COALESCE((SELECT SUM(item_count) FROM agent_imports WHERE host_id IN (SELECT id FROM hosts WHERE case_id = c.id)), 0) AS log_count
+            FROM cases c
+        """
         with get_connection() as conn:
             if search:
                 like = f"%{search}%"
@@ -61,8 +72,9 @@ class Case:
                     (like, like),
                 ).fetchone()["cnt"]
                 rows = conn.execute(
-                    """SELECT * FROM cases WHERE name LIKE ? OR case_number LIKE ?
-                    ORDER BY created_at DESC LIMIT ? OFFSET ?""",
+                    f"""{base_sql}
+                       WHERE c.name LIKE ? OR c.case_number LIKE ?
+                       ORDER BY c.created_at DESC LIMIT ? OFFSET ?""",
                     (like, like, size, offset),
                 ).fetchall()
             else:
@@ -70,7 +82,7 @@ class Case:
                     "SELECT COUNT(*) as cnt FROM cases"
                 ).fetchone()["cnt"]
                 rows = conn.execute(
-                    "SELECT * FROM cases ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                    f"{base_sql} ORDER BY c.created_at DESC LIMIT ? OFFSET ?",
                     (size, offset),
                 ).fetchall()
             return {"items": [dict(r) for r in rows], "total": total}
