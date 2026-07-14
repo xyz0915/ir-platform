@@ -193,7 +193,7 @@ app.include_router(logs.router, prefix="/api", tags=["日志分析"])  # 日志�
 app.include_router(policies.router, prefix="/api", tags=["策略配置"])  # 检测策略配置
 app.include_router(ai_advanced.router, prefix="/api", tags=["AI高级关联"])  # AI高级关联功能
 app.include_router(events.router, prefix="/api/analysis", tags=["分析中心"])  # 分析中心事件 API
-app.include_router(log_search.router, prefix="/api/logs", tags=["日志检索"])  # 日志检索 v2
+app.include_router(log_search.router, prefix="/api/log-search", tags=["日志检索"])  # 日志检索 v2
 
 
 @app.get("/api/health")
