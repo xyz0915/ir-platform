@@ -240,6 +240,9 @@ class ImportService:
             if raw_events:
                 events = normalize_batch(raw_events)
                 if events:
+                    # 规则匹配：自动标记 matched_rules
+                    from app.services.event_normalizer import _enrich_with_matched_rules
+                    _enrich_with_matched_rules(events)
                     inserted, skipped = bulk_insert(events)
                     logger.info(
                         "Normalized %d events (inserted=%d, skipped=%d) for host %d",

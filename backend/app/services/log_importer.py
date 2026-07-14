@@ -294,6 +294,10 @@ def to_event(import_id: int) -> dict:
     if not events:
         raise ValueError("归一化失败：未能从 raw_json 中提取任何有效事件")
 
+    # 规则匹配
+    from app.services.event_normalizer import _enrich_with_matched_rules
+    _enrich_with_matched_rules(events)
+
     # 批量写入（幂等去重）
     inserted, skipped = bulk_insert(events)
     event_id = events[0].id
