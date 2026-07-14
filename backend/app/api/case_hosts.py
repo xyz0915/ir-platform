@@ -33,7 +33,7 @@ def list_cases_with_hosts(current_user: dict = Depends(get_current_user)):
             # 3. 单次聚合：每个 case 的 log_count（agent_imports）
             case_log_counts = dict(
                 conn.execute(f"""
-                    SELECT h.case_id, COUNT(ai.id) AS cnt
+                    SELECT h.case_id, COALESCE(SUM(ai.item_count), 0) AS cnt
                     FROM agent_imports ai
                     JOIN hosts h ON ai.host_id = h.id
                     WHERE h.case_id IN ({placeholders})
@@ -60,7 +60,7 @@ def list_cases_with_hosts(current_user: dict = Depends(get_current_user)):
                 host_placeholders = ",".join("?" for _ in host_ids)
                 host_log_counts = dict(
                     conn.execute(f"""
-                        SELECT host_id, COUNT(*) AS cnt FROM agent_imports
+                        SELECT host_id, COALESCE(SUM(item_count), 0) AS cnt FROM agent_imports
                         WHERE host_id IN ({host_placeholders})
                         GROUP BY host_id
                     """, host_ids).fetchall()
