@@ -263,6 +263,7 @@ function typeType(t) {
 }
 function markDirty() { dirty.value = true }
 function onRuleCheck(row, checked) {
+  row._checked = checked  // 同步本地 _checked 字段，让 UI 立即响应
   selectedRuleIds.value = checked
     ? Array.from(new Set([...selectedRuleIds.value, row.id]))
     : selectedRuleIds.value.filter(id => id !== row.id)
@@ -436,6 +437,8 @@ onMounted(loadPolicies)
 /* ── Card ── */
 .card { background: var(--color-canvas-default); border: 0.5px solid var(--color-border-default); border-radius: 10px; overflow: hidden; }
 .card.empty { display: flex; align-items: center; justify-content: center; }
+/* 右侧详情卡片 — 可滚动 */
+.card:has(.detail-header) { overflow-y: auto; max-height: calc(100vh - 170px); }
 
 /* ── Left: Strategy List ── */
 .list-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 0.5px solid var(--color-border-default); }
