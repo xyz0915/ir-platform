@@ -84,7 +84,6 @@ const navGroups = [
     children: [
       { emoji: '📈', label: '全局态势', path: '/' },
       { emoji: '🚨', label: '告警监控', path: '/alerts', badge: true, activeMatch: '/alerts' },
-      { emoji: '🔍', label: '日志检索', path: '/log-search', activeMatch: '/log-search' },
       { emoji: '📋', label: '日志分析', path: '/logs', activeMatch: '/logs' },
     ],
   },
@@ -114,6 +113,7 @@ const navGroups = [
       { emoji: '🧠', label: 'AI 分析', path: '/ai' },
       { emoji: '🔬', label: 'AI 实验室', path: '/ai-advanced', activeMatch: '/ai-advanced' },
       { emoji: '🔍', label: '分析中心', path: '/analysis-center', activeMatch: '/analysis-center' },
+      { emoji: '🔎', label: '日志检索', path: '/log-search', activeMatch: '/log-search' },
       { emoji: '📚', label: '知识库', path: '/knowledge', activeMatch: '/knowledge' },
     ],
   },
