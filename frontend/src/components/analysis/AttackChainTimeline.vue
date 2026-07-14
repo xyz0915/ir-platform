@@ -56,6 +56,25 @@
         />
       </div>
 
+      <!-- ★ 事件密度回退视图（chains 为空时显示） -->
+      <div v-if="chains.length === 0 && events.length > 0" class="density-row">
+        <div class="density-label">事件密度</div>
+        <svg class="density-svg" :width="canvasWidth" :height="80" :viewBox="`0 0 ${canvasWidth} 80`">
+          <rect
+            v-for="(bar, idx) in densityBars"
+            :key="idx"
+            :x="bar.x"
+            :y="bar.y"
+            :width="bar.width"
+            :height="bar.height"
+            :fill="bar.color"
+            :title="bar.tooltip"
+            @click.stop="$emit('select-event', bar.eventId)"
+            style="cursor: pointer"
+          />
+        </svg>
+      </div>
+
       <!-- X 轴时间刻度 -->
       <div class="time-axis" :style="{ width: canvasWidth + 'px' }">
         <div
@@ -96,6 +115,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 
 const props = defineProps({
   chains: { type: Array, default: () => [] },
+  events: { type: Array, default: () => [] },
 })
 
 const emit = defineEmits(['select-event'])
@@ -160,6 +180,12 @@ const allEvents = computed(() => {
       result.push({ ...ev, _chainId: chain.chain_id })
     }
   }
+  // 兼容：chains 为空但 events 有数据时，把 events 视为所有事件
+  if (result.length === 0 && props.events.length > 0) {
+    for (const ev of props.events) {
+      result.push({ ...ev })
+    }
+  }
   return result
 })
 
@@ -175,6 +201,48 @@ const timeRange = computed(() => {
   }
   if (min === max) max = min + 60000
   return { min, max }
+})
+
+// ★ 事件密度柱状图（chains 为空时渲染）
+const densityBars = computed(() => {
+  if (props.chains.length > 0 || props.events.length === 0) return []
+  const sorted = [...props.events].sort((a, b) =>
+    new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  )
+  const firstTs = new Date(sorted[0].timestamp).getTime()
+  const lastTs = new Date(sorted[sorted.length - 1].timestamp).getTime()
+  if (lastTs <= firstTs) return []
+
+  const bucketCount = Math.min(80, Math.max(20, Math.floor(canvasWidth.value / 18)))
+  const bucketSize = (lastTs - firstTs) / bucketCount
+  if (bucketSize === 0) return []
+
+  const buckets = Array.from({ length: bucketCount }, () => [])
+  for (const ev of sorted) {
+    const idx = Math.min(bucketCount - 1, Math.floor(
+      (new Date(ev.timestamp).getTime() - firstTs) / bucketSize
+    ))
+    buckets[idx].push(ev)
+  }
+
+  const maxCount = Math.max(...buckets.map(b => b.length), 1)
+  const width = Math.max(1, canvasWidth.value / bucketCount - 1)
+  const heightMax = 64
+
+  return buckets.map((items, idx) => {
+    const count = items.length
+    const x = (idx / bucketCount) * canvasWidth.value
+    const h = count > 0 ? (count / maxCount) * heightMax : 0
+    const y = 80 - h
+    const color = count > 0 ? severityColor(items[0].severity) : 'transparent'
+    return {
+      x, y, width, height: h, color,
+      tooltip: count > 0
+        ? `${items.length} events @ ${new Date(items[0].timestamp).toLocaleString('zh-CN')}`
+        : '',
+      eventId: count > 0 ? items[0].id : null,
+    }
+  })
 })
 
 // 显示用的链（添加序号）
@@ -393,6 +461,38 @@ function selectEvent(eventId) {
   font-size: 9px;
   color: #9ca3af;
   white-space: nowrap;
+}
+
+.density-row {
+  position: absolute;
+  top: 0;
+  left: 90px;
+  right: 0;
+  height: 80px;
+  z-index: 1;
+}
+
+.density-label {
+  position: absolute;
+  top: 4px;
+  left: 0;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  background: rgba(255, 255, 255, 0.85);
+  padding: 0 4px;
+  border-radius: 3px;
+  z-index: 2;
+}
+
+.density-svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border-bottom: 1px dashed #e5e7eb;
+}
+
+.density-svg rect:hover {
+  opacity: 0.7;
 }
 
 .timeline-minimap {

@@ -166,7 +166,8 @@ def list_events(
 
         # 数据
         data_sql = f"""
-            SELECT se.*, h.hostname, h.ip_address, c.name as case_name, c.case_number
+            SELECT se.*, h.hostname, h.ip_address, h.case_id as case_id,
+                   c.name as case_name, c.case_number
             FROM security_events se
             LEFT JOIN hosts h ON h.id = se.host_id
             LEFT JOIN cases c ON c.id = h.case_id
@@ -239,7 +240,8 @@ def get_event(event_id: str, current_user: dict = Depends(get_current_user)):
     """事件详情."""
     with get_connection() as conn:
         row = conn.execute("""
-            SELECT se.*, h.hostname, h.ip_address, c.name as case_name, c.case_number
+            SELECT se.*, h.hostname, h.ip_address, h.case_id as case_id,
+                   c.name as case_name, c.case_number
             FROM security_events se
             LEFT JOIN hosts h ON h.id = se.host_id
             LEFT JOIN cases c ON c.id = h.case_id
@@ -467,6 +469,16 @@ def timeline_data(
     return success({
         "chains": chains,
         "total_groups": len(chains),
+        "events": [
+            {
+                "id": ev.get("id"),
+                "timestamp": ev.get("timestamp"),
+                "event_type": ev.get("event_type"),
+                "severity": ev.get("severity"),
+                "host_id": ev.get("host_id"),
+            }
+            for ev in items
+        ],
     })
 
 

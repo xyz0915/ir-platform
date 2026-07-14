@@ -13,6 +13,7 @@
     <div class="layer-timeline">
       <AttackChainTimeline
         :chains="store.timelineData"
+        :events="store.timelineEvents"
         @select-event="onTimelineSelectEvent"
       />
     </div>
