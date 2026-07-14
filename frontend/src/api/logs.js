@@ -9,9 +9,14 @@ const BASE_V2 = '/log-search'  // 日志检索 v2（新模块）— 对应后端
 // 日志分析中心（旧模块）API
 // ==============================
 
-/** 日志搜索（日志分析中心） */
-export function searchLogs(params) {
+/** 日志搜索（日志分析中心 — 旧模块，查询 normalized_logs） */
+export function searchLogsV1(params) {
   return request.get(`${BASE}/search`, { params })
+}
+
+/** 日志搜索（日志检索 — 新模块，查询 agent_imports） */
+export function searchLogs(params) {
+  return request.get(`${BASE_V2}/search`, { params })
 }
 
 /** 日志摘要统计 */

@@ -160,7 +160,7 @@
 import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
-import { searchLogs, getLogSummary, getLogTimeline, getBruteForce, logPivot } from '@/api/logs'
+import { searchLogsV1, getLogSummary, getLogTimeline, getBruteForce, logPivot } from '@/api/logs'
 
 const router = useRouter()
 const loading = ref(false)
@@ -237,7 +237,7 @@ async function search() {
     if (f.processName) params.process_name = f.processName
     if (f.keyword) params.keyword = f.keyword
     if (f.dateRange) { params.date_from = f.dateRange[0].toISOString(); params.date_to = f.dateRange[1].toISOString() }
-    const res = await searchLogs(params)
+    const res = await searchLogsV1(params)
     items.value = res.data?.items || []
     total.value = res.data?.total || 0
   } finally { loading.value = false }
