@@ -305,16 +305,18 @@ def get_event_filters(
 
         # 命中的规则列表（命中数受筛选约束 + json_each 精确匹配 rule_id）
         hit_rules = []
+        hits_subq = f"""SELECT json_extract(je.value, '$.rule_id') as rid, COUNT(DISTINCT se.id) as cnt
+    FROM security_events se, json_each(se.matched_rules) je
+    {where}
+    GROUP BY json_extract(je.value, '$.rule_id')"""
         for r in conn.execute(
-            f"SELECT r.id, r.name, r.category, "
-            f"COALESCE((SELECT COUNT(DISTINCT se.id) FROM security_events se {where} "
-            f"AND EXISTS (SELECT 1 FROM json_each(se.matched_rules) je "
-            f"WHERE json_extract(je.value, '$.rule_id') = r.id)), 0) as hit_count "
-            f"FROM rules r WHERE r.enabled=1 ORDER BY hit_count DESC",
+            f"""SELECT r.id, r.name, r.category, COALESCE(h.cnt, 0) as hit_count
+    FROM rules r LEFT JOIN ({hits_subq}) h ON h.rid = r.id
+    WHERE r.enabled = 1 AND COALESCE(h.cnt, 0) > 0
+    ORDER BY hit_count DESC""",
             where_params,
         ).fetchall():
-            if r["hit_count"] > 0:
-                hit_rules.append(dict(r))
+            hit_rules.append(dict(r))
 
         # 命中规则分类统计（保留全量，不受筛选约束）
         hit_rule_categories = []
