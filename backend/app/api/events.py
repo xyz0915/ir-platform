@@ -324,14 +324,21 @@ def get_event_filters(
         ).fetchall():
             hit_rules.append(dict(r))
 
-        # 命中规则分类统计（保留全量，不受筛选约束）
+        # 命中规则分类统计（受筛选约束：当前范围内已命中的规则按 category 聚合）
         hit_rule_categories = []
-        for r in conn.execute(
-            "SELECT r.category, COUNT(DISTINCT r.id) as count "
-            "FROM rules r WHERE r.enabled=1 "
-            "GROUP BY r.category ORDER BY count DESC"
-        ).fetchall():
-            hit_rule_categories.append(dict(r))
+        # 复用 hit_rules 已计算的子查询结果，避免再扫一次 events
+        if hit_rules:
+            # 在 Python 层做聚合（hit_rules 已经是按规则去重的小数据集）
+            cat_count = {}
+            for r in hit_rules:
+                cat = r.get("category") or "uncategorized"
+                cat_count[cat] = cat_count.get(cat, 0) + 1
+            hit_rule_categories = [
+                {"category": cat, "count": cnt}
+                for cat, cnt in sorted(cat_count.items(), key=lambda x: -x[1])
+            ]
+        else:
+            hit_rule_categories = []
 
         # 事件类型分布（受筛选约束）
         event_type_counts = []
