@@ -12,6 +12,11 @@ import {
   getTimelineData,
   getRelatedEvents,
   getEventHistory,
+  getEventContext,
+  getEventHostStats,
+  getEventImpact,
+  getDispositions,
+  addDisposition,
 } from '@/api/events'
 
 export const useAnalysisStore = defineStore('analysis', () => {
@@ -42,6 +47,13 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const timelineData = ref([])
   const timelineEvents = ref([])
   const detailVisible = ref(false)
+
+  // ── 事件详情增强数据 ──
+  const eventContext = ref([])
+  const hostStats = ref(null)
+  const impactScope = ref(null)
+  const dispositions = ref([])
+  const contextLoading = ref(false)
 
   // ── 新增：规则匹配降噪状态 ──
   const items = ref([])
@@ -243,6 +255,35 @@ export const useAnalysisStore = defineStore('analysis', () => {
     }
   }
 
+  // ── 新增：获取事件详情增强数据 ──
+  async function fetchEventDetailEnhanced(eventId) {
+    contextLoading.value = true
+    try {
+      const results = await Promise.allSettled([
+        getEventContext(eventId),
+        getEventHostStats(eventId),
+        getEventImpact(eventId),
+        getDispositions(eventId),
+      ])
+      if (results[0].status === 'fulfilled') eventContext.value = results[0].value.data || []
+      if (results[1].status === 'fulfilled') hostStats.value = results[1].value.data || null
+      if (results[2].status === 'fulfilled') impactScope.value = results[2].value.data || null
+      if (results[3].status === 'fulfilled') dispositions.value = results[3].value.data?.items || []
+    } finally {
+      contextLoading.value = false
+    }
+  }
+
+  // ── 新增：添加处置记录 ──
+  async function addDispositionForEvent(eventId, data) {
+    const res = await addDisposition(eventId, data)
+    if (res.code === 0) {
+      const r = await getDispositions(eventId)
+      dispositions.value = r.data?.items || []
+    }
+    return res
+  }
+
   // ── 原有 Action：更新状态 ──
   async function updateStatus(id, status, comment = '') {
     await updateEventStatus(id, { status, comment })
@@ -310,6 +351,12 @@ export const useAnalysisStore = defineStore('analysis', () => {
     ruleFilters,
     filterMeta,
     stats,
+    // state — 事件详情增强
+    eventContext,
+    hostStats,
+    impactScope,
+    dispositions,
+    contextLoading,
     // actions — 原有
     fetchEvents,
     fetchTimeline,
@@ -328,5 +375,8 @@ export const useAnalysisStore = defineStore('analysis', () => {
     setFilter,
     resetRuleFilters,
     buildRuleParams,
+    // actions — 事件详情增强
+    fetchEventDetailEnhanced,
+    addDispositionForEvent,
   }
 })

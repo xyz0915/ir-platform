@@ -155,6 +155,8 @@ def list_events(
 ):
     """事件列表（支持全量筛选 + 排序 + 分页）. """
     valid_sort_fields = {"timestamp", "severity", "event_type", "status", "host_id"}
+    # TODO: risk_score 排序需等 enrichment 服务稳定后添加
+    # 当前 response 已含 risk_score 字段（在 enrich 后）
     if sort_field not in valid_sort_fields:
         sort_field = "timestamp"
     if sort_order not in ("asc", "desc"):
@@ -843,3 +845,49 @@ def batch_match_rules(
         "matched": matched_total,
         "elapsed_ms": elapsed_ms,
     })
+
+
+# ===================================================================
+#  事件上下文（T4）
+# ===================================================================
+
+@router.get("/events/{event_id}/context")
+def get_event_context(
+    event_id: str,
+    minutes: int = Query(5, description="前后分钟数"),
+    current_user: dict = Depends(get_current_user),
+):
+    """获取事件前后 N 分钟同一主机的事件上下文."""
+    from app.services.event_enrichment import get_event_context as get_ctx
+
+    result = get_ctx(event_id, minutes)
+    return {"code": 0, "data": result}
+
+
+@router.get("/events/{event_id}/host-stats")
+def get_event_host_stats(
+    event_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """获取事件所属主机的 24h 统计."""
+    from app.database import get_connection
+    from app.services.event_enrichment import get_host_stats
+
+    with get_connection() as conn:
+        row = conn.execute("SELECT host_id FROM security_events WHERE id=?", (event_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Event not found")
+        result = get_host_stats(row["host_id"])
+        return {"code": 0, "data": result}
+
+
+@router.get("/events/{event_id}/impact")
+def get_event_impact(
+    event_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """评估事件影响范围."""
+    from app.services.event_enrichment import assess_impact_scope
+
+    result = assess_impact_scope(event_id)
+    return {"code": 0, "data": result}

@@ -28,6 +28,18 @@
         </template>
       </el-table-column>
 
+      <!-- 风险分 -->
+      <el-table-column label="风险" width="72" sortable="custom" prop="risk_score">
+        <template #default="{ row }">
+          <div class="rs">
+            <span class="rs-val" :style="{ color: riskScoreColor(row._risk_score || 0) }">{{ row._risk_score || '-' }}</span>
+            <div class="rs-bar">
+              <div class="rs-fill" :style="{ width: (row._risk_score || 0) + '%', background: riskScoreColor(row._risk_score || 0) }"></div>
+            </div>
+          </div>
+        </template>
+      </el-table-column>
+
       <!-- 时间戳 -->
       <el-table-column label="时间" width="170" sortable="custom" prop="timestamp">
         <template #default="{ row }">
@@ -185,7 +197,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 
 const props = defineProps({
   events: { type: Array, default: () => [] },
@@ -254,23 +266,71 @@ function formatTime(ts) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
+function riskScoreColor(score) {
+  if (score >= 70) return 'var(--color-risk-critical)'
+  if (score >= 50) return 'var(--color-risk-medium)'
+  if (score >= 30) return 'var(--color-risk-low)'
+  return 'var(--color-fg-subtle)'
+}
+
+function calcRiskScore(row) {
+  if (row._risk_score !== undefined) return
+  let s = { critical: 80, high: 60, medium: 40, low: 20, info: 5 }[row.severity] || 5
+  if (row.matched_rules?.length) s += Math.min(row.matched_rules.length * 5, 25)
+  if (row.ioc_matches?.length) s += Math.min(row.ioc_matches.length * 15, 30)
+  row._risk_score = Math.max(0, Math.min(100, s))
+}
+
+watch(() => props.events, (events) => {
+  if (events?.length) {
+    events.forEach(calcRiskScore)
+  }
+}, { immediate: true })
+
+function highlightPath(path) {
+  if (!path) return ''
+  const upper = path.toUpperCase()
+  if (upper.includes('TEMP') || upper.includes('APPDATA')) {
+    return `<span class="path-critical">${escapeHtml(path)}</span>`
+  }
+  if (upper.includes('SYSTEM32') || upper.includes('SYSWOW64') || upper.includes('STARTUP')) {
+    return `<span class="path-sensitive">${escapeHtml(path)}</span>`
+  }
+  return escapeHtml(path)
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div')
+  div.appendChild(document.createTextNode(str))
+  return div.innerHTML
+}
+
 function buildSummary(row) {
   const ev = row.evidence || {}
   switch (row.event_type) {
     case 'process_start':
-    case 'process_terminate':
-      return `${ev.process_name || '?'} (PID: ${ev.pid || '?'})`
+    case 'process_terminate': {
+      let s = `${ev.process_name || '?'} (PID: ${ev.pid || '?'})`
+      if (ev.parent_name) {
+        s += ` <span class="pp-info"><span class="pp-sep">←</span> ${ev.parent_name}</span>`
+      }
+      if (!ev.ppid && row.event_type === 'process_start') {
+        s += ` <span class="pp-orphan">孤儿进程</span>`
+      }
+      return s
+    }
     case 'network_outbound':
+      return `<span class="net-dir outbound"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 1L6 9M6 9L3 6M6 9L9 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span> ${ev.remote_address || '?'}:${ev.remote_port || '?'} <span class="pp-info">→ ${ev.process_name || '?'}</span>`
     case 'network_listen':
-      return `${ev.remote_address || '?'}:${ev.remote_port || '?'} → ${ev.process_name || '?'}`
+      return `<span class="net-dir inbound"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 11V3M6 3L3 6M6 3L9 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span> ${ev.local_address || '?'}:${ev.local_port || '?'} <span class="pp-info">● ${ev.process_name || '?'}</span>`
     case 'dns_query':
-      return `${ev.query || '?'} (${ev.query_type || 'A'})`
+      return `<span class="net-dir dns"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="4" stroke="currentColor" stroke-width="1.3"/><path d="M6 2V10M2 6H10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></span> ${ev.query || '?'}`
     case 'file_create':
     case 'file_modify':
-      return `${ev.file_name || ev.file_path || '?'}`
+      return highlightPath(ev.file_name || ev.file_path || '?')
     case 'registry_modify':
     case 'registry_delete':
-      return `${ev.key_path || '?'}`
+      return highlightPath(ev.key_path || '?')
     case 'ioc_match':
       return `IOC: ${(row.ioc_matches || []).join(', ') || '?'}`
     case 'behavior_alert':
@@ -658,4 +718,26 @@ function onAction(id, status) {
   font-weight: 400;
   color: var(--color-fg-light, #a3a3a3);
 }
+
+/* 风险分 */
+.rs { display: inline-flex; align-items: center; gap: 6px; }
+.rs-bar { width: 36px; height: 4px; background: var(--color-canvas-inset); border-radius: 2px; overflow: hidden; }
+.rs-fill { height: 100%; border-radius: 2px; }
+.rs-val { font-size: 12px; font-weight: 500; width: 22px; text-align: right; }
+
+/* 父进程信息 */
+.pp-info { font-size: 12px; color: var(--color-fg-subtle); }
+.pp-sep { margin: 0 4px; color: var(--color-fg-light); }
+.pp-orphan { display: inline-flex; align-items: center; padding: 0 5px; font-size: 10px; font-weight: 500; background: var(--color-danger-subtle); color: var(--color-danger-fg); border-radius: 3px; margin-left: 4px; }
+
+/* 网络方向图标 */
+.net-dir { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; }
+.net-dir svg { width: 12px; height: 12px; }
+.net-dir.outbound svg { color: var(--color-accent-fg); }
+.net-dir.inbound svg { color: var(--color-danger-fg); }
+.net-dir.dns svg { color: var(--color-fg-light); }
+
+/* 路径风险着色 */
+.path-critical { color: var(--color-danger-fg); font-weight: 500; }
+.path-sensitive { color: var(--color-warning-fg); font-weight: 500; }
 </style>

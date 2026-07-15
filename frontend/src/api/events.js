@@ -77,3 +77,28 @@ export function batchMatchRules(data) {
 export function ingestEvents(data) {
   return request.post('/analysis/events/ingest', data)
 }
+
+// 事件时间线上下文
+export function getEventContext(eventId, minutes = 5) {
+  return request.get(`/analysis/events/${eventId}/context`, { params: { minutes } })
+}
+
+// 主机统计
+export function getEventHostStats(eventId) {
+  return request.get(`/analysis/events/${eventId}/host-stats`)
+}
+
+// 影响范围
+export function getEventImpact(eventId) {
+  return request.get(`/analysis/events/${eventId}/impact`)
+}
+
+// 处置记录
+export function getDispositions(eventId) {
+  return request.get(`/analysis/events/${eventId}/dispositions`)
+}
+
+// 添加处置记录
+export function addDisposition(eventId, data) {
+  return request.post(`/analysis/events/${eventId}/dispositions`, data)
+}

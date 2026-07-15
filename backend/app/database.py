@@ -1150,6 +1150,36 @@ def _alter_security_events_add_matched_rules(conn: sqlite3.Connection) -> None:
         logger.info("Migrated: security_events.matched_at")
 
 
+def _alter_events_create_disposition_log(conn: sqlite3.Connection) -> None:
+    """创建 event_disposition_log 表（处置日志，幂等）. """
+    cursor = conn.execute("PRAGMA table_info(event_disposition_log)")
+    cols = [r[1] for r in cursor.fetchall()]
+    if not cols:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS event_disposition_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                operator TEXT NOT NULL DEFAULT '',
+                comment TEXT DEFAULT '',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (event_id) REFERENCES security_events(id)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_disposition_event_id ON event_disposition_log(event_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_disposition_created_at ON event_disposition_log(created_at)")
+        logger.info("Created table: event_disposition_log")
+
+
+def _alter_security_events_add_index(conn: sqlite3.Connection) -> None:
+    """添加 security_events 的 (host_id, timestamp) 联合索引（时间线查询优化）. """
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_security_events_host_time ON security_events(host_id, timestamp)")
+        logger.info("Created index: idx_security_events_host_time")
+    except Exception:
+        pass
+
+
 def _alter_cases_priority(conn: sqlite3.Connection) -> None:
     """检测并添加 cases 表的 priority 列."""
     cursor = conn.execute("PRAGMA table_info(cases)")
@@ -1600,6 +1630,9 @@ def init_db() -> None:
         _create_ai_evidence_refills_table(conn)
         # 分析中心规则匹配降噪：security_events 加 matched_rules 列
         _alter_security_events_add_matched_rules(conn)
+        # event_disposition_log 表 + security_events 联合索引
+        _alter_events_create_disposition_log(conn)
+        _alter_security_events_add_index(conn)
         # cases 表扩展（优先级）
         _alter_cases_priority(conn)
         # AI 自动知识入库（knowledge_drafts 已通过 DDL 幂等创建）
