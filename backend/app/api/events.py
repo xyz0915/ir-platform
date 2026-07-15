@@ -227,14 +227,20 @@ def list_events(
 
     items = [_row_to_dict(r) for r in rows]
 
-    # 附带统计
+    # 附带统计（受筛选约束）
     with get_connection() as conn:
-        total_all = conn.execute("SELECT COUNT(*) as cnt FROM security_events").fetchone()["cnt"]
+        total_all = conn.execute(
+            f"SELECT COUNT(*) as cnt FROM security_events se {where}", params
+        ).fetchone()["cnt"]
+        # 已匹配规则数（受筛选约束）
+        matched_params = list(params)
+        matched_where = f"{where} AND se.matched_rules IS NOT NULL AND se.matched_rules != '[]'"
         total_matched = conn.execute(
-            "SELECT COUNT(*) as cnt FROM security_events WHERE matched_rules IS NOT NULL AND matched_rules != '[]'"
+            f"SELECT COUNT(*) as cnt FROM security_events se {matched_where}",
+            matched_params,
         ).fetchone()["cnt"]
         distinct_rules = conn.execute(
-            "SELECT COUNT(DISTINCT json_extract(value, '$.rule_id')) as cnt FROM security_events, json_each(matched_rules)"
+            f"SELECT COUNT(DISTINCT json_extract(value, '$.rule_id')) as cnt FROM security_events, json_each(matched_rules) WHERE 1=1"
         ).fetchone()["cnt"] if total_matched > 0 else 0
 
     return success({
