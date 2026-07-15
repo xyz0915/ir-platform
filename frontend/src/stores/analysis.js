@@ -223,6 +223,8 @@ export const useAnalysisStore = defineStore('analysis', () => {
       ruleFilters.page = 1
     }
     fetchRuleEvents()
+    fetchFilterMeta()
+    fetchStats()
   }
 
   // ── 新增：重置全部筛选 ──

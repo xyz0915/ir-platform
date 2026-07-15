@@ -19,7 +19,7 @@
           :selectedCaseId="store.ruleFilters.caseId"
           :selectedHostId="store.ruleFilters.hostId"
           @update:caseId="onCaseChange"
-          @update:hostId="store.setFilter('hostId', $event)"
+          @update:hostId="onHostChange"
         />
       </div>
 
@@ -144,6 +144,17 @@ function onCaseChange(caseId) {
     store.ruleFilters.hostId = null
     store.ruleFilters.page = 1
     // 刷新筛选元数据（主机列表按案件过滤）
+    store.fetchFilterMeta()
+    store.fetchRuleEvents()
+    store.fetchStats()
+  }
+}
+
+// 主机切换
+function onHostChange(hostId) {
+  if (hostId !== store.ruleFilters.hostId) {
+    store.ruleFilters.hostId = hostId
+    store.ruleFilters.page = 1
     store.fetchFilterMeta()
     store.fetchRuleEvents()
     store.fetchStats()
