@@ -62,6 +62,7 @@ class ProcessMapper(BaseMapper):
             "timestamp": raw.get("timestamp", raw.get("start_time", datetime.now(timezone.utc).isoformat())),
             "source_collector": raw.get("source_collector", "osquery"),
             "evidence": {
+                "name": raw.get("process_name"),       # ← 规则匹配需要 name 字段
                 "pid": raw.get("pid"),
                 "ppid": raw.get("ppid"),
                 "process_name": raw.get("process_name"),
@@ -119,6 +120,7 @@ class RegistryMapper(BaseMapper):
                 "value_name": raw.get("value_name"),
                 "value_type": raw.get("value_type"),
                 "value_data": raw.get("value_data"),
+                "command": raw.get("value_data"),      # ← 规则匹配需要 command
                 "process_name": raw.get("process_name"),
             },
             "severity": raw.get("severity", "medium"),
@@ -138,6 +140,7 @@ class FileMapper(BaseMapper):
             "timestamp": raw.get("timestamp", datetime.now(timezone.utc).isoformat()),
             "source_collector": raw.get("source_collector", "osquery"),
             "evidence": {
+                "name": raw.get("file_name"),           # ← 规则匹配需要 name
                 "file_path": raw.get("file_path"),
                 "file_name": raw.get("file_name"),
                 "file_size": raw.get("file_size"),
