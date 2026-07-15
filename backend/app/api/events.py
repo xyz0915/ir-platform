@@ -303,12 +303,13 @@ def get_event_filters(
         ).fetchall():
             hosts.append(dict(r))
 
-        # 命中的规则列表（命中数受筛选约束）
+        # 命中的规则列表（命中数受筛选约束 + json_each 精确匹配 rule_id）
         hit_rules = []
         for r in conn.execute(
             f"SELECT r.id, r.name, r.category, "
-            f"COALESCE((SELECT COUNT(*) FROM security_events se {where} "
-            f"AND se.matched_rules LIKE '%' || r.id || '%'), 0) as hit_count "
+            f"COALESCE((SELECT COUNT(DISTINCT se.id) FROM security_events se {where} "
+            f"AND EXISTS (SELECT 1 FROM json_each(se.matched_rules) je "
+            f"WHERE json_extract(je.value, '$.rule_id') = r.id)), 0) as hit_count "
             f"FROM rules r WHERE r.enabled=1 ORDER BY hit_count DESC",
             where_params,
         ).fetchall():

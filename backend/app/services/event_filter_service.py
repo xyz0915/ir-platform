@@ -76,17 +76,23 @@ def build_events_where(params: dict) -> tuple[str, list]:
             conditions.append(f"se.event_type IN ({placeholders})")
             sql_params.extend(type_list)
 
-    # 按规则 ID 筛选（JSON LIKE 匹配）
+    # 按规则 ID 筛选（json_each 精确匹配 rule_id）
     rule_id = params.get("rule_id")
     if rule_id:
-        conditions.append("se.matched_rules LIKE ?")
-        sql_params.append(f'%"rule_id":{rule_id}%')
+        conditions.append(
+            "EXISTS (SELECT 1 FROM json_each(se.matched_rules) je "
+            "WHERE json_extract(je.value, '$.rule_id') = ?)"
+        )
+        sql_params.append(int(rule_id))
 
-    # 按规则分类筛选
+    # 按规则分类筛选（json_each 精确匹配 category）
     rule_category = params.get("rule_category")
     if rule_category:
-        conditions.append("se.matched_rules LIKE ?")
-        sql_params.append(f'%"category":"{rule_category}"%')
+        conditions.append(
+            "EXISTS (SELECT 1 FROM json_each(se.matched_rules) je "
+            "WHERE json_extract(je.value, '$.category') = ?)"
+        )
+        sql_params.append(rule_category)
 
     # 置信度下限
     rule_confidence_min = params.get("rule_confidence_min")
