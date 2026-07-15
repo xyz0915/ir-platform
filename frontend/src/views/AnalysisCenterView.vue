@@ -154,6 +154,7 @@ function onCaseChange(caseId) {
 function onViewSwitch(view) {
   store.ruleFilters.viewFilter = view
   store.ruleFilters.page = 1
+  store.fetchFilterMeta()
   store.fetchRuleEvents()
   store.fetchStats()
 }

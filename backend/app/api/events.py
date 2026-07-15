@@ -256,10 +256,35 @@ def list_events(
 # ===================================================================
 
 @router.get("/events/filters")
-def get_event_filters(current_user: dict = Depends(get_current_user)):
-    """返回筛选面板元数据：案件列表、主机列表、规则命中统计等. """
+def get_event_filters(
+    case_id: Optional[int] = Query(None),
+    host_id: Optional[int] = Query(None),
+    filter: str = Query("all"),
+    keyword: Optional[str] = Query(None),
+    start_time: Optional[str] = Query(None),
+    end_time: Optional[str] = Query(None),
+    event_types: Optional[str] = Query(None, alias="event_type"),
+    severities: Optional[str] = Query(None, alias="severity"),
+    rule_id: Optional[int] = Query(None),
+    rule_category: Optional[str] = Query(None),
+    rule_confidence_min: Optional[float] = Query(None),
+    time_range: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
+):
+    """返回筛选面板元数据：案件列表、主机列表、规则命中统计等.
+    所有聚合统计（除 cases 列表本身）都应受当前筛选条件约束. """
+    # 构建 WHERE 约束（用于除 cases/hit_rule_categories 外的聚合）
+    filter_params = {
+        "case_id": case_id, "host_id": host_id, "filter": filter,
+        "keyword": keyword, "start_time": start_time, "end_time": end_time,
+        "event_type": event_types, "severity": severities,
+        "rule_id": rule_id, "rule_category": rule_category,
+        "rule_confidence_min": rule_confidence_min, "time_range": time_range,
+    }
+    where, where_params = build_events_where(filter_params)
+
     with get_connection() as conn:
-        # 案件列表（含主机数）
+        # 案件列表（含主机数）— 自身元数据，不受筛选约束
         cases = []
         for r in conn.execute(
             "SELECT c.id, c.name, COUNT(h.id) as host_count "
@@ -268,26 +293,29 @@ def get_event_filters(current_user: dict = Depends(get_current_user)):
         ).fetchall():
             cases.append(dict(r))
 
-        # 主机列表（含日志数和事件数）
+        # 主机列表（事件数受筛选约束）
         hosts = []
         for r in conn.execute(
-            "SELECT h.id, h.hostname, h.case_id, "
-            "COALESCE((SELECT COUNT(*) FROM security_events se WHERE se.host_id = h.id), 0) as event_count "
-            "FROM hosts h ORDER BY h.hostname"
+            f"SELECT h.id, h.hostname, h.case_id, "
+            f"COALESCE((SELECT COUNT(*) FROM security_events se {where} AND se.host_id = h.id), 0) as event_count "
+            f"FROM hosts h ORDER BY h.hostname",
+            where_params,
         ).fetchall():
             hosts.append(dict(r))
 
-        # 命中的规则列表
+        # 命中的规则列表（命中数受筛选约束）
         hit_rules = []
         for r in conn.execute(
-            "SELECT r.id, r.name, r.category, "
-            "COALESCE((SELECT COUNT(*) FROM security_events se WHERE se.matched_rules LIKE '%' || r.id || '%'), 0) as hit_count "
-            "FROM rules r WHERE r.enabled=1 ORDER BY hit_count DESC"
+            f"SELECT r.id, r.name, r.category, "
+            f"COALESCE((SELECT COUNT(*) FROM security_events se {where} "
+            f"AND se.matched_rules LIKE '%' || r.id || '%'), 0) as hit_count "
+            f"FROM rules r WHERE r.enabled=1 ORDER BY hit_count DESC",
+            where_params,
         ).fetchall():
             if r["hit_count"] > 0:
                 hit_rules.append(dict(r))
 
-        # 命中规则分类统计
+        # 命中规则分类统计（保留全量，不受筛选约束）
         hit_rule_categories = []
         for r in conn.execute(
             "SELECT r.category, COUNT(DISTINCT r.id) as count "
@@ -296,19 +324,21 @@ def get_event_filters(current_user: dict = Depends(get_current_user)):
         ).fetchall():
             hit_rule_categories.append(dict(r))
 
-        # 事件类型分布
+        # 事件类型分布（受筛选约束）
         event_type_counts = []
         for r in conn.execute(
-            "SELECT event_type as type, COUNT(*) as count "
-            "FROM security_events GROUP BY event_type ORDER BY count DESC"
+            f"SELECT event_type as type, COUNT(*) as count "
+            f"FROM security_events se {where} GROUP BY event_type ORDER BY count DESC",
+            where_params,
         ).fetchall():
             event_type_counts.append(dict(r))
 
-        # 严重度分布
+        # 严重度分布（受筛选约束）
         severity_counts = []
         for r in conn.execute(
-            "SELECT severity, COUNT(*) as count "
-            "FROM security_events GROUP BY severity ORDER BY count DESC"
+            f"SELECT severity, COUNT(*) as count "
+            f"FROM security_events se {where} GROUP BY severity ORDER BY count DESC",
+            where_params,
         ).fetchall():
             severity_counts.append(dict(r))
 

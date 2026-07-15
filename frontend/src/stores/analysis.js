@@ -172,7 +172,18 @@ export const useAnalysisStore = defineStore('analysis', () => {
   // ── 新增：获取筛选元数据 ──
   async function fetchFilterMeta() {
     try {
-      const res = await getEventFilters()
+      const params = {}
+      if (ruleFilters.caseId) params.case_id = ruleFilters.caseId
+      if (ruleFilters.hostId) params.host_id = ruleFilters.hostId
+      if (ruleFilters.viewFilter !== 'all') params.filter = ruleFilters.viewFilter
+      if (ruleFilters.timeRange !== 'all') params.time_range = ruleFilters.timeRange
+      if (ruleFilters.severity.length) params.severity = ruleFilters.severity.join(',')
+      if (ruleFilters.eventType.length) params.event_type = ruleFilters.eventType.join(',')
+      if (ruleFilters.ruleId) params.rule_id = ruleFilters.ruleId
+      if (ruleFilters.ruleCategory.length) params.rule_category = ruleFilters.ruleCategory.join(',')
+      if (ruleFilters.confidenceMin) params.rule_confidence_min = ruleFilters.confidenceMin
+      if (ruleFilters.keyword) params.keyword = ruleFilters.keyword
+      const res = await getEventFilters(params)
       const d = res.data
       filterMeta.cases = d.cases || []
       filterMeta.hosts = d.hosts || []
