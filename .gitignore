@@ -65,3 +65,26 @@ agent/test_output.json
 
 # 后端依赖安装标记（bootstrap 产物，非源码）
 .ir_deps_installed
+
+# ===== 提交清理：排除运行时/构建产物/垃圾文件（2026-07-18） =====
+# 运行时数据库（backend 根目录，含真实业务数据，非源码）
+backend/ir.db
+
+# 误创建的 NUL 垃圾文件
+nul
+backend/NUL
+frontend/nul
+
+# Vite 构建临时文件
+frontend/vite.config.js.timestamp-*.mjs
+
+# 旧的/临时的 dist 构建产物
+frontend/dist-new/
+frontend/dist_old/
+frontend/dist_tmp/
+
+# 设计预览 HTML（非源码，随开发频繁变动）
+analysis-center-*-preview.html
+analysis-center-rules-preview*.html
+report-output.html
+process_tree_view_v3.html

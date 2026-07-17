@@ -654,6 +654,7 @@ DDL_STATEMENTS = [
         attack_stage        TEXT,
         ioc_matches         TEXT    DEFAULT '[]',
         evidence            TEXT    DEFAULT '{}',
+        ai_verdict          TEXT    DEFAULT '{}',
         status              TEXT    NOT NULL DEFAULT 'pending',
         assignee            TEXT,
         related_events      TEXT    DEFAULT '[]',
@@ -775,6 +776,58 @@ DDL_STATEMENTS = [
         INSERT INTO agent_imports_fts(agent_imports_fts, rowid, raw_json) VALUES('delete', old.id, old.raw_json);
         INSERT INTO agent_imports_fts(rowid, raw_json) VALUES (new.id, new.raw_json);
     END
+    """,
+    # audit_logs — 审计日志表
+    """
+    CREATE TABLE IF NOT EXISTS audit_logs (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id         INTEGER REFERENCES users(id),
+        username        TEXT NOT NULL,
+        action_type     TEXT NOT NULL,
+        detail          TEXT,
+        target_type     TEXT,
+        target_id       TEXT,
+        ip_address      TEXT,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_user ON audit_logs(user_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action_type)
+    """,
+    # system_settings — 系统参数表
+    """
+    CREATE TABLE IF NOT EXISTS system_settings (
+        key             TEXT PRIMARY KEY,
+        value           TEXT NOT NULL,
+        description     TEXT,
+        value_type      TEXT DEFAULT 'string',
+        updated_at      TEXT
+    )
+    """,
+    # import_results — 手工日志导入结果明细表
+    """
+    CREATE TABLE IF NOT EXISTS import_results (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        import_id       INTEGER NOT NULL REFERENCES import_records(id) ON DELETE CASCADE,
+        log_source      TEXT NOT NULL,
+        parsed_line     INTEGER NOT NULL,
+        event_type      TEXT NOT NULL,
+        severity        TEXT DEFAULT 'info',
+        event_key_hash  TEXT,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_import_results_import_id ON import_results(import_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_import_results_key_hash ON import_results(event_key_hash)
     """,
 ]
 
@@ -1150,6 +1203,25 @@ def _alter_security_events_add_matched_rules(conn: sqlite3.Connection) -> None:
         logger.info("Migrated: security_events.matched_at")
 
 
+def _alter_security_events_add_ai_verdict(conn: sqlite3.Connection) -> None:
+    """检测并添加 security_events 表的 ai_verdict 列（AI 降噪研判结果）.
+
+    ai_verdict 存储 AI 对原始事件的研判 JSON，形如 {"label": "suspicious",
+    "confidence": 0.9, ...}。该列此前仅在 ai_noise_reduce 服务首次运行时
+    通过 ALTER 懒添加，导致未跑过 AI 研判的库（含全新/空库）缺少该列，
+    进而使 event_stats / ai_label 筛选等只读接口引用 se.ai_verdict 时抛出
+    `no such column: se.ai_verdict` 的 500。
+
+    此处将其提升为规范 schema 的一部分（与 matched_rules 一致），保证任意库
+    在 init_db 阶段即具备该列，避免分析中心统计接口崩溃。
+    """
+    cursor = conn.execute("PRAGMA table_info(security_events)")
+    existing_columns: set[str] = {row["name"] for row in cursor.fetchall()}
+    if 'ai_verdict' not in existing_columns:
+        conn.execute("ALTER TABLE security_events ADD COLUMN ai_verdict TEXT DEFAULT '{}'")
+        logger.info("Migrated: security_events.ai_verdict")
+
+
 def _alter_events_create_disposition_log(conn: sqlite3.Connection) -> None:
     """创建 event_disposition_log 表（处置日志，幂等）. """
     cursor = conn.execute("PRAGMA table_info(event_disposition_log)")
@@ -1518,15 +1590,31 @@ def _alter_incident_reports_table(conn: sqlite3.Connection) -> None:
     if not cursor.fetchone():
         conn.execute(
             """CREATE TABLE IF NOT EXISTS incident_reports (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                host_id         INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
-                title           TEXT,
-                content         TEXT,
-                report_type     TEXT DEFAULT 'analysis',
-                status          TEXT DEFAULT 'draft',
-                risk_level      TEXT,
-                created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                host_id           INTEGER REFERENCES hosts(id) ON DELETE SET NULL,
+                case_id           INTEGER,
+                title             TEXT,
+                content           TEXT,
+                report_type       TEXT DEFAULT 'analysis',
+                audience          TEXT DEFAULT 'leader',
+                status            TEXT DEFAULT 'draft',
+                risk_level        TEXT,
+                risk_score        INTEGER DEFAULT 0,
+                summary           TEXT DEFAULT '',
+                impact_scope      TEXT DEFAULT '{}',
+                timeline_json     TEXT DEFAULT '[]',
+                mitre_cover       TEXT DEFAULT '[]',
+                evidence          TEXT DEFAULT '',
+                evidence_meta     TEXT,
+                recommendations   TEXT DEFAULT '{}',
+                confidence_metadata TEXT,
+                version           INTEGER DEFAULT 1,
+                ai_report_id      INTEGER,
+                mode              TEXT DEFAULT 'auto',
+                report_label      TEXT,
+                created_by        TEXT DEFAULT '',
+                created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
             )"""
         )
         logger.info("Created incident_reports table")
@@ -1542,6 +1630,16 @@ def _alter_incident_reports_table(conn: sqlite3.Connection) -> None:
         ("mode", "TEXT DEFAULT 'auto'"),
         ("report_label", "TEXT"),
         ("evidence_meta", "TEXT"),
+        # T-05: 报告 API 所需字段（与 app/api/report.py DDL 对齐）
+        ("audience", "TEXT DEFAULT 'leader'"),
+        ("summary", "TEXT DEFAULT ''"),
+        ("impact_scope", "TEXT DEFAULT '{}'"),
+        ("timeline_json", "TEXT DEFAULT '[]'"),
+        ("mitre_cover", "TEXT DEFAULT '[]'"),
+        ("evidence", "TEXT DEFAULT ''"),
+        ("recommendations", "TEXT DEFAULT '{}'"),
+        ("case_id", "INTEGER"),
+        ("created_by", "TEXT DEFAULT ''"),
     ]
 
     for col_name, col_type in new_columns:
@@ -1550,6 +1648,72 @@ def _alter_incident_reports_table(conn: sqlite3.Connection) -> None:
                 f"ALTER TABLE incident_reports ADD COLUMN {col_name} {col_type}"
             )
             logger.info("Added column '%s' to incident_reports table", col_name)
+
+
+def _fix_incident_reports_host_id_nullable(conn: sqlite3.Connection) -> None:
+    """修复 incident_reports.host_id 的 NOT NULL 约束为可空.
+
+    旧版 DDL 创建了 `host_id INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE`，
+    但报告 API 新建报告时支持 host_id=0（表示"案件级报告，不关联特定主机"），
+    此时应插入 NULL 而非 0。SQLite 不支持 ALTER TABLE DROP NOT NULL，
+    因此需要重建表。
+
+    该函数幂等：仅当 host_id 仍为 NOT NULL 时执行重建。
+    """
+    cursor = conn.execute("PRAGMA table_info(incident_reports)")
+    rows = cursor.fetchall()
+    col_info: dict[str, sqlite3.Row] = {r["name"]: r for r in rows}
+    host_row = col_info.get("host_id")
+    if host_row is None or host_row["notnull"] != 1:
+        return  # 已为可空或不存在，无需处理
+
+    logger.info("Fixing incident_reports.host_id NOT NULL → nullable ...")
+
+    # 构建完整列定义（从当前 schema 获取，跳过 host_id 的 NOT NULL）
+    cols_def: list[str] = []
+    for row in rows:
+        name = row["name"]
+        col_type = row["type"]
+        notnull = "NOT NULL" if (row["notnull"] and name != "host_id") else ""
+        default_val = row["dflt_value"]
+        default = ""
+        if default_val is not None:
+            # 函数表达式（如 datetime('now')）需要括号包裹
+            if "(" in str(default_val):
+                default = f"DEFAULT ({default_val})"
+            else:
+                default = f"DEFAULT {default_val}"
+        pk = "PRIMARY KEY AUTOINCREMENT" if row["pk"] else ""
+        col_def = f"{name} {col_type}"
+        if notnull:
+            col_def += f" {notnull}"
+        if default:
+            col_def += f" {default}"
+        if pk:
+            col_def += f" {pk}"
+        cols_def.append(col_def)
+
+    cols_sql = ",\n                ".join(cols_def)
+
+    # 暂存外键状态，开始重建
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.execute(f"""
+            CREATE TABLE IF NOT EXISTS incident_reports_v2 (
+                {cols_sql}
+            )
+        """)
+        col_names = [r["name"] for r in rows]
+        col_list = ", ".join(col_names)
+        conn.execute(f"INSERT INTO incident_reports_v2 ({col_list}) SELECT {col_list} FROM incident_reports")
+        conn.execute("DROP TABLE incident_reports")
+        conn.execute("ALTER TABLE incident_reports_v2 RENAME TO incident_reports")
+        logger.info("Successfully recreated incident_reports with nullable host_id")
+    except Exception:
+        conn.execute("DROP TABLE IF EXISTS incident_reports_v2")
+        raise
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
 
 
 def _create_incident_report_audit_table(conn: sqlite3.Connection) -> None:
@@ -1578,6 +1742,56 @@ def _create_incident_report_audit_table(conn: sqlite3.Connection) -> None:
     logger.info("incident_report_audit table ready")
 
 
+def _migrate_users_table(conn: sqlite3.Connection) -> None:
+    """为 users 表追加 is_active / last_login / display_name 列（幂等）."""
+    for col, col_type, default in [
+        ("is_active", "INTEGER", 1),
+        ("last_login", "TEXT", None),
+        ("display_name", "TEXT", None),
+    ]:
+        try:
+            if default is not None:
+                conn.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type} DEFAULT {default}")
+            else:
+                conn.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type}")
+        except Exception:
+            pass
+
+
+def _seed_system_settings(conn: sqlite3.Connection) -> None:
+    """预置 system_settings 种子数据."""
+    defaults = [
+        ("ai_auto_analysis", "false", "主机导入后自动触发 AI 分析", "bool"),
+        ("alert_aggregation_window", "5", "告警聚合窗口（分钟）", "int"),
+        ("events_page_size", "50", "分析中心事件列表默认分页条数", "int"),
+        ("max_upload_file_mb", "500", "手工上传日志单文件大小上限", "int"),
+        ("log_retention_days", "90", "安全事件保留天数", "int"),
+        ("upload_file_retention_days", "7", "上传日志文件保留天数", "int"),
+    ]
+    for key, value, desc, vtype in defaults:
+        conn.execute(
+            "INSERT OR IGNORE INTO system_settings (key, value, description, value_type) VALUES (?, ?, ?, ?)",
+            (key, value, desc, vtype),
+        )
+
+
+def _migrate_import_records() -> None:
+    """为 import_records 表追加手工日志导入相关列（幂等）."""
+    with get_connection() as conn:
+        for col, col_type in [
+            ("log_type", "TEXT"),
+            ("file_size", "INTEGER"),
+            ("parsed_count", "INTEGER"),
+            ("event_count", "INTEGER"),
+            ("task_id", "TEXT"),
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE import_records ADD COLUMN {col} {col_type}")
+            except Exception:
+                pass  # 列已存在则忽略
+        conn.commit()
+
+
 def init_db() -> None:
     """初始化数据库：创建目录、执行建表语句、迁移旧数据、ALTER表、创建默认用户、导入默认规则、导入默认白名单."""
     # 确保数据目录存在
@@ -1592,6 +1806,8 @@ def init_db() -> None:
         for ddl in DDL_STATEMENTS:
             conn.execute(ddl)
         conn.commit()
+        # 手工日志导入：import_records 表迁移（追加列）
+        _migrate_import_records()
         # 迁移旧 ai_config 数据到 ai_config_profiles
         _migrate_old_ai_config(conn)
         # ALTER ai_analysis_reports 添加新列
@@ -1622,14 +1838,17 @@ def init_db() -> None:
         _alter_network_connections_table(conn)
         _import_default_whitelist(conn)
         _import_default_iocs(conn)
-        # T-01: incident_reports 扩展列 + 审计表
+        # T-01: incident_reports 扩展列 + 审计表 + host_id 可空修复
         _alter_incident_reports_table(conn)
+        _fix_incident_reports_host_id_nullable(conn)
         _create_incident_report_audit_table(conn)
         # v1.3.0 作战化新表
         _create_agent_baselines_table(conn)
         _create_ai_evidence_refills_table(conn)
         # 分析中心规则匹配降噪：security_events 加 matched_rules 列
         _alter_security_events_add_matched_rules(conn)
+        # AI 降噪研判结果列：security_events 加 ai_verdict 列（避免 event_stats 等接口 500）
+        _alter_security_events_add_ai_verdict(conn)
         # event_disposition_log 表 + security_events 联合索引
         _alter_events_create_disposition_log(conn)
         _alter_security_events_add_index(conn)
@@ -1637,6 +1856,19 @@ def init_db() -> None:
         _alter_cases_priority(conn)
         # AI 自动知识入库（knowledge_drafts 已通过 DDL 幂等创建）
         _init_knowledge_drafts(conn)
+        # 系统设置一期：users 表迁移 + 预置系统参数
+        _migrate_users_table(conn)
+        _seed_system_settings(conn)
+        conn.commit()
+        # v3.1: ai_feedback / playbook_presets 表 + ai_audit_log 扩展列
+        conn.execute("CREATE TABLE IF NOT EXISTS ai_feedback (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, query TEXT, reply TEXT, rating INTEGER, comment TEXT, created_at TEXT DEFAULT (datetime('now')))")
+        conn.execute("CREATE TABLE IF NOT EXISTS playbook_presets (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, steps TEXT, tags TEXT, created_at TEXT DEFAULT (datetime('now')))")
+        # ai_audit_log 补齐 endpoint / intent 列（DLL已有 total_tokens/latency_ms/model_name）
+        for col in [("endpoint", "TEXT"), ("intent", "TEXT")]:
+            try:
+                conn.execute(f"ALTER TABLE ai_audit_log ADD COLUMN {col[0]} {col[1]}")
+            except Exception:
+                pass  # 列已存在
         conn.commit()
         # 实时告警与 Agent 索引
         _ensure_index("alerts", "idx_alerts_host", "host_id")

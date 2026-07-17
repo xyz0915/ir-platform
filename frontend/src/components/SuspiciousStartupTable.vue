@@ -4,7 +4,7 @@
     <el-table-column prop="location" label="位置" min-width="220" show-overflow-tooltip />
     <el-table-column prop="type" label="类型" width="130">
       <template #default="{ row }">
-        <el-tag size="small" :type="typeTagType(row.type)">{{ typeLabel(row.type) }}</el-tag>
+        <el-tag size="small" :type="typeTagType(row.type)" effect="plain" class="startup-type-tag">{{ typeLabel(row.type) }}</el-tag>
       </template>
     </el-table-column>
     <el-table-column prop="user" label="用户" width="120" show-overflow-tooltip />
@@ -13,7 +13,7 @@
     <el-table-column prop="rule_name" label="命中规则" min-width="150" show-overflow-tooltip />
     <el-table-column prop="severity" label="严重程度" width="100">
       <template #default="{ row }">
-        <el-tag size="small" :type="severityTagType(row.severity)">{{ severityLabel(row.severity) }}</el-tag>
+        <el-tag size="small" :type="severityTagType(row.severity)" effect="plain" class="severity-tag">{{ severityLabel(row.severity) }}</el-tag>
       </template>
     </el-table-column>
   </el-table>
@@ -68,3 +68,24 @@ function severityLabel(severity) {
   return map[severity] || severity
 }
 </script>
+
+<style scoped>
+:deep(.el-table) {
+  --el-table-border-color: var(--color-border-default, #e5e5e5);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  border-radius: 8px;
+  overflow: hidden;
+}
+:deep(.el-table th.el-table__cell) {
+  background: var(--color-canvas-subtle, #fafafa) !important;
+  color: var(--color-fg-subtle, #888) !important;
+  font-weight: 500 !important;
+  font-size: 12px !important;
+  padding: 8px 10px !important;
+}
+:deep(.el-table td.el-table__cell) {
+  padding: 6px 8px !important;
+  font-size: 12px !important;
+  line-height: 1.4 !important;
+}
+</style>

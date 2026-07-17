@@ -12,7 +12,7 @@
         <el-descriptions-item label="案件名称">{{ caseData?.name }}</el-descriptions-item>
         <el-descriptions-item label="案件编号">{{ caseData?.case_number || '未分配' }}</el-descriptions-item>
         <el-descriptions-item label="状态">
-          <el-tag :type="caseData?.status === 'open' ? 'success' : 'info'" size="small">
+          <el-tag :type="caseData?.status === 'open' ? 'success' : 'info'" size="small" effect="plain" class="status-tag">
             {{ caseData?.status === 'open' ? '进行中' : '已关闭' }}
           </el-tag>
         </el-descriptions-item>
@@ -28,14 +28,13 @@
         <div>
           <!-- P2-07: 批量AI分析按钮 -->
           <el-button
-            type="warning"
             :disabled="selectedHosts.length < 2 || selectedHosts.length > 5"
             @click="openBatchAnalysis"
           >
             <el-icon><DataAnalysis /></el-icon>
             批量AI分析 ({{ selectedHosts.length }})
           </el-button>
-          <el-button type="success" @click="agentDialogRef?.show()">
+          <el-button @click="agentDialogRef?.show()">
             <el-icon><Download /></el-icon> 下载 Agent
           </el-button>
           <el-button type="primary" @click="showAddHostDialog">
@@ -58,7 +57,7 @@
         <el-table-column prop="os_type" label="系统类型" width="100" />
         <el-table-column prop="status" label="状态" width="100">
           <template #default="{ row }">
-            <el-tag :type="statusType(row.status)" size="small">
+            <el-tag :type="statusType(row.status)" size="small" effect="plain" :class="'status-tag status-tag--' + row.status">
               {{ statusLabel(row.status) }}
             </el-tag>
           </template>
@@ -132,16 +131,16 @@
         <div class="batch-dimensions mb-20">
           <h4 class="batch-subtitle">对比维度（默认全选）：</h4>
           <el-checkbox-group v-model="batchDimensions" class="batch-checkbox-group">
-            <el-checkbox label="risk" border>🛡️ 风险评估对比</el-checkbox>
-            <el-checkbox label="threat" border>🔍 威胁模式对比</el-checkbox>
-            <el-checkbox label="timeline" border>⏱️ 时间线对比</el-checkbox>
-            <el-checkbox label="recommendation" border>💡 处置建议对比</el-checkbox>
+            <el-checkbox label="risk" border>风险评估对比</el-checkbox>
+            <el-checkbox label="threat" border>威胁模式对比</el-checkbox>
+            <el-checkbox label="timeline" border>时间线对比</el-checkbox>
+            <el-checkbox label="recommendation" border>处置建议对比</el-checkbox>
           </el-checkbox-group>
         </div>
 
         <div class="flex-center">
           <el-button @click="batchDialogVisible = false">取消</el-button>
-          <el-button type="warning" @click="startBatchAnalysis" :loading="batchLoading">
+          <el-button type="primary" @click="startBatchAnalysis" :loading="batchLoading">
             开始对比分析
           </el-button>
         </div>
@@ -174,7 +173,7 @@
           </el-alert>
 
           <!-- 风险对比 — 表格 + 色条 -->
-          <el-card header="🛡️ 风险评估对比" class="mb-15">
+          <el-card header="风险评估对比" class="mb-15" shadow="never">
             <el-table :data="batchReport.risk_comparison?.hosts || []" size="small">
               <el-table-column prop="hostname" label="主机" />
               <el-table-column prop="risk_level" label="风险等级" width="100">
@@ -193,7 +192,7 @@
           </el-card>
 
           <!-- 威胁对比 — 共性列表 + 差异表格 -->
-          <el-card header="🔍 威胁模式对比" class="mb-15">
+          <el-card header="威胁模式对比" class="mb-15" shadow="never">
             <div class="mb-10"><strong>共性威胁：</strong></div>
             <el-tag
               v-for="t in batchReport.threat_comparison?.common_threats"
@@ -227,7 +226,7 @@
           </el-card>
 
           <!-- 攻击路径对比 -->
-          <el-card header="⏱️ 攻击路径对比" class="mb-15">
+          <el-card header="攻击路径对比" class="mb-15" shadow="never">
             <el-timeline>
               <el-timeline-item
                 v-for="p in batchReport.attack_path_comparison?.paths"
@@ -235,7 +234,7 @@
                 :timestamp="p.hostname"
                 placement="top"
               >
-                <el-card shadow="hover" class="attack-path-card">
+                <el-card shadow="never" class="attack-path-card">
                   {{ p.attack_chain || '无攻击链' }}
                 </el-card>
               </el-timeline-item>
@@ -475,7 +474,7 @@ async function startBatchAnalysis() {
         batchProgress.value = 100
         batchDone.value = true
         if (!batchCompareResult.value) {
-          batchCompareResult.value = `> ⚠️ 分析失败：${data.message || '未知错误'}`
+          batchCompareResult.value = `> 分析失败：${data.message || '未知错误'}`
         }
         // 尝试解析已有结果为结构化报告
         if (batchCompareResult.value) {
@@ -546,13 +545,13 @@ function renderBatchMarkdown(text) {
 }
 .batch-stream-title {
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-fg-default);
 }
 
 .batch-result {
   background: var(--color-canvas-inset);
-  border: 1px solid var(--color-border-default);
+  border: 0.5px solid var(--color-border-default);
   border-radius: 8px;
   padding: 16px;
   max-height: 50vh;
@@ -572,13 +571,13 @@ function renderBatchMarkdown(text) {
 }
 .batch-result-content :deep(th),
 .batch-result-content :deep(td) {
-  border: 1px solid var(--color-border-default);
+  border: 0.5px solid var(--color-border-default);
   padding: 8px 12px;
   text-align: left;
 }
 .batch-result-content :deep(th) {
   background: var(--color-canvas-subtle);
-  font-weight: 600;
+  font-weight: 500;
 }
 .batch-result-content :deep(pre) {
   background: var(--color-code-bg);
@@ -624,7 +623,96 @@ function renderBatchMarkdown(text) {
 .text-muted { color: var(--color-fg-muted); }
 
 .attack-path-card {
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.6;
+}
+
+/* ===== 案件详情 IR 设计规范覆盖 ===== */
+.page-container {
+  padding: 24px;
+  background: var(--color-canvas-subtle, #fafafa);
+  min-height: calc(100vh - 56px);
+}
+.card-box {
+  background: var(--color-canvas-default, #fff);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+.page-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--color-fg-default, #111);
+  margin: 0;
+}
+.flex-between { display: flex; justify-content: space-between; align-items: center; }
+.mb-20 { margin-bottom: 20px; }
+
+/* descriptions 弱化 */
+.card-box :deep(.el-descriptions__label) {
+  color: var(--color-fg-subtle, #888);
+  font-size: 12px;
+  font-weight: 400;
+}
+.card-box :deep(.el-descriptions__content) {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--color-fg-default, #111);
+}
+
+/* 状态 tag 浅色背景 */
+.status-tag {
+  border: none !important;
+  background: transparent !important;
+  padding: 0 6px !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+}
+.status-tag:deep(.el-tag__content) {
+  padding: 0 6px;
+}
+
+/* 表格紧凑化 */
+.card-box :deep(.el-table) {
+  --el-table-row-height: 44px;
+  --el-table-border-color: var(--color-border-default, #e5e5e5);
+}
+.card-box :deep(.el-table th.el-table__cell) {
+  background: var(--color-canvas-inset, #f5f5f5) !important;
+  color: var(--color-fg-subtle, #888) !important;
+  font-weight: 500 !important;
+  font-size: 12px !important;
+}
+.card-box :deep(.el-table td.el-table__cell) {
+  padding: 8px 0 !important;
+  font-size: 12px !important;
+}
+
+/* 卡片（dialog/批量分析）弱化 */
+:deep(.el-card) {
+  border: 0.5px solid var(--color-border-default, #e5e5e5) !important;
+  border-radius: 10px !important;
+}
+:deep(.el-card__header) {
+  font-size: 13px;
+  font-weight: 500;
+  border-bottom: 0.5px solid var(--color-border-default, #e5e5e5);
+  padding: 14px 20px;
+}
+:deep(.el-card__body) {
+  padding: 16px 20px;
+}
+
+/* 按钮间距与默认样式 */
+:deep(.el-button) {
+  border-radius: 6px;
+  font-weight: 500;
+}
+.card-box :deep(.el-button) {
+  margin-left: 8px;
+}
+.card-box :deep(.el-button:first-child) {
+  margin-left: 0;
 }
 </style>

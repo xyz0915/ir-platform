@@ -80,9 +80,11 @@ class ImportService:
             )
         # 新增 4 个顶层字段计数（数据采集增强）
         for new_key in ["network_connections", "file_hashes",
-                        "wmi_subscriptions", "registry_keys"]:
+                        "wmi_subscriptions", "registry_keys",
+                        "files", "logs", "security", "browser",
+                        "usb", "remote_control", "ioc"]:
             val = data.get(new_key, [])
-            summary[new_key] = len(val) if isinstance(val, list) else 0
+            summary[new_key] = len(val) if isinstance(val, list) else (len(val.keys()) if isinstance(val, dict) else 0)
         return json.dumps(summary, ensure_ascii=False)
 
     @staticmethod
@@ -179,6 +181,13 @@ class ImportService:
                 "network_connections": "network",
                 "registry_keys": "registry",
                 "file_hashes": "files",
+                "files": "files",
+                "logs": "logs",
+                "security": "security",
+                "browser": "browser",
+                "usb": "usb",
+                "remote_control": "remote_control",
+                "ioc": "ioc",
                 "persistence_items": "persistence",
                 "wmi_subscriptions": "wmi",
                 "startup_items": "startup",
@@ -220,6 +229,13 @@ class ImportService:
                 "network_connections": "network_outbound",
                 "registry_keys": "registry_modify",
                 "file_hashes": "file_create",
+                "files": "file_event",
+                "logs": "log_event",
+                "security": "security_event",
+                "browser": "browser_event",
+                "usb": "usb_event",
+                "remote_control": "remote_control_event",
+                "ioc": "ioc_event",
                 "persistence_items": "persistence_register",
                 "wmi_subscriptions": "wmi_subscribe",
                 "startup_items": "persistence_register",

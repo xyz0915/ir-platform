@@ -62,43 +62,43 @@
 
 /* ---------- 暗色 ---------- */
 html.dark {
-  --color-canvas-default: #1a1a1a;
-  --color-canvas-subtle: #222222;
-  --color-canvas-inset: #111111;
+  --color-canvas-default: #161618;
+  --color-canvas-subtle: #1e1e20;
+  --color-canvas-inset: #121214;
 
-  --color-fg-default: #e5e5e5;
-  --color-fg-muted: #a3a3a3;
-  --color-fg-subtle: #888888;
-  --color-fg-light: #555555;
+  --color-fg-default: #d4d4d8;
+  --color-fg-muted: #a1a1aa;
+  --color-fg-subtle: #71717a;
+  --color-fg-light: #52525b;
 
-  --color-border-default: #333333;
+  --color-border-default: #27272a;
 
-  --color-accent-fg: #60a5fa;
-  --color-accent-emphasis: #3b82f6;
-  --color-accent-subtle: #1e3a5f;
+  --color-accent-fg: #818cf8;
+  --color-accent-emphasis: #6366f1;
+  --color-accent-subtle: #1e1a3a;
 
-  --color-danger-fg: #f87171;
-  --color-danger-emphasis: #ef4444;
-  --color-danger-subtle: #3b1f1f;
-  --color-success-fg: #4ade80;
-  --color-success-emphasis: #22c55e;
-  --color-success-subtle: #1a3a1a;
-  --color-warning-fg: #fbbf24;
-  --color-warning-emphasis: #f59e0b;
-  --color-warning-subtle: #3a2a1a;
+  --color-danger-fg: #fb7185;
+  --color-danger-emphasis: #f43f5e;
+  --color-danger-subtle: #2a151e;
+  --color-success-fg: #34d399;
+  --color-success-emphasis: #10b981;
+  --color-success-subtle: #14261b;
+  --color-warning-fg: #f59e0b;
+  --color-warning-emphasis: #d97706;
+  --color-warning-subtle: #261a0a;
 
-  --color-risk-critical: #f87171;
-  --color-risk-high: #f87171;
-  --color-risk-medium: #fbbf24;
-  --color-risk-low: #60a5fa;
-  --color-risk-info: #888888;
+  --color-risk-critical: #fb7185;
+  --color-risk-high: #fb7185;
+  --color-risk-medium: #f59e0b;
+  --color-risk-low: #818cf8;
+  --color-risk-info: #71717a;
 
-  --color-sidebar-bg: #1a1a1a;
-  --color-sidebar-fg: #e5e5e5;
-  --color-sidebar-fg-muted: #a3a3a3;
-  --color-sidebar-border: #333333;
-  --color-sidebar-hover-bg: #222222;
-  --color-sidebar-active-bg: #1e3a5f;
+  --color-sidebar-bg: #161618;
+  --color-sidebar-fg: #d4d4d8;
+  --color-sidebar-fg-muted: #a1a1aa;
+  --color-sidebar-border: #27272a;
+  --color-sidebar-hover-bg: #1e1e20;
+  --color-sidebar-active-bg: #1e1a3a;
   --color-fg-on-emphasis: #ffffff;
 
   --color-code-bg: #0d1117;
@@ -121,3 +121,5 @@ body,
 .batch-result {
   transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
 }
+
+/* 动态主题（由 themeStore 通过 setProperty 覆写） */

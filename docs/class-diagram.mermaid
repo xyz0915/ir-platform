@@ -1,81 +1,193 @@
 classDiagram
-    class ServiceRiskAnalyzer {
-        <<static>>
-        +analyze(raw_data: dict, host_id: int) dict
-        -_extract_services(raw_data: dict) list~dict~
-        -_detect_tamper(services: list) list~dict~
-        -_detect_shadow(services: list) list~dict~
-        -_detect_priv_esc(services: list) list~dict~
-        -_calc_edit_distance(a: str, b: str) float
-        -_normalize_path(path: str) str
-        -_calculate_aggregate_score(services: list) tuple
+    %% ===== SSE Event Model =====
+    class StreamingEvent {
+        +str event_name
+        +str session_id
+        +str intent
+        +float confidence
+    }
+    class TextChunkEvent {
+        +str type: "text"
+        +str content
+    }
+    class CardEvent {
+        +str type: "card"
+        +str card_type
+        +dict data
+        +list~str~ action_hints
+    }
+    class ActionConfirmEvent {
+        +str type: "action_confirm"
+        +str action
+        +str target
+        +str reason
+        +str confirm_id
+        +bool require_confirm
+    }
+    class ActionResultEvent {
+        +str type: "action_result"
+        +str action
+        +str status
+        +dict result
+        +int exec_time_ms
+        +str error
+    }
+    class PlaybookProgressEvent {
+        +str type: "playbook_progress"
+        +int step
+        +int total
+        +str current_step_name
+        +str status
+    }
+    class QueryEndEvent {
+        +str type: "query_end"
+        +str session_id
+        +dict usage
+        +str confidence
+        +list~str~ source_ids
+        +dict attack_path
     }
 
-    class ServiceRiskItem {
-        +service_name: str
-        +display_name: str
-        +status: str
-        +start_type: str
-        +binary_path: str
-        +user: str
-        +risk_score: int
-        +detections: list~DetectionResult~
+    %% ===== Action Model =====
+    class ActionIntent {
+        +str action
+        +dict target
+        +str reason
+        +bool confirm_required
+        +str confirm_id
+    }
+    class ActionResult {
+        +bool success
+        +str action
+        +str status
+        +dict result
+        +str error
+        +str rule_id
+        +int exec_time_ms
+        +list~str~ affected_hosts
+    }
+    class ActionMapEntry {
+        +str user_intent
+        +str action_name
+        +str backend_api
+        +bool high_risk
+        +str confirm_text
+        +callable executor
     }
 
-    class DetectionResult {
-        +rule_id: str
-        +rule_name: str
-        +triggered: bool
-        +severity: str
-        +weight: int
-        +detail: str
+    %% ===== Playbook Model =====
+    class PlaybookDef {
+        +str id
+        +str name
+        +str description
+        +list~PlaybookStep~ steps
+    }
+    class PlaybookStep {
+        +str name
+        +str action
+        +dict params
+        +str prompt
+        +list~str~ depends_on
+    }
+    class PlaybookStatus {
+        +str playbook_id
+        +str playbook_name
+        +str status
+        +int current_step
+        +int total_steps
+        +float progress_pct
+        +list~StepResult~ step_results
+    }
+    class StepResult {
+        +str step_name
+        +str status
+        +str output
+        +str error
+        +float duration_ms
     }
 
-    class ServiceRiskReport {
-        +services: list~ServiceRiskItem~
-        +aggregate_score: int
-        +summary: dict
-        +stats: dict
+    %% ===== Context Model =====
+    class ContextState {
+        +int host_id
+        +str host_name
+        +str host_ip
+        +int alert_count
+        +int risk_score
+        +str last_active
+        +bool pinned
+    }
+    class HostOption {
+        +int id
+        +str hostname
+        +str ip_address
+        +str status
+        +int alert_count
     }
 
-    class RiskAssessor {
-        <<static>>
-        +SEVERITY_WEIGHTS: dict
-        +RISK_LEVELS: list
-        +assess(findings: dict) dict
-        +calculate_score(findings: dict) int
-        -_calculate_category_score(items: list) int
-        -_score_to_level(score: int) str
-        -_generate_summary(risk_level: str, score: int, total: int, details: dict) str
+    %% ===== Attack Path Model =====
+    class AttackPathNode {
+        +str id
+        +str label
+        +str type
+        +str ip
+        +str severity
+        +int risk_score
+        +str detail_url
+    }
+    class AttackPathEdge {
+        +str source
+        +str target
+        +str technique_id
+        +str technique_name
+        +str time
+        +str confidence
+        +list~str~ evidence_ids
+    }
+    class AttackPathData {
+        +list~AttackPathNode~ nodes
+        +list~AttackPathEdge~ edges
+        +str summary
+        +int total_alerts
+        +int total_hosts
     }
 
-    class AnalysisService {
-        <<static>>
-        +analyze(host_id: int) dict
-        +get_analysis(host_id: int) dict
-        +get_service_risk(host_id: int) dict
-        -_inject_exe_signatures(raw_data: dict) None
-        -_build_tiered_data(raw_data: dict) dict
-        -_cross_validate(abnormal_processes: list, semantic_hits: list, suspicious_connections: list, webshell_hits: list, memory_shell_hits: list, persistence_items: list) list
-        -_aggregate_incidents(incidents: list) list
+    %% ===== Session Summary Model =====
+    class SessionSummary {
+        +str session_id
+        +str purpose
+        +dict coverage
+        +list~str~ key_findings
+        +list~dict~ actions_taken
+        +str status
+        +str generated_at
     }
 
-    class ServiceConstants {
-        <<constant>>
-        SECURITY_SERVICES: list~str~
-        SCORING_WEIGHTS: dict~str,int~
-        TRUSTED_PATHS: list~str~
-        KNOWN_LEGIT_SERVICES: set~str~
-        START_TYPE_RISK: dict~str,int~
-        SERVICE_NAME_SIMILARITY_THRESHOLD: float
-        SUSPICIOUS_PATH_KEYWORDS: list~str~
+    %% ===== File Upload Model =====
+    class FileUpload {
+        +str name
+        +str type
+        +str content_base64
+        +int size_bytes
+    }
+    class FileParseResult {
+        +bool success
+        +str file_type
+        +str parsed_text
+        +str intent
+        +str error
     }
 
-    ServiceRiskAnalyzer ..> ServiceRiskItem : produces
-    ServiceRiskItem *-- DetectionResult : contains (1..*)
-    ServiceRiskAnalyzer ..> ServiceRiskReport : produces
-    ServiceRiskReport o-- ServiceRiskItem : aggregates
-    ServiceRiskAnalyzer ..> ServiceConstants : reads
-    AnalysisService --> ServiceRiskAnalyzer : calls analyze()
-    AnalysisService ..> ServiceRiskReport : returns via API
-    RiskAssessor --> ServiceRiskReport : consumes for scoring
+    %% ===== Relationships =====
+    StreamingEvent <|-- TextChunkEvent
+    StreamingEvent <|-- CardEvent
+    StreamingEvent <|-- ActionConfirmEvent
+    StreamingEvent <|-- ActionResultEvent
+    StreamingEvent <|-- PlaybookProgressEvent
+    StreamingEvent <|-- QueryEndEvent
+    ActionIntent --> ActionResult : executes to
+    ActionMapEntry --> ActionIntent : maps to
+    PlaybookDef *-- PlaybookStep : contains
+    PlaybookStatus *-- StepResult : contains
+    PlaybookDef --> PlaybookStatus : produces
+    AttackPathData *-- AttackPathNode : contains
+    AttackPathData *-- AttackPathEdge : contains

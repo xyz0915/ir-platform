@@ -21,6 +21,7 @@ from app.models.security_event import (
 from app.services.auth_service import get_current_user
 from app.services.event_filter_service import build_events_where
 from app.services.event_normalizer import ingest_events
+from app.services.frontend_projection import get_event_display as get_display
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -148,6 +149,7 @@ def list_events(
     rule_id: Optional[int] = Query(None),
     rule_category: Optional[str] = Query(None),
     rule_confidence_min: Optional[float] = Query(None, ge=0.0, le=1.0),
+    ai_label: Optional[str] = Query(None, regex="^(recommended|suspicious|false_positive)?$"),
     time_range: Optional[str] = Query(None, regex="^(1h|24h|7d|all)?$"),
     sort_field: str = Query("timestamp"),
     sort_order: str = Query("desc"),
@@ -172,6 +174,7 @@ def list_events(
         "rule_id": rule_id,
         "rule_category": rule_category,
         "rule_confidence_min": rule_confidence_min,
+        "ai_label": ai_label,
         "time_range": time_range if time_range != "all" else None,
         "keyword": keyword,
         "start_time": start_time,
@@ -227,10 +230,47 @@ def list_events(
 
     items = [_row_to_dict(r) for r in rows]
 
-    # 附带统计（受筛选约束）
+    # 为每行注入 summary / t_code / source（列表渲染用）
+    from app.services.event_enrichment import build_event_summary
+    from app.services.frontend_projection import infer_t_code, infer_source
+    for item in items:
+        evi = item.get("evidence")
+        if isinstance(evi, str):
+            try:
+                evi = json.loads(evi)
+            except (json.JSONDecodeError, TypeError):
+                evi = {}
+
+        # AI 推荐事件：摘要显示原始事件的摘要（evidence._original_summary）
+        if item.get("event_type") == "ai_recommended":
+            orig_summary = (evi or {}).get("_original_summary", "")
+            item["summary"] = orig_summary or "AI推荐事件（原始摘要不可用）"
+        else:
+            item["summary"] = build_event_summary({
+                "event_type": item.get("event_type", ""),
+                "severity": item.get("severity", "info"),
+                "host_id": item.get("host_id"),
+                "hostname": item.get("hostname", ""),
+                "evidence": evi,
+            })
+        # MITRE T-code
+        mr = item.get("matched_rules", [])
+        if isinstance(mr, str):
+            try:
+                mr = json.loads(mr)
+            except (json.JSONDecodeError, TypeError):
+                mr = []
+        item["t_code"] = infer_t_code(item.get("event_type", ""), mr if isinstance(mr, list) else [])
+        item["source"] = infer_source(item)
+
+    # 附带统计（total_all 不受 filter 约束）
+    total_params_raw = dict(filter_params)
+    total_params_raw["filter"] = "all"
+    total_where_base, total_params_base = build_events_where(total_params_raw)
+
     with get_connection() as conn:
         total_all = conn.execute(
-            f"SELECT COUNT(*) as cnt FROM security_events se {where}", params
+            f"SELECT COUNT(*) as cnt FROM security_events se {total_where_base}", total_params_base
         ).fetchone()["cnt"]
         # 已匹配规则数（受筛选约束）
         matched_params = list(params)
@@ -401,9 +441,14 @@ def event_stats(
     }
     where, params = build_events_where(filter_params)
 
+    # total_events 不应受 filter(matched/unmatched) 约束——始终返回全部总数
+    total_params = dict(filter_params)
+    total_params["filter"] = "all"
+    total_where, total_params_list = build_events_where(total_params)
+
     with get_connection() as conn:
         total = conn.execute(
-            f"SELECT COUNT(*) as cnt FROM security_events se {where}", params
+            f"SELECT COUNT(*) as cnt FROM security_events se {total_where}", total_params_list
         ).fetchone()["cnt"]
 
         # 已匹配
@@ -440,13 +485,36 @@ def event_stats(
             ).fetchone()
             distinct_rules = row["cnt"] if row else 0
 
+        # AI 推荐/待复核/误报 计数（排除 ai_recommended 事件自身）
+        ai_base_where = total_where + " AND se.event_type != 'ai_recommended'"
+        ai_base_params = list(total_params_list)
+
+        ai_recommended = conn.execute(
+            f"SELECT COUNT(*) as c FROM security_events se {total_where} AND se.event_type='ai_recommended'",
+            total_params_list
+        ).fetchone()["c"]
+
+        ai_suspicious = conn.execute(
+            "SELECT COUNT(*) as c FROM security_events se WHERE json_extract(se.ai_verdict, '$.label')='suspicious'"
+        ).fetchone()["c"]
+
+        ai_false_positive = conn.execute(
+            "SELECT COUNT(*) as c FROM security_events se WHERE json_extract(se.ai_verdict, '$.label')='false_positive'"
+        ).fetchone()["c"]
+
+        # matched_events 排除 AI 推荐事件（避免重复计数）
+        matched_total_excluding_ai = matched_total - ai_recommended
+
     return success({
         "total_events": total,
-        "matched_events": matched_total,
+        "matched_events": matched_total_excluding_ai,
         "unmatched_events": total - matched_total,
         "distinct_rules_hit": distinct_rules,
         "today_new": today_new,
         "today_matched": today_matched,
+        "ai_recommended": ai_recommended,
+        "ai_suspicious": ai_suspicious,
+        "ai_false_positive": ai_false_positive,
     })
 
 
@@ -469,6 +537,22 @@ def get_event(event_id: str, current_user: dict = Depends(get_current_user)):
     if not row:
         raise HTTPException(status_code=404, detail="事件不存在")
     return success(_row_to_dict(row))
+
+
+@router.get("/events/{event_id}/display")
+def get_event_display(
+    event_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """事件前端展示投影（v2.1 FrontendProjection）。
+
+    返回必填 14 项 + 辅助 9 项 + 证据双视图（范式化视图 + 完整原始数据），
+    供分析中心前端列表/详情直接渲染。详见 analysis_center_optimization_design.md §10。
+    """
+    result = get_display(event_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="事件不存在")
+    return success(result)
 
 
 # ===================================================================

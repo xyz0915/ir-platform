@@ -1,7 +1,7 @@
 <template>
   <div class="alert-center">
     <div class="page-header">
-      <h2>🚨 实时告警</h2>
+      <h2>实时告警</h2>
       <div class="header-actions">
         <el-button size="small" @click="fetchData" :loading="loading">↻ 刷新</el-button>
       </div>
@@ -13,7 +13,7 @@
         <el-card shadow="never" class="stat-card critical">
           <div class="stat-label">待处理告警</div>
           <div class="stat-value">{{ stats.open }}</div>
-          <div class="stat-sub">严重 <strong style="color:#cf222e;">{{ stats.critical }}</strong> 条</div>
+          <div class="stat-sub">严重 <strong style="color:var(--color-text-danger);">{{ stats.critical }}</strong> 条</div>
         </el-card>
       </el-col>
       <el-col :span="6">
@@ -87,8 +87,8 @@
         <el-button size="small" type="primary" @click="fetchData">搜索</el-button>
         <el-button size="small" @click="resetAllFilters" :disabled="!hasAnyFilter">重置</el-button>
         <div style="flex:1" />
-        <el-button size="small" type="primary" plain @click="batchAck" :disabled="selected.length === 0">✅ 批量确认</el-button>
-        <el-button size="small" type="success" plain @click="batchResolve" :disabled="selected.length === 0">✅ 批量解决</el-button>
+        <el-button size="small" type="primary" plain @click="batchAck" :disabled="selected.length === 0">批量确认</el-button>
+        <el-button size="small" type="success" plain @click="batchResolve" :disabled="selected.length === 0">批量解决</el-button>
       </div>
       <!-- 已选条件标签 -->
       <div v-if="hasAnyFilter" class="filter-tags">
@@ -133,7 +133,7 @@
       <el-table-column prop="count" label="次数" width="60" align="center" />
       <el-table-column label="时间" width="160">
         <template #default="{ row }">
-          <span style="font-size:12px;color:#6b7280;">{{ formatTime(row.last_seen_at || row.first_seen_at) }}</span>
+          <span style="font-size:12px;color:var(--color-text-secondary);">{{ formatTime(row.last_seen_at || row.first_seen_at) }}</span>
         </template>
       </el-table-column>
       <el-table-column label="状态" width="90">
@@ -157,7 +157,7 @@
     </div>
 
     <!-- 详情抽屉 -->
-    <el-drawer v-model="drawerVisible" :title="'🔍 ' + (detailAlert?.title || '告警详情')" size="480px">
+    <el-drawer v-model="drawerVisible" :title="(detailAlert?.title || '告警详情')" size="480px">
       <template v-if="detailAlert">
         <div class="detail-section">
           <div class="d-label">严重度</div>
@@ -431,24 +431,24 @@ onUnmounted(() => {
 .header-actions { display: flex; gap: 8px; }
 
 .stats-row { margin-bottom: 16px; }
-.stat-card { border-left: 3px solid #9ca3af; }
-.stat-card.critical { border-left-color: #cf222e; }
-.stat-card.high { border-left-color: #d4a72c; }
-.stat-card.medium { border-left-color: #0969da; }
-.stat-card.low { border-left-color: #656d76; }
-.stat-label { font-size: 12px; color: #9ca3af; margin-bottom: 4px; }
+.stat-card { border-left: 3px solid var(--color-text-tertiary); }
+.stat-card.critical { border-left-color: var(--color-text-danger); }
+.stat-card.high { border-left-color: var(--color-text-warning); }
+.stat-card.medium { border-left-color: var(--color-text-info); }
+.stat-card.low { border-left-color: var(--color-text-tertiary); }
+.stat-label { font-size: 12px; color: var(--color-text-secondary); margin-bottom: 4px; }
 .stat-value { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
-.stat-sub { font-size: 11px; color: #9ca3af; margin-top: 4px; }
+.stat-sub { font-size: 11px; color: var(--color-text-tertiary); margin-top: 4px; }
 
 .filter-bar { margin-bottom: 0; }
 .filter-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.filter-tags { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 8px; padding-top: 8px; border-top: 1px solid #f3f4f6; }
+.filter-tags { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 8px; padding-top: 8px; border-top: 0.5px solid var(--color-border-tertiary); }
 
-.alert-title { font-weight: 500; color: #1f2937; }
-.alert-detail { font-size: 11px; color: #9ca3af; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 300px; }
+.alert-title { font-weight: 500; color: var(--color-text-primary); }
+.alert-detail { font-size: 11px; color: var(--color-text-tertiary); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 300px; }
 
 .detail-section { margin-bottom: 8px; }
-.d-label { font-size: 11px; color: #9ca3af; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.3px; }
-.d-value { font-size: 14px; color: #1f2937; }
-.d-detail { font-size: 12px; color: #6b7280; margin-top: 4px; line-height: 1.6; }
+.d-label { font-size: 11px; color: var(--color-text-tertiary); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.3px; }
+.d-value { font-size: 14px; color: var(--color-text-primary); }
+.d-detail { font-size: 12px; color: var(--color-text-secondary); margin-top: 4px; line-height: 1.6; }
 </style>

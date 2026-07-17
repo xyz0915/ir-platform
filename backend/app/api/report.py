@@ -148,16 +148,29 @@ def get_report(report_id: int):
 def create_report(title: str = "未命名报告", report_type: str = "emergency",
                    audience: str = "leader", case_id: int = 0, host_id: int = 0,
                    created_by: str = ""):
-    """新建报告."""
+    """新建报告.
+
+    host_id=0 / case_id=0 表示"不关联特定主机/案件"，入库时为 NULL.
+    """
     try:
         from datetime import datetime
         now = datetime.now().isoformat()
+        cols = ["title", "report_type", "audience", "status", "created_at", "updated_at"]
+        vals: list = [title, report_type, audience, "draft", now, now]
+        if case_id:
+            cols.append("case_id")
+            vals.append(case_id)
+        if host_id:
+            cols.append("host_id")
+            vals.append(host_id)
+        if created_by:
+            cols.append("created_by")
+            vals.append(created_by)
+        placeholders = ",".join("?" for _ in vals)
         with db.get_connection() as conn:
             cur = conn.execute(
-                """INSERT INTO incident_reports (title, report_type, audience, status,
-                   case_id, host_id, created_by, created_at, updated_at)
-                   VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?)""",
-                [title, report_type, audience, case_id or None, host_id or None, created_by, now, now]
+                f"INSERT INTO incident_reports ({','.join(cols)}) VALUES ({placeholders})",
+                vals,
             )
             conn.commit()
             return {"success": True, "data": {"id": cur.lastrowid}}

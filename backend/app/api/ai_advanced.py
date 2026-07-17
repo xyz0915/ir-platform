@@ -3,12 +3,18 @@
 包含: 语义降噪 & 事件归并 / 自然语言指挥台 / 攻击故事讲述 / 误报自学习 / 预测预警
 """
 
+import asyncio
 import json
 import logging
+import time
+import uuid
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from app.services.auth_service import get_current_user
+from app.services.ai_service import AiService
+from app.models.ai_config import AiConfigProfile
 from app.database import get_connection
 
 logger = logging.getLogger(__name__)
@@ -133,11 +139,11 @@ def correlate_incidents(
 # ─────────────────────────────────────────────
 
 @router.post("/ai/query")
-def ai_nl_query(
+async def ai_nl_query(
     query: str = Query(""),
     current_user: dict = Depends(get_current_user),
 ):
-    """自然语言 → 结构化查询 + 返回结果."""
+    """自然语言 → 结构化查询 + 返回结果 (LLM 增强版)."""
     if not query.strip():
         return {"success": True, "data": {
             "intent": "unknown", "params": {}, "summary": "请输入问题",
@@ -153,9 +159,8 @@ def ai_nl_query(
     if any(kw in q for kw in ("告警", "alert", "严重", "alerts")):
         intent = "alerts"
         params["limit"] = 20
-        if "严重" in q or "critical" in q:
-            params["severity"] = "critical"
-        if "高危" in q or "high" in q:
+        if "严重" in q or "critical" in q or "高危" in q or "high" in q:
+            # 数据库中告警严重度字段为 high/medium/low
             params["severity"] = "high"
         if "未处理" in q or "open" in q or "待处理" in q:
             params["status"] = "open"
@@ -167,7 +172,7 @@ def ai_nl_query(
         if "登录" in q or "login" in q:
             params["event_type"] = "failed_logon,successful_logon"
         if "失败" in q or "fail" in q:
-            params["severity"] = "high"
+            params["event_type"] = "failed_logon"
         if any(kw in q for kw in ("进程", "process", "创建")):
             params["event_type"] = "process_creation"
 
@@ -193,6 +198,15 @@ def ai_nl_query(
         intent = "policies"
 
     result = _execute_query(intent, params, q)
+
+    # 调用 LLM 生成智能回复（非 unknown 意图时异步执行）
+    if intent != "unknown":
+        data_json = json.dumps(result.get("data"), ensure_ascii=False, default=str)[:2000]
+        llm_reply = await _llm_summary(q, intent, data_json)
+        if llm_reply:
+            result["summary"] = llm_reply
+            result["llm_generated"] = True
+
     return {"success": True, "data": result}
 
 
@@ -281,6 +295,62 @@ def _execute_query(intent: str, params: dict, raw_query: str) -> dict:
             result["summary"] = f"未识别查询意图: {raw_query}。支持: 告警/日志/主机/案件/统计/策略"
 
     return result
+
+
+async def _llm_summary(query: str, intent: str, data_json: str) -> str:
+    """调用 LLM 生成自然语言分析回复.
+
+    Args:
+        query: 用户原始查询.
+        intent: 识别出的意图 (alerts/logs/hosts/cases/stats/policies).
+        data_json: 查询结果的 JSON 字符串（前 2000 字符）.
+
+    Returns:
+        LLM 生成的回复文本；失败或配置缺失时返回空字符串（静默降级）.
+    """
+    try:
+        profile = AiConfigProfile.get_active()
+        if not profile:
+            return ""
+
+        # 解密 API Key（数据库中存储的是加密值）
+        api_key = AiService.decrypt_api_key(profile["api_key"])
+
+        system_prompt = """你是一个网络安全分析助手，负责对用户的查询结果给出简明、专业的分析回复。
+
+回复要求：
+- 用自然语言（中文）回复，不要用模板格式
+- 先说结论（是否有问题）
+- 接着提供关键数据洞察
+- 最后给出 1-2 条行动建议
+- 如果数据为空，用肯定语气告知用户状态良好
+- 语气专业、简洁，每条回复控制在 150 字以内
+- 不要出现"根据数据"、"分析如下"等套话"""
+
+        user_prompt = f"""用户查询: {query}
+查询类型: {intent}
+查询结果: {data_json or '无数据'}
+
+请根据上述信息给用户一个专业、有用的回复。"""
+
+        result = await AiService.call_llm(
+            api_base_url=profile["api_base_url"],
+            api_key=api_key,
+            model=profile["model_name"],
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            max_tokens=600,
+            temperature=0.7,
+        )
+
+        choices = result.get("choices", [])
+        if choices:
+            content = choices[0].get("message", {}).get("content", "")
+            return content.strip()
+        return ""
+    except Exception as e:
+        logger.warning("LLM summary generation failed: %s", e)
+        return ""
 
 
 # ─────────────────────────────────────────────
@@ -513,3 +583,483 @@ def _calculate_risk_score(host_id: int) -> int:
         logger.debug("Risk score calc failed for host %d: %s", host_id, e)
 
     return min(score, 100)
+
+
+# ================================================================
+# T-001: SSE 流式查询端点
+# ================================================================
+
+from fastapi.responses import StreamingResponse
+from app.schemas.ai_advanced import (
+    TextChunkEvent, CardEvent, ActionConfirmEvent, ActionResultEvent,
+    PlaybookProgressEvent, QueryStartEvent, QueryEndEvent, SessionSummary,
+    FileUpload,
+)
+
+
+@router.get("/ai/query-stream")
+async def ai_query_stream(
+    query: str = Query(""),
+    session_id: str = Query(""),
+    host_id: Optional[int] = Query(None),
+    start_time: Optional[str] = Query(None),
+    end_time: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
+):
+    """SSE 流式自然语言查询 — 逐字返回 AI 分析结果 + 内联富卡片."""
+    if not query.strip():
+        return {"success": True, "data": {"intent": "unknown", "summary": "请输入问题", "data": None}}
+
+    async def event_stream():
+        sid = session_id or str(uuid.uuid4())[:8]
+        t_start = time.time()
+        # 发送 query_start 事件
+        yield f"event: query_start\ndata: {json.dumps({'type': 'query_start', 'session_id': sid, 'intent': ''})}\n\n"
+
+        # 完整意图识别（与 /ai/query 一致）
+        q = query.lower().strip()
+        intent = "unknown"
+        params = {}
+        if any(kw in q for kw in ("告警", "alert", "严重", "alerts")):
+            intent = "alerts"
+            params["limit"] = 50
+            # 不设 severity/status 过滤：让 _execute_query 返回全部告警
+            # 数据库实际上使用 high/medium/low，没有 critical
+            # 用户在空数据时看到的是友好占位卡，而非空泡
+        elif any(kw in q for kw in ("日志", "log", "登录", "login", "失败")):
+            intent = "logs"
+            params["page_size"] = 50
+            # 不设 event_type 过滤：数据库 event_type 值多样（Windows 系统事件）
+            # 精确匹配容易筛空，让用户通过结果自行定位
+        elif any(kw in q for kw in ("主机", "host", "机器", "服务器", "server")):
+            intent = "hosts"
+            # 不设 status 过滤：数据库中主机状态可能是 analyzed/online/offline
+        elif any(kw in q for kw in ("案件", "case", "事件", "incident", "未结")):
+            intent = "cases"
+            params["limit"] = 20
+        elif any(kw in q for kw in ("统计", "stats", "汇总", "总数", "分布")):
+            intent = "stats"
+        elif any(kw in q for kw in ("策略", "policy", "规则", "rule")):
+            intent = "policies"
+            params["limit"] = 20
+
+        # 执行查询（复用已有 _execute_query）
+        result = _execute_query(intent, params, q)
+
+        # 流式返回文本结果
+        data_field = result.get("data")
+        if isinstance(data_field, list):
+            items = data_field
+            item_count = len(items)
+        elif isinstance(data_field, dict) and data_field:
+            items = [data_field]
+            item_count = 1
+        else:
+            items = []
+            item_count = 0
+        summary = result.get("summary", f"查询完成，共 {item_count} 条结果")
+
+        # 文本逐块发送（打字机效果）
+        chunk_size = 3
+        for i in range(0, len(summary), chunk_size):
+            chunk = summary[i:i + chunk_size]
+            event = TextChunkEvent(type="text", content=chunk, session_id=sid, intent=intent)
+            yield f"event: text_chunk\ndata: {event.model_dump_json()}\n\n"
+            await asyncio.sleep(0.06)  # 60ms/块 = 约15字/秒的可读打字机速度
+
+        # 发送富卡片：永远发卡，避免空泡
+        # 1) 选卡片类型
+        card_type = "alert_list" if intent == "alerts" else \
+            "host_list" if intent == "hosts" else \
+            "log_list" if intent == "logs" else \
+            "stats_chart" if intent == "stats" else \
+            "policy_list" if intent == "policies" else \
+            "case_list" if intent == "cases" else "generic"
+        # 2) 准备数据：有数据用真实数据，无数据用占位
+        if item_count > 0:
+            card_data = items[:10] if intent != "stats" else [data_field]
+        else:
+            # 无数据时也发卡 — 显式标记 _empty 与 _message，前端可识别渲染
+            empty_msg = (
+                "未找到符合条件的告警，请尝试调整查询条件（如放宽严重度、扩大时间范围）"
+                if intent == "alerts" else
+                "未找到匹配的主机，请检查筛选条件或确认 Agent 已部署"
+                if intent == "hosts" else
+                "未找到匹配的日志，请放宽时间范围或更换关键词"
+                if intent == "logs" else
+                f"统计完成：{summary}"
+                if intent == "stats" else
+                "未找到匹配的案件"
+                if intent == "cases" else
+                "未找到匹配的策略"
+                if intent == "policies" else
+                f"未识别查询意图: {query}。\n\n支持的关键字：\n• 告警/严重/未处理\n• 日志/登录/失败\n• 主机/在线/离线\n• 案件/未结\n• 统计/汇总\n• 策略/规则"
+            )
+            card_data = [{ "_empty": True, "_message": empty_msg, "intent": intent }]
+        card_event = CardEvent(type="card", card_type=card_type, data=card_data, session_id=sid, intent=intent)
+        yield f"event: card\ndata: {card_event.model_dump_json()}\n\n"
+
+        # === 附加：LLM AI 分析（可选，有 AI 配置时自动执行）===
+        if intent not in ("unknown", "") and item_count > 0:
+            try:
+                data_json = json.dumps(data_field if isinstance(data_field, (list, dict)) else [], ensure_ascii=False, default=str)[:1500]
+                ai_analysis = await _llm_summary(query, intent, data_json)
+                if ai_analysis:
+                    # AI 分析文本逐块流式输出（前缀 "[AI 分析]"）
+                    prefix = "\n\n**AI 分析**\n"
+                    full_text = prefix + ai_analysis
+                    chunk_size = 4
+                    for i in range(0, len(full_text), chunk_size):
+                        chunk = full_text[i:i + chunk_size]
+                        event = TextChunkEvent(type="text", content=chunk, session_id=sid, intent=intent)
+                        yield f"event: text_chunk\ndata: {event.model_dump_json()}\n\n"
+                        await asyncio.sleep(0.05)
+            except Exception as e:
+                logger.debug("SSE LLM analysis skipped: %s", e)
+
+        # 发送 query_end 事件（带性能数据）
+        t_elapsed = int((time.time() - t_start) * 1000)
+        end_event = QueryEndEvent(
+            type="query_end", session_id=sid, usage={}, confidence="high",
+            exec_time_ms=t_elapsed, results_count=item_count,
+        )
+        yield f"event: query_end\ndata: {end_event.model_dump_json()}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# ================================================================
+# T-006: 自然语言报表生成
+# ================================================================
+
+@router.get("/ai/generate-report")
+async def generate_report(
+    query: str = Query(""),
+    current_user: dict = Depends(get_current_user),
+):
+    """生成安全态势报告 — 自动执行多步查询链，聚合输出完整报告."""
+    now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    from app.database import get_connection
+
+    with get_connection() as conn:
+        total_logs = conn.execute("SELECT COUNT(*) FROM normalized_logs").fetchone()[0]
+        total_alerts = conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0]
+        open_alerts = conn.execute("SELECT COUNT(*) FROM alerts WHERE status='open'").fetchone()[0]
+        high_alerts = conn.execute("SELECT COUNT(*) FROM alerts WHERE severity='high'").fetchone()[0]
+        total_hosts = conn.execute("SELECT COUNT(*) FROM hosts").fetchone()[0]
+        total_cases = conn.execute("SELECT COUNT(*) FROM cases").fetchone()[0]
+        open_cases = conn.execute("SELECT COUNT(*) FROM cases WHERE status='open'").fetchone()[0]
+        total_policies = conn.execute("SELECT COUNT(*) FROM detection_policies").fetchone()[0]
+
+        # 最近 24h 告警
+        recent_alerts = conn.execute(
+            "SELECT COUNT(*) FROM alerts WHERE last_seen_at >= datetime('now', '-1 day')"
+        ).fetchone()[0]
+
+        # 严重度分布
+        severity_dist = conn.execute(
+            "SELECT severity, COUNT(*) as cnt FROM alerts GROUP BY severity ORDER BY cnt DESC"
+        ).fetchall()
+        severity_dist = [{"severity": r["severity"], "count": r["cnt"]} for r in severity_dist]
+
+        # 告警来源主机Top5
+        top_hosts = conn.execute(
+            "SELECT h.hostname, COUNT(*) as cnt FROM alerts a JOIN hosts h ON a.host_id=h.id GROUP BY a.host_id ORDER BY cnt DESC LIMIT 5"
+        ).fetchall()
+        top_hosts = [{"hostname": r["hostname"], "count": r["cnt"]} for r in top_hosts]
+
+    report = {
+        "generated_at": now,
+        "query": query,
+        "summary": f"当前系统运行状态：{total_logs} 条日志，{total_alerts} 条告警（其中 {high_alerts} 条高危），"
+                    f"{open_alerts} 条未处理，{total_hosts} 台主机，"
+                    f"{total_cases} 个案件（{open_cases} 个未结），"
+                    f"最近 24h 新增告警 {recent_alerts} 条。",
+        "sections": [
+            {
+                "title": "告警概览",
+                "items": [
+                    f"总告警数: {total_alerts}",
+                    f"高危告警: {high_alerts}",
+                    f"未处理: {open_alerts}",
+                    f"最近24h: {recent_alerts}",
+                ],
+                "severity_dist": severity_dist,
+                "top_hosts": top_hosts,
+            },
+            {"title": "日志总量", "items": [f"已收录日志: {total_logs} 条"]},
+            {"title": "主机概况", "items": [f"受管主机: {total_hosts} 台"]},
+            {"title": "案件追踪", "items": [f"总案件: {total_cases}（未结 {open_cases}）"]},
+            {"title": "检测策略", "items": [f"策略数: {total_policies}"]},
+        ],
+        "suggestions": [
+            f"当前有 {open_alerts} 条未处理告警，建议及时研判处置" if open_alerts > 0 else "告警已全部处置",
+            f"最近 24h 产生 {recent_alerts} 条新告警，建议关注" if recent_alerts > 5 else "最近 24h 告警量正常",
+            f"共 {total_cases} 个案件进行中，建议定期复盘" if open_cases > 0 else "无进行中案件",
+        ],
+    }
+    return {"success": True, "data": report}
+
+
+# ================================================================
+# T-003: Action 执行 + 主机上下文 API
+# ================================================================
+
+
+@router.post("/ai/execute-action")
+async def execute_action(
+    action: str = Query(""),
+    target: str = Query("{}"),
+    confirm_id: str = Query(""),
+    current_user: dict = Depends(get_current_user),
+):
+    """执行操作（封锁/隔离/导出等）."""
+    from app.services.action_service import ActionService
+    target_dict = json.loads(target) if isinstance(target, str) else target
+    result = await ActionService.execute(action, target_dict)
+    return {"success": True, "data": result.model_dump()}
+
+
+@router.get("/ai/context-hosts")
+async def get_context_hosts(
+    current_user: dict = Depends(get_current_user),
+):
+    """获取可选主机列表（用于上下文指示器切换）."""
+    from app.database import get_connection
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, hostname, ip_address, status FROM hosts ORDER BY id LIMIT 20"
+        ).fetchall()
+        hosts = [dict(r) for r in rows]
+    return {"success": True, "data": hosts}
+
+
+# ================================================================
+# T-004: 剧本 API + 会话摘要
+# ================================================================
+
+import yaml
+from app.services.playbook_engine import PlaybookEngine
+
+# 全局剧本引擎实例
+_playbook_engine = PlaybookEngine()
+
+
+@router.post("/ai/playbook/start")
+async def start_playbook(
+    playbook_id: str = Query(""),
+    session_id: str = Query(""),
+    current_user: dict = Depends(get_current_user),
+):
+    """启动调查剧本."""
+    status = await _playbook_engine.start(playbook_id, session_id)
+    return {"success": True, "data": status.model_dump()}
+
+
+@router.get("/ai/playbook/status")
+async def get_playbook_status(current_user: dict = Depends(get_current_user)):
+    """获取剧本当前执行状态."""
+    status = await _playbook_engine.get_status()
+    return {"success": True, "data": status.model_dump()}
+
+
+@router.post("/ai/playbook/control")
+async def control_playbook(
+    action: str = Query(""),
+    current_user: dict = Depends(get_current_user),
+):
+    """控制剧本（pause / resume / skip / stop）."""
+    status = await _playbook_engine.control(action)
+    return {"success": True, "data": status.model_dump()}
+
+
+@router.get("/ai/playbook/step")
+async def get_playbook_step(current_user: dict = Depends(get_current_user)):
+    """获取当前步骤的执行结果."""
+    result, step_type, params = await _playbook_engine.execute_step()
+    return {"success": True, "data": {"result": result.model_dump(), "step_type": step_type, "params": params}}
+
+
+@router.post("/ai/session-summary")
+async def generate_session_summary(
+    session_id: str = Query(""),
+    current_user: dict = Depends(get_current_user),
+):
+    """生成会话摘要（基于会话内容的结构化摘要）."""
+    now = time.strftime("%Y-%m-%dT%H:%M:%S")
+    summary = SessionSummary(
+        session_id=session_id,
+        purpose="AI 辅助调查",
+        coverage={"queries": 0, "alerts_reviewed": 0, "hosts_involved": 0},
+        key_findings=["暂无"],
+        actions_taken=[],
+        status="completed",
+        generated_at=now,
+    ).model_dump()
+    return {"success": True, "data": summary}
+
+
+# ================================================================
+# T-007: v3.1 新功能
+# ================================================================
+
+@router.post("/ai/feedback")
+async def submit_feedback(
+    session_id: str = Query(""),
+    query: str = Query(""),
+    reply: str = Query(""),
+    rating: int = Query(0, ge=-1, le=1),
+    comment: str = Query(""),
+    current_user: dict = Depends(get_current_user),
+):
+    """提交用户反馈（有用/无用/评分）. """
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO ai_feedback (session_id, query, reply, rating, comment) VALUES (?,?,?,?,?)",
+            [session_id, query, reply, rating, comment],
+        )
+        conn.commit()
+    return {"success": True, "data": {"message": "反馈已记录"}}
+
+
+@router.get("/ai/feedback/stats")
+async def feedback_stats(current_user: dict = Depends(get_current_user)):
+    """获取反馈统计. """
+    with get_connection() as conn:
+        total = conn.execute("SELECT COUNT(*) FROM ai_feedback").fetchone()[0]
+        useful = conn.execute("SELECT COUNT(*) FROM ai_feedback WHERE rating=1").fetchone()[0]
+        useless = conn.execute("SELECT COUNT(*) FROM ai_feedback WHERE rating=-1").fetchone()[0]
+    return {"success": True, "data": {"total": total, "useful": useful, "useless": useless}}
+
+
+@router.post("/ai/nl-understand")
+async def nl_understand(
+    query: str = Query(""),
+    current_user: dict = Depends(get_current_user),
+):
+    """语义意图识别 — 利用已配置 LLM 理解用户自然语言."""
+    if not query.strip():
+        return {"success": True, "data": {"intent": "unknown", "params": {}, "explain": "请输入查询"}}
+
+    profile = AiConfigProfile.get_active()
+    if not profile:
+        # 降级为关键词匹配
+        q = query.lower()
+        if any(k in q for k in ("告警", "alert", "严重", "alerts")):
+            return {"success": True, "data": {"intent": "alerts", "params": {}, "explain": "关键词匹配: 告警"}}
+        if any(k in q for k in ("日志", "log", "登录", "login", "失败")):
+            return {"success": True, "data": {"intent": "logs", "params": {}, "explain": "关键词匹配: 日志"}}
+        if any(k in q for k in ("主机", "host", "机器", "服务器", "server")):
+            return {"success": True, "data": {"intent": "hosts", "params": {}, "explain": "关键词匹配: 主机"}}
+        if any(k in q for k in ("案件", "case", "事件", "incident", "未结")):
+            return {"success": True, "data": {"intent": "cases", "params": {}, "explain": "关键词匹配: 案件"}}
+        if any(k in q for k in ("统计", "stats", "汇总", "总数", "分布")):
+            return {"success": True, "data": {"intent": "stats", "params": {}, "explain": "关键词匹配: 统计"}}
+        if any(k in q for k in ("策略", "policy", "规则", "rule")):
+            return {"success": True, "data": {"intent": "policies", "params": {}, "explain": "关键词匹配: 策略"}}
+        return {"success": True, "data": {"intent": "unknown", "params": {}, "explain": "无AI配置，关键词降级"}}
+
+    api_key = AiService.decrypt_api_key(profile["api_key"])
+    system_prompt = """你是一个安全分析助手的意图识别模块。
+用户输入一句自然语言查询，请输出 JSON 格式的意图和参数：
+{
+  "intent": "alerts|logs|hosts|cases|stats|policies|report|unknown",
+  "params": {},
+  "explain": "简短说明分析结果"
+}
+关键词参考：严重告警=alerts, 日志/登录/log=logs, 主机/机器/server=hosts, 案件/事件=cases, 统计/总=stats, 策略/规则=policies, 报告=report"""
+    try:
+        result = await AiService.call_llm(
+            api_base_url=profile["api_base_url"],
+            api_key=api_key,
+            model=profile["model_name"],
+            system_prompt=system_prompt,
+            user_prompt=query,
+            max_tokens=300,
+            temperature=0.1,
+        )
+        choices = result.get("choices", [])
+        if choices:
+            content = choices[0].get("message", {}).get("content", "")
+            import re
+            m = re.search(r'\{.*\}', content, re.DOTALL)
+            if m:
+                parsed = json.loads(m.group())
+                return {"success": True, "data": parsed}
+    except Exception as e:
+        logger.warning("nl-understand LLM failed: %s", e)
+    return {"success": True, "data": {"intent": "unknown", "params": {}, "explain": "LLM解析失败"}}
+
+
+@router.get("/ai/audit-log")
+async def get_audit_log(
+    days: int = Query(7),
+    current_user: dict = Depends(get_current_user),
+):
+    """AI 调用用量统计. """
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT endpoint, COUNT(*) as calls, COALESCE(SUM(total_tokens),0) as tokens, "
+            "COALESCE(SUM(latency_ms),0) as total_ms FROM ai_audit_log "
+            "WHERE created_at >= datetime('now', ? || ' days') GROUP BY endpoint",
+            [f"-{days}"],
+        ).fetchall()
+        total = conn.execute("SELECT COUNT(*) FROM ai_audit_log").fetchone()[0]
+        total_tokens = conn.execute("SELECT COALESCE(SUM(total_tokens),0) FROM ai_audit_log").fetchone()[0]
+    return {"success": True, "data": {"total_calls": total, "total_tokens": total_tokens, "detail": [dict(r) for r in rows]}}
+
+
+# 预案预置数据
+DEFAULT_PRESETS = [
+    {"name": "RDP 爆破应急", "description": "检测 RDP 爆破后自动封锁来源 IP，隔离受影响主机", "tags": ["T1110"],
+     "steps": [{"action": "block_ip", "target": "{source_ip}"}, {"action": "isolate_host", "target": "{host_id}"}]},
+    {"name": "Webshell 清除", "description": "检测到 Webshell 后封锁来源 IP，取证，通知", "tags": ["T1505"],
+     "steps": [{"action": "block_ip", "target": "{source_ip}"}, {"action": "export_report", "target": "{host_id}"}]},
+    {"name": "数据外泄响应", "description": "检测到异常外连 C2 后隔离主机，封锁 C2 IP", "tags": ["T1041"],
+     "steps": [{"action": "isolate_host", "target": "{host_id}"}, {"action": "block_ip", "target": "{dest_ip}"}]},
+]
+
+
+@router.get("/ai/presets")
+async def list_presets(current_user: dict = Depends(get_current_user)):
+    """获取预案模板列表. """
+    from app.database import get_connection
+    with get_connection() as conn:
+        rows = conn.execute("SELECT * FROM playbook_presets ORDER BY id").fetchall()
+    db_presets = [dict(r) for r in rows]
+    all_presets = DEFAULT_PRESETS + [{"name": p["name"], "description": p["description"],
+                                       "tags": p["tags"], "steps": json.loads(p["steps"]) if isinstance(p["steps"], str) else p["steps"]}
+                                      for p in db_presets]
+    return {"success": True, "data": all_presets}
+
+
+@router.get("/ai/feedback/list")
+async def list_feedback(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50),
+    current_user: dict = Depends(get_current_user),
+):
+    """获取反馈列表. """
+    with get_connection() as conn:
+        offset = (page - 1) * page_size
+        rows = conn.execute(
+            "SELECT * FROM ai_feedback ORDER BY id DESC LIMIT ? OFFSET ?",
+            [page_size, offset],
+        ).fetchall()
+        total = conn.execute("SELECT COUNT(*) FROM ai_feedback").fetchone()[0]
+    return {"success": True, "data": {"items": [dict(r) for r in rows], "total": total}}
+
+
+# ================================================================
+# T-005: 文件解析 API
+# ================================================================
+
+@router.post("/ai/parse-file")
+async def parse_uploaded_file(
+    body: FileUpload,
+    current_user: dict = Depends(get_current_user),
+):
+    """解析上传文件并返回结构化内容（JSON body 方式，避免 base64 URL 过长）. """
+    from app.services.file_parser import FileParser
+    result = FileParser.parse(body.name, body.content_base64)
+    return {"success": True, "data": result}

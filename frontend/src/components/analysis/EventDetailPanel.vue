@@ -1,20 +1,64 @@
 <template>
   <div class="event-detail-panel">
-    <!-- 标题栏 -->
-    <div class="detail-header">
-      <div class="header-left">
-        <span class="severity-badge" :class="'badge-' + (event.severity || 'info')">
-          {{ event.severity }}
-        </span>
-        <span class="event-id" :title="event.id">
-          {{ event.id ? event.id.substring(0, 12) + '...' : '' }}
-        </span>
+    <!-- 决策条（§10.3） -->
+    <div class="decision-bar">
+      <div class="db-left">
+        <span class="severity-badge" :class="'badge-' + (event.severity || 'info')">{{ event.severity }}</span>
+        <span class="db-risk" :style="{ color: riskScoreColor(riskScore) }">{{ riskScore }}</span>
+        <span v-if="categoryLabel" class="db-category" :class="'cat-' + (event.category || 'unknown')">{{ categoryLabel }}</span>
+        <span v-if="event.attack_stage" class="db-stage">{{ stageLabel(event.attack_stage) }}</span>
+        <span class="db-status" :class="'stat-' + (event.status || 'pending')">{{ statusLabel(event.status) }}</span>
       </div>
-      <button class="close-btn" @click="$emit('close')">
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-          <path d="M1 1L13 13M13 1L1 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-        </svg>
+      <button class="close-btn-fixed" @click="$emit('close')" title="关闭">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 1L13 13M13 1L1 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
       </button>
+    </div>
+
+    <!-- 操作行（按钮组） -->
+    <div class="action-row">
+      <button v-if="event.status === 'pending'" class="btn btn-primary btn-xs" @click="onStatusChange('triaging')">分诊</button>
+      <button v-if="event.status === 'triaging'" class="btn btn-warning btn-xs" @click="onStatusChange('investigating')">调查</button>
+      <button v-if="event.status === 'investigating'" class="btn btn-success btn-xs" @click="onStatusChange('resolved')">解决</button>
+      <button v-if="event.status === 'resolved'" class="btn btn-warning btn-xs" @click="onStatusChange('investigating')">重开</button>
+      <button v-if="event.status !== 'rejected' && event.status !== 'resolved'" class="btn btn-danger btn-xs" @click="onStatusChange('rejected')">误报</button>
+    </div>
+
+    <!-- 查看详情入口 -->
+    <div class="detail-section edv-entry">
+      <router-link :to="'/analysis-center/event/' + event.id" class="edv-entry-btn">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 4L8 7L2 10V4Z" fill="currentColor"/><rect x="8" y="3" width="4" height="8" rx="1" fill="currentColor" opacity="0.6"/></svg>
+        查看完整详情
+      </router-link>
+    </div>
+
+    <!-- v2 AI 研判区块（AI 推荐事件） -->
+    <div class="detail-section ai-verdict-section" v-if="event.event_type === 'ai_recommended'">
+      <div class="ai-v-header">🤖 AI 优先推荐</div>
+      <div class="ai-v-body">
+        <div class="ai-v-row"><span class="ai-v-label">置信度</span><span class="ai-v-val">{{ aiConfidence }}</span></div>
+        <div class="ai-v-row" v-if="aiAnalysis"><span class="ai-v-label">研判结果</span><span class="ai-v-val ai-summary-text">{{ aiAnalysis }}</span></div>
+        <div class="ai-v-row" v-if="aiAttackType"><span class="ai-v-label">攻击类型</span><span class="ai-v-val">{{ aiAttackType }}</span></div>
+        <div class="ai-v-row" v-if="aiAction"><span class="ai-v-label">建议动作</span><span class="ai-v-val ai-action-tag">{{ aiAction }}</span></div>
+        <div class="ai-v-row" v-if="aiOriginalId">
+          <span class="ai-v-label">原始事件</span>
+          <span class="ai-v-val">
+            <router-link :to="'/analysis-center/event/' + event.id" class="ai-orig-link">查看 →</router-link>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- v2 AI 研判区块（已标记原事件） -->
+    <div class="detail-section ai-verdict-section" v-else-if="event.ai_verdict">
+      <div class="ai-v-header">
+        <span v-if="verdictLabel === 'suspicious'">🟡 待复核</span>
+        <span v-else-if="verdictLabel === 'false_positive'">⚪ AI误报</span>
+        <span v-else>🤖 AI 研判</span>
+      </div>
+      <div class="ai-v-body">
+        <div class="ai-v-row"><span class="ai-v-label">置信度</span><span class="ai-v-val">{{ aiConfidence }}</span></div>
+        <div class="ai-v-row" v-if="aiReason"><span class="ai-v-label">理由</span><span class="ai-v-val">{{ aiReason }}</span></div>
+      </div>
     </div>
 
     <!-- 基本信息 -->
@@ -226,20 +270,57 @@
       </div>
     </div>
 
-    <!-- 原始证据 + 结构化视图 -->
-    <div class="detail-section">
-      <div class="section-title">原始证据 · 结构化视图</div>
-      <div v-for="(val, key) in structuredEvidence" :key="key" class="ev-row">
-        <span class="ev-key">{{ key }}</span>
-        <span class="ev-val">{{ val }}</span>
+    <!-- v2.1 必填字段展示 -->
+    <div class="detail-section" v-if="requiredFields.length">
+      <div class="section-title">必填字段 ({{ requiredFields.length }})</div>
+      <div v-for="f in requiredFields" :key="f.key" class="detail-row">
+        <span class="detail-label">{{ f.label }}</span>
+        <span class="detail-value">{{ fieldValue(f) }}</span>
       </div>
     </div>
 
-    <div class="detail-section">
-      <div class="section-title">完整原始证据</div>
-      <div class="json-viewer">
-        <pre class="json-content">{{ formatJson(event.evidence) }}</pre>
+    <!-- v2.1 证据双视图 -->
+    <div class="detail-section" v-if="evidenceViews">
+      <div class="section-title">
+        证据详情
+        <span class="view-toggle" @click="toggleEvidenceView">
+          {{ evidenceViewMode === 'normalized' ? '📋 范式化视图' : '📄 完整原始数据' }}
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style="margin-left:4px"><path d="M4 2L8 6L4 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </span>
       </div>
+      <div v-if="evidenceViewMode === 'normalized'" class="ev-json">
+        <pre class="json-content">{{ formatJson(evidenceViews.normalized) }}</pre>
+      </div>
+      <div v-else class="ev-json">
+        <div class="raw-source-label">来源: {{ evidenceViews.raw_source }}</div>
+        <pre class="json-content">{{ formatJson(evidenceViews.raw) }}</pre>
+      </div>
+    </div>
+
+    <!-- v2.1 自适应主体（按事件类型展开） -->
+    <div class="detail-section" v-if="processSubject" key="process-subject">
+      <div class="section-title">进程主体</div>
+      <div class="subject-grid">
+        <div v-for="(val, key) in processSubject" :key="key" class="sg-row" v-if="val && val !== '—'">
+          <span class="sg-key">{{ key }}</span>
+          <span class="sg-val">{{ val }}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="detail-section" v-if="networkSubject" key="network-subject">
+      <div class="section-title">网络主体</div>
+      <div class="subject-grid">
+        <div v-for="(val, key) in networkSubject" :key="key" class="sg-row" v-if="val && val !== '—'">
+          <span class="sg-key">{{ key }}</span>
+          <span class="sg-val">{{ val }}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="detail-section" v-if="persistenceTarget" key="persistence-subject">
+      <div class="section-title">持久化落点</div>
+      <div class="detail-value">{{ persistenceTarget }}</div>
     </div>
 
     <!-- IOC 匹配 -->
@@ -309,6 +390,7 @@ import { useAnalysisStore } from '@/stores/analysis'
 
 const props = defineProps({
   event: { type: Object, default: () => ({}) },
+  display: { type: Object, default: null },  // v2.1 展示投影数据
 })
 
 const emit = defineEmits(['close', 'update-status', 'assign', 'view-related'])
@@ -385,6 +467,36 @@ const structuredEvidence = computed(() => {
 function sevColor(s) { return SEV_COLORS[s] || '#a3a3a3' }
 function stageLabel(s) { return STAGE_LABELS[s] || s }
 function eventTypeLabel(t) { return EVENT_TYPE_LABELS[t] || t }
+function statusLabel(s) {
+  const labels = { pending: '待处理', triaging: '分诊中', investigating: '调查中', resolved: '已解决', rejected: '已误报' }
+  return labels[s] || s
+}
+
+const categoryLabel = computed(() => {
+  const labels = { process: '进程', network: '网络', persistence: '持久化', startup: '启动项', behavior: '行为', ioc: '情报', credential: '凭据', discovery: '发现', execution: '执行', lateral: '横向', c2: 'C2', impact: '影响' }
+  return labels[props.event?.category] || props.event?.category || ''
+})
+
+// AI 研判（v2）
+const aiVerdict = computed(() => {
+  const raw = props.event?.ai_verdict
+  if (!raw) return null
+  try { return typeof raw === 'string' ? JSON.parse(raw) : raw }
+  catch { return null }
+})
+const verdictLabel = computed(() => aiVerdict.value?.label || '')
+const aiConfidence = computed(() => (aiVerdict.value?.confidence ?? '') + '%')
+const aiReason = computed(() => aiVerdict.value?.reason || '')
+const aiAnalysis = computed(() => props.event?.ai_analysis || '')
+const aiAttackType = computed(() => aiVerdict.value?.attack_type || '')
+const aiAction = computed(() => {
+  const labels = { isolate: '隔离主机', kill_process: '结束进程', block_ip: '封锁IP', review: '人工复核' }
+  return labels[aiVerdict.value?.action] || aiVerdict.value?.action || ''
+})
+const aiOriginalId = computed(() => {
+  const id = props.event?.id || ''
+  return id.startsWith('ai:') ? id.substring(3) : null
+})
 function actionLabel(a) { return ACTION_LABELS[a] || a }
 
 function formatTime(ts) {
@@ -417,6 +529,46 @@ function impactLabel(key) {
     ips: '关联IP', files: '关联文件',
   }
   return labels[key] || key
+}
+
+// ── v2.1 展示投影 ──
+const projection = computed(() => props.display?.projection || props.display || {})
+const requiredFields = computed(() => projection.value.required || [])
+const auxiliaryFields = computed(() => projection.value.auxiliary || [])
+const evidenceViews = computed(() => projection.value.evidence_views || null)
+const evidenceViewMode = ref('normalized')
+
+// 自适应主体：按事件类型展开进程/网络/持久化
+const processSubject = computed(() => {
+  const et = (props.event?.event_type || '')
+  if (!et.startsWith('process') && et !== 'ioc_match') return null
+  const aux = auxiliaryFields.value.find(f => f.key === 'process_subject')
+  return aux?.value || null
+})
+const networkSubject = computed(() => {
+  const et = (props.event?.event_type || '')
+  if (!et.startsWith('network') && et !== 'dns_query') return null
+  const aux = auxiliaryFields.value.find(f => f.key === 'network_subject')
+  return aux?.value || null
+})
+const persistenceTarget = computed(() => {
+  const et = (props.event?.event_type || '')
+  if (!['persistence_register','registry_modify','registry_delete','scheduled_task','service_operation','wmi_subscribe']
+      .includes(et)) return null
+  const aux = auxiliaryFields.value.find(f => f.key === 'persistence_target')
+  return aux?.value || null
+})
+
+function toggleEvidenceView() {
+  evidenceViewMode.value = evidenceViewMode.value === 'normalized' ? 'raw' : 'normalized'
+}
+
+function fieldValue(f) {
+  if (!f) return '—'
+  const v = f.value
+  if (v === null || v === undefined || v === '') return '—'
+  if (typeof v === 'object') return formatJson(v)
+  return String(v)
 }
 
 function copyHash(hash) {
@@ -466,20 +618,172 @@ async function onAddDisposition() {
   font-weight: 400;
 }
 
-.detail-header {
+/* 决策条（§10.3） */
+.decision-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  padding: 6px 8px 6px 12px;
+  border-bottom: 0.5px solid var(--color-border-default, #e5e5e5);
+  background: var(--color-canvas-default, #ffffff);
+  flex-shrink: 0;
+  gap: 6px;
+  min-height: 36px;
+}
+.db-left, .db-right {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.db-left { flex: 1; min-width: 0; overflow-x: auto; overflow-y: hidden; }
+.db-left::-webkit-scrollbar { height: 3px; }
+.db-left::-webkit-scrollbar-thumb { background: var(--color-border-default); border-radius: 2px; }
+.db-risk {
+  font-size: 13px;
+  font-weight: 600;
+  min-width: 22px;
+}
+.db-category {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--color-canvas-inset);
+  color: var(--color-fg-subtle);
+  white-space: nowrap;
+}
+.db-category.cat-behavior {
+  background: rgba(220,38,38,0.1);
+  color: var(--color-danger-fg);
+}
+.db-stage {
+  font-size: 10.5px;
+  color: var(--color-fg-subtle);
+  white-space: nowrap;
+}
+.db-status {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--color-canvas-inset);
+  white-space: nowrap;
+}
+.db-status.stat-pending { background: var(--color-accent-subtle); color: var(--color-accent-fg); }
+.db-status.stat-triaging { background: var(--color-warning-subtle, #fef3c7); color: #d97706; }
+.db-status.stat-investigating { background: var(--color-warning-subtle, #fef3c7); color: #d97706; }
+.db-status.stat-resolved { background: var(--color-success-subtle, #dcfce7); color: #16a34a; }
+.db-status.stat-rejected { background: var(--color-danger-subtle, #fef2f2); color: #dc2626; }
+
+/* 关闭按钮 - 固定右上角 */
+.close-btn-fixed {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-fg-subtle, #888888);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+.close-btn-fixed:hover {
+  background: var(--color-canvas-inset, #f5f5f5);
+  color: var(--color-danger-fg, #dc2626);
+}
+
+/* 操作行（处置按钮） */
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 12px;
+  background: var(--color-canvas-subtle, #fafafa);
   border-bottom: 0.5px solid var(--color-border-default, #e5e5e5);
   flex-shrink: 0;
 }
+.btn-xs { padding: 2px 8px; font-size: 10px; line-height: 1.5; }
 
-.header-left {
+/* 自适应主体网格 */
+.subject-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  font-size: 12px;
+}
+.sg-row {
+  display: contents;
+}
+.sg-key {
+  color: var(--color-fg-subtle);
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.sg-val {
+  color: var(--color-fg-default);
+  word-break: break-all;
+}
+
+/* AI 研判区块（v2 方案） */
+.ai-verdict-section {
+  background: var(--color-canvas-subtle, #fafafa);
+  border-left: 3px solid #16a34a;
+}
+.ai-verdict-section:has(.ai-v-header:contains('🟡')) {
+  border-left-color: #d97706;
+}
+.ai-verdict-section:has(.ai-v-header:contains('⚪')) {
+  border-left-color: #a3a3a3;
+}
+.ai-v-header {
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+.ai-v-body {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  font-size: 12px;
+}
+.ai-v-row { display: contents; }
+.ai-v-label {
+  color: var(--color-fg-subtle);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.ai-v-val { color: var(--color-fg-default); word-break: break-all; }
+.ai-summary-text { font-family: 'Courier New', monospace; font-size: 11px; }
+.ai-action-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 4px;
+  background: #dcfce7;
+  color: #16a34a;
+  font-size: 11px;
+}
+.ai-orig-link { font-size: 11px; color: var(--color-accent-fg); text-decoration: none; }
+.edv-entry { padding: 8px 16px; }
+.edv-entry-btn {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-accent-fg);
+  background: var(--color-accent-subtle);
+  border: 0.5px solid var(--color-accent-fg);
+  border-radius: 6px;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.15s;
 }
+.edv-entry-btn:hover { opacity: 0.85; }
 
 .severity-badge {
   display: inline-flex;

@@ -5,12 +5,14 @@
       <div class="flex-between mb-20">
         <h2 class="page-title">主机详情</h2>
         <div>
-          <el-button type="success" @click="agentDialogRef?.show()">下载 Agent</el-button>
-          <el-button type="warning" @click="importDialogRef?.show()">导入 JSON</el-button>
+          <el-button @click="agentDialogRef?.show()">下载 Agent</el-button>
+          <el-button @click="importDialogRef?.show()">导入 JSON</el-button>
+          <el-button size="small" @click="showImportLog = true">
+            <el-icon><Upload /></el-icon> 导入日志
+          </el-button>
           <el-button type="primary" :loading="analyzing" @click="handleAnalyze">分析</el-button>
           <el-button
             v-if="aiEnabled !== null"
-            type="warning"
             :disabled="!aiEnabled"
             @click="handleAiAnalyze"
           >
@@ -26,7 +28,7 @@
         <el-descriptions-item label="系统类型">{{ host?.os_type || 'N/A' }}</el-descriptions-item>
         <el-descriptions-item label="系统版本">{{ host?.os_version || 'N/A' }}</el-descriptions-item>
         <el-descriptions-item label="状态">
-          <el-tag :type="statusType(host?.status)" size="small">{{ statusLabel(host?.status) }}</el-tag>
+          <el-tag :type="statusType(host?.status)" size="small" effect="plain" class="status-tag">{{ statusLabel(host?.status) }}</el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="风险等级">
           <RiskBadge v-if="analysis" :level="analysis.risk_level" />
@@ -52,9 +54,9 @@
     <!-- 知识匹配（RAG 语义检索结果） -->
     <div v-if="knowledgeHits.length" class="card-box">
       <h3 class="mb-10" style="display:flex;align-items:center;gap:8px">
-        📚 知识匹配
-        <el-tag size="small" type="warning">RAG 语义检索</el-tag>
-        <span style="font-size:13px;color:#909399;font-weight:normal">共 {{ knowledgeHits.length }} 条语义命中</span>
+        知识匹配
+        <el-tag size="small" effect="plain" class="status-tag">RAG 语义检索</el-tag>
+        <span class="kh-subtle-hint">共 {{ knowledgeHits.length }} 条语义命中</span>
       </h3>
       <div class="kh-grid">
         <div
@@ -65,11 +67,11 @@
           @click="showKnowledgePopup(kh)"
         >
           <div class="kh-header">
-            <el-tag :type="kh.confidence === 'high' ? 'danger' : kh.confidence === 'medium' ? 'warning' : 'info'" size="small">
+            <el-tag :type="kh.confidence === 'high' ? 'danger' : kh.confidence === 'medium' ? 'warning' : 'info'" size="small" effect="plain">
               {{ kh.confidence === 'high' ? '高置信' : kh.confidence === 'medium' ? '中置信' : '低置信' }}
             </el-tag>
-            <el-tag v-if="kh.severity" size="small" style="margin-left:4px">{{ kh.severity }}</el-tag>
-            <el-tag v-if="kh.needs_review" type="warning" size="small" style="margin-left:4px">⚠ 需复核</el-tag>
+            <el-tag v-if="kh.severity" size="small" effect="plain" style="margin-left:4px">{{ kh.severity }}</el-tag>
+            <el-tag v-if="kh.needs_review" size="small" effect="plain" class="status-tag" style="margin-left:4px">需复核</el-tag>
             <span class="kh-title">{{ kh.title }}</span>
           </div>
           <div class="kh-desc" v-if="kh.description">{{ kh.description }}</div>
@@ -88,11 +90,10 @@
           <div class="tab-toolbar">
             <span class="tab-hint">主机画像概览</span>
             <el-button
-              type="warning"
               :disabled="!aiEnabled || host?.status === 'pending'"
               @click="handleModuleAiAnalyze('profile')"
             >
-              🤖 AI 分析
+              AI 分析
             </el-button>
           </div>
           <ProfileCard :profile="profile" />
@@ -101,11 +102,10 @@
           <div class="tab-toolbar">
             <span class="tab-hint">进程树视图</span>
             <el-button
-              type="warning"
               :disabled="!aiEnabled || host?.status === 'pending'"
               @click="handleModuleAiAnalyze('process_list')"
             >
-              🤖 AI 分析
+              AI 分析
             </el-button>
           </div>
           <ProcessTreeView
@@ -118,11 +118,10 @@
           <div class="tab-toolbar">
             <span class="tab-hint">共 {{ abnormalProcesses.length }} 条异常进程</span>
             <el-button
-              type="warning"
               :disabled="!aiEnabled || host?.status === 'pending'"
               @click="handleModuleAiAnalyze('abnormal_processes')"
             >
-              🤖 AI 分析
+              AI 分析
             </el-button>
           </div>
           <ProcessStatsCards :data="abnormalProcesses" />
@@ -138,14 +137,12 @@
             <span class="tab-hint">共 {{ suspiciousConnections.length }} 条可疑外连</span>
             <div class="flex-center" style="gap: 8px">
               <el-button
-                type="warning"
                 :disabled="!aiEnabled || host?.status === 'pending'"
                 @click="handleModuleAiAnalyze('connections')"
               >
-                🤖 AI 分析
+                AI 分析
               </el-button>
               <el-button
-                type="primary"
                 :loading="enriching"
                 @click="handleEnrichConns"
               >
@@ -168,11 +165,10 @@
           <div class="tab-toolbar">
             <span class="tab-hint">共 {{ persistenceItems.length }} 条持久化痕迹</span>
             <el-button
-              type="warning"
               :disabled="!aiEnabled || host?.status === 'pending'"
               @click="handleModuleAiAnalyze('persistence')"
             >
-              🤖 AI 分析
+              AI 分析
             </el-button>
           </div>
           <PersistenceTable :data="persistenceItems" :host-id="Number(hostId)" />
@@ -181,11 +177,10 @@
           <div class="tab-toolbar">
             <span class="tab-hint">共 {{ startupItems.length }} 条可疑启动项</span>
             <el-button
-              type="warning"
               :disabled="!aiEnabled || host?.status === 'pending'"
               @click="handleModuleAiAnalyze('startup')"
             >
-              🤖 AI 分析
+              AI 分析
             </el-button>
           </div>
           <SuspiciousStartupTable :data="startupItems" />
@@ -194,11 +189,10 @@
           <div class="tab-toolbar">
             <span class="tab-hint">共 {{ iocHits.length }} 条IOC命中</span>
             <el-button
-              type="warning"
               :disabled="!aiEnabled || host?.status === 'pending'"
               @click="handleModuleAiAnalyze('ioc')"
             >
-              🤖 AI 分析
+              AI 分析
             </el-button>
           </div>
           <IocTable :data="iocHits" />
@@ -222,7 +216,7 @@
                 <el-option label="内存码" value="memory_shell" />
                 <el-option label="语义检测" value="knowledge" />
               </el-select>
-              <span class="fusion-stats" style="margin-left:12px;color:#909399;font-size:12px">
+              <span class="fusion-stats">
                 共 {{ filteredFusionItems.length }} 条
               </span>
             </div>
@@ -238,7 +232,7 @@
               <el-collapse-item v-if="filteredIncidents.length" name="incidents">
                 <template #title>
                   <div class="collapse-title">
-                    <el-tag type="danger" size="small">融合事件</el-tag>
+                    <el-tag effect="plain" class="status-tag" size="small">融合事件</el-tag>
                     <span>{{ filteredIncidents.length }} 条</span>
                   </div>
                 </template>
@@ -249,7 +243,7 @@
               <el-collapse-item v-if="filteredWebshells.length" name="webshells">
                 <template #title>
                   <div class="collapse-title">
-                    <el-tag type="warning" size="small">WebShell</el-tag>
+                    <el-tag effect="plain" class="status-tag" size="small">WebShell</el-tag>
                     <span>{{ filteredWebshells.length }} 条</span>
                   </div>
                 </template>
@@ -260,7 +254,7 @@
               <el-collapse-item v-if="filteredMemoryShells.length" name="memory_shells">
                 <template #title>
                   <div class="collapse-title">
-                    <el-tag type="warning" size="small">内存码</el-tag>
+                    <el-tag effect="plain" class="status-tag" size="small">内存码</el-tag>
                     <span>{{ filteredMemoryShells.length }} 条</span>
                   </div>
                 </template>
@@ -271,7 +265,7 @@
               <el-collapse-item v-if="filteredKnowledgeHits.length" name="knowledge_hits">
                 <template #title>
                   <div class="collapse-title">
-                    <el-tag type="primary" size="small">语义检测</el-tag>
+                    <el-tag effect="plain" class="status-tag" size="small">语义检测</el-tag>
                     <span>{{ filteredKnowledgeHits.length }} 条</span>
                   </div>
                 </template>
@@ -279,24 +273,24 @@
                   <el-table-column prop="title" label="命中规则" min-width="180" />
                   <el-table-column prop="evidence_type" label="证据类型" width="100">
                     <template #default="{ row }">
-                      <el-tag size="small">{{ evidenceTypeLabel(row.evidence_type) }}</el-tag>
+                      <el-tag size="small" effect="plain">{{ evidenceTypeLabel(row.evidence_type) }}</el-tag>
                     </template>
                   </el-table-column>
                   <el-table-column prop="evidence_key" label="证据标识" width="140" show-overflow-tooltip />
                   <el-table-column prop="confidence" label="置信度" width="90">
                     <template #default="{ row }">
-                      <el-tag :type="confTag(row.confidence)" size="small">{{ row.confidence }}</el-tag>
+                      <el-tag :type="confTag(row.confidence)" size="small" effect="plain">{{ row.confidence }}</el-tag>
                     </template>
                   </el-table-column>
                   <el-table-column prop="severity" label="严重度" width="80">
                     <template #default="{ row }">
-                      <el-tag :type="sevTag(row.severity)" size="small">{{ row.severity }}</el-tag>
+                      <el-tag :type="sevTag(row.severity)" size="small" effect="plain">{{ row.severity }}</el-tag>
                     </template>
                   </el-table-column>
                   <el-table-column label="需复核" width="70">
                     <template #default="{ row }">
-                      <span v-if="row.needs_review" style="color:#e6a23c">⚠</span>
-                      <span v-else style="color:#67c23a">✓</span>
+                      <span v-if="row.needs_review" class="needs-review-text">待复核</span>
+                      <span v-else class="review-passed-text">已复核</span>
                     </template>
                   </el-table-column>
                   <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
@@ -310,17 +304,16 @@
             <span class="tab-hint">共 {{ timelineEvents.length }} 条时间线事件</span>
             <div class="flex-center" style="gap: 8px">
               <el-button
-                type="warning"
                 size="small"
                 :disabled="!aiEnabled || host?.status === 'pending'"
                 @click="handleModuleAiAnalyze('timeline')"
               >
-                🤖 AI 分析
+                AI 分析
               </el-button>
               <el-button size="small" @click="showCompare = true">对比模式</el-button>
               <el-button size="small" @click="handleExportCsv">导出 CSV</el-button>
               <el-button size="small" @click="handleExportPdf">导出 PDF</el-button>
-              <el-button size="small" type="danger" @click="warRoomActive = true">作战视图</el-button>
+              <el-button size="small" @click="warRoomActive = true">作战视图</el-button>
             </div>
           </div>
           <SummaryStatsBar :host-id="hostId" :stats="timelineStats" @stats-loaded="handleTimelineStatsLoaded" />
@@ -372,11 +365,10 @@
           <div class="tab-toolbar">
             <span class="tab-hint">共 {{ users.length }} 个用户账户</span>
             <el-button
-              type="warning"
               :disabled="!aiEnabled || host?.status === 'pending'"
               @click="handleModuleAiAnalyze('users')"
             >
-              🤖 AI 分析
+              AI 分析
             </el-button>
           </div>
           <UsersTable :data="users" />
@@ -385,16 +377,15 @@
           <div class="tab-toolbar">
             <span class="tab-hint">
               共 {{ services.length }} 个服务
-              <el-tag v-if="serviceRisk && serviceRisk.summary" type="danger" size="small" style="margin-left:8px">
+              <el-tag v-if="serviceRisk && serviceRisk.summary" size="small" effect="plain" class="status-tag" style="margin-left:8px">
                 {{ serviceRisk.summary.high_risk_count }} 个高风险
               </el-tag>
             </span>
             <el-button
-              type="warning"
               :disabled="!aiEnabled || host?.status === 'pending'"
               @click="handleModuleAiAnalyze('services')"
             >
-              🤖 AI 分析
+              AI 分析
             </el-button>
           </div>
           <ServicesTable :data="services" :service-risk="serviceRisk" />
@@ -403,11 +394,10 @@
           <div class="tab-toolbar">
             <span class="tab-hint">共 {{ usb.length }} 条USB记录</span>
             <el-button
-              type="warning"
               :disabled="!aiEnabled || host?.status === 'pending'"
               @click="handleModuleAiAnalyze('usb')"
             >
-              🤖 AI 分析
+              AI 分析
             </el-button>
           </div>
           <UsbTable :data="usb" />
@@ -416,17 +406,19 @@
           <div class="tab-toolbar">
             <span class="tab-hint">共 {{ remoteControl.length }} 条远程工具记录</span>
             <el-button
-              type="warning"
               :disabled="!aiEnabled || host?.status === 'pending'"
               @click="handleModuleAiAnalyze('remote_control')"
             >
-              🤖 AI 分析
+              AI 分析
             </el-button>
           </div>
           <RemoteControlTable :data="remoteControl" />
         </el-tab-pane>
         <el-tab-pane label="知识库" name="knowledge">
           <HostKnowledgeTab :host-id="hostId" />
+        </el-tab-pane>
+        <el-tab-pane label="导入记录" name="import-logs">
+          <ImportHistoryTab v-if="activeTab === 'import-logs'" :host-id="Number(hostId)" />
         </el-tab-pane>
       </el-tabs>
     </div>
@@ -439,6 +431,7 @@
     />
 
     <HostImportDialog ref="importDialogRef" :host-id="Number(hostId)" @success="onImportSuccess" />
+    <LogImportDialog :visible="showImportLog" :host-id="Number(hostId)" @update:visible="showImportLog = $event" @imported="onLogImported" />
     <AgentDownloadDialog ref="agentDialogRef" />
     <AiAnalysisDialog ref="aiDialogRef" />
     <KnowledgeDetailPopup v-model:visible="knowledgePopupVisible" :entry-ref="knowledgePopupRef" :hit-meta="knowledgePopupMeta" />
@@ -447,7 +440,7 @@
 
 <script setup>
 import { ref, computed, onMounted, watch, nextTick, defineAsyncComponent } from 'vue'
-import { Search } from '@element-plus/icons-vue'
+import { Search, Upload } from '@element-plus/icons-vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import hostsApi from '@/api/hosts'
@@ -487,6 +480,8 @@ const MemoryShellPanel = defineAsyncComponent(() => import('@/components/MemoryS
 const ProcessTreeView = defineAsyncComponent(() => import('@/components/ProcessTreeView.vue'))
 import IncidentPanel from '@/components/ai/IncidentPanel.vue'
 import KnowledgeDetailPopup from '@/components/KnowledgeDetailPopup.vue'
+import LogImportDialog from '@/components/LogImportDialog.vue'
+import ImportHistoryTab from '@/components/ImportHistoryTab.vue'
 import { getAiConfig } from '@/api/ai'
 
 const route = useRoute()
@@ -533,6 +528,7 @@ const selectedProcess = ref(null)
 const detailPanelVisible = ref(false)
 
 const importDialogRef = ref(null)
+const showImportLog = ref(false)
 const agentDialogRef = ref(null)
 const aiDialogRef = ref(null)
 const aiEnabled = ref(null) // null=未加载, true=开启, false=关闭
@@ -804,6 +800,15 @@ function onImportSuccess() {
   loadHost()
 }
 
+function onLogImported(data) {
+  // 日志导入完成后切换到导入记录标签页查看结果
+  if (data?.status === 'completed' || data?.status === 'processing') {
+    nextTick(() => {
+      activeTab.value = 'import-logs'
+    })
+  }
+}
+
 /** 异常进程表格查看详情事件（进程树改用 ProcessTreeView 内部详情面板，不再联动此处） */
 function handleViewDetail(row) {
   selectedProcess.value = row
@@ -1026,7 +1031,7 @@ function statusLabel(status) {
   padding: 8px 12px;
   background: var(--color-canvas-subtle);
   border-radius: 6px;
-  border: 1px solid var(--color-border-default);
+  border: 0.5px solid var(--color-border-default);
 }
 .tab-hint {
   font-size: 13px;
@@ -1048,7 +1053,7 @@ function statusLabel(status) {
   font-weight: 500;
   font-size: 14px;
   padding: 8px 12px;
-  border: 1px solid var(--color-border-default);
+  border: 0.5px solid var(--color-border-default);
   border-radius: 6px;
   margin-bottom: 8px;
   background: var(--color-canvas-subtle);
@@ -1063,17 +1068,100 @@ function statusLabel(status) {
   gap: 12px;
 }
 .kh-card {
-  border: 1px solid #e4e7ed;
+  border: 0.5px solid var(--color-border-default);
   border-radius: 6px;
   padding: 12px;
-  background: #fafafa;
+  background: var(--color-canvas-subtle);
   transition: box-shadow 0.2s;
   cursor: pointer;
 }
-.kh-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.08); }
-.kh-card.kh-needs-review { border-color: var(--el-color-warning); background: #fef7e8; }
+.kh-card:hover { box-shadow: 0 1px 4px var(--color-border-default); }
+.kh-card.kh-needs-review { border-color: var(--color-fg-subtle); background: var(--color-canvas-subtle); }
 .kh-header { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-.kh-title { font-weight: 600; font-size: 14px; margin-left: 4px; }
-.kh-desc { color: #606266; font-size: 12px; margin-top: 6px; }
-.kh-meta { color: #909399; font-size: 11px; margin-top: 4px; }
+.kh-title { font-weight: 500; font-size: 14px; margin-left: 4px; }
+.kh-desc { color: var(--color-fg-muted); font-size: 12px; margin-top: 6px; }
+.kh-meta { color: var(--color-fg-subtle); font-size: 11px; margin-top: 4px; }
+
+/* ── 辅助文本 ── */
+.kh-subtle-hint {
+  font-size: 13px;
+  color: var(--color-fg-subtle);
+  font-weight: 400;
+}
+.fusion-stats {
+  margin-left: 12px;
+  color: var(--color-fg-subtle);
+  font-size: 12px;
+}
+.needs-review-text {
+  color: var(--color-fg-subtle);
+  font-size: 12px;
+}
+.review-passed-text {
+  color: var(--color-fg-muted);
+  font-size: 12px;
+}
+
+/* ===== HostDetail IR 设计规范覆盖 ===== */
+.page-container {
+  padding: 24px;
+  background: var(--color-canvas-subtle, #fafafa);
+  min-height: calc(100vh - 56px);
+}
+.card-box {
+  background: var(--color-canvas-default, #fff);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+.page-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--color-fg-default, #111);
+  margin: 0;
+}
+.flex-between { display: flex; justify-content: space-between; align-items: center; }
+
+/* 状态 tag 浅色 */
+.status-tag {
+  border: none !important;
+  background: transparent !important;
+  padding: 0 6px !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+}
+
+/* descriptions 弱化 */
+.card-box :deep(.el-descriptions__label) {
+  color: var(--color-fg-subtle, #888);
+  font-size: 12px;
+  font-weight: 400;
+}
+.card-box :deep(.el-descriptions__content) {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--color-fg-default, #111);
+}
+
+/* 表格/卡片弱化 */
+.card-box :deep(.el-card) {
+  border: 0.5px solid var(--color-border-default) !important;
+  border-radius: 10px !important;
+}
+.card-box :deep(.el-card__header) {
+  font-size: 13px;
+  font-weight: 500;
+  border-bottom: 0.5px solid var(--color-border-default);
+  padding: 14px 20px;
+}
+.card-box :deep(.el-card__body) {
+  padding: 16px 20px;
+}
+
+/* 按钮圆角 */
+.el-button {
+  border-radius: 6px;
+  font-weight: 500;
+}
 </style>

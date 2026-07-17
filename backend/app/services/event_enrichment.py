@@ -311,3 +311,104 @@ def _build_context_summary(event_type: str, evidence: dict) -> str:
     if event_type in ("dns_query",):
         return f"{evidence.get('query', '?')}"
     return event_type
+
+
+def build_event_summary(event: dict) -> str:
+    """生成事件的人话一句话摘要（v2.1 必填字段「摘要」）。
+
+    应急价值：列表首屏无需点开详情即可读懂"发生了什么"，是研判的"标题栏"。
+    逻辑降级：当关键字段缺失时退化为 "event_type + host" 拼接，确保首屏必有可读标题。
+
+    Args:
+        event: 事件字典（含 event_type / severity / evidence / host_id 等）。
+
+    Returns:
+        一句话摘要字符串。
+    """
+    event_type = event.get("event_type", "")
+    severity = event.get("severity", "info")
+    host_id = event.get("host_id", "?")
+    hostname = event.get("hostname") or ""
+    evidence = event.get("evidence", {})
+    if isinstance(evidence, str):
+        try:
+            evidence = json.loads(evidence)
+        except Exception:
+            evidence = {}
+
+    def _g(*keys, default="?"):
+        for k in keys:
+            v = evidence.get(k)
+            if v not in (None, "", []):
+                return str(v)
+        return default
+
+    parts: list[str] = []
+
+    if event_type in ("process_start", "process_terminate"):
+        verb = "启动" if event_type == "process_start" else "退出"
+        pname = _g("process_name", "image", default="未知进程")
+        pid = _g("pid", default="")
+        parent = _g("parent_name", "parent_process_name", default="")
+        summary = f"{verb}进程 {pname}"
+        if pid and pid != "?":
+            summary += f" (PID:{pid})"
+        if parent and parent != "?":
+            summary += f"，父进程 {parent}"
+        parts.append(summary)
+
+    elif event_type in ("network_outbound", "network_listen"):
+        direction = "外连" if event_type == "network_outbound" else "监听"
+        remote = _g("remote_address", "dst_ip", default="?")
+        rport = _g("remote_port", "dst_port", default="")
+        proto = _g("protocol", default="")
+        summary = f"{direction} {proto + ' ' if proto not in ('?', '') else ''}{remote}"
+        if rport and rport != "?":
+            summary += f":{rport}"
+        parts.append(summary)
+
+    elif event_type in ("dns_query",):
+        parts.append(f"查询域名 {_g('query', 'query_name', default='?')}")
+
+    elif event_type in ("registry_modify", "registry_delete"):
+        action = "修改" if event_type == "registry_modify" else "删除"
+        parts.append(f"{action}注册表 {_g('key_path', default='?')}")
+
+    elif event_type in ("file_create", "file_modify"):
+        action = "创建" if event_type == "file_create" else "修改"
+        parts.append(f"{action}文件 {_g('file_name', 'file_path', default='?')}")
+
+    elif event_type in ("persistence_register", "scheduled_task", "service_operation", "wmi_subscribe"):
+        name = _g("name", "task_name", "service_name", default="?")
+        parts.append(f"注册持久化项 {name}")
+
+    elif event_type in ("user_login", "user_logout"):
+        action = "登录" if event_type == "user_login" else "登出"
+        parts.append(f"用户 {_g('user_name', default='?')} {action}")
+
+    elif event_type in ("module_load", "driver_load"):
+        kind = "模块" if event_type == "module_load" else "驱动"
+        parts.append(f"加载{kind} {_g('module_name', 'driver_name', default='?')}")
+
+    elif event_type in ("pipe_connect",):
+        parts.append(f"管道连接 {_g('pipe_name', default='?')}")
+
+    else:
+        parts.append(f"事件 {event_type}")
+
+    # 命中规则增强：附上最关键的命中规则名，提升首屏研判效率
+    matched = event.get("matched_rules", [])
+    if isinstance(matched, str):
+        try:
+            matched = json.loads(matched)
+        except Exception:
+            matched = []
+    if matched:
+        top = matched[0].get("rule_name", "") if isinstance(matched[0], dict) else ""
+        if top:
+            parts.append(f"命中规则[{top}]")
+
+    text = "；".join(parts)
+    # 严重度前缀，便于快速分诊
+    sev_tag = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢", "info": ""}.get(severity, "")
+    return f"{sev_tag} {text}".strip() if sev_tag else text

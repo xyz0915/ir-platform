@@ -10,6 +10,7 @@ from app.services.analysis_service import AnalysisService
 from app.services.auth_service import get_current_user
 from app.services.host_service import HostService
 from app.services.import_service import ImportService
+from app.services.sync_service import SyncService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -30,7 +31,20 @@ def analyze_host(host_id: int, current_user: dict = Depends(get_current_user)):
             detail="主机尚未导入采集数据，无法分析",
         )
     try:
+        # 1. 主机分析
         result = AnalysisService.analyze(host_id)
+        # 2. 分析完成后自动同步 CM 数据到分析中心
+        try:
+            sync_result = SyncService.sync_cm_to_ac(host_id)
+            result["sync"] = {
+                "total_cm_rows": sync_result.get("total_cm_rows", 0),
+                "synced": sync_result.get("synced", 0),
+            }
+            if sync_result["synced"]:
+                logger.info("分析后自动同步: host=%d synced=%d", host_id, sync_result["synced"])
+        except Exception as sync_exc:
+            logger.warning("分析后同步 CM 数据失败 host=%d: %s", host_id, sync_exc)
+            result["sync"] = {"error": str(sync_exc)}
         return {"code": 0, "data": result, "message": "success"}
     except ValueError as exc:
         raise HTTPException(

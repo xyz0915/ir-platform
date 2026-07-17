@@ -16,10 +16,11 @@
         <polygon points="12 2 16 8 22 9 18 14 19 20 12 17 5 20 6 14 2 9 8 8 12 2"/>
       </svg>
       <!-- 未匹配 -->
-      <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <svg v-else-if="v.key === 'unmatched'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="12" cy="12" r="10"/><path d="M16 8l-8 8M8 8l8 8"/>
       </svg>
-      {{ v.label }} <span class="vf-cnt">{{ v.count }}</span>
+      {{ v.label }}
+      <span v-if="v.count !== undefined" class="vf-cnt">{{ v.count }}</span>
     </span>
   </div>
 </template>
@@ -30,14 +31,18 @@ import { computed } from 'vue'
 const props = defineProps({
   active: { type: String, default: 'matched' },
   counts: { type: Object, default: () => ({ all: 0, matched: 0, unmatched: 0 }) },
+  aiCounts: { type: Object, default: () => ({ recommended: 0, suspicious: 0, false_positive: 0 }) },
 })
 
 defineEmits(['switch'])
 
 const views = computed(() => [
-  { key: 'all', label: '全部事件', count: props.counts.all || 0 },
-  { key: 'matched', label: '已匹配规则', count: props.counts.matched || 0 },
-  { key: 'unmatched', label: '未匹配规则', count: props.counts.unmatched || 0 },
+  { key: 'all', label: '全部事件', count: props.counts.all },
+  { key: 'matched', label: '已匹配规则', count: props.counts.matched },
+  { key: 'unmatched', label: '未匹配规则', count: props.counts.unmatched },
+  { key: 'recommended', label: '🤖 AI优先推荐', count: props.aiCounts.recommended },
+  { key: 'suspicious', label: '🟡 待复核', count: props.aiCounts.suspicious },
+  { key: 'false_positive', label: '⚪ AI误报', count: props.aiCounts.false_positive },
 ])
 </script>
 

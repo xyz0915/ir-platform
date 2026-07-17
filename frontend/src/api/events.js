@@ -102,3 +102,15 @@ export function getDispositions(eventId) {
 export function addDisposition(eventId, data) {
   return request.post(`/analysis/events/${eventId}/dispositions`, data)
 }
+
+// v2.1 前端字段展示：必填/辅助分级 + 证据双视图
+export function getEventDisplay(eventId) {
+  return request.get(`/analysis/events/${eventId}/display`)
+}
+
+// AI 降噪研判（触发当前案件所有已匹配事件的分析）
+export function triggerAiNoiseReduce(caseId, hostId = null) {
+  const params = { case_id: caseId }
+  if (hostId) params.host_id = hostId
+  return request.post('/ai/noise-reduce', null, { params, timeout: 200000 })
+}

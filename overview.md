@@ -1,23 +1,21 @@
-# 本次处理概览
+# 自然语言指挥台 v3.0 — 10项功能增强
 
-## 完成内容
-- 修复 AI 分析卡在 0% 不动的问题：后端 RAG 向量模型加载改为仅使用本地缓存，不再因首次联网下载 Hugging Face 模型而阻塞整个分析链路。
-- 修复取消分析后界面恢复异常的问题：前端取消后会真正重置状态并回到确认阶段，可直接重新发起分析。
-- 保持关键词回退链路可用：本地无向量模型缓存时，自动快速降级为关键词检索，而不是长时间卡死。
+## 修改文件
+- `backend/app/api/ai_advanced.py` — SSE性能指标 + 报表生成端点
+- `backend/app/schemas/ai_advanced.py` — QueryEndEvent增加exec_time_ms/results_count
+- `frontend/src/api/ai_advanced.js` — SSE回调传extra数据 + generateReport API
+- `frontend/src/views/AiAdvancedView.vue` — 全部10项功能实现
 
-## 关键改动
-- `backend/app/services/knowledge_retriever.py`
-  - `_get_embedding_model()` 改为 `local_files_only=True`
-  - 本地无模型缓存时记录 warning，并禁用 embedding，快速回退关键词检索
-- `frontend/src/components/AiAnalysisDialog.vue`
-  - `handleCancelAnalysis()` 改为取消后 `resetState()` 并回到 `confirm`
-- 之前已兼容 `content` SSE 文本事件，保证黑色终端区能显示流式输出
-
-## 验证结果
-- 后端语法校验通过：`knowledge_retriever.py`
-- 前端构建通过：`npm --prefix frontend run build`
-- 后端 AI API 定向回归通过：`backend/tests/test_ai_api.py` -> 25/25 通过
-
-## 说明
-- 用户日志中的真正阻塞点是 `sentence-transformers/all-MiniLM-L6-v2` 首次联网访问 Hugging Face 超时重试，导致任务长时间停在早期阶段。
-- 修复后，在离线或网络受限环境下，AI 分析不会再因为模型下载卡住；若本地没有向量模型缓存，将直接走关键词回退。
+## 功能清单
+| # | 功能 | 状态 | 关键实现 |
+|---|------|------|---------|
+| 1 | 消息操作菜单 | ✅ | 每轮AI消息hover出现···，支持复制/引用/有用/没用/意图修正 |
+| 2 | 时间范围Pill | ✅ | 输入框下方蓝色tag显示解析的时间范围，可关闭 |
+| 3 | 输入区智能补全 | ✅ | el-autocomplete，/或@触发模板下拉+历史匹配 |
+| 4 | 告警批量处置 | ✅ | alert每行checkbox+底部浮起批量操作栏 |
+| 5 | 意图修正反馈 | ✅ | 菜单"这不是我要的"，自动重查 |
+| 6 | 多轮复合查询 | ✅ | chatContext.workingSet追踪中间结果 |
+| 7 | 对话导出 | ✅ | 页面头部按钮，导出Markdown |
+| 8 | 查询性能洞察 | ✅ | SSE query_end带回exec_time_ms/results_count，文本尾部显示⚡ |
+| 9 | 报表生成 | ✅ | /ai/generate-report后端端点+前端按钮 |
+| 10 | ECharts仪表盘 | ✅ | stats卡片加小型饼图渲染 |

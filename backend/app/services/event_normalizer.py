@@ -369,11 +369,51 @@ def validate_schema(raw: dict) -> tuple[bool, str]:
     return True, ""
 
 
-def normalize_single(raw: dict) -> SecurityEvent | None:
+# 必填证据字段（按 event_type 分组）
+_REQUIRED_EVIDENCE_FIELDS: dict[str, list[str]] = {
+    "process_start": ["process_name"],
+    "process_terminate": ["process_name"],
+    "network_outbound": ["remote_address"],
+    "dns_query": ["query"],
+    "registry_modify": ["key_path"],
+    "file_create": ["file_name"],
+}
+
+
+def _check_field_quality(fields: dict) -> list[str]:
+    """检查映射后字段质量，返回 quality_flags 列表.
+
+    每个 flag 标记一个可修复的缺失项，不会阻断归一化。
+    """
+    flags: list[str] = []
+    event_type = fields.get("event_type", "")
+    evidence = fields.get("evidence")
+    if not isinstance(evidence, dict):
+        evidence = {}
+
+    # 1. 必填证据字段检查
+    for required_field in _REQUIRED_EVIDENCE_FIELDS.get(event_type, []):
+        if required_field not in evidence or evidence.get(required_field) in (None, "", []):
+            flags.append(f"missing_evidence_field:{required_field}")
+
+    # 2. severity 合理性
+    sev = fields.get("severity", "")
+    if sev and sev not in ("critical", "high", "medium", "low", "info"):
+        flags.append(f"invalid_severity:{sev}")
+
+    # 3. 主机 ID
+    if not fields.get("host_id"):
+        flags.append("missing_host_id")
+
+    return flags
+
+
+def normalize_single(raw: dict, validate: bool = True) -> SecurityEvent | None:
     """将单条 Agent 原始数据归一化为 SecurityEvent.
 
     Args:
         raw: Agent 上报的原始数据字典.
+        validate: 是否执行逐字段校验并打 quality_flags.
 
     Returns:
         SecurityEvent 实例，或 None（映射失败跳过）.
@@ -396,16 +436,30 @@ def normalize_single(raw: dict) -> SecurityEvent | None:
     if fields is None:
         return None
 
-    # 3. 生成唯一 ID
+    # 3. 逐字段校验 (validate=True 时)
+    quality_flags: list[str] = []
+    if validate:
+        quality_flags = _check_field_quality(fields)
+
+    # 4. 生成唯一 ID
     fields["event_key"] = fields.get("event_key", str(raw.get("timestamp", "")))
     host_id = fields.get("host_id", 0)
     event_id = make_event_id(host_id, event_type, fields["event_key"])
     fields["id"] = event_id
 
-    # 4. ATT&CK 阶段分类
+    # 5. ATT&CK 阶段分类
     fields["attack_stage"] = infer_attack_stage(event_type, fields.get("evidence"))
 
-    # 5. 构建 SecurityEvent
+    # 6. 质量标记注入 evidence
+    evidence = fields.get("evidence")
+    if isinstance(evidence, dict) and quality_flags:
+        evidence_copy = dict(evidence)
+        evidence_copy["_quality_flags"] = quality_flags
+        fields["evidence"] = evidence_copy
+    elif not isinstance(evidence, dict):
+        fields["evidence"] = {"_quality_flags": quality_flags} if quality_flags else {}
+
+    # 7. 构建 SecurityEvent
     event = SecurityEvent(**fields)
 
     # 6. 确保基本字段
@@ -425,11 +479,12 @@ def normalize_single(raw: dict) -> SecurityEvent | None:
     return event
 
 
-def normalize_batch(raw_events: list[dict]) -> list[SecurityEvent]:
+def normalize_batch(raw_events: list[dict], validate: bool = True) -> list[SecurityEvent]:
     """批量归一化 20+ 类 Agent 原始数据.
 
     Args:
         raw_events: Agent 原始数据列表.
+        validate: 是否执行逐字段校验并打 quality_flags（§4.2 Schema 校验）.
 
     Returns:
         归一化后的 SecurityEvent 列表（映射失败的数据已过滤）.
@@ -437,7 +492,7 @@ def normalize_batch(raw_events: list[dict]) -> list[SecurityEvent]:
     normalized: list[SecurityEvent] = []
     for raw in raw_events:
         try:
-            event = normalize_single(raw)
+            event = normalize_single(raw, validate=validate)
             if event is not None:
                 normalized.append(event)
         except Exception as exc:

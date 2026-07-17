@@ -4,10 +4,17 @@ import { fileURLToPath, URL } from 'node:url'
 
 export default defineConfig({
   plugins: [vue()],
+  build: {
+    emptyOutDir: false,
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url))
     }
+  },
+  test: {
+    environment: 'happy-dom',
+    globals: true,
   },
   server: {
     port: 5173,

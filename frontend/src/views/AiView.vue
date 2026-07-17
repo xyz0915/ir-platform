@@ -1,9 +1,8 @@
 <template>
   <div class="page-container">
     <h2 class="page-title mb-20">
-      <span class="title-emoji">🧠</span>
       <span>AI 分析</span>
-      <el-tag class="title-tag" type="success" effect="plain" size="small">✨ 智能辅助</el-tag>
+      <span class="page-subtitle">配置 AI 供应商、模型与提示词</span>
     </h2>
 
     <el-tabs v-model="activeTab" class="ai-tabs">
@@ -29,35 +28,37 @@
                 :value="p.id"
               />
             </el-select>
-            <el-tag v-if="store.activeProfileId === selectedProfileId" type="success" size="small" class="ml-10">
-              活跃中
-            </el-tag>
+            <span class="profile-detail" v-if="currentProfileData">
+              {{ currentProfileData.model_name || '--' }} · {{ currentProfileData.provider || '--' }}
+            </span>
+            <span class="status-dot" :class="{ active: store.activeProfileId === selectedProfileId }">
+              <span class="dot"></span>
+              {{ store.activeProfileId === selectedProfileId ? '活跃中' : '未激活' }}
+            </span>
           </div>
           <div class="profile-bar-right">
-            <el-button type="primary" size="small" @click="openAddDialog">新增配置</el-button>
             <el-button
               size="small"
               @click="openEditDialog"
               :disabled="!selectedProfileId"
             >编辑</el-button>
-            <el-button
-              size="small"
-              @click="handleSetActive"
-              :disabled="!selectedProfileId || store.activeProfileId === selectedProfileId"
-            >设为活跃</el-button>
-            <el-popconfirm
-              title="确认删除该配置？此操作不可撤销"
-              @confirm="handleDeleteProfile"
-              :disabled="store.profiles.length <= 1"
-            >
-              <template #reference>
-                <el-button
-                  type="danger"
-                  size="small"
-                  :disabled="!selectedProfileId || store.profiles.length <= 1"
-                >删除</el-button>
+            <el-dropdown trigger="click" size="small">
+              <el-button size="small">更多 ▼</el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item @click="openAddDialog">新增配置</el-dropdown-item>
+                  <el-dropdown-item
+                    @click="handleSetActive"
+                    :disabled="!selectedProfileId || store.activeProfileId === selectedProfileId"
+                  >设为活跃</el-dropdown-item>
+                  <el-dropdown-item
+                    @click="handleDeleteProfile"
+                    :disabled="!selectedProfileId || store.profiles.length <= 1"
+                    divided
+                  >删除</el-dropdown-item>
+                </el-dropdown-menu>
               </template>
-            </el-popconfirm>
+            </el-dropdown>
           </div>
         </div>
 
@@ -73,8 +74,6 @@
               :loading="toggleLoading"
               :disabled="!canToggleAi"
             />
-            <el-tag v-if="aiSwitchOn" type="success" size="small" class="ml-10">已开启</el-tag>
-            <el-tag v-else type="info" size="small" class="ml-10">已关闭</el-tag>
           </div>
           <div class="switch-right">
             <span class="switch-hint" v-if="!canToggleAi && !aiSwitchOn">
@@ -85,118 +84,88 @@
 
         <!-- 配置表单区 -->
         <div v-if="currentProfileData" class="card-box mb-20" v-loading="formLoading">
-          <h3 class="section-title">配置详情</h3>
-          <el-form :model="configForm" label-width="140px" class="config-form">
-            <el-form-item label="配置名称">
-              <el-input v-model="configForm.profile_name" placeholder="例如：生产环境 GPT-4o" clearable />
-            </el-form-item>
+          <div class="section-title">配置详情 <span class="subsection-hint">编辑后自动保存</span></div>
 
-            <el-form-item label="AI 提供商">
-              <el-select v-model="configForm.provider" filterable allow-create placeholder="选择或输入提供商">
-                <el-option label="OpenAI" value="openai" />
-                <el-option label="DeepSeek" value="deepseek" />
-                <el-option label="通义千问" value="qwen" />
-                <el-option label="智谱 GLM" value="zhipu" />
-                <el-option label="Anthropic" value="anthropic" />
-                <el-option label="Ollama (本地)" value="ollama" />
-                <el-option label="自定义" value="custom" />
-              </el-select>
-              <!-- P2-05: Ollama 本地模型提示 -->
-              <div v-if="configForm.provider === 'ollama'" class="ollama-hint mt-10">
-                <el-alert type="info" :closable="false" show-icon>
-                  <template #title>
-                    使用本地模型
-                  </template>
-                  请确保已启动本地 Ollama 服务：<br/>
-                  <code>ollama pull llama3 &amp;&amp; ollama serve</code><br/>
-                  默认 API 地址: <code>http://localhost:11434/v1</code>
-                </el-alert>
-              </div>
-            </el-form-item>
+          <div class="config-grid">
+            <!-- 左侧列 -->
+            <div class="config-col">
+              <el-form-item label="配置名称">
+                <el-input v-model="configForm.profile_name" size="small" maxlength="60" show-word-limit />
+              </el-form-item>
+              <el-form-item label="API Key">
+                <div class="api-key-row">
+                  <el-input v-model="configForm.api_key" size="small" type="password" show-password />
+                </div>
+              </el-form-item>
+              <el-form-item label="系统提示词">
+                <el-input v-model="configForm.system_prompt" type="textarea" :rows="4" size="small" placeholder="自定义 AI 分析的系统提示词（可选，留空使用默认提示词）" />
+                <el-button v-if="configForm.system_prompt" size="small" @click="openPromptOptimize" class="prompt-optimize-btn">提示词优化</el-button>
+              </el-form-item>
+            </div>
 
-            <el-form-item label="API Base URL">
-              <el-input v-model="configForm.api_base_url" placeholder="例如: https://api.openai.com/v1" clearable />
-              <div class="form-tip">OpenAI 兼容格式的 API 地址，支持各种大模型服务</div>
-            </el-form-item>
-
-            <el-form-item label="API Key">
-              <el-input
-                v-model="configForm.api_key"
-                type="password"
-                placeholder="输入 API Key"
-                show-password
-                clearable
-              />
-              <div class="form-tip" v-if="currentProfileData.api_key_masked">
-                当前已保存的 Key: <code>{{ currentProfileData.api_key_masked }}</code>
-              </div>
-            </el-form-item>
-
-            <el-form-item label="模型名称">
-              <el-select v-model="configForm.model_name" filterable allow-create placeholder="选择或输入模型名称">
-                <el-option label="gpt-4o" value="gpt-4o" />
-                <el-option label="gpt-4o-mini" value="gpt-4o-mini" />
-                <el-option label="gpt-4-turbo" value="gpt-4-turbo" />
-                <el-option label="gpt-4" value="gpt-4" />
-                <el-option label="gpt-3.5-turbo" value="gpt-3.5-turbo" />
-                <el-option label="deepseek-chat" value="deepseek-chat" />
-                <el-option label="deepseek-reasoner" value="deepseek-reasoner" />
-                <el-option label="qwen-max" value="qwen-max" />
-                <el-option label="qwen-plus" value="qwen-plus" />
-                <el-option label="glm-4" value="glm-4" />
-                <el-option label="claude-3-5-sonnet" value="claude-3-5-sonnet" />
-                <el-option label="claude-3-opus" value="claude-3-opus" />
-              </el-select>
-            </el-form-item>
-
-            <el-form-item label="Max Tokens">
-              <el-slider v-model="configForm.max_tokens" :min="512" :max="16384" :step="256" show-input />
-            </el-form-item>
-
-            <el-form-item label="Temperature">
-              <el-slider v-model="configForm.temperature" :min="0" :max="1" :step="0.1" show-input />
-            </el-form-item>
-
-            <el-form-item label="系统提示词">
-              <div class="prompt-row">
-                <el-input
-                  v-model="configForm.system_prompt"
-                  type="textarea"
-                  :rows="6"
-                  placeholder="自定义 AI 分析的系统提示词（可选，留空使用默认提示词）"
-                  class="prompt-textarea"
-                />
-                <!-- P2-06: 提示词优化按钮 -->
-                <el-button
-                  class="prompt-optimize-btn"
-                  type="warning"
-                  size="small"
-                  :disabled="!selectedProfileId"
-                  @click="openPromptOptimize"
-                >
-                  ✨ 提示词优化
-                </el-button>
-              </div>
-            </el-form-item>
-
-            <el-form-item>
-              <el-button type="primary" @click="handleTestConnection" :loading="testLoading">
-                <el-icon v-if="!testLoading && testResult === 'success'" class="mr-5"><CircleCheck /></el-icon>
-                <el-icon v-if="!testLoading && testResult === 'fail'" class="mr-5"><CircleClose /></el-icon>
-                测试连接
-              </el-button>
-              <el-button type="success" @click="handleSaveConfig" :loading="saveLoading">保存配置</el-button>
-              <el-button @click="handleResetConfig">重置</el-button>
-
-              <!-- 测试结果 -->
-              <span v-if="testResult === 'success'" class="test-result test-success">
-                <el-icon><CircleCheck /></el-icon> 连接成功
-              </span>
-              <span v-if="testResult === 'fail'" class="test-result test-fail">
-                <el-icon><CircleClose /></el-icon> {{ testErrorMsg }}
-              </span>
-            </el-form-item>
-          </el-form>
+            <!-- 右侧列 -->
+            <div class="config-col">
+              <el-form-item label="AI 提供商">
+                <el-select v-model="configForm.provider" size="small" style="width:100%" filterable allow-create placeholder="选择或输入提供商">
+                  <el-option label="OpenAI" value="openai" />
+                  <el-option label="DeepSeek" value="deepseek" />
+                  <el-option label="通义千问" value="qwen" />
+                  <el-option label="智谱 GLM" value="zhipu" />
+                  <el-option label="Anthropic" value="anthropic" />
+                  <el-option label="Ollama (本地)" value="ollama" />
+                  <el-option label="自定义" value="custom" />
+                </el-select>
+                <!-- P2-05: Ollama 本地模型提示 -->
+                <div v-if="configForm.provider === 'ollama'" class="ollama-hint mt-10">
+                  <el-alert type="info" :closable="false" show-icon>
+                    <template #title>
+                      使用本地模型
+                    </template>
+                    请确保已启动本地 Ollama 服务：<br/>
+                    <code>ollama pull llama3 &amp;&amp; ollama serve</code><br/>
+                    默认 API 地址: <code>http://localhost:11434/v1</code>
+                  </el-alert>
+                </div>
+              </el-form-item>
+              <el-form-item label="API Base URL">
+                <el-input v-model="configForm.api_base_url" size="small" placeholder="https://api.deepseek.com" />
+                <div class="form-tip">兼容 OpenAI 格式的 API 地址</div>
+              </el-form-item>
+              <el-form-item label="模型名称">
+                <el-select v-model="configForm.model_name" size="small" style="width:100%" filterable allow-create placeholder="选择或输入模型名称">
+                  <el-option label="gpt-4o" value="gpt-4o" />
+                  <el-option label="gpt-4o-mini" value="gpt-4o-mini" />
+                  <el-option label="gpt-4-turbo" value="gpt-4-turbo" />
+                  <el-option label="gpt-4" value="gpt-4" />
+                  <el-option label="gpt-3.5-turbo" value="gpt-3.5-turbo" />
+                  <el-option label="deepseek-chat" value="deepseek-chat" />
+                  <el-option label="deepseek-reasoner" value="deepseek-reasoner" />
+                  <el-option label="deepseek-v4-flash" value="deepseek-v4-flash" />
+                  <el-option label="qwen-max" value="qwen-max" />
+                  <el-option label="qwen-plus" value="qwen-plus" />
+                  <el-option label="glm-4" value="glm-4" />
+                  <el-option label="claude-3-5-sonnet" value="claude-3-5-sonnet" />
+                  <el-option label="claude-3-opus" value="claude-3-opus" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="Max Tokens">
+                <div class="slider-row">
+                  <el-slider v-model="configForm.max_tokens" :min="256" :max="65536" size="small" style="flex:1" />
+                  <el-input-number v-model="configForm.max_tokens" :min="256" :max="65536" size="small" style="width:100px" controls-position="right" />
+                </div>
+              </el-form-item>
+              <el-form-item label="Temperature">
+                <div class="slider-row">
+                  <el-slider v-model="configForm.temperature" :min="0" :max="2" :step="0.1" size="small" style="flex:1" />
+                  <el-input-number v-model="configForm.temperature" :min="0" :max="2" :step="0.1" size="small" style="width:80px" controls-position="right" />
+                </div>
+              </el-form-item>
+            </div>
+          </div>
+          <div class="config-actions">
+            <el-button size="small" :loading="testing" @click="handleTestConnection">测试连接</el-button>
+            <el-button size="small" type="primary" :loading="saving" @click="handleSaveConfig">保存配置</el-button>
+          </div>
         </div>
 
         <!-- 无 Profile 时的空状态 -->
@@ -214,8 +183,8 @@
           <el-row :gutter="20" class="stats-cards mb-20">
             <el-col :span="6">
               <div class="stat-card">
-                <div class="stat-card-icon" style="background: #ecf5ff;">
-                  <el-icon :size="28" color="#409eff"><Coin /></el-icon>
+                <div class="stat-card-icon stat-icon-tokens">
+                  <el-icon :size="24"><Coin /></el-icon>
                 </div>
                 <div class="stat-card-info">
                   <div class="stat-card-value">{{ formatNumber(stats.totalTokens) }}</div>
@@ -225,8 +194,8 @@
             </el-col>
             <el-col :span="6">
               <div class="stat-card">
-                <div class="stat-card-icon" style="background: #f0f9eb;">
-                  <el-icon :size="28" color="#67c23a"><TrendCharts /></el-icon>
+                <div class="stat-card-icon stat-icon-calls">
+                  <el-icon :size="24"><TrendCharts /></el-icon>
                 </div>
                 <div class="stat-card-info">
                   <div class="stat-card-value">{{ formatNumber(stats.totalCalls) }}</div>
@@ -236,8 +205,8 @@
             </el-col>
             <el-col :span="6">
               <div class="stat-card">
-                <div class="stat-card-icon" style="background: #fdf6ec;">
-                  <el-icon :size="28" color="#e6a23c"><Timer /></el-icon>
+                <div class="stat-card-icon stat-icon-latency">
+                  <el-icon :size="24"><Timer /></el-icon>
                 </div>
                 <div class="stat-card-info">
                   <div class="stat-card-value">{{ stats.avgLatency }}<small>ms</small></div>
@@ -247,8 +216,8 @@
             </el-col>
             <el-col :span="6">
               <div class="stat-card">
-                <div class="stat-card-icon" style="background: #fef0f0;">
-                  <el-icon :size="28" color="#f56c6c"><DataAnalysis /></el-icon>
+                <div class="stat-card-icon stat-icon-rate">
+                  <el-icon :size="24"><DataAnalysis /></el-icon>
                 </div>
                 <div class="stat-card-info">
                   <div class="stat-card-value">{{ stats.successRate }}<small>%</small></div>
@@ -422,7 +391,7 @@
               :disabled="!selectedProfileId && profileDialogMode === 'edit'"
               @click="openPromptOptimize"
             >
-              ✨ 提示词优化
+              提示词优化
             </el-button>
           </div>
         </el-form-item>
@@ -453,7 +422,7 @@
     <!-- ============================================================ -->
     <el-dialog
       v-model="promptOptimizeVisible"
-      title="✨ 提示词优化"
+      title="提示词优化"
       width="750px"
       :close-on-click-modal="false"
       destroy-on-close
@@ -502,13 +471,13 @@
 
         <div class="opt-compare-grid">
           <div class="opt-compare-col">
-            <div class="opt-compare-header old">📝 原始提示词</div>
+            <div class="opt-compare-header old">原始提示词</div>
             <div class="opt-compare-content">
               <pre>{{ currentPromptText || '(空)' }}</pre>
             </div>
           </div>
           <div class="opt-compare-col">
-            <div class="opt-compare-header new">✨ 优化后提示词</div>
+            <div class="opt-compare-header new">优化后提示词</div>
             <div class="opt-compare-content">
               <pre>{{ optimizedPromptText }}</pre>
             </div>
@@ -1285,9 +1254,6 @@ function isTextLong(text) {
 </script>
 
 <style scoped>
-/* ============================================================
-   Profile Bar
-   ============================================================ */
 .profile-bar {
   display: flex;
   justify-content: space-between;
@@ -1295,30 +1261,44 @@ function isTextLong(text) {
   flex-wrap: wrap;
   gap: 10px;
 }
-.profile-bar-left {
+.profile-bar-left, .profile-bar-right {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 .profile-label {
-  font-size: 14px;
-  color: #606266;
+  font-size: 13px;
+  color: var(--color-text-secondary, #555);
   white-space: nowrap;
 }
 .profile-select {
   width: 260px;
 }
-.profile-bar-right {
-  display: flex;
-  gap: 8px;
+.profile-detail {
+  font-size: 12px;
+  color: var(--color-fg-subtle, #888);
+  white-space: nowrap;
 }
-.ml-10 {
-  margin-left: 10px;
+.status-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--color-text-tertiary, #888);
 }
-
-/* ============================================================
-   Switch Row
-   ============================================================ */
+.status-dot .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-text-tertiary, #888);
+  flex-shrink: 0;
+}
+.status-dot.active .dot {
+  background: var(--color-text-success, #16a34a);
+}
+.status-dot.active {
+  color: var(--color-text-success, #16a34a);
+}
 .switch-row {
   display: flex;
   justify-content: space-between;
@@ -1330,61 +1310,64 @@ function isTextLong(text) {
   gap: 10px;
 }
 .switch-label {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 500;
-  color: #303133;
+  color: var(--color-text-primary, #111);
 }
 .switch-hint {
-  font-size: 13px;
-  color: #909399;
+  font-size: 12px;
+  color: var(--color-text-tertiary, #888);
 }
-
-/* ============================================================
-   Config Form
-   ============================================================ */
 .section-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: #303133;
-  margin-bottom: 16px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid #ebeef5;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-primary, #111);
+  margin-bottom: 14px;
+  padding-bottom: 8px;
+  border-bottom: 0.5px solid var(--color-border-default, #e5e5e5);
 }
-.config-form {
-  max-width: 700px;
+.config-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 32px;
 }
+.config-col { min-width: 0; }
+.config-col :deep(.el-form-item) { margin-bottom: 14px; }
+.config-col :deep(.el-form-item__label) {
+  font-size: 12px; color: var(--color-fg-subtle, #888);
+  font-weight: 400; padding-bottom: 2px;
+  line-height: 1.4;
+}
+.config-col :deep(.el-form-item__content) { line-height: 1; }
+.config-col :deep(.el-input__wrapper) { border-radius: 4px; }
+.config-col :deep(.el-slider__runway) { margin: 8px 0; }
+.config-col :deep(.el-slider__bar) { background: var(--color-accent-emphasis, #185FA5); }
+.config-col :deep(.el-slider__button) { border-color: var(--color-accent-emphasis, #185FA5); }
+
+.subsection-hint {
+  font-size: 12px; color: var(--color-fg-subtle, #888);
+  font-weight: 400; margin-left: 8px;
+}
+.config-actions {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 12px; padding-top: 12px;
+  border-top: 0.5px solid var(--color-border-default, #e5e5e5);
+}
+.api-key-row { display: flex; gap: 4px; width: 100%; }
+.api-key-row .el-input { flex: 1; }
+.slider-row { display: flex; align-items: center; gap: 10px; width: 100%; }
+
 .form-tip {
   font-size: 12px;
-  color: #909399;
+  color: var(--color-text-tertiary, #888);
   margin-top: 4px;
 }
 .form-tip code {
-  color: #e6a23c;
-  background: #fdf6ec;
+  color: var(--color-text-warning, #d97706);
+  background: var(--color-warning-subtle, #fffbeb);
   padding: 2px 6px;
   border-radius: 3px;
 }
-
-/* ============================================================
-   Test Result
-   ============================================================ */
-.test-result {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 14px;
-  margin-left: 12px;
-}
-.test-success {
-  color: #67c23a;
-}
-.test-fail {
-  color: #f56c6c;
-}
-
-/* ============================================================
-   Stats Cards
-   ============================================================ */
 .stats-section {
   margin-top: 20px;
 }
@@ -1393,22 +1376,31 @@ function isTextLong(text) {
   align-items: center;
   gap: 14px;
   padding: 16px;
-  background: #fff;
-  border-radius: 8px;
-  border: 1px solid #ebeef5;
-  transition: box-shadow 0.2s;
-}
-.stat-card:hover {
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+  background: var(--color-canvas-default, #fff);
+  border-radius: var(--r-card, 10px);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
 }
 .stat-card-icon {
-  width: 52px;
-  height: 52px;
-  border-radius: 10px;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--r-btn, 6px);
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  color: var(--color-fg-on-emphasis, #fff);
+}
+.stat-icon-tokens {
+  background: var(--color-accent-fg, #2563eb);
+}
+.stat-icon-calls {
+  background: var(--color-text-success, #16a34a);
+}
+.stat-icon-latency {
+  background: var(--color-text-warning, #d97706);
+}
+.stat-icon-rate {
+  background: var(--color-text-info, #378ADD);
 }
 .stat-card-info {
   flex: 1;
@@ -1416,32 +1408,28 @@ function isTextLong(text) {
 }
 .stat-card-value {
   font-size: 22px;
-  font-weight: 700;
-  color: #303133;
+  font-weight: 500;
+  color: var(--color-text-primary, #111);
   line-height: 1.2;
 }
 .stat-card-value small {
   font-size: 13px;
   font-weight: 400;
-  color: #909399;
+  color: var(--color-text-tertiary, #888);
 }
 .stat-card-label {
-  font-size: 13px;
-  color: #909399;
+  font-size: 12px;
+  color: var(--color-text-secondary, #555);
   margin-top: 2px;
 }
-
-/* ============================================================
-   Chart
-   ============================================================ */
 .chart-controls {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 .chart-label {
-  font-size: 14px;
-  color: #606266;
+  font-size: 13px;
+  color: var(--color-text-secondary, #555);
 }
 .chart-container {
   min-height: 300px;
@@ -1450,35 +1438,26 @@ function isTextLong(text) {
   width: 100%;
   height: 340px;
 }
-
-/* ============================================================
-   Audit Table
-   ============================================================ */
 .audit-table {
   width: 100%;
 }
-
-/* ============================================================
-   Audit Detail
-   ============================================================ */
 .audit-detail {
   max-height: 65vh;
   overflow-y: auto;
 }
 .audit-section h4 {
-  font-size: 14px;
-  font-weight: 600;
-  color: #303133;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-primary, #111);
   margin-bottom: 8px;
 }
 .audit-content {
-  background: #f5f7fa;
-  border: 1px solid #e4e7ed;
+  background: var(--color-canvas-subtle, #fafafa);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
   border-radius: 6px;
   padding: 12px;
   max-height: 400px;
   overflow-y: auto;
-  transition: max-height 0.3s;
 }
 .audit-content.collapsed {
   max-height: 200px;
@@ -1488,70 +1467,40 @@ function isTextLong(text) {
   margin: 0;
   white-space: pre-wrap;
   word-wrap: break-word;
-  font-size: 13px;
-  line-height: 1.7;
-  color: #303133;
-  font-family: Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-primary, #111);
+  font-family: var(--font-mono, Consolas, monospace);
 }
-
-/* ============================================================
-   Empty State
-   ============================================================ */
 .empty-state {
   text-align: center;
   padding: 40px 0;
 }
-
-/* ============================================================
-   Utility
-   ============================================================ */
-.mb-5 { margin-bottom: 5px; }
-.mb-10 { margin-bottom: 10px; }
-.mb-15 { margin-bottom: 15px; }
-.mb-20 { margin-bottom: 20px; }
-.mt-5 { margin-top: 5px; }
-.mt-10 { margin-top: 10px; }
-.mt-15 { margin-top: 15px; }
-.mt-20 { margin-top: 20px; }
-.mr-5 { margin-right: 5px; }
-.flex-between {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.text-gray {
-  font-size: 13px;
-  color: #909399;
-}
 .page-title {
-  font-size: 20px;
-  font-weight: 600;
-  color: #303133;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--color-text-primary, #111);
   display: flex;
   align-items: center;
   gap: 8px;
 }
-.title-emoji { font-size: 22px; }
-.title-tag { margin-left: 4px; }
-
-/* ============================================================
-   P2-05: Ollama Hint
-   ============================================================ */
+.page-subtitle {
+  font-size: 12px;
+  color: var(--color-fg-subtle, #888);
+  margin-left: 8px;
+  font-weight: 400;
+}
 .ollama-hint {
   margin-top: 8px;
 }
 .ollama-hint code {
-  background: #f0f2f5;
+  background: var(--color-canvas-inset, #f5f5f5);
   padding: 2px 6px;
   border-radius: 3px;
   font-size: 12px;
-  color: #303133;
-  font-family: Consolas, monospace;
+  color: var(--color-text-primary, #111);
+  font-family: var(--font-mono, Consolas, monospace);
 }
-
-/* ============================================================
-   P2-06: Prompt Optimize
-   ============================================================ */
 .prompt-row {
   display: flex;
   flex-direction: column;
@@ -1564,15 +1513,14 @@ function isTextLong(text) {
 .prompt-optimize-btn {
   align-self: flex-end;
 }
-
 .opt-label {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
-  color: #303133;
+  color: var(--color-text-primary, #111);
 }
 .opt-current-prompt {
-  background: #f5f7fa;
-  border: 1px solid #e4e7ed;
+  background: var(--color-canvas-subtle, #fafafa);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
   border-radius: 6px;
   padding: 10px 12px;
   max-height: 150px;
@@ -1580,53 +1528,51 @@ function isTextLong(text) {
 }
 .opt-current-prompt pre {
   margin: 0;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.6;
-  color: #606266;
+  color: var(--color-text-secondary, #555);
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: Consolas, 'Courier New', monospace;
+  font-family: var(--font-mono, Consolas, monospace);
 }
-
 .opt-compare-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
 }
 .opt-compare-col {
-  border: 1px solid #e4e7ed;
-  border-radius: 8px;
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  border-radius: var(--r-card, 10px);
   overflow: hidden;
 }
 .opt-compare-header {
   padding: 8px 12px;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
 }
 .opt-compare-header.old {
-  background: #f5f7fa;
-  color: #606266;
+  background: var(--color-canvas-subtle, #fafafa);
+  color: var(--color-text-secondary, #555);
 }
 .opt-compare-header.new {
-  background: #f0f9eb;
-  color: #67c23a;
+  background: var(--color-success-subtle, #f0fdf4);
+  color: var(--color-text-success, #16a34a);
 }
 .opt-compare-content {
   padding: 10px 12px;
   max-height: 250px;
   overflow-y: auto;
-  background: #fff;
+  background: var(--color-canvas-default, #fff);
 }
 .opt-compare-content pre {
   margin: 0;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.6;
-  color: #303133;
+  color: var(--color-text-primary, #111);
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: Consolas, 'Courier New', monospace;
+  font-family: var(--font-mono, Consolas, monospace);
 }
-
 .opt-history-bar {
   display: flex;
   align-items: center;
@@ -1634,12 +1580,30 @@ function isTextLong(text) {
 .opt-history-select {
   width: 240px;
 }
-
 .flex-center {
   display: flex;
   justify-content: center;
   align-items: center;
   gap: 12px;
 }
+.mb-5 { margin-bottom: 5px; }
+.mb-10 { margin-bottom: 10px; }
+.mb-15 { margin-bottom: 15px; }
+.mb-20 { margin-bottom: 20px; }
+.mt-5 { margin-top: 5px; }
+.mt-10 { margin-top: 10px; }
+.mt-15 { margin-top: 15px; }
+.mt-20 { margin-top: 20px; }
+.mr-5 { margin-right: 5px; }
 .mr-10 { margin-right: 10px; }
+.ml-10 { margin-left: 10px; }
+.flex-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.text-gray {
+  font-size: 12px;
+  color: var(--color-text-tertiary, #888);
+}
 </style>

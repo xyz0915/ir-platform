@@ -143,6 +143,43 @@ def _register_scheduled_tasks() -> None:
             except Exception as exc:
                 logger.warning("定时同步 IOC 列表失败: %s", exc)
 
+        @scheduler.scheduled_job("cron", hour=3, minute=30, id="cleanup_uploaded_logs")
+        def _cleanup_uploaded_logs_job() -> None:
+            """每天 3:30 清理过期的上传日志文件."""
+            import shutil as _shutil
+            from datetime import datetime as _datetime, timedelta as _timedelta
+            from app.config import settings as _settings
+
+            upload_base = getattr(_settings, "UPLOAD_DIR", "./uploads")
+            retention_days = getattr(_settings, "LOG_FILE_RETENTION_DAYS", 7)
+            cutoff = _datetime.now() - _timedelta(days=retention_days)
+            cleaned = 0
+
+            if not os.path.isdir(upload_base):
+                return
+
+            for root, dirs, files in os.walk(upload_base):
+                for f in files:
+                    fpath = os.path.join(root, f)
+                    try:
+                        mtime = _datetime.fromtimestamp(os.path.getmtime(fpath))
+                        if mtime < cutoff:
+                            os.remove(fpath)
+                            cleaned += 1
+                    except Exception:
+                        continue
+                # 清理空目录
+                for d in dirs:
+                    dpath = os.path.join(root, d)
+                    try:
+                        if not os.listdir(dpath):
+                            os.rmdir(dpath)
+                    except Exception:
+                        continue
+
+            if cleaned:
+                logger.info("清理过期上传文件: %d 个文件已删除", cleaned)
+
         scheduler.start()
         logger.info("已注册定时同步任务（每天 03:00）")
     except ImportError:
@@ -166,8 +203,15 @@ from app.api import logs  # noqa: E402  # 日志分析中心
 from app.api import policies  # noqa: E402  # 检测策略配置
 from app.api import ai_advanced  # noqa: E402  # AI 高级关联功能
 from app.api import events  # noqa: E402  # 分析中心事件 API
+from app.api import dq  # noqa: E402  # v2.1 数据质量监控 API
+from app.api import sync  # noqa: E402  # v2 SyncLayer 同步 API
 from app.api import log_search  # noqa: E402  # 日志检索模块 v2
 from app.api import disposition  # noqa: E402  # 处置记录 API
+from app.api import ai_noise  # noqa: E402  # AI 降噪 + 路由注册
+from app.api import import_logs  # noqa: E402  # 手工日志导入
+from app.api import users  # noqa: E402  # 用户管理
+from app.api import audit_logs  # noqa: E402  # 审计日志
+from app.api import settings_api  # noqa: E402  # 系统参数
 
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(case_hosts.router, prefix="/api", tags=["案件"])  # 必须在 cases.router 之前注册
@@ -194,8 +238,15 @@ app.include_router(logs.router, prefix="/api", tags=["日志分析"])  # 日志�
 app.include_router(policies.router, prefix="/api", tags=["策略配置"])  # 检测策略配置
 app.include_router(ai_advanced.router, prefix="/api", tags=["AI高级关联"])  # AI高级关联功能
 app.include_router(events.router, prefix="/api/analysis", tags=["分析中心"])  # 分析中心事件 API
+app.include_router(dq.router, prefix="/api/dq", tags=["数据质量"])  # v2.1 DQMonitor 接口
+app.include_router(sync.router, prefix="/api/sync", tags=["同步"])  # v2 SyncLayer 接口
 app.include_router(log_search.router, prefix="/api/log-search", tags=["日志检索"])  # 日志检索 v2
 app.include_router(disposition.router, tags=["处置"])  # 处置记录
+app.include_router(ai_noise.router, prefix="/api/ai", tags=["AI降噪"])  # AI 降噪研判
+app.include_router(import_logs.router, tags=["手工日志导入"])  # 手工日志导入
+app.include_router(users.router, prefix="/api", tags=["用户管理"])  # 用户管理
+app.include_router(audit_logs.router, prefix="/api/audit-logs", tags=["审计日志"])  # 审计日志
+app.include_router(settings_api.router, prefix="/api/settings", tags=["系统参数"])  # 系统参数
 
 
 @app.get("/api/health")

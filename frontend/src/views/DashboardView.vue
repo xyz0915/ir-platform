@@ -24,7 +24,7 @@
 
       <!-- KPI 卡片行 -->
       <div class="kpi-row">
-        <div class="kpi-card critical" @click="$router.push('/iocs')">
+        <div class="kpi-card card-danger" @click="$router.push('/iocs')">
           <div class="kpi-label">待处理告警</div>
           <div class="kpi-value">{{ stats.pending_alerts }}</div>
           <div class="kpi-sub">
@@ -32,42 +32,37 @@
             <span v-if="stats.alert_trend_dir === 'up'" class="trend-up">↑ {{ Math.abs(stats.alert_trend || 0) }}</span>
             <span v-else-if="stats.alert_trend_dir === 'down'" class="trend-down">↓ {{ Math.abs(stats.alert_trend || 0) }}</span>
           </div>
-          <div class="kpi-icon" style="background:#ffebe9;">⚡</div>
         </div>
-        <div class="kpi-card high">
+        <div class="kpi-card card-warning">
           <div class="kpi-label">活跃案件</div>
           <div class="kpi-value">{{ stats.active_cases }}</div>
           <div class="kpi-sub">
             今日新增 <strong>{{ stats.new_cases_today }}</strong> 件
             <span v-if="stats.cases_trend > 0" class="trend-up">↑ {{ stats.cases_trend }}</span>
           </div>
-          <div class="kpi-icon" style="background:#fff8c5;">📋</div>
         </div>
-        <div class="kpi-card medium">
+        <div class="kpi-card card-info">
           <div class="kpi-label">已采集主机</div>
           <div class="kpi-value">{{ stats.total_hosts }}</div>
           <div class="kpi-sub">
             待分析 <strong>{{ stats.pending_hosts }}</strong> 台 · 最近 24h <strong>{{ stats.recent_hosts_24h || 0 }}</strong>
           </div>
-          <div class="kpi-icon" style="background:#ddf4ff;">🖥</div>
         </div>
-        <div class="kpi-card purple">
+        <div class="kpi-card card-neutral">
           <div class="kpi-label">规则命中</div>
           <div class="kpi-value kpi-purple">{{ formatNum(stats.total_rule_hits) }}</div>
           <div class="kpi-sub">活跃规则 <strong>{{ stats.active_rules }}</strong> 条</div>
-          <div class="kpi-icon" style="background:#f3eefc;">📊</div>
         </div>
-        <div class="kpi-card green">
+        <div class="kpi-card card-neutral">
           <div class="kpi-label">知识库命中</div>
           <div class="kpi-value kpi-green">{{ stats.kb_hits }}</div>
           <div class="kpi-sub">
             覆盖率 <strong>{{ stats.kb_coverage }}%</strong>
-            <span v-if="stats.kb_coverage > 0 && stats.kb_coverage < 30" style="color:#d4a72c;">（偏低）</span>
-            <span v-else-if="stats.kb_coverage >= 50" style="color:#2da44e;">（良好）</span>
+            <span v-if="stats.kb_coverage > 0 && stats.kb_coverage < 30" style="color:var(--color-text-warning);">（偏低）</span>
+            <span v-else-if="stats.kb_coverage >= 50" style="color:var(--color-text-success);">（良好）</span>
           </div>
-          <div class="kpi-icon" style="background:#e6f6e8;">📚</div>
         </div>
-        <div class="kpi-card teal">
+        <div class="kpi-card card-neutral">
           <div class="kpi-label">AI 分析</div>
           <div class="kpi-value kpi-teal">{{ stats.ai_analyses_recent || 0 }}</div>
           <div class="kpi-sub">
@@ -75,7 +70,6 @@
             <span v-if="stats.ai_trend > 0" class="trend-up">↑ {{ stats.ai_trend }}</span>
             <span v-else-if="stats.ai_trend < 0" class="trend-down">↓ {{ Math.abs(stats.ai_trend) }}</span>
           </div>
-          <div class="kpi-icon" style="background:#e6fffa;">🤖</div>
         </div>
       </div>
 
@@ -106,7 +100,7 @@
         <!-- 左：待处理告警 -->
         <div class="panel">
           <div class="panel-header">
-            <span class="panel-title">🔔 待处理告警</span>
+            <span class="panel-title">待处理告警</span>
             <router-link to="/cases" class="panel-link">查看全部 →</router-link>
           </div>
           <div v-if="recentAlerts.length === 0" class="empty-state">暂无待处理告警</div>
@@ -123,7 +117,7 @@
         <!-- 中：最近主机 -->
         <div class="panel">
           <div class="panel-header">
-            <span class="panel-title">🖥 最近主机</span>
+            <span class="panel-title">最近主机</span>
             <router-link to="/cases" class="panel-link">主机列表 →</router-link>
           </div>
           <div v-if="recentHosts.length === 0" class="empty-state">暂未采集主机</div>
@@ -144,7 +138,7 @@
         <!-- 右：规则命中 Top 8 -->
         <div class="panel">
           <div class="panel-header">
-            <span class="panel-title">📊 规则命中 Top 8</span>
+            <span class="panel-title">规则命中 Top 8</span>
             <router-link to="/rules" class="panel-link">规则管理 →</router-link>
           </div>
           <div v-if="ruleTop.length === 0" class="empty-state">暂无命中记录</div>
@@ -377,59 +371,52 @@ watch(activeRange, () => fetchData())
 .time-range { display: flex; gap: 4px; margin-bottom: 20px; }
 .pill {
   padding: 4px 14px; border-radius: 16px; font-size: 12px;
-  border: 1px solid #e5e7eb; background: #fff; color: #6b7280;
+  border: 0.5px solid var(--color-border-tertiary); background: var(--color-background-primary); color: var(--color-text-secondary);
   cursor: pointer; transition: all .15s;
 }
-.pill.active { background: #409eff; color: #fff; border-color: #409eff; }
-.pill:hover:not(.active) { background: #f3f4f6; }
+.pill.active { background: var(--color-background-info); color: var(--color-text-info); border-color: var(--color-background-info); }
+.pill:hover:not(.active) { background: var(--color-background-tertiary); }
 
 .kpi-row {
   display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px;
   margin-bottom: 20px;
 }
 .kpi-card {
-  background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
+  background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: 10px;
   padding: 16px 18px; position: relative; overflow: hidden;
-  cursor: pointer; transition: box-shadow .2s, transform .15s;
 }
-.kpi-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.06); transform: translateY(-1px); }
-.kpi-label { font-size: 12px; color: #9ca3af; margin-bottom: 4px; }
+.kpi-card:hover { background: var(--color-background-tertiary); }
+.kpi-label { font-size: 12px; color: var(--color-text-tertiary); margin-bottom: 4px; }
 .kpi-value { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; line-height: 1.1; }
-.kpi-sub { font-size: 11px; color: #9ca3af; margin-top: 6px; }
+.kpi-sub { font-size: 11px; color: var(--color-text-tertiary); margin-top: 6px; }
 .kpi-sub strong { font-weight: 600; }
-.trend-up { color: #cf222e; margin-left: 4px; font-weight: 500; }
-.trend-down { color: #2da44e; margin-left: 4px; font-weight: 500; }
-.kpi-icon {
-  position: absolute; right: 14px; top: 14px;
-  width: 36px; height: 36px; border-radius: 8px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 18px; opacity: 0.85;
-}
-.kpi-card.critical .kpi-value { color: #cf222e; }
-.kpi-card.high .kpi-value { color: #d4a72c; }
-.kpi-card.medium .kpi-value { color: #0969da; }
-.kpi-value.kpi-purple { color: #8250df; }
-.kpi-value.kpi-green { color: #2da44e; }
-.kpi-value.kpi-teal { color: #0d9488; }
+.trend-up { color: var(--color-text-danger); margin-left: 4px; font-weight: 500; }
+.trend-down { color: var(--color-text-success); margin-left: 4px; font-weight: 500; }
+.kpi-card.card-danger .kpi-value { color: var(--color-text-danger); }
+.kpi-card.card-warning .kpi-value { color: var(--color-text-warning); }
+.kpi-card.card-info .kpi-value { color: var(--color-text-info); }
+.kpi-value.kpi-purple { color: var(--color-text-primary); }
+.kpi-value.kpi-green { color: var(--color-text-success); }
+.kpi-value.kpi-teal { color: var(--color-text-primary); }
 
 .charts-row {
   display: grid; grid-template-columns: 2fr 1fr; gap: 12px;
   margin-bottom: 20px;
 }
 .chart-card {
-  background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
+  background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: 10px;
   padding: 18px 20px;
 }
 .chart-header { margin-bottom: 12px; }
-.chart-title { font-size: 14px; font-weight: 600; color: #1f2937; }
-.chart-subtitle { font-size: 11px; color: #9ca3af; margin-top: 2px; }
+.chart-title { font-size: 13px; font-weight: 500; color: var(--color-text-primary); }
+.chart-subtitle { font-size: 11px; color: var(--color-text-tertiary); margin-top: 2px; }
 .chart-box { width: 100%; height: 280px; }
 
 .bottom-row {
   display: grid; grid-template-columns: 1.5fr 1fr 1fr; gap: 12px;
 }
 .panel {
-  background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
+  background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: 10px;
   padding: 18px 20px;
 }
 .panel-header {
@@ -437,55 +424,55 @@ watch(activeRange, () => fetchData())
   margin-bottom: 14px;
 }
 .panel-title { font-size: 14px; font-weight: 600; }
-.panel-link { font-size: 12px; color: #409eff; text-decoration: none; }
+.panel-link { font-size: 12px; color: var(--color-text-info); text-decoration: none; }
 .panel-link:hover { text-decoration: underline; }
 
-.empty-state { text-align: center; color: #9ca3af; font-size: 13px; padding: 30px 0; }
+.empty-state { text-align: center; color: var(--color-text-tertiary); font-size: 13px; padding: 30px 0; }
 
 .alert-item {
   display: flex; align-items: flex-start; gap: 10px;
-  padding: 10px 0; border-bottom: 1px solid #f3f4f6;
+  padding: 10px 0; border-bottom: 0.5px solid var(--color-border-tertiary);
 }
 .alert-item:last-child { border-bottom: none; }
 .alert-severity-dot { flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; }
-.dot-critical { background: #cf222e; }
-.dot-high { background: #d4a72c; }
-.dot-medium { background: #0969da; }
-.dot-low { background: #2da44e; }
+.dot-critical { background: var(--color-text-danger); }
+.dot-high { background: var(--color-text-warning); }
+.dot-medium { background: var(--color-text-info); }
+.dot-low { background: var(--color-text-success); }
 .alert-body { flex: 1; min-width: 0; }
-.alert-title { font-size: 13px; font-weight: 500; color: #1f2937; }
-.alert-meta { font-size: 11px; color: #9ca3af; margin-top: 2px; }
+.alert-title { font-size: 13px; font-weight: 500; color: var(--color-text-primary); }
+.alert-meta { font-size: 11px; color: var(--color-text-tertiary); margin-top: 2px; }
 .alert-badge {
   flex-shrink: 0; padding: 1px 8px; border-radius: 10px;
   font-size: 10px; font-weight: 500; margin-top: 2px;
 }
-.badge-critical { background: #ffebe9; color: #cf222e; }
-.badge-high { background: #fff8c5; color: #9a6700; }
-.badge-medium { background: #ddf4ff; color: #0969da; }
+.badge-critical { background: var(--color-background-danger); color: var(--color-text-danger); }
+.badge-high { background: var(--color-background-warning); color: var(--color-text-warning); }
+.badge-medium { background: var(--color-background-info); color: var(--color-text-info); }
 
 .host-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .host-item {
   display: flex; align-items: center; gap: 8px;
-  padding: 8px 10px; border-radius: 6px; border: 1px solid #f3f4f6;
+  padding: 8px 10px; border-radius: 6px; border: 0.5px solid var(--color-border-tertiary);
   font-size: 12px; cursor: pointer; transition: background .15s;
 }
-.host-item:hover { background: #f9fafb; }
-.host-name { font-weight: 500; color: #1f2937; }
-.host-ip { font-size: 10px; color: #9ca3af; margin-top: 1px; }
+.host-item:hover { background: var(--color-background-tertiary); }
+.host-name { font-weight: 500; color: var(--color-text-primary); }
+.host-ip { font-size: 10px; color: var(--color-text-tertiary); margin-top: 1px; }
 .host-risk-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-.host-risk-dot.critical { background: #cf222e; }
-.host-risk-dot.high { background: #d4a72c; }
-.host-risk-dot.medium { background: #0969da; }
-.host-risk-dot.low { background: #2da44e; }
+.host-risk-dot.critical { background: var(--color-text-danger); }
+.host-risk-dot.high { background: var(--color-text-warning); }
+.host-risk-dot.medium { background: var(--color-text-info); }
+.host-risk-dot.low { background: var(--color-text-success); }
 
 .eff-item {
   display: flex; align-items: center; padding: 8px 0;
-  border-bottom: 1px solid #f3f4f6; font-size: 12px;
+  border-bottom: 0.5px solid var(--color-border-tertiary); font-size: 12px;
 }
 .eff-item:last-child { border-bottom: none; }
-.eff-name { flex: 1; font-weight: 500; color: #1f2937; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.eff-count { font-size: 11px; color: #6b7280; width: 40px; text-align: right; flex-shrink: 0; }
-.eff-bar-bg { width: 80px; height: 6px; background: #f3f4f6; border-radius: 3px; margin: 0 10px; overflow: hidden; flex-shrink: 0; }
+.eff-name { flex: 1; font-weight: 500; color: var(--color-text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.eff-count { font-size: 11px; color: var(--color-text-secondary); width: 40px; text-align: right; flex-shrink: 0; }
+.eff-bar-bg { width: 80px; height: 6px; background: var(--color-background-tertiary); border-radius: 3px; margin: 0 10px; overflow: hidden; flex-shrink: 0; }
 .eff-bar-fill { height: 100%; border-radius: 3px; transition: width 1s ease; }
 
 @media (max-width: 1100px) {

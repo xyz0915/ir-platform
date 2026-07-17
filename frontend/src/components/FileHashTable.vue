@@ -9,7 +9,7 @@
     </el-table-column>
     <el-table-column label="签名状态" width="90">
       <template #default="{ row }">
-        <el-tag :type="row.is_signed ? 'success' : 'danger'" size="small">
+        <el-tag :type="row.is_signed ? 'success' : 'danger'" size="small" effect="plain" class="sign-tag">
           {{ row.is_signed ? '已签名' : '未签名' }}
         </el-tag>
       </template>
@@ -32,6 +32,33 @@ defineProps({
 .mono-code {
   font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
   font-size: 12px;
-  color: #303133;
+  color: var(--color-fg-default, #111);
+}
+
+.sign-tag {
+  border: none !important;
+  background: transparent !important;
+  padding: 0 6px !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+}
+
+:deep(.el-table) {
+  --el-table-border-color: var(--color-border-default, #e5e5e5);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  border-radius: 8px;
+  overflow: hidden;
+}
+:deep(.el-table th.el-table__cell) {
+  background: var(--color-canvas-subtle, #fafafa) !important;
+  color: var(--color-fg-subtle, #888) !important;
+  font-weight: 500 !important;
+  font-size: 12px !important;
+  padding: 8px 10px !important;
+}
+:deep(.el-table td.el-table__cell) {
+  padding: 6px 8px !important;
+  font-size: 12px !important;
+  line-height: 1.4 !important;
 }
 </style>

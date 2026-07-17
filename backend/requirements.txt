@@ -41,3 +41,6 @@ python-docx>=1.1.0
 
 # 定时任务调度（Phase 2 — IOC 列表每日同步）
 apscheduler>=3.10.0
+
+# 手工日志导入（Manual Log Import）
+python-evtx>=0.1.1

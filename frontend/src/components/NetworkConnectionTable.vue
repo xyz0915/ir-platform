@@ -43,7 +43,7 @@
       <el-table-column prop="local_port" label="本地端口" width="90" />
       <el-table-column label="远程地址" min-width="140">
         <template #default="{ row }">
-          <el-tag v-if="isPublicAddress(row.remote_addr)" type="warning" size="small" effect="dark">
+          <el-tag v-if="isPublicAddress(row.remote_addr)" size="small" effect="plain" class="addr-tag addr-tag--public">
             {{ row.remote_addr }}
           </el-tag>
           <span v-else>{{ row.remote_addr }}</span>
@@ -53,16 +53,16 @@
       <el-table-column label="威胁情报" min-width="130">
         <template #default="{ row }">
           <template v-if="row.threat_level === 'high'">
-            <el-tag type="danger" size="small">恶意</el-tag>
+            <el-tag size="small" effect="plain" class="threat-tag threat-tag--malicious">恶意</el-tag>
           </template>
           <template v-else-if="row.threat_level === 'medium'">
-            <el-tag type="warning" size="small">可疑</el-tag>
+            <el-tag size="small" effect="plain" class="threat-tag threat-tag--suspicious">可疑</el-tag>
           </template>
           <template v-else-if="row.threat_level === 'low'">
-            <el-tag type="success" size="small">干净</el-tag>
+            <el-tag size="small" effect="plain" class="threat-tag threat-tag--clean">干净</el-tag>
           </template>
           <template v-else-if="isPublicAddress(row.remote_addr)">
-            <el-tag type="info" size="small">未检测</el-tag>
+            <el-tag size="small" effect="plain" class="threat-tag threat-tag--unknown">未检测</el-tag>
           </template>
           <template v-else>
             <span class="text-muted">私网</span>
@@ -188,13 +188,72 @@ function isPublicAddress(addr) {
 <style scoped>
 .flex-between { display: flex; justify-content: space-between; align-items: center; }
 .mb-8 { margin-bottom: 8px; }
-.tab-hint { font-size: 13px; color: #909399; }
-.text-muted { color: #c0c4cc; font-size: 12px; }
+.tab-hint { font-size: 12px; color: var(--color-fg-subtle, #888); }
+.text-muted { color: var(--color-fg-subtle, #888); font-size: 12px; }
 .filter-bar {
   display: flex; align-items: center; gap: 8px;
   margin-bottom: 10px; padding: 8px 10px;
-  background: #f5f7fa; border-radius: 6px;
+  background: var(--color-canvas-subtle, #fafafa);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  border-radius: 6px;
 }
 .filter-item { width: 120px; }
 .filter-search { width: 200px; }
+
+/* ===== 表格弱化 ===== */
+:deep(.el-table) {
+  --el-table-border-color: var(--color-border-default, #e5e5e5);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  border-radius: 8px;
+  overflow: hidden;
+}
+:deep(.el-table th.el-table__cell) {
+  background: var(--color-canvas-subtle, #fafafa) !important;
+  color: var(--color-fg-subtle, #888) !important;
+  font-weight: 500 !important;
+  font-size: 12px !important;
+  padding: 8px 10px !important;
+}
+:deep(.el-table td.el-table__cell) {
+  padding: 6px 8px !important;
+  font-size: 12px !important;
+  line-height: 1.4 !important;
+}
+:deep(.el-table--striped .el-table__body tr.el-table__row--striped td) {
+  background: var(--color-canvas-inset, #f5f5f5) !important;
+}
+
+/* ===== 远程地址 tag ===== */
+.addr-tag--public {
+  border: 0.5px solid var(--color-border-default, #e5e5e5) !important;
+  background: transparent !important;
+  color: var(--color-fg-default, #111) !important;
+  padding: 0 6px !important;
+  font-size: 11px !important;
+  font-weight: 400 !important;
+}
+
+/* ===== 威胁情报 tag ===== */
+.threat-tag {
+  border: none !important;
+  padding: 0 6px !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+}
+.threat-tag--malicious {
+  color: var(--color-text-danger) !important;
+  background: transparent !important;
+}
+.threat-tag--suspicious {
+  color: var(--color-text-warning) !important;
+  background: transparent !important;
+}
+.threat-tag--clean {
+  color: var(--color-text-success) !important;
+  background: transparent !important;
+}
+.threat-tag--unknown {
+  color: var(--color-fg-muted, #555) !important;
+  background: transparent !important;
+}
 </style>

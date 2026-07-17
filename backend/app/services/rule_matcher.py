@@ -31,8 +31,10 @@ _RULE_CACHE_TTL = 60  # 秒
 # ===================================================================
 
 _EVENT_TYPE_CATEGORY_MAP: dict[str, list[str]] = {
-    "process_start":        ["process", "execution", "defense_evasion"],
-    "process_terminate":    ["process", "defense_evasion"],
+    # 进程类事件额外接入 "behavior" 分类，使孤儿进程/浏览器子进程/高价值路径等行为规则
+    # 能够作为候选规则加载（修复：此前无任何 event_type 路由到 behavior，导致 26 条行为规则永不执行）。
+    "process_start":        ["process", "execution", "defense_evasion", "behavior"],
+    "process_terminate":    ["process", "defense_evasion", "behavior"],
     "network_outbound":     ["network", "exfiltration", "lateral", "ioc"],
     "network_listen":       ["network", "persistence"],
     "dns_query":            ["network", "exfiltration"],
@@ -348,29 +350,41 @@ def _match_behavior(condition: dict, evidence: dict, event: dict) -> Optional[di
 
     if pattern == "orphan_process":
         ppid = evidence.get("ppid")
-        parent_name = str(evidence.get("parent_name", "")).lower()
-        parent_process_name = str(evidence.get("parent_process_name", "")).lower()
-        combined_parent = parent_name or parent_process_name
-        if ppid == 0 or ppid == 4 or (
-            "explorer" not in combined_parent
-            and "wininit" not in combined_parent
-            and "services" not in combined_parent
-        ):
-            return {"confidence": 0.75, "matched_fields": {"ppid": ppid}}
+        parent_name = str(evidence.get("parent_name") or evidence.get("parent_process_name") or "").lower().strip()
+        # ppid 为 0/4 表示父进程已退出或系统级，属可疑孤儿——与父进程名无关，优先判定。
+        if ppid == 0 or ppid == 4:
+            return {"confidence": 0.75, "matched_fields": {"ppid": ppid, "parent_name": parent_name}}
+        # 其余情况：无父进程信息（None / 空串）→ 无法判定孤儿，必须跳过。
+        # 修复：原逻辑 str(None)=="none" 导致 "explorer" not in "none" 恒 True，
+        # 所有无父进程名的事件被误判为孤儿进程。
+        if not parent_name:
+            return None
+        # 父进程不在已知合法父进程列表中 → 疑似孤儿（忽略 .exe 等扩展名）
+        base = parent_name.rsplit(".", 1)[0] if "." in parent_name else parent_name
+        KNOWN_LEGIT_PARENTS = (
+            "explorer", "wininit", "services", "system", "svchost", "csrss",
+            "lsass", "smss", "winlogon", "taskhostw", "taskhost", "dwm",
+            "sihost", "conhost", "rundll32", "lsm", "runtimebroker",
+        )
+        if parent_name in KNOWN_LEGIT_PARENTS or base in KNOWN_LEGIT_PARENTS:
+            return None
+        return {"confidence": 0.6, "matched_fields": {"ppid": ppid, "parent_name": parent_name}}
 
     elif pattern == "child_of_office":
-        parent = str(evidence.get("parent_name", "")).lower()
-        parent_process = str(evidence.get("parent_process_name", "")).lower()
-        combined = parent or parent_process
-        if any(x in combined for x in ["winword", "excel", "powerpnt", "outlook", "wordpad"]):
-            return {"confidence": 0.85, "matched_fields": {"parent_name": combined}}
+        parent = str(evidence.get("parent_name") or evidence.get("parent_process_name") or "").lower().strip()
+        if not parent:
+            return None
+        if any(x in parent for x in ["winword", "excel", "powerpnt", "outlook", "wordpad"]):
+            return {"confidence": 0.85, "matched_fields": {"parent_name": parent}}
+        return None
 
     elif pattern == "child_of_browser":
-        parent = str(evidence.get("parent_name", "")).lower()
-        parent_process = str(evidence.get("parent_process_name", "")).lower()
-        combined = parent or parent_process
-        if any(x in combined for x in ["chrome", "firefox", "msedge", "iexplore", "opera"]):
-            return {"confidence": 0.80, "matched_fields": {"parent_name": combined}}
+        parent = str(evidence.get("parent_name") or evidence.get("parent_process_name") or "").lower().strip()
+        if not parent:
+            return None
+        if any(x in parent for x in ["chrome", "firefox", "msedge", "iexplore", "opera"]):
+            return {"confidence": 0.80, "matched_fields": {"parent_name": parent}}
+        return None
 
     elif pattern == "high_value_path":
         path = str(evidence.get("process_path", "")).lower()

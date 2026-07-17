@@ -37,6 +37,11 @@
             matched: store.stats.matchedEvents,
             unmatched: store.stats.unmatchedEvents,
           }"
+          :aiCounts="{
+            recommended: store.stats.aiRecommended || 0,
+            suspicious: store.stats.aiSuspicious || 0,
+            false_positive: store.stats.aiFalsePositive || 0,
+          }"
           @switch="onViewSwitch"
         />
         <AdvancedFilter
@@ -45,6 +50,19 @@
           @update="store.setFilter"
           @reset="store.resetRuleFilters"
         />
+        <button
+          class="ai-trigger-btn"
+          :class="{ loading: store.aiLoading }"
+          :disabled="store.aiLoading"
+          @click="onAiNoiseReduce"
+          :title="'对当前案件所有已匹配事件进行 AI 降噪研判'"
+        >
+          <svg v-if="!store.aiLoading" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2l2 7h7l-5.5 4 2 7L12 17l-5.5 4 2-7L3 9h7z"/>
+          </svg>
+          <span v-else class="ai-spinner"></span>
+          {{ store.aiLoading ? 'AI研判中...' : '🤖 AI降噪研判' }}
+        </button>
       </div>
 
       <!-- 规则名称筛选 (仅已匹配模式) -->
@@ -87,6 +105,7 @@
         <div class="layer-detail" v-if="store.detailVisible">
           <EventDetailPanel
             :event="store.selectedEvent"
+            :display="store.eventDisplay"
             @close="onCloseDetail"
             @update-status="onUpdateStatus"
             @assign="onAssign"
@@ -105,6 +124,7 @@
 
 <script setup>
 import { computed, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useAnalysisStore } from '@/stores/analysis'
 import CaseHostSelector from '@/components/analysis/CaseHostSelector.vue'
 import MetricsBar from '@/components/analysis/MetricsBar.vue'
@@ -170,8 +190,28 @@ function onViewSwitch(view) {
   store.fetchStats()
 }
 
+// AI 降噪研判
+async function onAiNoiseReduce() {
+  const caseId = store.ruleFilters.caseId
+  if (!caseId) {
+    ElMessage.warning('请先选择一个案件')
+    return
+  }
+  try {
+    const result = await store.triggerNoiseReduce(caseId)
+    ElMessage.success(`AI 研判完成：攻击 ${result.attack || 0} 条，可疑 ${result.suspicious || 0} 条，误报 ${result.false_positive || 0} 条`)
+    // 刷新数据
+    store.fetchRuleEvents()
+    store.fetchStats()
+    store.ruleFilters.viewFilter = 'recommended'
+  } catch (e) {
+    ElMessage.error('AI 降噪研判失败：' + (e.message || '未知错误'))
+  }
+}
+
 function onTableSelectEvent(event) {
   store.fetchEventDetail(event.id)
+  store.fetchEventDisplay(event.id)
 }
 
 function onSelectionChange(ids) {
@@ -232,7 +272,7 @@ function onCloseDetail() {
 /* Topbar */
 .topbar {
   flex-shrink: 0;
-  padding: 12px 20px;
+  padding: 6px 16px;
   background: var(--color-canvas-default);
   border-bottom: 0.5px solid var(--color-border-default);
   position: sticky;
@@ -265,14 +305,14 @@ function onCloseDetail() {
 /* Layers */
 .layer-chs {
   flex-shrink: 0;
-  padding: 12px 20px;
+  padding: 6px 16px;
   background: var(--color-canvas-default);
   border-bottom: 0.5px solid var(--color-border-default);
 }
 
 .layer-metrics {
   flex-shrink: 0;
-  padding: 12px 20px;
+  padding: 6px 16px;
   background: var(--color-canvas-default);
   border-bottom: 0.5px solid var(--color-border-default);
 }
@@ -281,15 +321,60 @@ function onCloseDetail() {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 20px;
+  gap: 4px;
+  padding: 4px 16px;
   background: var(--color-canvas-default);
   border-bottom: 0.5px solid var(--color-border-default);
 }
 
+/* AI 降噪研判按钮 */
+.ai-trigger-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 0.5px solid var(--color-accent-fg, #2563eb);
+  border-radius: var(--r-btn, 6px);
+  background: #2563eb;
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+  align-self: flex-end;
+}
+.ai-trigger-btn:hover {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+}
+.ai-trigger-btn:active {
+  background: #1e40af;
+}
+.ai-trigger-btn.loading {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+.ai-trigger-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ai-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: ai-spin 0.6s linear infinite;
+}
+@keyframes ai-spin {
+  to { transform: rotate(360deg); }
+}
+
 .layer-rule-filter {
   flex-shrink: 0;
-  padding: 8px 20px;
+  padding: 4px 16px;
   background: var(--color-canvas-subtle);
   border-bottom: 0.5px solid var(--color-border-default);
 }
@@ -335,7 +420,7 @@ function onCloseDetail() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 16px;
+  padding: 4px 12px;
   border-bottom: 0.5px solid var(--color-border-default);
   background: var(--color-canvas-subtle);
 }

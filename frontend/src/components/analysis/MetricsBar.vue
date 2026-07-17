@@ -53,20 +53,23 @@ defineProps({
 .metric {
   background: var(--color-canvas-default, #ffffff);
   border: 0.5px solid var(--color-border-default, #e5e5e5);
-  border-radius: var(--r-card, 10px);
-  padding: 16px;
+  border-radius: var(--r-card, 8px);
+  padding: 8px 12px;
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
 }
 .metric-top {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
 }
 .metric-dot {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -75,18 +78,23 @@ defineProps({
 .metric-dot.gray { background: var(--color-fg-light, #a3a3a3); }
 .metric-dot.amber { background: var(--color-warning-fg, #d97706); }
 .metric-lbl {
-  font-size: 12px;
-  font-weight: 400;
-  color: var(--color-fg-subtle, #888888);
-}
-.metric-val {
-  font-size: 24px;
-  font-weight: 500;
-  color: var(--color-fg-default, #111111);
-}
-.metric-sub {
   font-size: 11px;
   font-weight: 400;
+  color: var(--color-fg-subtle, #888888);
+  white-space: nowrap;
+}
+.metric-val {
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--color-fg-default, #111111);
+  flex: 1;
+  min-width: 0;
+}
+.metric-sub {
+  font-size: 10px;
+  font-weight: 400;
   color: var(--color-fg-light, #a3a3a3);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 </style>

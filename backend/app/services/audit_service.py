@@ -1,174 +1,129 @@
-"""审计日志服务 — AI 调用记录查询与管理."""
+"""审计日志服务 — 通用审计日志写入函数."""
 
 import logging
-from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Optional
 
-from app.models.ai_audit_log import AiAuditLog
+from app.database import get_connection
 
 logger = logging.getLogger(__name__)
 
 
 class AuditService:
-    """AI 调用审计日志服务.
-
-    封装审计日志的写入与查询，提供分页、筛选、统计功能.
-    """
+    """审计日志服务类(兼容旧版导入)."""
 
     @staticmethod
-    def log_call(
-        host_id: Optional[int] = None,
-        host_name: str = "",
-        profile_id: Optional[int] = None,
-        profile_name: str = "",
-        model_name: str = "",
-        status: str = "success",
-        prompt_tokens: int = 0,
-        completion_tokens: int = 0,
-        total_tokens: int = 0,
-        latency_ms: int = 0,
-        masked_mode: int = 0,
-        prompt: str = "",
-        response: str = "",
-        error_message: Optional[str] = None,
+    def create_audit_log(
+        user_id: int,
+        username: str,
+        action_type: str,
+        detail: str = "",
+        target_type: str = "",
+        target_id: str = "",
         ip_address: str = "",
-        user_id: Optional[int] = None,
-    ) -> dict:
-        """记录一次 AI 调用审计日志.
-
-        Args:
-            host_id: 主机 ID.
-            host_name: 主机名.
-            profile_id: AI 配置 Profile ID.
-            profile_name: Profile 名称.
-            model_name: 模型名称.
-            status: 调用状态（success/failed/cancelled）.
-            prompt_tokens: 输入 token 数.
-            completion_tokens: 输出 token 数.
-            total_tokens: 总 token 数.
-            latency_ms: 调用延迟（毫秒）.
-            masked_mode: 是否脱敏模式.
-            prompt: 用户提示词（完整原文）.
-            response: AI 响应内容（完整原文）.
-            error_message: 错误信息.
-            ip_address: 调用方 IP.
-            user_id: 用户 ID.
-
-        Returns:
-            创建的审计日志记录字典.
-        """
-        logger.info(
-            "AuditService.log_call: ENTER host=%d, model=%s, status=%s, tokens=(%d,%d,%d), latency=%dms, masked=%d",
-            host_id or 0,
-            model_name,
-            status,
-            prompt_tokens,
-            completion_tokens,
-            total_tokens,
-            latency_ms,
-            masked_mode,
-        )
-        result = AiAuditLog.create(
-            host_id=host_id,
-            host_name=host_name,
-            profile_id=profile_id,
-            profile_name=profile_name,
-            model_name=model_name,
-            status=status,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-            latency_ms=latency_ms,
-            masked_mode=masked_mode,
-            prompt=prompt,
-            response=response,
-            error_message=error_message,
-            ip_address=ip_address,
-            user_id=user_id,
-        )
-        logger.info(
-            "AuditService.log_call: DONE id=%s, host=%d, model=%s",
-            result.get("id") if result else "NONE",
-            host_id or 0,
-            model_name,
-        )
-        return result
+    ) -> None:
+        """写入一条审计日志(静态方法, 兼容旧调用方)."""
+        create_audit_log(user_id, username, action_type, detail, target_type, target_id, ip_address)
 
     @staticmethod
-    def query_logs(
-        page: int = 1,
-        page_size: int = 20,
-        host_id: Optional[int] = None,
-        status: Optional[str] = None,
-        days: int = 30,
-    ) -> dict:
-        """分页查询审计日志.
+    def log_call(**kwargs) -> None:
+        """记录一条 AI 调用审计日志（写入 ai_audit_log 表）."""
+        with get_connection() as conn:
+            columns = [
+                "host_id", "host_name", "profile_id", "profile_name", "model_name",
+                "status", "prompt_tokens", "completion_tokens", "total_tokens",
+                "latency_ms", "masked_mode", "prompt", "response", "error_message",
+                "ip_address", "user_id",
+            ]
+            insert_cols = [c for c in columns if c in kwargs]
+            insert_vals = [kwargs.get(c) for c in insert_cols]
+            placeholders = ", ".join(["?"] * len(insert_cols))
+            col_str = ", ".join(insert_cols)
+            sql = f"INSERT INTO ai_audit_log ({col_str}) VALUES ({placeholders})"
+            conn.execute(sql, insert_vals)
+            conn.commit()
+        logger.debug("AuditService.log_call: host_id=%s status=%s", kwargs.get("host_id"), kwargs.get("status"))
 
-        Args:
-            page: 页码（从 1 开始）.
-            page_size: 每页条数.
-            host_id: 按主机 ID 筛选.
-            status: 按状态筛选.
-            days: 查询最近 N 天的日志.
+    @staticmethod
+    def query_logs(page: int = 1, page_size: int = 20, host_id: Optional[int] = None,
+                   status: Optional[str] = None, days: int = 90) -> dict:
+        """分页查询 AI 调用审计日志."""
+        with get_connection() as conn:
+            conditions = []
+            params = []
+            if host_id is not None:
+                conditions.append("host_id = ?")
+                params.append(host_id)
+            if status:
+                conditions.append("status = ?")
+                params.append(status)
+            if days:
+                conditions.append("created_at >= datetime('now', ?)")
+                params.append(f"-{days} days")
 
-        Returns:
-            {"items": [...], "total": int, "page": int, "page_size": int}
-        """
-        start_date: Optional[str] = None
-        if days > 0:
-            start_date = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+            where = ""
+            if conditions:
+                where = "WHERE " + " AND ".join(conditions)
 
-        return AiAuditLog.list_all(
-            page=page,
-            page_size=page_size,
-            host_id=host_id,
-            status=status,
-            start_date=start_date,
-        )
+            # 总数
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM ai_audit_log {where}", params
+            ).fetchone()[0]
+
+            # 分页
+            offset = (page - 1) * page_size
+            cursor = conn.execute(
+                f"SELECT * FROM ai_audit_log {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                params + [page_size, offset],
+            )
+            rows = cursor.fetchall()
+
+            columns = [desc[0] for desc in cursor.description]
+            items = [dict(zip(columns, row)) for row in rows]
+
+            return {
+                "items": items,
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+            }
 
     @staticmethod
     def get_detail(log_id: int) -> dict:
-        """获取单条审计日志详情.
+        """获取单条 AI 调用审计日志详情."""
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM ai_audit_log WHERE id = ?", (log_id,)
+            ).fetchone()
+            if not row:
+                raise ValueError(f"Audit log {log_id} not found")
+            return dict(row)
 
-        Args:
-            log_id: 审计日志 ID.
 
-        Returns:
-            审计日志字典.
+def create_audit_log(
+    user_id: int,
+    username: str,
+    action_type: str,
+    detail: str = "",
+    target_type: str = "",
+    target_id: str = "",
+    ip_address: str = "",
+) -> None:
+    """写入一条审计日志.
 
-        Raises:
-            ValueError: 日志不存在.
-        """
-        log = AiAuditLog.get_by_id(log_id)
-        if not log:
-            raise ValueError(f"审计日志 {log_id} 不存在")
-        return log
-
-    @staticmethod
-    def get_token_stats(
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-        profile_id: Optional[int] = None,
-    ) -> dict:
-        """获取 Token 使用统计.
-
-        Returns:
-            统计结果字典.
-        """
-        return AiAuditLog.get_token_stats(
-            start_date=start_date,
-            end_date=end_date,
-            profile_id=profile_id,
+    Args:
+        user_id: 操作用户 ID.
+        username: 操作用户名.
+        action_type: 操作类型(login/logout/rule_change/event_dispose/ai_analysis/settings_change/user_manage).
+        detail: 操作详情.
+        target_type: 目标类型.
+        target_id: 目标 ID.
+        ip_address: 客户端 IP 地址.
+    """
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO audit_logs (user_id, username, action_type, detail, target_type, target_id, ip_address) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (user_id, username, action_type, detail, target_type, target_id, ip_address),
         )
-
-    @staticmethod
-    def get_token_summary(group_by: str = "daily") -> list[dict]:
-        """获取 Token 使用汇总.
-
-        Args:
-            group_by: 汇总维度（daily/model/profile）.
-
-        Returns:
-            汇总数据列表.
-        """
-        return AiAuditLog.get_token_summary(group_by=group_by)
+        conn.commit()
+    logger.debug("Audit log created: user=%s action=%s detail=%s", username, action_type, detail)

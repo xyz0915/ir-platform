@@ -39,7 +39,6 @@
         />
       </el-select>
       <el-button
-        type="success"
         size="small"
         style="margin-left: 8px"
         @click="exportCSV"
@@ -64,7 +63,7 @@
       <el-table-column prop="parent_name" label="父进程" width="120" show-overflow-tooltip />
       <el-table-column prop="severity" label="严重程度" width="100">
         <template #default="{ row }">
-          <el-tag :type="severityType(row.severity)" size="small">
+          <el-tag :type="severityType(row.severity)" size="small" effect="plain" class="sev-tag">
             {{ row.severity }}
           </el-tag>
         </template>
@@ -88,6 +87,8 @@
               :key="idx"
               :type="severityType(rule.severity)"
               size="small"
+              effect="plain"
+              class="rule-tag"
               style="margin: 2px 4px"
             >
               {{ rule.label || rule.name }} [{{ rule.severity }}]: {{ rule.reason }}
@@ -106,18 +107,30 @@
             :content="row.knowledge_hit.title + ' (' + row.knowledge_hit.confidence + ')'"
             placement="top"
           >
-            <span class="knowledge-badge" @click.stop="$emit('knowledge-click', row.knowledge_hit?.entry_ref)">📚</span>
+            <span class="knowledge-badge" @click.stop="$emit('knowledge-click', row.knowledge_hit?.entry_ref)">
+              <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+                <path d="M12 6v7" />
+                <path d="M9 9h6" />
+              </svg>
+            </span>
           </el-tooltip>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="80" fixed="right">
         <template #default="{ row }">
-          <el-button type="primary" link size="small" @click="$emit('view-detail', row)">
+          <el-button link size="small" @click="$emit('view-detail', row)">
             详情
           </el-button>
         </template>
       </el-table-column>
     </el-table>
+
+    <!-- 底部统计条 -->
+    <div class="table-footer">
+      <span class="footer-info">共 {{ filteredData.length }} 条异常进程<span v-if="filteredData.length !== data.length">，已筛选</span></span>
+    </div>
   </div>
 </template>
 
@@ -205,10 +218,10 @@ function severityType(severity) {
 }
 
 function riskColor(score) {
-  if (score >= 80) return '#F56C6C'
-  if (score >= 50) return '#E6A23C'
-  if (score >= 20) return '#409EFF'
-  return '#67C23A'
+  if (score >= 80) return '#A32D2D'   // c-red 600
+  if (score >= 50) return '#BA7517'   // c-amber 500
+  if (score >= 20) return '#378ADD'   // c-blue 400
+  return '#1D9E75'                    // c-teal 400
 }
 
 function exportCSV() {
@@ -252,5 +265,90 @@ function exportCSV() {
 .knowledge-badge {
   cursor: pointer;
   font-size: 16px;
+}
+.sev-tag {
+  border: none !important;
+  background: transparent !important;
+  padding: 0 6px !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+}
+.rule-tag {
+  background: var(--color-canvas-inset, #f5f5f5) !important;
+  border: 0.5px solid var(--color-border-default, #e5e5e5) !important;
+  color: var(--color-fg-muted, #555) !important;
+  padding: 2px 7px !important;
+  font-size: 11px !important;
+  font-weight: 400 !important;
+  border-radius: 4px !important;
+}
+.knowledge-badge {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+.knowledge-badge svg {
+  width: 16px;
+  height: 16px;
+  stroke: var(--color-fg-muted, #555);
+}
+
+.table-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 10px 0 0;
+  font-size: 12px;
+  color: var(--color-fg-subtle, #888);
+}
+.footer-info {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 表格弱化边框和 stripe */
+:deep(.el-table) {
+  --el-table-border-color: var(--color-border-default, #e5e5e5);
+  --el-table-row-hover-bg-color: var(--color-canvas-inset, #f5f5f5);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  border-radius: 8px;
+  overflow: hidden;
+}
+:deep(.el-table th.el-table__cell) {
+  background: var(--color-canvas-subtle, #fafafa) !important;
+  color: var(--color-fg-subtle, #888) !important;
+  font-weight: 500 !important;
+  font-size: 12px !important;
+  padding: 8px 10px !important;
+}
+:deep(.el-table td.el-table__cell) {
+  padding: 8px 10px !important;
+  font-size: 12px !important;
+}
+:deep(.el-table--striped .el-table__body tr.el-table__row--striped td) {
+  background: var(--color-canvas-inset, #f5f5f5) !important;
+}
+
+/* 表格行紧凑 */
+:deep(.el-table .el-table__body td) {
+  padding: 6px 8px !important;
+  font-size: 12px !important;
+  line-height: 1.4 !important;
+}
+:deep(.el-table .el-table__body td .cell) {
+  padding: 0 !important;
+}
+
+/* 进度条弱化 */
+:deep(.el-progress) {
+  margin: 0;
+}
+:deep(.el-progress-bar__inner) {
+  border-radius: 3px !important;
+}
+:deep(.el-progress-bar__outer) {
+  background: var(--color-canvas-inset, #f5f5f5) !important;
+  border-radius: 3px !important;
 }
 </style>

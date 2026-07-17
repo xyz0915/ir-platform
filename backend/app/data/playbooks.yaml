@@ -1,0 +1,113 @@
+playbooks:
+  - id: login_failure
+    name: 调查登录失败
+    description: AI 自动排查登录失败事件：查日志→分析模式→定位来源→检查横向移动→给出结论
+    tags: [初始访问, T1110]
+    steps:
+      - id: step_1
+        name: 查询登录日志
+        type: query
+        params:
+          query_type: logs
+          event_type: failed_logon
+          limit: 50
+        depends_on: []
+      - id: step_2
+        name: 分析失败模式
+        type: llm
+        params:
+          prompt: 分析以下是登录失败日志，判断是否存在暴力破解、密码喷洒等攻击模式，输出分析结果。
+        depends_on: [step_1]
+      - id: step_3
+        name: 定位来源IP
+        type: query
+        params:
+          query_type: extract_ips
+        depends_on: [step_2]
+      - id: step_4
+        name: 检查横向移动
+        type: query
+        params:
+          query_type: alerts
+          severity: high
+          limit: 20
+        depends_on: [step_3]
+      - id: step_5
+        name: 生成调查结论
+        type: llm
+        params:
+          prompt: 汇总以上所有步骤的结果，用中文生成一份简洁的调查结论，包含发现、证据和处置建议。
+        depends_on: [step_4]
+
+  - id: abnormal_process
+    name: 调查异常进程
+    description: AI 自动排查异常进程：查进程列表→父链分析→网络连接→文件哈希→IOC 命中
+    tags: [执行, T1059]
+    steps:
+      - id: step_1
+        name: 查询异常进程列表
+        type: query
+        params:
+          query_type: abnormal_processes
+          limit: 20
+        depends_on: []
+      - id: step_2
+        name: 分析进程父链
+        type: llm
+        params:
+          prompt: 分析以下异常进程列表，关注父进程和命令行参数，指出可疑的进程创建链。
+        depends_on: [step_1]
+      - id: step_3
+        name: 查询网络连接
+        type: query
+        params:
+          query_type: network_connections
+          limit: 20
+        depends_on: [step_2]
+      - id: step_4
+        name: 检查文件哈希
+        type: query
+        params:
+          query_type: file_hashes
+          limit: 20
+        depends_on: [step_2]
+      - id: step_5
+        name: 汇总与建议
+        type: llm
+        params:
+          prompt: 综合异常进程、网络连接、文件哈希信息，给出完整的入侵指标和建议处置方案。
+        depends_on: [step_3, step_4]
+
+  - id: lateral_movement
+    name: 调查横向移动
+    description: AI 自动排查横向移动：查异常连接→查认证事件→查可疑文件→生成时间线
+    tags: [横向移动, T1021]
+    steps:
+      - id: step_1
+        name: 查询异常网络连接
+        type: query
+        params:
+          query_type: network_connections
+          severity: high
+          limit: 30
+        depends_on: []
+      - id: step_2
+        name: 查询认证事件
+        type: query
+        params:
+          query_type: logs
+          event_type: successful_logon
+          limit: 30
+        depends_on: [step_1]
+      - id: step_3
+        name: 分析横向移动模式
+        type: llm
+        params:
+          prompt: 分析以下网络连接和认证事件，判断是否存在横向移动迹象（如 RDP、PSExec 异常连接），输出分析结果。
+        depends_on: [step_1, step_2]
+      - id: step_4
+        name: 生成时间线
+        type: llm
+        params:
+          prompt: 基于以上步骤结果生成事件时间线，按时间顺序列出关键节点。
+        depends_on: [step_3]

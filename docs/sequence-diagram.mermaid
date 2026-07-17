@@ -1,76 +1,37 @@
 sequenceDiagram
-    participant FE as 前端 HostDetailView
-    participant API as FastAPI Router
-    participant AS as AnalysisService
-    participant SRA as ServiceRiskAnalyzer
-    participant RA as RiskAssessor
-    participant RD as raw_data (JSON)
+    participant U as 用户
+    participant F as AiAdvancedView.vue
+    participant SM as StreamMessage.vue
+    participant API as /ai/query-stream (FastAPI)
+    participant LLM as AiService.call_llm_stream
+    participant DB as SQLite
 
-    Note over FE,RD: ── 触发分析流程 ──
-    FE->>API: POST /hosts/{id}/analyze
-    API->>AS: analyze(host_id)
-    AS->>RD: ImportService.read_raw_json(host_id)
-
-    Note over AS: 步骤 1: clear_analysis_by_host()
-    Note over AS: 步骤 2: RuleEngine.load_rules()
-    Note over AS: 步骤 3: ProfileBuilder.build() → HostProfile
-    Note over AS: 步骤 4: AnomalyDetector (进程/外连/启动项)
-
-    AS->>AS: 步骤 5: PersistenceFinder.find_all()<br/>+ assess_suspicious()
-
-    Note over AS: ═══ 步骤 5.5: 新增服务风险检测 ═══
-    AS->>SRA: ServiceRiskAnalyzer.analyze(raw_data, host_id)
-
-    activate SRA
-    SRA->>SRA: _extract_services(raw_data)
-    Note over SRA: 从 raw_data.persistence.services<br/>提取服务列表 (200-500条)
-
-    SRA->>SRA: _detect_tamper(services)
-    Note over SRA: 遍历服务 × SECURITY_SERVICES白名单<br/>检查 status≠running 或 start_type异常<br/>→ DetectionResult(P0-1-TAMPER)
-
-    SRA->>SRA: _detect_shadow(services)
-    Note over SRA: 编辑距离名称伪装检测<br/>路径异常检测 (Temp/AppData)<br/>幽灵服务检测<br/>→ DetectionResult(P0-2-SHADOW)
-
-    SRA->>SRA: _detect_priv_esc(services)
-    Note over SRA: 检查 LocalSystem + 可疑路径<br/>→ DetectionResult(P1-PRIVESC)
-
-    SRA->>SRA: _calculate_aggregate_score(services)
-    Note over SRA: SUM(weight × triggered) / max<br/>归一化 → 0-100
-
-    SRA-->>AS: ServiceRiskReport
-    deactivate SRA
-
-    AS->>AS: findings["service_risks"] = report
-
-    Note over AS: 步骤 6: IocChecker.check()
-    Note over AS: 步骤 7: TimelineBuilder.build()
-    Note over AS: 步骤 8: 数据采集增强 (网络/哈希/WMI/注册表)
-    Note over AS: 步骤 8.6: 文件哈希情报匹配
-    Note over AS: 步骤 8.5: 攻击链关联检测
-
-    AS->>RA: RiskAssessor.assess(findings)
-
-    activate RA
-    RA->>RA: 计算 service_risks 维度
-    Note over RA: svc_score = aggregate_score × 0.15<br/>合并到总风险分
-    RA-->>AS: risk_result
-    deactivate RA
-
-    Note over AS: 步骤 10: AnalysisResult.create_or_replace()
-    AS-->>API: result dict
-    API-->>FE: { code:0, data: result }
-
-    Note over FE,RD: ── 查询服务风险 (独立调用) ──
-    FE->>API: GET /hosts/{id}/service-risk
-    API->>AS: get_service_risk(host_id)
-    AS->>RD: ImportService.read_raw_json(host_id)
-    AS->>SRA: ServiceRiskAnalyzer.analyze(raw_data, host_id)
-
-    activate SRA
-    Note over SRA: 实时执行全部4个检测规则<br/>纯内存计算 (<100ms for 500 services)
-    SRA-->>AS: ServiceRiskReport
-    deactivate SRA
-
-    AS-->>API: report dict
-    API-->>FE: { code:0, data: report }
-    Note over FE: ServicesTable 渲染<br/>风险评分列 + 检测标签 + 行展开详情
+    U->>F: 输入"严重告警"并回车
+    F->>F: 构建 POST body {query, session_id, context}
+    F->>API: POST /ai/query-stream (SSE)
+    API->>DB: 执行 SQL 查询严重告警
+    DB-->>API: 返回告警数据 [{...}, ...]
+    API->>LLM: call_llm_stream(system_prompt + 告警数据)
+    
+    Note over API,LLM: SSE 流开始
+    LLM-->>API: event: query_start {intent:"alerts", confidence:0.85}
+    API-->>F: SSE: event=query_start data={...}
+    
+    LLM-->>API: chunk: "根据分析，在过去24小时内"
+    API-->>F: SSE: event=text_chunk data={type:"text", content:"根据分析，在过去24小时内"}
+    F->>SM: 追加文本到流式缓冲区
+    
+    LLM-->>API: chunk: "共发现 12 条严重告警"
+    API-->>F: SSE: event=text_chunk data={type:"text", content:"共发现 12 条严重告警"}
+    F->>SM: 追加文本
+    
+    API->>F: SSE: event=card data={type:"card", card_type:"alert_list", data:{alerts:[...]}}
+    F->>SM: 在内联位置渲染 <StreamCard cardType="alert_list" :data="alerts" />
+    
+    LLM-->>API: chunk: "其中最高频的告警类型是..."
+    API-->>F: SSE: event=text_chunk data={type:"text", content:"其中最高频的告警类型是..."}
+    F->>SM: 继续追加文本
+    
+    API-->>F: SSE: event=query_end data={type:"query_end", confidence:"high", source_ids:["alert-1","alert-2"]}
+    F->>F: 标记流结束，显示 ConfidenceBadge
+    F->>F: 更新 chatContext

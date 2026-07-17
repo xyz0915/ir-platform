@@ -104,9 +104,51 @@ const routes = [
         component: () => import('@/views/AnalysisCenterView.vue')
       },
       {
+        path: 'analysis-center/event/:id',
+        name: 'EventDetail',
+        component: () => import('@/views/EventDetailView.vue')
+      },
+      {
         path: 'log-search',
         name: 'LogSearch',
         component: () => import('@/views/LogSearchView.vue')
+      },
+      // 系统设置路由
+      {
+        path: 'settings',
+        component: () => import('@/views/settings/SettingsLayout.vue'),
+        children: [
+          {
+            path: 'users',
+            name: 'UserManagement',
+            component: () => import('@/views/settings/UserManagement.vue')
+          },
+          {
+            path: 'audit-logs',
+            name: 'AuditLogs',
+            component: () => import('@/views/settings/AuditLogView.vue')
+          },
+          {
+            path: 'agents',
+            name: 'AgentManagement',
+            component: () => import('@/views/settings/AgentManagement.vue')
+          },
+          {
+            path: 'storage',
+            name: 'DataStorage',
+            component: () => import('@/views/settings/DataStorageView.vue')
+          },
+          {
+            path: 'params',
+            name: 'SystemParams',
+            component: () => import('@/views/settings/SystemParamsView.vue')
+          },
+          {
+            path: 'theme',
+            name: 'ThemeCustomize',
+            component: () => import('@/views/settings/ThemeCustomizeView.vue'),
+          },
+        ]
       }
     ]
   }

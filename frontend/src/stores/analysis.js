@@ -5,6 +5,7 @@ import {
   getEventStats,
   getEventFilters,
   getEventDetail,
+  getEventDisplay,
   updateEventStatus,
   batchUpdateStatus,
   assignEvent,
@@ -17,6 +18,7 @@ import {
   getEventImpact,
   getDispositions,
   addDisposition,
+  triggerAiNoiseReduce,
 } from '@/api/events'
 
 export const useAnalysisStore = defineStore('analysis', () => {
@@ -55,6 +57,9 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const dispositions = ref([])
   const contextLoading = ref(false)
 
+  // v2.1 展示投影数据（必填/辅助分级 + 证据双视图）
+  const eventDisplay = ref(null)
+
   // ── 新增：规则匹配降噪状态 ──
   const items = ref([])
   const elapsedMs = ref(0)
@@ -90,6 +95,9 @@ export const useAnalysisStore = defineStore('analysis', () => {
     distinctRulesHit: 0,
     todayNew: 0,
     todayMatched: 0,
+    aiRecommended: 0,
+    aiSuspicious: 0,
+    aiFalsePositive: 0,
   })
 
   // ── 原有筛选参数构建 ──
@@ -118,7 +126,13 @@ export const useAnalysisStore = defineStore('analysis', () => {
       page: ruleFilters.page,
       page_size: ruleFilters.pageSize,
     }
-    if (ruleFilters.viewFilter !== 'all') params.filter = ruleFilters.viewFilter
+    // 视图筛选：AI 标签 vs 普通视图
+    const viewFilter = ruleFilters.viewFilter
+    if (['recommended', 'suspicious', 'false_positive'].includes(viewFilter)) {
+      params.ai_label = viewFilter
+    } else if (viewFilter !== 'all') {
+      params.filter = viewFilter
+    }
     if (ruleFilters.caseId) params.case_id = ruleFilters.caseId
     if (ruleFilters.hostId) params.host_id = ruleFilters.hostId
     if (ruleFilters.severity.length) params.severity = ruleFilters.severity.join(',')
@@ -128,6 +142,11 @@ export const useAnalysisStore = defineStore('analysis', () => {
     if (ruleFilters.ruleCategory.length) params.rule_category = ruleFilters.ruleCategory.join(',')
     if (ruleFilters.confidenceMin) params.rule_confidence_min = ruleFilters.confidenceMin
     if (ruleFilters.keyword) params.keyword = ruleFilters.keyword
+    // AI 降噪筛选（v2）
+    if (['recommended', 'suspicious', 'false_positive'].includes(ruleFilters.viewFilter)) {
+      delete params.filter
+      params.ai_label = ruleFilters.viewFilter
+    }
     return params
   }
 
@@ -211,8 +230,24 @@ export const useAnalysisStore = defineStore('analysis', () => {
       stats.distinctRulesHit = d.distinct_rules_hit || 0
       stats.todayNew = d.today_new || 0
       stats.todayMatched = d.today_matched || 0
+      stats.aiRecommended = d.ai_recommended || 0
+      stats.aiSuspicious = d.ai_suspicious || 0
+      stats.aiFalsePositive = d.ai_false_positive || 0
     } catch (e) {
       // ignore
+    }
+  }
+
+  const aiLoading = ref(false)
+
+  // AI 降噪研判
+  async function triggerNoiseReduce(caseId, hostId = null) {
+    aiLoading.value = true
+    try {
+      const res = await triggerAiNoiseReduce(caseId, hostId)
+      return res.data
+    } finally {
+      aiLoading.value = false
     }
   }
 
@@ -265,6 +300,17 @@ export const useAnalysisStore = defineStore('analysis', () => {
       detailVisible.value = true
     } catch (e) {
       selectedEvent.value = null
+    }
+  }
+
+  // v2.1 展示投影：必填/辅助分级 + 证据双视图
+  async function fetchEventDisplay(eventId) {
+    if (!eventId) return
+    try {
+      const res = await getEventDisplay(eventId)
+      eventDisplay.value = res.data
+    } catch (e) {
+      eventDisplay.value = null
     }
   }
 
@@ -370,6 +416,8 @@ export const useAnalysisStore = defineStore('analysis', () => {
     impactScope,
     dispositions,
     contextLoading,
+    // state — v2.1 展示投影
+    eventDisplay,
     // actions — 原有
     fetchEvents,
     fetchTimeline,
@@ -391,5 +439,10 @@ export const useAnalysisStore = defineStore('analysis', () => {
     // actions — 事件详情增强
     fetchEventDetailEnhanced,
     addDispositionForEvent,
+    // actions — v2.1 展示投影
+    fetchEventDisplay,
+    // AI 降噪
+    aiLoading,
+    triggerNoiseReduce,
   }
 })

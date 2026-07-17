@@ -1,10 +1,11 @@
 <template>
-  <div class="event-table-wrapper">
+  <div class="event-table-wrapper" ref="wrapperRef">
     <el-table
       :data="events"
       style="width: 100%"
-      :max-height="tableHeight"
+      :height="tableHeight"
       :highlight-current-row="true"
+      :row-class-name="rowClassName"
       stripe
       size="small"
       @row-click="onRowClick"
@@ -47,10 +48,18 @@
         </template>
       </el-table-column>
 
-      <!-- 事件类型 -->
-      <el-table-column label="事件类型" width="120" sortable="custom" prop="event_type">
+      <!-- T-code / 事件类型 -->
+      <el-table-column label="T-code" width="90" sortable="custom" prop="t_code">
         <template #default="{ row }">
-          <span class="event-type-badge">{{ eventTypeLabel(row.event_type) }}</span>
+          <span class="tcode-badge">{{ row.t_code || '—' }}</span>
+          <span class="etype-sub">{{ eventTypeLabel(row.event_type) }}</span>
+        </template>
+      </el-table-column>
+
+      <!-- 案件名称 -->
+      <el-table-column label="案件" width="120" prop="case_name">
+        <template #default="{ row }">
+          <span :title="'案件ID: ' + row.case_id" class="case-name-text">{{ row.case_name || ('案件#' + row.case_id) }}</span>
         </template>
       </el-table-column>
 
@@ -62,26 +71,12 @@
         </template>
       </el-table-column>
 
-      <!-- 案件名称 -->
-      <el-table-column label="案件" width="120" prop="case_name">
-        <template #default="{ row }">
-          <span :title="'案件ID: ' + row.case_id" class="case-name-text">{{ row.case_name || ('案件#' + row.case_id) }}</span>
-        </template>
-      </el-table-column>
-
-      <!-- 摘要 -->
-      <el-table-column label="摘要" min-width="200">
-        <template #default="{ row }">
-          <span class="event-summary">{{ buildSummary(row) }}</span>
-        </template>
-      </el-table-column>
-
       <!-- ATT&CK 阶段 -->
       <el-table-column label="ATT&CK 阶段" width="120" sortable="custom" prop="attack_stage">
         <template #default="{ row }">
           <span
             v-if="row.attack_stage"
-            class="stage-tag"
+            class="stage-tag" :class="`stage-${row.attack_stage || 'default'}`"
           >
             {{ stageLabel(row.attack_stage) }}
           </span>
@@ -89,16 +84,21 @@
         </template>
       </el-table-column>
 
-      <!-- IOC 命中 -->
-      <el-table-column label="IOC" width="70">
+      <!-- 摘要（恢复原始：不混入 ai_analysis） -->
+      <el-table-column label="摘要" min-width="200">
         <template #default="{ row }">
-          <span
-            v-if="row.ioc_matches && row.ioc_matches.length > 0"
-            class="ioc-badge"
-          >
-            {{ row.ioc_matches.length }}
-          </span>
-          <span v-else class="ioc-none">—</span>
+          <span class="summary-cell" :title="row.summary">{{ row.summary || eventTypeLabel(row.event_type) || '—' }}</span>
+        </template>
+      </el-table-column>
+
+      <!-- AI 分析（独立列，仅 AI 推荐事件显示） -->
+      <el-table-column label="AI分析" min-width="200" v-if="hasAiContent">
+        <template #default="{ row }">
+          <div class="summary-wrap" v-if="row.event_type === 'ai_recommended' || row.ai_analysis">
+            <span class="ai-badge-sm">🤖 AI</span>
+            <span class="ai-text-cell" :title="row.ai_analysis">{{ row.ai_analysis }}</span>
+          </div>
+          <span v-else class="summary-cell">—</span>
         </template>
       </el-table-column>
 
@@ -111,23 +111,30 @@
         </template>
       </el-table-column>
 
+      <!-- 告警来源 -->
+      <el-table-column label="来源" width="80" prop="source">
+        <template #default="{ row }">
+          <span class="source-tag" :class="'src-' + (row.source || '未知')">{{ row.source || '—' }}</span>
+        </template>
+      </el-table-column>
+
       <!-- 规则匹配 -->
-      <el-table-column label="规则匹配" width="180">
+      <el-table-column label="规则匹配" width="200">
         <template #default="{ row }">
           <div class="c-rt">
             <template v-if="row.matched_rules && row.matched_rules.length">
               <span
-                v-for="rule in row.matched_rules.slice(0, 2)"
+                v-for="rule in row.matched_rules.slice(0, 1)"
                 :key="rule.rule_id"
                 class="rtag"
-                :class="'sev-' + (rule.severity || 'info')"
+                :class="['sev-' + (rule.severity || 'info'), rule.severity === 'critical' || rule.severity === 'high' ? 'rtag-bang' : '']"
                 :title="rule.rule_name + ' (置信度: ' + Math.round((rule.confidence || 0) * 100) + '%)'"
               >
-                {{ rule.rule_name }}
+                <span class="rtag-name">{{ rule.rule_name }}</span>
                 <span class="conf">{{ Math.round((rule.confidence || 0) * 100) }}%</span>
               </span>
-              <span v-if="row.matched_rules.length > 2" class="rtag more">
-                +{{ row.matched_rules.length - 2 }}
+              <span v-if="row.matched_rules.length > 1" class="rtag more" :title="row.matched_rules.slice(1).map(r => r.rule_name).join('; ')">
+                +{{ row.matched_rules.length - 1 }}
               </span>
             </template>
             <span v-else class="unmatched-badge">未匹配</span>
@@ -135,49 +142,6 @@
         </template>
       </el-table-column>
 
-      <!-- 负责人 -->
-      <el-table-column label="负责人" width="100" sortable="custom" prop="assignee">
-        <template #default="{ row }">
-          <span v-if="row.assignee" class="assignee-name">{{ row.assignee }}</span>
-          <span v-else class="assignee-none">未指派</span>
-        </template>
-      </el-table-column>
-
-      <!-- 行操作 -->
-      <el-table-column label="操作" width="200" fixed="right">
-        <template #default="{ row }">
-          <div class="row-actions">
-            <button
-              v-if="row.status === 'pending'"
-              class="action-btn"
-              @click.stop="onAction(row.id, 'triaging')"
-            >
-              分诊
-            </button>
-            <button
-              v-if="row.status === 'triaging'"
-              class="action-btn"
-              @click.stop="onAction(row.id, 'investigating')"
-            >
-              调查
-            </button>
-            <button
-              v-if="row.status === 'investigating'"
-              class="action-btn action-success"
-              @click.stop="onAction(row.id, 'resolved')"
-            >
-              解决
-            </button>
-            <button
-              v-if="row.status !== 'rejected' && row.status !== 'resolved'"
-              class="action-btn action-danger"
-              @click.stop="onAction(row.id, 'rejected')"
-            >
-              误报
-            </button>
-          </div>
-        </template>
-      </el-table-column>
     </el-table>
 
     <!-- 分页 -->
@@ -197,7 +161,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 
 const props = defineProps({
   events: { type: Array, default: () => [] },
@@ -215,9 +179,47 @@ const emit = defineEmits([
   'update-status',
 ])
 
-const tableHeight = computed(() => 'calc(100vh - 280px)')
+// 动态表格高度: ResizeObserver 跟踪父容器实际高度
+const wrapperRef = ref(null)
+const wrapperHeight = ref(0)
+let resizeObserver = null
+const PAGINATION_HEIGHT = 48
+
+const tableHeight = computed(() => {
+  if (wrapperHeight.value > 0) {
+    return Math.max(wrapperHeight.value - PAGINATION_HEIGHT, 200)
+  }
+  return 'calc(100vh - 510px)'
+})
+
+onMounted(() => {
+  if (wrapperRef.value && typeof ResizeObserver !== 'undefined') {
+    resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        wrapperHeight.value = entry.contentRect.height
+      }
+    })
+    resizeObserver.observe(wrapperRef.value)
+  }
+})
+
+onBeforeUnmount(() => {
+  if (resizeObserver) resizeObserver.disconnect()
+})
 const currentPage = ref(props.pagination.page)
 const currentPageSize = ref(props.pagination.pageSize)
+
+// 同步父组件传过来的 pagination 变更（视图切换/案件切换时会重置页码）
+watch(() => props.pagination?.page, (newPage) => {
+  if (newPage && newPage !== currentPage.value) {
+    currentPage.value = newPage
+  }
+})
+watch(() => props.pagination?.pageSize, (newSize) => {
+  if (newSize && newSize !== currentPageSize.value) {
+    currentPageSize.value = newSize
+  }
+})
 
 // 颜色映射
 const SEV_COLORS = {
@@ -280,6 +282,11 @@ function calcRiskScore(row) {
   if (row.ioc_matches?.length) s += Math.min(row.ioc_matches.length * 15, 30)
   row._risk_score = Math.max(0, Math.min(100, s))
 }
+
+// 检查当前数据中是否有 AI 分析内容，控制 AI 分析列显示
+const hasAiContent = computed(() => {
+  return props.events?.some(r => r.event_type === 'ai_recommended' || r.ai_analysis)
+})
 
 watch(() => props.events, (events) => {
   if (events?.length) {
@@ -369,6 +376,14 @@ function onPageSizeChange(size) {
 function onAction(id, status) {
   emit('update-status', { id, status, comment: '' })
 }
+
+// §10.3 高亮机制：ioc_hit / 融合场景命中时行加红色徽标
+function rowClassName({ row }) {
+  if (row.event_type === 'ai_recommended') return 'row-ai-recommended'
+  if (row.ioc_matches?.length) return 'row-ioc-hit'
+  if (row.fusion_scene) return 'row-ioc-hit'
+  return ''
+}
 </script>
 
 <style scoped>
@@ -376,6 +391,10 @@ function onAction(id, status) {
   height: 100%;
   display: flex;
   flex-direction: column;
+  background: var(--color-canvas-default, #ffffff);
+  border-radius: 8px;
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  overflow: hidden;
 }
 
 /* 覆盖 el-table 样式 */
@@ -398,15 +417,15 @@ function onAction(id, status) {
   color: var(--color-fg-subtle, #888888);
   background: var(--color-canvas-subtle, #fafafa);
   border-bottom: 0.5px solid var(--color-border-default, #e5e5e5);
-  padding: 8px 0;
+  padding: 6px 0;
 }
 
 .event-table-wrapper :deep(.el-table td.el-table__cell) {
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 400;
   color: var(--color-fg-default, #111111);
-  border-bottom: 0.5px solid var(--color-border-default, #e5e5e5);
-  padding: 6px 0;
+  border-bottom: 0.5px solid var(--color-border-default, #ebebeb);
+  padding: 4px 0;
 }
 
 .event-table-wrapper :deep(.el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell) {
@@ -414,7 +433,10 @@ function onAction(id, status) {
 }
 
 .event-table-wrapper :deep(.el-table__body tr:hover > td.el-table__cell) {
-  background: var(--color-canvas-inset, #f5f5f5);
+  background: var(--color-accent-subtle, #eff6ff) !important;
+}
+.event-table-wrapper :deep(.el-table__body tr.current-row > td.el-table__cell) {
+  background: var(--color-accent-subtle, #eff6ff) !important;
 }
 
 /* 左侧严重度色条行 */
@@ -505,14 +527,41 @@ function onAction(id, status) {
   background: var(--color-canvas-default, #ffffff);
 }
 
-.event-type-badge {
+/* T-code 徽标 */
+.tcode-badge {
+  display: inline-block;
+  font-family: 'Courier New', monospace;
   font-size: 11px;
-  font-weight: 400;
-  background: var(--color-canvas-inset, #f5f5f5);
-  padding: 2px 8px;
+  font-weight: 600;
+  background: linear-gradient(135deg, #ede9fe, #ddd6fe);
+  color: #5b21b6;
+  padding: 1px 6px;
   border-radius: 4px;
-  color: var(--color-fg-default, #111111);
-  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  border: 0.5px solid #c4b5fd;
+  margin-right: 4px;
+}
+.etype-sub {
+  font-size: 10px;
+  color: var(--color-fg-light, #a3a3a3);
+  white-space: nowrap;
+}
+
+/* 告警来源标签 */
+.source-tag {
+  font-size: 10.5px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+.src-规则引擎 {
+  background: var(--color-accent-subtle, #eff6ff);
+  color: var(--color-accent-fg, #2563eb);
+  border: 0.5px solid rgba(37,99,235,0.2);
+}
+.src-行为分析 {
+  background: var(--color-warning-subtle, #fffbeb);
+  color: var(--color-risk-medium, #d97706);
+  border: 0.5px solid rgba(217,119,6,0.2);
 }
 
 .event-summary {
@@ -526,15 +575,24 @@ function onAction(id, status) {
 }
 
 .stage-tag {
-  font-size: 11px;
-  font-weight: 400;
-  padding: 1px 8px;
-  border-radius: 4px;
+  display: inline-block;
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 10px;
   white-space: nowrap;
-  background: var(--color-canvas-inset, #f5f5f5);
-  color: var(--color-fg-default, #111111);
-  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  background: linear-gradient(135deg, #ede9fe, #ddd6fe);
+  color: #5b21b6;
+  border: 0.5px solid #c4b5fd;
 }
+
+.stage-persistence { background: linear-gradient(135deg, #fed7aa, #fdba74); color: #9a3412; border-color: #fb923c; }
+.stage-execution { background: linear-gradient(135deg, #fecaca, #fca5a5); color: #991b1b; border-color: #f87171; }
+.stage-discovery { background: linear-gradient(135deg, #bfdbfe, #93c5fd); color: #1e40af; border-color: #60a5fa; }
+.stage-credential_access { background: linear-gradient(135deg, #fef08a, #fde047); color: #854d0e; border-color: #facc15; }
+.stage-lateral_movement { background: linear-gradient(135deg, #fbcfe8, #f9a8d4); color: #9d174d; border-color: #f472b6; }
+.stage-collection { background: linear-gradient(135deg, #a7f3d0, #6ee7b7); color: #065f46; border-color: #34d399; }
+.stage-defense_evasion { background: linear-gradient(135deg, #fde68a, #fcd34d); color: #92400e; border-color: #fbbf24; }
 
 .stage-none, .ioc-none {
   color: var(--color-fg-light, #a3a3a3);
@@ -559,10 +617,10 @@ function onAction(id, status) {
 .status-tag {
   display: inline-flex;
   align-items: center;
-  padding: 1px 8px;
-  font-size: 11px;
-  font-weight: 400;
-  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 10.5px;
+  font-weight: 500;
+  border-radius: 10px;
   line-height: 1.4;
   border: 0.5px solid transparent;
 }
@@ -663,7 +721,7 @@ function onAction(id, status) {
 /* 规则标签 */
 .c-rt {
   display: flex;
-  gap: 4px;
+  gap: 3px;
   flex-wrap: nowrap;
   align-items: center;
 }
@@ -671,18 +729,31 @@ function onAction(id, status) {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 1px 6px;
-  font-size: 10px;
-  font-weight: 400;
-  border-radius: 4px;
-  line-height: 1.4;
+  padding: 1px 7px;
+  font-size: 10.5px;
+  font-weight: 500;
+  border-radius: 10px;
+  line-height: 1.5;
   white-space: nowrap;
   border: 0.5px solid transparent;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rtag-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 130px;
+}
+.rtag.rtag-bang {
+  box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.3), 0 0 6px rgba(220, 38, 38, 0.1);
 }
 .rtag.sev-critical {
   background: var(--color-danger-subtle, #fef2f2);
   color: var(--color-risk-critical, #dc2626);
   border-color: rgba(220, 38, 38, 0.2);
+  font-weight: 600;
 }
 .rtag.sev-high {
   background: var(--color-danger-subtle, #fef2f2);
@@ -708,10 +779,13 @@ function onAction(id, status) {
   background: var(--color-canvas-subtle, #fafafa);
   color: var(--color-fg-subtle, #888888);
   border-color: var(--color-border-default, #e5e5e5);
+  font-size: 9.5px;
+  font-weight: 500;
 }
 .rtag .conf {
   font-size: 9px;
-  opacity: 0.7;
+  opacity: 0.75;
+  font-weight: 400;
 }
 .unmatched-badge {
   font-size: 11px;
@@ -740,4 +814,89 @@ function onAction(id, status) {
 /* 路径风险着色 */
 .path-critical { color: var(--color-danger-fg); font-weight: 500; }
 .path-sensitive { color: var(--color-warning-fg); font-weight: 500; }
+
+/* v2.1 摘要列 */
+.summary-cell {
+  display: block;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--color-fg-default);
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 高亮行：ioc/融合场景命中 */
+:deep(.el-table .row-ioc-hit) {
+  background: rgba(220, 38, 38, 0.04) !important;
+}
+:deep(.el-table .row-ioc-hit:hover > td) {
+  background: rgba(220, 38, 38, 0.08) !important;
+}
+/* AI 推荐行 */
+:deep(.el-table .row-ai-recommended) {
+  background: rgba(22, 163, 74, 0.04) !important;
+}
+:deep(.el-table .row-ai-recommended:hover > td) {
+  background: rgba(22, 163, 74, 0.08) !important;
+}
+
+/* AI 小徽标（摘要列内嵌） */
+.ai-badge-sm {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  padding: 0 5px;
+  margin-right: 4px;
+  border-radius: 3px;
+  background: #16a34a;
+  color: #fff;
+  flex-shrink: 0;
+}
+.summary-wrap {
+  display: flex;
+  align-items: center;
+}
+
+/* AI 分析文本（独立列） */
+.ai-text-cell {
+  display: inline-block;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--color-fg-default, #111111);
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+}
+
+/* 事件分类标签 */
+.category-tag {
+  display: inline-block;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--color-canvas-inset);
+  color: var(--color-fg-subtle);
+}
+.category-tag.cat-behavior {
+  background: rgba(220, 38, 38, 0.1);
+  color: var(--color-danger-fg);
+}
+
+/* 事件ID */
+.event-id-text {
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  color: var(--color-fg-light);
+}
+
+/* 攻击链 */
+.chain-text {
+  font-size: 11px;
+  color: var(--color-fg-subtle);
+  font-family: 'Courier New', monospace;
+}
 </style>

@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",
@@ -24,6 +26,10 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.5",
-    "vite": "^5.3.3"
+    "@vue/test-utils": "^2.4.11",
+    "happy-dom": "^20.10.6",
+    "jsdom": "^29.1.1",
+    "vite": "^5.3.3",
+    "vitest": "^4.1.10"
   }
 }

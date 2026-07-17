@@ -3,22 +3,22 @@
     <!-- 4个统计卡片 -->
     <el-row :gutter="16" class="mb-16">
       <el-col :span="6">
-        <el-card shadow="hover" class="stat-card">
+        <el-card shadow="never" class="stat-card">
           <el-statistic title="异常总数" :value="totalAbnormal" />
         </el-card>
       </el-col>
       <el-col :span="6">
-        <el-card shadow="hover" class="stat-card critical">
+        <el-card shadow="never" class="stat-card critical">
           <el-statistic title="Critical" :value="criticalCount" />
         </el-card>
       </el-col>
       <el-col :span="6">
-        <el-card shadow="hover" class="stat-card high">
+        <el-card shadow="never" class="stat-card high">
           <el-statistic title="High" :value="highCount" />
         </el-card>
       </el-col>
       <el-col :span="6">
-        <el-card shadow="hover" class="stat-card avg">
+        <el-card shadow="never" class="stat-card avg">
           <el-statistic title="平均风险评分" :value="avgRiskScore" :precision="1" />
         </el-card>
       </el-col>
@@ -27,13 +27,13 @@
     <!-- 饼图 + 条形图 -->
     <el-row :gutter="16">
       <el-col :span="8">
-        <el-card shadow="hover">
+        <el-card shadow="never">
           <div class="chart-title">严重程度分布</div>
           <v-chart :option="pieOption" autoresize style="height: 280px" />
         </el-card>
       </el-col>
       <el-col :span="16">
-        <el-card shadow="hover">
+        <el-card shadow="never">
           <div class="chart-title">规则类别分布</div>
           <v-chart :option="barOption" autoresize style="height: 280px" />
         </el-card>
@@ -76,19 +76,29 @@ const severityDistribution = computed(() => {
 })
 
 const pieOption = computed(() => ({
-  tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+  tooltip: {
+    trigger: 'item',
+    formatter: '{b}: {c} ({d}%)',
+    backgroundColor: '#fff',
+    borderColor: '#e5e5e5',
+    textStyle: { color: '#111' }
+  },
   legend: { bottom: 0, left: 'center' },
   series: [
     {
       type: 'pie',
       radius: ['40%', '70%'],
       avoidLabelOverlap: false,
-      label: { show: true, formatter: '{b}\n{c}' },
+      label: { show: true, formatter: '{b}', fontSize: 11, color: '#5F5E5A' },
       data: Object.entries(severityDistribution.value).map(([name, value]) => ({
         name,
         value,
         itemStyle: {
-          color: name === 'critical' ? '#F56C6C' : name === 'high' ? '#E6A23C' : name === 'medium' ? '#FABC6F' : name === 'low' ? '#409EFF' : '#909399'
+          color: name === 'critical' ? '#A32D2D'
+               : name === 'high' ? '#BA7517'
+               : name === 'medium' ? '#D4A72C'
+               : name === 'low' ? '#185FA5'
+               : '#5F5E5A'
         }
       }))
     }
@@ -121,22 +131,32 @@ const ruleDistribution = computed(() => {
 })
 
 const barOption = computed(() => ({
-  tooltip: { trigger: 'axis' },
+  tooltip: {
+    trigger: 'axis',
+    backgroundColor: '#fff',
+    borderColor: '#e5e5e5',
+    textStyle: { color: '#111' }
+  },
   grid: { left: 120, right: 20, top: 20, bottom: 30 },
-  xAxis: { type: 'value' },
+  xAxis: {
+    type: 'value',
+    splitLine: { lineStyle: { color: '#e5e5e5' } },
+    axisLabel: { color: '#6b7280', fontSize: 11 }
+  },
   yAxis: {
     type: 'category',
     // y 轴显示中文 label（name 作稳定 key 不展示）
     data: ruleDistribution.value.map((entry) => entry[2]),
-    axisLabel: { width: 100, overflow: 'truncate' }
+    axisLabel: { width: 100, overflow: 'truncate', color: '#374151', fontSize: 11 },
+    axisLine: { lineStyle: { color: '#e5e5e5' } }
   },
   series: [
     {
       type: 'bar',
       data: ruleDistribution.value.map((entry) => entry[1]),
-      itemStyle: { color: '#409EFF' },
+      itemStyle: { color: '#185FA5' },
       barMaxWidth: 20,
-      label: { show: true, position: 'right' }
+      label: { show: true, position: 'right', color: '#374151', fontSize: 11 }
     }
   ]
 }))
@@ -148,19 +168,23 @@ const barOption = computed(() => ({
 }
 .stat-card {
   text-align: center;
+  padding: 4px 0;
 }
 .stat-card.critical .el-statistic__number {
-  color: #F56C6C;
+  color: var(--color-text-danger);
 }
 .stat-card.high .el-statistic__number {
-  color: #E6A23C;
+  color: var(--color-text-warning);
 }
 .stat-card.avg .el-statistic__number {
-  color: #409EFF;
+  color: var(--color-text-info);
 }
 .chart-title {
-  font-weight: bold;
+  font-weight: 500;
   margin-bottom: 8px;
-  color: #303133;
+  color: var(--color-fg-default, #111);
+}
+.el-card {
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
 }
 </style>

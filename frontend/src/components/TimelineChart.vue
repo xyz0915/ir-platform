@@ -218,8 +218,10 @@ function initChart() {
     aggregatedBubbles = result.aggregated
   }
 
-  // ── V1-2: dataZoom 底部留空间 ──
-  const grid = { left: '3%', right: '4%', bottom: 80, top: 60, containLabel: true }
+  // ── V1-2: dataZoom 底部留空间（事件少时进一步压缩） ──
+  const grid = eventsToRender.length < 10
+    ? { left: '3%', right: '4%', bottom: 20, top: 32, containLabel: true }
+    : { left: '3%', right: '4%', bottom: 50, top: 36, containLabel: true }
 
   // ── V1-1: 按 severity 分组为多个 scatter series ──
   const severityGroups = { high: [], medium: [], low: [], info: [] }
@@ -262,12 +264,7 @@ function initChart() {
         borderColor: isHigh ? '#C0392B' : 'transparent',
         borderWidth: isHigh ? 1 : 0,
       },
-      emphasis: {
-        itemStyle: isHigh ? {
-          shadowBlur: 10,
-          shadowColor: 'rgba(245,108,108,0.8)',
-        } : {},
-      },
+      emphasis: {},
     }
   }).filter(Boolean)
 
@@ -289,7 +286,7 @@ function initChart() {
       symbol: 'diamond',
       symbolSize: 18,
       z: 10,
-      itemStyle: { color: '#FF0000' },
+      itemStyle: { color: '#A32D2D' },
     })
   }
 
@@ -339,8 +336,8 @@ function initChart() {
     const slaStr = slaBoundary.toISOString()
     markLineData.push({
       xAxis: slaStr,
-      lineStyle: { type: 'dashed', color: '#FF0000', width: 1 },
-      label: { formatter: '24h SLA 边界', color: '#FF0000', fontSize: 10 },
+      lineStyle: { type: 'dashed', color: '#A32D2D', width: 1 },
+      label: { formatter: '24h SLA 边界', color: '#A32D2D', fontSize: 10 },
     })
   }
 
@@ -357,13 +354,16 @@ function initChart() {
         let html = `<b>${d.name}</b><br/>时间: ${displayTime}<br/>类型: ${typeLabel}`
         if (d.source) html += `<br/>来源: ${d.source}`
         if (d.severity) html += `<br/>严重度: ${d.severity}`
-        if (d.ioc_hit_id) html += `<br/>⚠ IOC 命中`
+        if (d.ioc_hit_id) html += `<br/>IOC 命中`
         return html
       },
     },
     legend: {
       data: legendData,
-      top: 10,
+      top: 6,
+      textStyle: { fontSize: 11, color: '#5F5E5A' },
+      itemWidth: 10,
+      itemHeight: 10,
       selectedMode: 'multiple',
     },
     grid: grid,
@@ -371,6 +371,8 @@ function initChart() {
       type: 'time',
       axisLabel: {
         rotate: 30,
+        fontSize: 11,
+        color: '#5F5E5A',
         formatter: function (value) {
           const d = new Date(value)
           if (isNaN(d.getTime())) return value
@@ -381,22 +383,34 @@ function initChart() {
           return `${month}-${day} ${hours}:${minutes}`
         },
       },
+      axisLine: { lineStyle: { color: '#e5e5e5' } },
+      splitLine: { show: false },
     },
     yAxis: {
       type: 'category',
       data: yAxisData,
-      axisLabel: { interval: 0 },
+      axisLabel: { interval: 0, fontSize: 11, color: '#5F5E5A' },
+      axisLine: { lineStyle: { color: '#e5e5e5' } },
+      axisTick: { show: false },
     },
-    dataZoom: [
-      {
-        type: 'slider',
-        bottom: 10,
-        height: 20,
-      },
-      {
-        type: 'inside',
-      },
-    ],
+    // 仅当事件数 > 50 时才显示缩放条，避免少量数据时占大量空白
+    dataZoom: eventsToRender.length > 50 ? [{
+      type: 'slider',
+      bottom: 10,
+      height: 18,
+      show: true,
+      start: 0,
+      end: 100,
+      textStyle: { color: '#5F5E5A', fontSize: 10 },
+      borderColor: 'transparent',
+      backgroundColor: 'rgba(0,0,0,0.02)',
+      fillerColor: 'rgba(99, 153, 34, 0.08)',
+      handleStyle: { color: '#639922', borderColor: '#639922' },
+    }, {
+      type: 'inside',
+      start: 0,
+      end: 100,
+    }] : [],
     series: severitySeries.length > 0 ? severitySeries : [{
       type: 'scatter',
       data: [],
@@ -425,6 +439,7 @@ function initChart() {
 <style scoped>
 .timeline-chart {
   width: 100%;
-  height: 400px;
+  min-height: 220px;
+  max-height: 480px;
 }
 </style>

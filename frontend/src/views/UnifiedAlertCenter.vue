@@ -3,14 +3,14 @@
     <!-- ===== 顶栏 ===== -->
     <div class="top-bar">
       <div class="top-left">
-        <h2>🛡️ 告警监控中心</h2>
+        <h2>告警监控中心</h2>
         <span class="top-sub">Alert &amp; Monitoring Center</span>
       </div>
       <div class="top-right">
         <span class="status-badge">
           <span class="dot online" /> <span class="stat-online">-</span> 在线
         </span>
-        <el-button size="small" @click="fetchAll" :loading="loading" style="background:#242b3d;border-color:#2d3548;color:#c8cdd5;">
+        <el-button size="small" @click="fetchAll" :loading="loading">
           ↻ 刷新
         </el-button>
       </div>
@@ -19,32 +19,32 @@
     <!-- ===== 统计卡片 ===== -->
     <div class="stats-row">
       <div class="stat-card critical">
-        <div class="s-label">🚨 待处理告警</div>
+        <div class="s-label">待处理告警</div>
         <div class="s-value">{{ stats.open }}</div>
         <div class="s-sub">严重 <strong>{{ stats.critical }}</strong> 条</div>
       </div>
       <div class="stat-card high">
-        <div class="s-label">📥 今日新增</div>
+        <div class="s-label">今日新增</div>
         <div class="s-value">{{ stats.today }}</div>
         <div class="s-sub">近 1h <strong>{{ hourlyNew }}</strong> 条</div>
       </div>
       <div class="stat-card green">
-        <div class="s-label">✅ 已处置</div>
+        <div class="s-label">已处置</div>
         <div class="s-value">{{ stats.total - stats.open }}</div>
         <div class="s-sub">处置率 {{ stats.total ? Math.round((stats.total - stats.open) / stats.total * 100) : 0 }}%</div>
       </div>
       <div class="stat-card blue">
-        <div class="s-label">📊 规则命中</div>
+        <div class="s-label">规则命中</div>
         <div class="s-value">{{ ruleHitTotal }}</div>
         <div class="s-sub">活跃规则 <strong>{{ stats.active_rules || '-' }}</strong> 条</div>
       </div>
       <div class="stat-card green">
-        <div class="s-label">💻 监控主机</div>
+        <div class="s-label">监控主机</div>
         <div class="s-value">{{ onlineCount }}</div>
         <div class="s-sub">总计 {{ hosts.length }} 台</div>
       </div>
       <div class="stat-card blue">
-        <div class="s-label">⚡ 事件速率</div>
+        <div class="s-label">事件速率</div>
         <div class="s-value">{{ eventRate }}</div>
         <div class="s-sub">峰值 {{ eventPeak }}</div>
       </div>
@@ -53,15 +53,15 @@
     <!-- ===== 图表 + 主机 ===== -->
     <div class="mid-section">
       <div class="mid-panel">
-        <div class="p-head">📈 告警趋势 <span class="p-badge">过去 7 天</span></div>
+        <div class="p-head">告警趋势 <span class="p-badge">过去 7 天</span></div>
         <div ref="trendChartRef" class="chart-box" />
       </div>
       <div class="mid-panel">
-        <div class="p-head">🧩 严重度分布 <span class="p-badge">按告警等级</span></div>
+        <div class="p-head">严重度分布 <span class="p-badge">按告警等级</span></div>
         <div ref="pieChartRef" class="chart-box" />
       </div>
       <div class="mid-panel">
-        <div class="p-head">🖥️ 主机在线 <span class="p-badge">实时</span></div>
+        <div class="p-head">主机在线 <span class="p-badge">实时</span></div>
         <div class="host-scroll">
           <div v-for="h in displayHosts" :key="h.id" class="h-item" @click="$router.push(`/hosts/${h.id}`)">
             <span :class="['h-dot', h.status === 'online' ? 'on' : 'off']" />
@@ -94,13 +94,13 @@
       <el-cascader v-model="f.caseHost" :options="caseHostOptions"
         :props="{ expandTrigger: 'hover', label: 'label', value: 'value', children: 'children' }"
         placeholder="案件 → 主机" clearable size="small" style="width:180px" @change="onCaseChange" />
-      <el-input v-model="f.search" placeholder="🔍 搜索标题/进程/规则..." size="small" style="width:160px"
+      <el-input v-model="f.search" placeholder="搜索标题/进程/规则..." size="small" style="width:160px"
         clearable @keyup.enter="fetchAlerts" @clear="fetchAlerts" />
       <el-button size="small" type="primary" @click="fetchAlerts">搜索</el-button>
       <el-button size="small" @click="resetFilters" :disabled="!hasFilter">重置</el-button>
       <div style="flex:1" />
-      <el-button size="small" type="warning" plain :disabled="selected.length===0" @click="batchOp('ack')">✅ 批量确认</el-button>
-      <el-button size="small" type="success" plain :disabled="selected.length===0" @click="batchOp('resolve')">✅ 批量解决</el-button>
+      <el-button size="small" :disabled="selected.length===0" @click="batchOp('ack')">批量确认</el-button>
+      <el-button size="small" :disabled="selected.length===0" @click="batchOp('resolve')">批量解决</el-button>
     </div>
     <!-- 条件标签 -->
     <div v-if="hasFilter" class="filter-tags">
@@ -118,7 +118,7 @@
       <el-table-column type="selection" width="36" />
       <el-table-column label="严重度" width="72">
         <template #default="{row}">
-          <el-tag :type="sevType(row.severity)" size="small" effect="dark" style="width:48px;text-align:center">
+          <el-tag :type="sevType(row.severity)" size="small" effect="plain" :class="`sev-tag sev-tag--${row.severity}`">
             {{ sevLabel(row.severity) }}
           </el-tag>
         </template>
@@ -134,15 +134,15 @@
       </el-table-column>
       <el-table-column label="规则" width="120"><template #default="{row}"><span class="cell-rule">{{ row.rule_label || row.rule_name }}</span></template></el-table-column>
       <el-table-column label="主机" width="100"><template #default="{row}"><span class="cell-host">{{ row.hostname || '-' }}</span></template></el-table-column>
-      <el-table-column label="次数" width="50" align="center"><template #default="{row}">{{ row.count }}</template></el-table-column>
+      <el-table-column label="次数" width="50" align="center"><template #default="{row}"><span class="cell-count">{{ row.count }}</span></template></el-table-column>
       <el-table-column label="状态" width="80">
-        <template #default="{row}"><el-tag :type="stsType(row.status)" size="small">{{ stsLabel(row.status) }}</el-tag></template>
+        <template #default="{row}"><el-tag :type="stsType(row.status)" size="small" :class="`sts-tag sts-tag--${row.status}`">{{ stsLabel(row.status) }}</el-tag></template>
       </el-table-column>
       <el-table-column label="操作" width="160" fixed="right">
         <template #default="{row}">
-          <el-button link type="primary" size="small" @click="viewDetail(row)">详情</el-button>
-          <el-button v-if="row.status==='open'" link type="warning" size="small" @click="handleAck(row)">确认</el-button>
-          <el-button v-if="row.status!=='resolved'" link type="success" size="small" @click="handleResolve(row)">解决</el-button>
+          <el-button link size="small" @click="viewDetail(row)">详情</el-button>
+          <el-button v-if="row.status==='open'" link size="small" @click="handleAck(row)">确认</el-button>
+          <el-button v-if="row.status!=='resolved'" link size="small" @click="handleResolve(row)">解决</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -151,13 +151,13 @@
     <div class="page-wrap">
       <span class="page-info">共 {{ stats.total }} 条告警，显示 {{ alerts.length }} 条</span>
       <el-pagination v-model:current-page="page" :page-size="50" :total="stats.total"
-        layout="prev, pager, next" background small @current-change="fetchAlerts" />
+        layout="prev, pager, next" small @current-change="fetchAlerts" />
     </div>
 
     <!-- 详情抽屉 -->
-    <el-drawer v-model="drawerVisible" :title="'🔍 ' + (detail?.title || '告警详情')" size="420px">
+    <el-drawer v-model="drawerVisible" :title="(detail?.title || '告警详情')" size="420px">
       <template v-if="detail">
-        <div class="d-section"><span class="d-lbl">严重度</span><el-tag :type="sevType(detail.severity)" effect="dark">{{ sevLabel(detail.severity) }}</el-tag></div>
+        <div class="d-section"><span class="d-lbl">严重度</span><el-tag :type="sevType(detail.severity)" effect="plain">{{ sevLabel(detail.severity) }}</el-tag></div>
         <el-divider />
         <div class="d-section"><span class="d-lbl">告警描述</span><div class="d-val">{{ detail.title }}</div><div class="d-sub">{{ detail.detail || '无' }}</div></div>
         <el-divider />
@@ -321,48 +321,22 @@ function renderCharts(trendData) {
       tooltip: {
         trigger: 'axis',
         axisPointer: { type: 'shadow' },
-        backgroundColor: '#1a1f2e', borderColor: '#2d3548', textStyle: { color: '#e0e4ea', fontSize: 11 },
+        backgroundColor: 'var(--color-background-primary)', borderColor: 'var(--color-border-tertiary)', textStyle: { color: 'var(--color-text-primary)', fontSize: 11 },
       },
-      legend: { data: ['严重', '高危', '中危', '低危'], textStyle: { color: '#8b929a', fontSize: 10 }, bottom: 30, itemWidth: 10, itemHeight: 8 },
-      grid: { left: 36, right: 12, top: 6, bottom: 60 },
-      dataZoom: [
-        {
-          type: 'inside',       // 鼠标滚轮 + 拖拽
-          xAxisIndex: 0,
-          start: 0,
-          end: 100,
-          zoomOnMouseWheel: true,
-          moveOnMouseMove: true,
-          moveOnMouseWheel: false,
-        },
-        {
-          type: 'slider',       // 底部滑块
-          xAxisIndex: 0,
-          start: 0,
-          end: 100,
-          height: 18,
-          bottom: 6,
-          borderColor: '#2d3548',
-          backgroundColor: 'rgba(45,53,72,0.3)',
-          fillerColor: 'rgba(88,166,255,0.15)',
-          handleStyle: { color: '#58a6ff', borderColor: '#58a6ff' },
-          textStyle: { color: '#6e7681', fontSize: 10 },
-          dataBackground: { lineStyle: { color: '#3d475e' }, areaStyle: { color: 'rgba(88,166,255,0.1)' } },
-          selectedDataBackground: { lineStyle: { color: '#58a6ff' }, areaStyle: { color: 'rgba(88,166,255,0.2)' } },
-        }
-      ],
+      legend: { data: ['严重', '高危', '中危', '低危'], textStyle: { color: 'var(--color-text-secondary)', fontSize: 10 }, bottom: 30, itemWidth: 10, itemHeight: 8 },
+      grid: { left: 36, right: 12, top: 6, bottom: 32 },
       xAxis: {
         type: 'category', data: hours,
-        axisLabel: { color: '#6e7681', fontSize: 9, interval: 'auto' },
-        axisLine: { lineStyle: { color: '#242b3d' } },
+        axisLabel: { color: 'var(--color-text-tertiary)', fontSize: 9, interval: 'auto' },
+        axisLine: { lineStyle: { color: 'var(--color-border-tertiary)' } },
         axisTick: { show: false },
       },
-      yAxis: { type: 'value', splitLine: { lineStyle: { color: '#1e2433', type: 'dashed' } }, axisLabel: { color: '#6e7681', fontSize: 9 } },
+      yAxis: { type: 'value', splitLine: { lineStyle: { color: 'var(--color-border-tertiary)', type: 'solid' } }, axisLabel: { color: 'var(--color-text-tertiary)', fontSize: 9 } },
       series: [
-        { name: '严重', type: 'bar', stack: 't', data: critical, itemStyle: { color: '#f85149', borderRadius: [2, 2, 0, 0] }, barWidth: '55%' },
-        { name: '高危', type: 'bar', stack: 't', data: high, itemStyle: { color: '#d4a72c' } },
-        { name: '中危', type: 'bar', stack: 't', data: medium, itemStyle: { color: '#58a6ff' } },
-        { name: '低危', type: 'bar', stack: 't', data: low, itemStyle: { color: '#6e7681', borderRadius: [0, 0, 2, 2] } },
+        { name: '严重', type: 'bar', stack: 't', data: critical, itemStyle: { color: '#A32D2D' }, barWidth: '40%' },
+        { name: '高危', type: 'bar', stack: 't', data: high, itemStyle: { color: '#854F0B' } },
+        { name: '中危', type: 'bar', stack: 't', data: medium, itemStyle: { color: '#185FA5' } },
+        { name: '低危', type: 'bar', stack: 't', data: low, itemStyle: { color: '#5F5E5A' } },
       ]
     })
   }
@@ -377,17 +351,17 @@ function renderCharts(trendData) {
     const m = dist.medium || 0
     const l = dist.low || 0
     const pieData = []
-    if (c) pieData.push({ name: '严重', value: c, itemStyle: { color: '#f85149' } })
-    if (h) pieData.push({ name: '高危', value: h, itemStyle: { color: '#d4a72c' } })
-    if (m) pieData.push({ name: '中危', value: m, itemStyle: { color: '#58a6ff' } })
-    if (l) pieData.push({ name: '低危', value: l, itemStyle: { color: '#6e7681' } })
-    if (pieData.length === 0) pieData.push({ name: '暂无数据', value: 1, itemStyle: { color: '#2d3548' } })
+    if (c) pieData.push({ name: '严重', value: c, itemStyle: { color: '#A32D2D' } })
+    if (h) pieData.push({ name: '高危', value: h, itemStyle: { color: '#854F0B' } })
+    if (m) pieData.push({ name: '中危', value: m, itemStyle: { color: '#185FA5' } })
+    if (l) pieData.push({ name: '低危', value: l, itemStyle: { color: '#5F5E5A' } })
+    if (pieData.length === 0) pieData.push({ name: '暂无数据', value: 1, itemStyle: { color: 'var(--color-border-tertiary)' } })
     pieChart.setOption({
-      tooltip: { trigger: 'item', backgroundColor: '#1a1f2e', borderColor: '#2d3548', textStyle: { color: '#e0e4ea' }, formatter: '{b}: {c} 条 ({d}%)' },
+      tooltip: { trigger: 'item', backgroundColor: 'var(--color-background-primary)', borderColor: 'var(--color-border-tertiary)', textStyle: { color: 'var(--color-text-primary)' }, formatter: '{b}: {c} 条 ({d}%)' },
       series: [{
         type: 'pie', radius: ['45%', '70%'], center: ['50%', '48%'],
-        avoidLabelOverlap: true, itemStyle: { borderRadius: 4, borderColor: '#0f1219', borderWidth: 2 },
-        label: { show: pieData.length > 1, formatter: '{b}\n{d}%', fontSize: 10, color: '#c8cdd5', lineHeight: 14 },
+        avoidLabelOverlap: true, itemStyle: { borderRadius: 4, borderColor: 'var(--color-background-primary)', borderWidth: 2 },
+        label: { show: pieData.length > 1, formatter: '{b}\n{d}%', fontSize: 10, color: 'var(--color-text-secondary)', lineHeight: 14 },
         emphasis: { label: { fontSize: 12, fontWeight: 'bold' } },
         data: pieData,
       }]
@@ -463,61 +437,142 @@ onUnmounted(() => {
 .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .top-left { display: flex; align-items: baseline; gap: 8px; }
 .top-left h2 { font-size: 20px; font-weight: 600; }
-.top-sub { font-size: 12px; color: #8b929a; }
+.top-sub { font-size: 12px; color: var(--color-text-tertiary); }
 .top-right { display: flex; align-items: center; gap: 10px; }
-.status-badge { font-size: 12px; color: #6e7681; }
+.status-badge { font-size: 12px; color: var(--color-text-secondary); }
 .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
-.dot.online { background: #2da44e; box-shadow: 0 0 5px #2da44e66; }
-.stat-online { color: #2da44e; font-weight: 600; }
+.dot.online { background: var(--color-text-success); }
+.stat-online { color: var(--color-text-success); font-weight: 600; }
 
 /* ===== 统计卡片 ===== */
 .stats-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-bottom: 14px; }
-.stat-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 13px 15px; transition: .2s; }
-.stat-card:hover { border-color: #d1d5db; box-shadow: 0 1px 4px rgba(0,0,0,.04); }
-.s-label { font-size: 11px; color: #6b7280; margin-bottom: 3px; }
+.stat-card { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: 8px; padding: 13px 15px; transition: .2s; }
+.stat-card:hover { border-color: var(--color-border-secondary); box-shadow: none; }
+.s-label { font-size: 11px; color: var(--color-text-secondary); margin-bottom: 3px; }
 .s-value { font-size: 24px; font-weight: 700; letter-spacing: -.3px; }
-.stat-card.critical .s-value { color: #dc2626; }
-.stat-card.high .s-value { color: #d97706; }
-.stat-card.green .s-value { color: #16a34a; }
-.stat-card.blue .s-value { color: #2563eb; }
-.s-sub { font-size: 11px; color: #9ca3af; margin-top: 3px; }
+.stat-card.critical .s-value { color: var(--color-text-danger); }
+.stat-card.high .s-value { color: var(--color-text-warning); }
+.stat-card.green .s-value { color: var(--color-text-success); }
+.stat-card.blue .s-value { color: var(--color-text-info); }
+.s-sub { font-size: 11px; color: var(--color-text-tertiary); margin-top: 3px; }
 
 /* ===== 图表 + 主机 ===== */
 .mid-section { display: grid; grid-template-columns: 1.4fr 1fr 0.8fr; gap: 10px; margin-bottom: 14px; }
-.mid-panel { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 14px; }
+.mid-panel { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: 8px; padding: 12px 14px; }
 .p-head { font-size: 13px; font-weight: 600; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
-.p-badge { font-size: 10px; color: #9ca3af; font-weight: 400; }
+.p-badge { font-size: 10px; color: var(--color-text-tertiary); font-weight: 400; }
 .chart-box { width: 100%; height: 180px; }
 
 .host-scroll { max-height: 180px; overflow-y: auto; }
-.h-item { display: flex; align-items: center; gap: 6px; padding: 5px 6px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: .15s; }
-.h-item:hover { background: #f3f4f6; }
+.h-item { display: flex; align-items: center; gap: 6px; padding: 5px 6px; border-radius: 4px; cursor: pointer; font-size: 11px; transition: .15s; border-bottom: 0.5px solid var(--color-border-tertiary); }
+.h-item:hover { background: var(--color-background-tertiary); }
 .h-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-.h-dot.on { background: #16a34a; box-shadow: 0 0 3px #16a34a55; }
-.h-dot.off { background: #9ca3af; }
-.h-name { flex: 1; color: #374151; }
-.h-ip { font-size: 10px; color: #9ca3af; }
-.h-badge { font-size: 10px; background: #fee2e2; color: #dc2626; padding: 0 6px; border-radius: 8px; font-weight: 600; }
+.h-dot.on { background: var(--color-text-success); }
+.h-dot.off { background: var(--color-text-tertiary); }
+.h-name { flex: 1; color: var(--color-text-primary); }
+.h-ip { font-size: 10px; color: var(--color-text-tertiary); }
+.h-badge { font-size: 10px; background: var(--color-background-danger); color: var(--color-text-danger); padding: 0 6px; border-radius: 8px; font-weight: 600; }
 
 /* ===== 筛选栏 ===== */
-.filter-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 14px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; }
+.filter-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 14px; background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: 8px; }
 .filter-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; align-items: center; }
 
 /* ===== 表格 ===== */
-.cell-time { font-size: 12px; color: #6b7280; white-space: nowrap; }
-.cell-title { font-size: 13px; color: #1f2937; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cell-detail { font-size: 11px; color: #9ca3af; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cell-rule { font-size: 12px; color: #6b7280; }
-.cell-host { font-size: 12px; color: #6b7280; }
+.cell-time { font-size: 12px; color: var(--color-text-secondary); white-space: nowrap; }
+.cell-title { font-size: 12px; color: var(--color-text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
+.cell-detail { font-size: 11px; color: var(--color-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cell-rule { font-size: 12px; color: var(--color-text-secondary); }
+.cell-host { font-size: 12px; color: var(--color-text-secondary); }
 
 .page-wrap { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; }
-.page-info { font-size: 12px; color: #9ca3af; }
+.page-info { font-size: 12px; color: var(--color-text-tertiary); }
 
 /* ===== 详情抽屉 ===== */
 .d-section { margin-bottom: 4px; }
-.d-lbl { font-size: 12px; color: #6b7280; display: block; margin-bottom: 4px; }
-.d-val { font-size: 14px; color: #1f2937; }
-.d-sub { font-size: 12px; color: #6b7280; margin-top: 2px; line-height: 1.6; }
+.d-lbl { font-size: 12px; color: var(--color-text-secondary); display: block; margin-bottom: 4px; }
+.d-val { font-size: 14px; color: var(--color-text-primary); }
+.d-sub { font-size: 12px; color: var(--color-text-secondary); margin-top: 2px; line-height: 1.6; }
 
-.empty { text-align: center; padding: 20px; color: #9ca3af; font-size: 12px; }
+.empty { text-align: center; padding: 20px; color: var(--color-text-tertiary); font-size: 12px; }
+
+/* ===== 表格紧凑化 ===== */
+.el-table {
+  --el-table-row-height: 44px;
+  --el-table-border-color: var(--color-border-tertiary);
+}
+.el-table th.el-table__cell {
+  background: var(--color-background-tertiary) !important;
+  color: var(--color-text-secondary) !important;
+  font-weight: 500 !important;
+  font-size: 12px !important;
+}
+.el-table td.el-table__cell {
+  padding: 8px 0 !important;
+  font-size: 12px !important;
+}
+
+/* 严重度 tag 弱化（浅色背景） */
+.sev-tag {
+  border: none !important;
+  background: transparent !important;
+  padding: 0 6px !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+}
+.sev-tag--critical { color: var(--color-text-danger) !important; }
+.sev-tag--high { color: var(--color-text-warning) !important; }
+.sev-tag--medium { color: var(--color-text-info) !important; }
+.sev-tag--low { color: var(--color-text-tertiary) !important; }
+
+/* 状态 tag 弱化 */
+.sts-tag {
+  border: none !important;
+  background: transparent !important;
+  padding: 0 6px !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+}
+.sts-tag--open { color: var(--color-text-danger) !important; }
+.sts-tag--acknowledged { color: var(--color-text-warning) !important; }
+.sts-tag--resolved { color: var(--color-text-success) !important; }
+.sts-tag--dismissed { color: var(--color-text-tertiary) !important; }
+
+/* 次数列紧凑 */
+.cell-count {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 操作列 link 按钮去色 */
+.el-table .el-button.is-link {
+  font-weight: 400;
+  color: var(--color-text-info);
+}
+.el-table .el-button.is-link:hover {
+  color: var(--color-accent-fg, #185FA5);
+}
+
+/* 批量按钮弱化 */
+.filter-bar .el-button:not(.is-link) {
+  background: var(--color-background-primary) !important;
+  border: 0.5px solid var(--color-border-tertiary) !important;
+  color: var(--color-text-primary) !important;
+}
+
+/* 分页去 background */
+.el-pagination .btn-prev,
+.el-pagination .btn-next,
+.el-pagination .el-pager li {
+  background: transparent !important;
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: 4px;
+  margin: 0 2px;
+  color: var(--color-text-secondary);
+}
+.el-pagination .el-pager li.is-active {
+  background: var(--color-background-info) !important;
+  color: var(--color-text-info) !important;
+  border-color: var(--color-background-info);
+}
 </style>

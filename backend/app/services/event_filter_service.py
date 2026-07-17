@@ -106,6 +106,19 @@ def build_events_where(params: dict) -> tuple[str, list]:
         except (ValueError, TypeError):
             pass
 
+    # AI 降噪筛选（v2 方案）
+    ai_label = params.get("ai_label")
+    if ai_label:
+        if ai_label == "recommended":
+            conditions.append("se.event_type = 'ai_recommended'")
+        elif ai_label == "suspicious":
+            conditions.append("""json_extract(se.ai_verdict, '$.label') = 'suspicious'""")
+        elif ai_label == "false_positive":
+            conditions.append("""json_extract(se.ai_verdict, '$.label') = 'false_positive'""")
+    else:
+        # 非 AI 筛选模式下，排除 AI 推荐事件（避免普通视图混入）
+        conditions.append("se.event_type != 'ai_recommended'")
+
     # 时间范围预设
     time_range = params.get("time_range")
     if time_range and time_range != "all":

@@ -55,7 +55,7 @@
     </el-form-item>
 
     <el-form-item>
-      <el-button type="primary" @click="emitFilter">筛选</el-button>
+      <el-button @click="emitFilter">筛选</el-button>
       <el-button @click="resetFilter">重置</el-button>
     </el-form-item>
   </el-form>
@@ -107,6 +107,6 @@ function resetFilter() {
   padding: 12px;
   background: var(--color-canvas-subtle, #f5f7fa);
   border-radius: 6px;
-  border: 1px solid var(--color-border-default, #e4e7ed);
+  border: 0.5px solid var(--color-border-default, #e4e7ed);
 }
 </style>

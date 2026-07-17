@@ -99,4 +99,10 @@ class Settings:
     DEFAULT_CACHE_TTL_UNKNOWN_DAYS: int = 3
 
 
+    # ── 手工日志导入（Manual Log Import）────────────────────
+    LOG_FILE_RETENTION_DAYS: int = 7       # 上传日志文件保留天数
+    MAX_LOG_FILE_SIZE_MB: int = 500        # 单文件大小上限（MB）
+    ASYNC_THRESHOLD_MB: int = 100          # 异步处理阈值（MB）
+
+
 settings = Settings()
