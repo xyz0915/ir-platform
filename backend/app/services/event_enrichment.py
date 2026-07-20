@@ -348,6 +348,17 @@ def build_event_summary(event: dict) -> str:
     if event_type in ("process_start", "process_terminate"):
         verb = "启动" if event_type == "process_start" else "退出"
         pname = _g("process_name", "image", default="未知进程")
+        # 如果 process_name 为空但有 command_line，从中提取可执行文件名
+        if pname == "未知进程":
+            cmd = _g("command_line", default="")
+            if cmd and cmd != "?":
+                # 取命令行第一个 token（通常是可执行文件路径）
+                import re
+                m = re.search(r'([^\\\/"]+\.exe|[\w-]+(?=\.exe|$))', cmd, re.I)
+                if m:
+                    pname = m.group(1)
+                else:
+                    pname = cmd.split()[0][:40] if cmd.split() else pname
         pid = _g("pid", default="")
         parent = _g("parent_name", "parent_process_name", default="")
         summary = f"{verb}进程 {pname}"
