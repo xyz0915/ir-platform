@@ -21,7 +21,8 @@ router = APIRouter()
 
 
 def _search_rules(q: str, category: Optional[str], enabled: Optional[bool],
-                  current_user: Optional[dict] = None) -> list:
+                  current_user: Optional[dict] = None,
+                  engine_type: Optional[str] = None) -> list:
     """按关键字搜索规则（T-P2-1）：name/label/description 模糊匹配 + 租户隔离."""
     tenant_id = getattr(current_user, "tenant_id", 0) if current_user else 0
     if not isinstance(tenant_id, int):
@@ -41,6 +42,9 @@ def _search_rules(q: str, category: Optional[str], enabled: Optional[bool],
         if enabled is not None:
             query += " AND enabled = ?"
             params.append(1 if enabled else 0)
+        if engine_type is not None:
+            query += " AND engine_type = ?"
+            params.append(engine_type)
         query += " ORDER BY category, severity DESC, created_at"
         rows = conn.execute(query, params).fetchall()
         results = []
@@ -61,17 +65,18 @@ def list_rules(
     category: str = Query(None, description="规则类别"),
     enabled: bool = Query(None, description="启用状态"),
     q: str = Query(None, description="关键字搜索（名称/中文名/描述）"),
+    engine_type: str = Query(None, description="引擎类型: rule_engine / behavior_engine"),
     current_user: dict = Depends(get_current_user),
 ):
     """获取规则列表（支持类别、启用状态与关键字搜索 + 多租户）."""
     if q:
-        rules = _search_rules(q, category, enabled, current_user)
+        rules = _search_rules(q, category, enabled, current_user, engine_type=engine_type)
     else:
         # 非关键字查询也加租户隔离
         tenant_id = getattr(current_user, "tenant_id", 0) if current_user else 0
         if not isinstance(tenant_id, int):
             tenant_id = 0
-        rules = Rule.list(category=category, enabled=enabled, tenant_id=tenant_id)
+        rules = Rule.list(category=category, enabled=enabled, tenant_id=tenant_id, engine_type=engine_type)
     return {"code": 0, "data": rules, "message": "success"}
 
 
@@ -82,9 +87,10 @@ def list_rules_for_selector(
     category: str = Query(None, description="规则类别"),
     severity: str = Query(None, description="严重度"),
     keyword: str = Query(None, description="关键字搜索"),
+    engine_type: str = Query(None, description="引擎类型: rule_engine / behavior_engine"),
     current_user: dict = Depends(get_current_user),
 ):
-    """策略配置中的规则选择器 — 支持分页、类别、严重度、关键字筛选."""
+    """策略配置中的规则选择器 — 支持分页、类别、严重度、关键字、引擎类型筛选."""
     try:
         with get_connection() as conn:
             conditions: list[str] = ["1=1"]
@@ -100,6 +106,9 @@ def list_rules_for_selector(
                 conditions.append("(name LIKE ? OR label LIKE ? OR description LIKE ?)")
                 like = f"%{keyword}%"
                 params.extend([like, like, like])
+            if engine_type:
+                conditions.append("engine_type = ?")
+                params.append(engine_type)
 
             where = " AND ".join(conditions)
 
@@ -154,6 +163,7 @@ def create_rule(
         description=rule.description,
         label=rule.label,
         source=rule.source,
+        engine_type=rule.engine_type,
         changed_by=current_user.get("username"),
     )
     return {"code": 0, "data": result, "message": "success"}
@@ -244,6 +254,7 @@ def update_rule(
         owner=rule.owner,
         label=rule.label,
         mitre_attack=rule.mitre_attack,
+        engine_type=rule.engine_type,
     )
     if not result:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="规则不存在")
@@ -794,10 +805,14 @@ def get_rule_stats(current_user: dict = Depends(get_current_user)):
         high_risk = conn.execute(f"SELECT COUNT(*) as c FROM rules WHERE severity IN ('critical','high'){tw}", tp).fetchone()["c"]
         medium_risk = conn.execute(f"SELECT COUNT(*) as c FROM rules WHERE severity='medium'{tw}", tp).fetchone()["c"]
         user_rules = conn.execute(f"SELECT COUNT(*) as c FROM rules WHERE source != 'default'{tw}", tp).fetchone()["c"]
+        rule_engine_count = conn.execute(f"SELECT COUNT(*) as c FROM rules WHERE engine_type='rule_engine'{tw}", tp).fetchone()["c"]
+        behavior_engine_count = conn.execute(f"SELECT COUNT(*) as c FROM rules WHERE engine_type='behavior_engine'{tw}", tp).fetchone()["c"]
     return {"code": 0, "data": {
         "total": total, "enabled": enabled,
         "high_risk": high_risk, "medium_risk": medium_risk,
         "user_rules": user_rules,
+        "rule_engine_count": rule_engine_count,
+        "behavior_engine_count": behavior_engine_count,
     }}
 
 

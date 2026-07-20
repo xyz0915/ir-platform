@@ -17,6 +17,7 @@ export const useRulesStore = defineStore('rules', () => {
   const coverage = ref(null)
   const categories = ref([])
   const error = ref(null)
+  const filterEngineType = ref('')
 
   // ── getters ──
   const enabledCount = computed(() => rules.value.filter(r => r.enabled).length)
@@ -27,6 +28,7 @@ export const useRulesStore = defineStore('rules', () => {
   async function fetchRules(params = {}) {
     loading.value = true
     error.value = null
+    if (filterEngineType.value) params.engine_type = filterEngineType.value
     try {
       const res = await listRules(params)
       rules.value = res.data || []
@@ -84,7 +86,7 @@ export const useRulesStore = defineStore('rules', () => {
 
   return {
     rules, loading, stats, coverage, categories, error,
-    enabledCount, highRiskCount,
+    enabledCount, highRiskCount, filterEngineType,
     fetchRules, fetchStats, fetchCoverage,
     addRule, editRule, removeRule, batchEnable,
   }

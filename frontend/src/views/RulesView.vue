@@ -43,6 +43,16 @@
         <div class="metric-value">{{ rules.filter(r => r.source !== 'default').length }}</div>
         <div class="metric-sub up">自定义</div>
       </div>
+      <div class="metric">
+        <div class="metric-top"><div class="metric-dot blue"></div><div class="metric-label">规则引擎</div></div>
+        <div class="metric-value">{{ statsData?.rule_engine_count || 0 }}</div>
+        <div class="metric-sub">引擎规则</div>
+      </div>
+      <div class="metric">
+        <div class="metric-top"><div class="metric-dot purple"></div><div class="metric-label">行为引擎</div></div>
+        <div class="metric-value">{{ statsData?.behavior_engine_count || 0 }}</div>
+        <div class="metric-sub">检测规则</div>
+      </div>
     </div>
 
     <!-- Main Card -->
@@ -69,6 +79,11 @@
           <option value="defense_evasion">防御规避</option>
           <option value="privilege_escalation">权限提升</option>
           <option value="impact">影响</option>
+        </select>
+        <select v-model="filterEngineType" class="select" style="width:130px;margin-left:8px;" @change="loadRules">
+          <option value="">全部引擎</option>
+          <option value="rule_engine">规则引擎</option>
+          <option value="behavior_engine">行为引擎</option>
         </select>
         <div class="toolbar-spacer"></div>
         <button class="btn btn-default btn-sm" @click="loadRules">
@@ -104,6 +119,7 @@
               <th style="width:28px;"><input type="checkbox" class="cbx" :checked="rules.length && selectedRows.length === rules.length" @change="(e) => { if(e.target.checked) { selectedRows = [...rules]; handleSelectionChange(selectedRows); } else { selectedRows = []; handleSelectionChange(selectedRows); } }" /></th>
               <th>规则名称</th>
               <th style="width:84px;">类别</th>
+              <th style="width:90px;">引擎类型</th>
               <th style="width:72px;">类型</th>
               <th style="width:80px;">严重度</th>
               <th style="width:100px;">ATT&amp;CK</th>
@@ -131,6 +147,10 @@
                 </div>
               </td>
               <td><span class="badge badge-info">{{ row.category }}</span></td>
+              <td>
+                <span v-if="row.engine_type === 'behavior_engine'" class="badge badge-behavior">行为引擎</span>
+                <span v-else class="badge badge-rule">规则引擎</span>
+              </td>
               <td><span class="td-mono">{{ row.rule_type }}</span></td>
               <td>
                 <div class="sev">
@@ -167,7 +187,7 @@
               </td>
             </tr>
             <tr v-if="!rules.length && !loading">
-              <td colspan="10">
+              <td colspan="11">
                 <div class="empty-state">没有匹配的规则</div>
               </td>
             </tr>
@@ -292,6 +312,20 @@
                 <option value="exists">存在性检查</option>
               </select>
             </div>
+            <div class="fg" v-if="!editingRuleId">
+              <label class="fl">引擎类型</label>
+              <div style="display:flex;gap:16px;margin-top:4px;">
+                <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+                  <input type="radio" v-model="createForm.engine_type" value="rule_engine" />
+                  <span>规则引擎</span>
+                </label>
+                <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+                  <input type="radio" v-model="createForm.engine_type" value="behavior_engine" />
+                  <span>行为引擎</span>
+                </label>
+              </div>
+              <div class="fg-hint" v-if="createForm.engine_type === 'behavior_engine'">行为引擎规则适用于系统服务风险检测场景</div>
+            </div>
             <div class="fg">
               <label class="fl">严重程度</label>
               <select class="fs" v-model="createForm.severity">
@@ -340,6 +374,7 @@ async function loadStats() {
   try { const r = await request.get('/rules/stats'); statsData.value = r.data } catch (e) {}
 }
 const filterCategory = ref('')
+const filterEngineType = ref('')
 const searchKeyword = ref('')
 const selectedRows = ref([])
 const tableRef = ref(null)
@@ -354,6 +389,7 @@ const createForm = reactive({
   label: '',
   category: 'process',
   rule_type: 'regex',
+  engine_type: 'rule_engine',
   severity: 'medium',
   description: '',
   conditionStr: '{}'
@@ -382,6 +418,7 @@ async function loadRules() {
   try {
     const params = {}
     if (filterCategory.value) params.category = filterCategory.value
+    if (filterEngineType.value) params.engine_type = filterEngineType.value
     if (searchKeyword.value.trim()) params.q = searchKeyword.value.trim()
     const res = await request.get('/rules', { params })
     rules.value = res.data
@@ -433,6 +470,7 @@ function showCreateDialog() {
   createForm.label = ''
   createForm.category = 'process'
   createForm.rule_type = 'regex'
+  createForm.engine_type = 'rule_engine'
   createForm.severity = 'medium'
   createForm.description = ''
   createForm.conditionStr = '{}'
@@ -478,6 +516,7 @@ async function handleCreate() {
       label: createForm.label || undefined,
       category: createForm.category,
       rule_type: createForm.rule_type,
+      engine_type: createForm.engine_type,
       condition,
       severity: createForm.severity,
       description: createForm.description
@@ -585,7 +624,7 @@ function severityLabel(severity) {
 /* ── Metrics ── */
 .metrics {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 12px;
   margin-bottom: 24px;
 }
@@ -610,6 +649,7 @@ function severityLabel(severity) {
 .metric-dot.green { background: var(--color-success-fg); }
 .metric-dot.amber { background: var(--color-warning-fg); }
 .metric-dot.red { background: var(--color-danger-fg); }
+.metric-dot.purple { background: #7c3aed; }
 .metric-label {
   font-size: 11px;
   font-weight: 400;
@@ -817,6 +857,22 @@ function severityLabel(severity) {
 .badge-user {
   background: #e0f2fe;
   color: #0369a1;
+}
+.badge-rule {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  background: #e0f2fe;
+  color: #0369a1;
+}
+.badge-behavior {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  background: #f3e8ff;
+  color: #7c3aed;
 }
 
 /* ── Severity ── */

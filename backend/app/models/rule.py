@@ -95,6 +95,7 @@ class Rule:
         label: Optional[str] = None,
         source: str = "user",
         changed_by: Optional[str] = None,
+        engine_type: str = "rule_engine",
     ) -> dict:
         """创建规则.
 
@@ -109,13 +110,14 @@ class Rule:
             label: 中文展示名（本地化）.
             source: 来源 'default'（导入）| 'user'（API 创建）.
             changed_by: 操作人（来自 JWT）.
+            engine_type: 引擎类型 'rule_engine' | 'behavior_engine'.
         """
         with get_connection() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO rules
-                    (name, description, category, rule_type, condition, severity, enabled, label, source)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (name, description, category, rule_type, condition, severity, enabled, label, source, engine_type)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     name,
@@ -127,6 +129,7 @@ class Rule:
                     1 if enabled else 0,
                     label,
                     source,
+                    engine_type,
                 ),
             )
             rule_id = cursor.lastrowid
@@ -162,13 +165,15 @@ class Rule:
 
     @staticmethod
     def list(category: Optional[str] = None, enabled: Optional[bool] = None,
-             tenant_id: Optional[int] = None) -> list:
+             tenant_id: Optional[int] = None,
+             engine_type: Optional[str] = None) -> list:
         """获取规则列表（支持按类别、启用状态过滤 + 多租户隔离）.
 
         Args:
             category: 规则类别过滤.
             enabled: 启用状态过滤.
             tenant_id: 租户 ID（T-P2-1）。若 >0 则添加 ``WHERE tenant_id=? OR tenant_id=0``.
+            engine_type: 引擎类型过滤（rule_engine / behavior_engine）.
         """
         with get_connection() as conn:
             query = "SELECT * FROM rules WHERE 1=1"
@@ -182,6 +187,9 @@ class Rule:
             if enabled is not None:
                 query += " AND enabled = ?"
                 params.append(1 if enabled else 0)
+            if engine_type is not None:
+                query += " AND engine_type = ?"
+                params.append(engine_type)
             query += " ORDER BY category, severity DESC, created_at"
             rows = conn.execute(query, params).fetchall()
             results = []
@@ -259,7 +267,8 @@ class Rule:
     @staticmethod
     def search(category: Optional[str] = None, severity: Optional[str] = None,
                rule_type: Optional[str] = None, keyword: Optional[str] = None,
-               page: int = 1, page_size: int = 100) -> dict:
+               page: int = 1, page_size: int = 100,
+               engine_type: Optional[str] = None) -> dict:
         """规则多维度搜索（供策略规则选择器使用）. """
         with get_connection() as conn:
             conditions = ["1=1"]
@@ -279,6 +288,9 @@ class Rule:
                 conditions.append("(name LIKE ? OR description LIKE ? OR condition LIKE ?)")
                 kw = f"%{keyword}%"
                 params.extend([kw, kw, kw])
+            if engine_type is not None:
+                conditions.append("engine_type=?")
+                params.append(engine_type)
             where = " AND ".join(conditions)
             total = conn.execute(f"SELECT COUNT(*) FROM rules WHERE {where}", params).fetchone()[0]
             offset = (page - 1) * page_size
@@ -310,6 +322,7 @@ class Rule:
         name: Optional[str] = None,
         label: Optional[str] = None,
         mitre_attack: Optional[str] = None,
+        engine_type: Optional[str] = None,
     ) -> Optional[dict]:
         """更新规则（保持可改 severity/condition/enabled）并写审计和版本历史.
 
@@ -346,6 +359,9 @@ class Rule:
             if mitre_attack is not None:
                 fields.append("mitre_attack = ?")
                 params.append(mitre_attack)
+            if engine_type is not None:
+                fields.append("engine_type = ?")
+                params.append(engine_type)
             if fields:
                 fields.append("version = version + 1")
                 fields.append("updated_at = datetime('now')")

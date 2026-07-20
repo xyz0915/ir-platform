@@ -1,37 +1,59 @@
 sequenceDiagram
-    participant U as 用户
-    participant F as AiAdvancedView.vue
-    participant SM as StreamMessage.vue
-    participant API as /ai/query-stream (FastAPI)
-    participant LLM as AiService.call_llm_stream
-    participant DB as SQLite
+    participant Client as Agent 数据
+    participant SRA as ServiceRiskAnalyzer
+    participant SC as service_constants
+    participant DB as rules 表
+    participant SW as USE_BEHAVIOR_DB_RULES
 
-    U->>F: 输入"严重告警"并回车
-    F->>F: 构建 POST body {query, session_id, context}
-    F->>API: POST /ai/query-stream (SSE)
-    API->>DB: 执行 SQL 查询严重告警
-    DB-->>API: 返回告警数据 [{...}, ...]
-    API->>LLM: call_llm_stream(system_prompt + 告警数据)
-    
-    Note over API,LLM: SSE 流开始
-    LLM-->>API: event: query_start {intent:"alerts", confidence:0.85}
-    API-->>F: SSE: event=query_start data={...}
-    
-    LLM-->>API: chunk: "根据分析，在过去24小时内"
-    API-->>F: SSE: event=text_chunk data={type:"text", content:"根据分析，在过去24小时内"}
-    F->>SM: 追加文本到流式缓冲区
-    
-    LLM-->>API: chunk: "共发现 12 条严重告警"
-    API-->>F: SSE: event=text_chunk data={type:"text", content:"共发现 12 条严重告警"}
-    F->>SM: 追加文本
-    
-    API->>F: SSE: event=card data={type:"card", card_type:"alert_list", data:{alerts:[...]}}
-    F->>SM: 在内联位置渲染 <StreamCard cardType="alert_list" :data="alerts" />
-    
-    LLM-->>API: chunk: "其中最高频的告警类型是..."
-    API-->>F: SSE: event=text_chunk data={type:"text", content:"其中最高频的告警类型是..."}
-    F->>SM: 继续追加文本
-    
-    API-->>F: SSE: event=query_end data={type:"query_end", confidence:"high", source_ids:["alert-1","alert-2"]}
-    F->>F: 标记流结束，显示 ConfidenceBadge
-    F->>F: 更新 chatContext
+    Note over SRA,SW: Phase 1-2: 硬编码模式 (USE_BEHAVIOR_DB_RULES=False)
+
+    SRA->>SW: 检查灰度开关
+    SW-->>SRA: False
+    SRA->>SC: 读取 SECURITY_SERVICES
+    SRA->>SC: 读取 TRUSTED_PATHS
+    SRA->>SC: 读取 KNOWN_LEGIT_SERVICES
+    SRA->>SC: 读取 START_TYPE_RISK
+    SRA->>SRA: _detect_tamper(services) ← 硬编码参数
+    SRA->>SRA: _detect_shadow(services)  ← 硬编码参数
+    SRA->>SRA: _detect_priv_esc(services) ← 硬编码参数
+    SRA->>SRA: _detect_registry(services) ← 硬编码参数
+    SRA-->>Client: 返回分析结果
+
+    Note over SRA,SW: Phase 3-4: DB 模式 (USE_BEHAVIOR_DB_RULES=True)
+
+    SRA->>SW: 检查灰度开关
+    SW-->>SRA: True
+    SRA->>SRA: _load_behavior_rules()
+    SRA->>DB: SELECT * FROM rules WHERE engine_type='behavior_engine' AND enabled=1
+    DB-->>SRA: [TAMPER规则, SHADOW规则, PRIVESC规则, REGISTRY规则]
+    SRA->>SRA: 按 condition.detector 分发
+    SRA->>SRA: _detect_tamper(services, condition)        ← condition 参数
+    SRA->>SRA: _detect_shadow(services, condition)         ← condition 参数
+    SRA->>SRA: _detect_priv_esc(services, condition)       ← condition 参数
+    SRA->>SRA: _detect_registry(services, condition)       ← condition 参数
+    SRA-->>Client: 返回分析结果
+
+    participant Normalizer as event_normalizer
+    participant Mapper as ProcessMapper
+    participant Util as _compute_raw_extra
+    participant RMatcher as rule_matcher
+    participant SE as security_events
+
+    Note over Normalizer,SE: 归一化管道：_raw_extra 注入
+
+    Agent->>Normalizer: raw={"event_type":"process_start","pid":1234,"process_name":"cmd.exe","command_line":"...","is_64bit":true,"session":1}
+    Normalizer->>Normalizer: validate_schema(raw)
+    Normalizer->>Mapper: map(raw)
+    Mapper->>Mapper: 提取显式字段 {name, pid, ppid, process_name, process_path, command_line, parent_name, session}
+    Mapper->>Util: _compute_raw_extra(raw, self._EXTRACTED_KEYS)
+    Util->>Util: 计算差集: raw.keys() - extracted_keys
+    Util->>Util: 过滤内部字段(_开头)、非标量值、_raw_extra自身
+    Util-->>Mapper: {"is_64bit": true, ...}
+    Mapper->>Mapper: 注入到 evidence._raw_extra
+    Mapper-->>Normalizer: fields = {evidence: {name:"cmd.exe",..., _raw_extra: {is_64bit:true, ...}}}
+    Normalizer->>Normalizer: infer_attack_stage()
+    Normalizer->>Normalizer: build SecurityEvent
+    Normalizer->>RMatcher: match_event(event_dict)
+    RMatcher->>RMatcher: _get_nested(evidence, "_raw_extra.is_64bit")
+    RMatcher-->>Normalizer: matched_rules
+    Normalizer->>SE: bulk_insert([event])

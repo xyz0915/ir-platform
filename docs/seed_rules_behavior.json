@@ -1,0 +1,101 @@
+[
+  {
+    "name": "P0-1-TAMPER",
+    "label": "安全服务被篡改",
+    "category": "persistence",
+    "rule_type": "behavior",
+    "engine_type": "behavior_engine",
+    "severity": "critical",
+    "enabled": true,
+    "source": "default",
+    "condition": {
+      "detector": "tamper",
+      "security_services": [
+        "windefend", "msmpeng", "sense", "wdnisdrv", "wdfilter",
+        "securityhealthservice", "wscsvc", "mpssvc",
+        "avp", "kavfs", "klnagent",
+        "hipsdaemon", "wsctrl", "zhudongfangyu",
+        "csfalconservice", "csagent", "sentinelagent",
+        "cavp", "cmdagent"
+      ],
+      "start_type_risk": {"disabled": 20, "manual": 5, "auto": 0, "boot": 0, "system": 0},
+      "weight": 40
+    }
+  },
+  {
+    "name": "P0-2-SHADOW",
+    "label": "影子服务/名称伪装",
+    "category": "persistence",
+    "rule_type": "behavior",
+    "engine_type": "behavior_engine",
+    "severity": "critical",
+    "enabled": true,
+    "source": "default",
+    "condition": {
+      "detector": "shadow",
+      "similarity_threshold": 0.85,
+      "legit_services": [
+        "dhcp", "dnscache", "eventlog", "eventSystem",
+        "lmhosts", "lanmanserver", "lanmanworkstation",
+        "netlogon", "nlasvc", "schedule",
+        "samss", "themes", "trkwks", "w32time",
+        "winmgmt", "wuauserv"
+      ],
+      "trusted_paths": [
+        "c:\\windows\\", "c:\\program files\\",
+        "c:\\program files (x86)\\", "c:\\windows\\system32\\"
+      ],
+      "suspicious_keywords": ["temp", "tmp", "appdata", "downloads", "users",
+        "\\desktop\\", "\\documents\\", "\\downloads\\", "roaming"],
+      "weight": 35
+    }
+  },
+  {
+    "name": "P1-PRIVESC",
+    "label": "服务提权风险",
+    "category": "persistence",
+    "rule_type": "behavior",
+    "engine_type": "behavior_engine",
+    "severity": "high",
+    "enabled": true,
+    "source": "default",
+    "condition": {
+      "detector": "priv_esc",
+      "trusted_paths": [
+        "c:\\windows\\", "c:\\program files\\",
+        "c:\\program files (x86)\\", "c:\\windows\\system32\\"
+      ],
+      "suspicious_keywords": ["temp", "tmp", "appdata", "downloads", "users",
+        "\\desktop\\", "\\documents\\", "\\downloads\\", "roaming"],
+      "high_priv_users": ["localsystem", "nt authority\\system", "system"],
+      "weight": 15
+    }
+  },
+  {
+    "name": "P1-REGISTRY",
+    "label": "注册表关联风险",
+    "category": "persistence",
+    "rule_type": "behavior",
+    "engine_type": "behavior_engine",
+    "severity": "medium",
+    "enabled": true,
+    "source": "default",
+    "condition": {
+      "detector": "registry",
+      "trusted_paths": [
+        "c:\\windows\\", "c:\\program files\\",
+        "c:\\program files (x86)\\", "c:\\windows\\system32\\"
+      ],
+      "legit_services": [
+        "dhcp", "dnscache", "eventlog", "eventSystem",
+        "lmhosts", "lanmanserver", "lanmanworkstation",
+        "netlogon", "nlasvc", "schedule",
+        "samss", "themes", "trkwks", "w32time",
+        "winmgmt", "wuauserv"
+      ],
+      "suspicious_keywords": ["temp", "tmp", "appdata", "downloads", "users",
+        "\\desktop\\", "\\documents\\", "\\downloads\\", "roaming"],
+      "weight": 10
+    }
+  }
+]

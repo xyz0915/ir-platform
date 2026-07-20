@@ -23,6 +23,40 @@ from app.models.security_event import (
 
 logger = logging.getLogger(__name__)
 
+
+def _compute_raw_extra(raw: dict, extracted_keys: set) -> dict:
+    """计算原始数据中未被 Mapper 显式提取的字段，注入到 evidence._raw_extra。
+
+    过滤规则：
+    1. 仅保留标量值（str/int/float/bool），排除嵌套 dict/list
+    2. 排除 '_' 开头的内部字段（_fallback_ts, _persist_path 等）
+    3. 排除已经被显式提取的 key（extracted_keys）
+    4. 排除 _raw_extra 自身（防止无限递归）
+    5. 每个字段值截断到 500 字符，总大小不超过 16KB
+    """
+    SCALAR_TYPES = (str, int, float, bool)
+    MAX_FIELD_LENGTH = 500
+    MAX_TOTAL_BYTES = 16 * 1024
+    result = {}
+    total_size = 0
+    for k, v in raw.items():
+        if k in extracted_keys:
+            continue
+        if k.startswith("_"):
+            continue
+        if k == "_raw_extra":
+            continue
+        if not isinstance(v, SCALAR_TYPES):
+            continue
+        if isinstance(v, str) and len(v) > MAX_FIELD_LENGTH:
+            v = v[:MAX_FIELD_LENGTH]
+        val_bytes = len(str(v).encode("utf-8"))
+        if total_size + val_bytes > MAX_TOTAL_BYTES:
+            continue
+        result[k] = v
+        total_size += val_bytes
+    return result
+
 # ── 批量写入配置 ──
 BATCH_SIZE = 500
 FLUSH_INTERVAL = 1.0  # 秒
@@ -54,6 +88,11 @@ class ProcessMapper(BaseMapper):
     """进程事件映射器: process_start / process_terminate."""
 
     event_types = ["process_start", "process_terminate"]
+    _EXTRACTED_KEYS = {
+        "event_type", "pid", "ppid", "process_name", "process_path",
+        "command_line", "parent_name", "session", "timestamp",
+        "source_collector", "severity", "host_id",
+    }
 
     def map(self, raw: dict) -> dict | None:
         return {
@@ -70,6 +109,7 @@ class ProcessMapper(BaseMapper):
                 "command_line": raw.get("command_line"),
                 "parent_name": raw.get("parent_name"),
                 "session": raw.get("session"),
+                "_raw_extra": _compute_raw_extra(raw, self._EXTRACTED_KEYS),
             },
             "severity": raw.get("severity", "medium"),
             "host_id": raw.get("host_id", 0),
@@ -80,6 +120,12 @@ class NetworkMapper(BaseMapper):
     """网络事件映射器: network_outbound / network_listen / dns_query."""
 
     event_types = ["network_outbound", "network_listen", "dns_query"]
+    _EXTRACTED_KEYS = {
+        "event_type", "protocol", "local_address", "local_addr", "local_port",
+        "remote_address", "remote_addr", "remote_port", "state", "process_name",
+        "pid", "query", "query_type", "timestamp", "source_collector",
+        "severity", "host_id",
+    }
 
     def map(self, raw: dict) -> dict | None:
         return {
@@ -98,6 +144,7 @@ class NetworkMapper(BaseMapper):
                 "pid": raw.get("pid"),
                 "query": raw.get("query"),  # DNS
                 "query_type": raw.get("query_type"),
+                "_raw_extra": _compute_raw_extra(raw, self._EXTRACTED_KEYS),
             },
             "severity": raw.get("severity", "medium"),
             "host_id": raw.get("host_id", 0),
@@ -108,6 +155,10 @@ class RegistryMapper(BaseMapper):
     """注册表事件映射器: registry_modify / registry_delete."""
 
     event_types = ["registry_modify", "registry_delete"]
+    _EXTRACTED_KEYS = {
+        "event_type", "key_path", "value_name", "value_type", "value_data",
+        "process_name", "timestamp", "source_collector", "severity", "host_id",
+    }
 
     def map(self, raw: dict) -> dict | None:
         return {
@@ -122,6 +173,7 @@ class RegistryMapper(BaseMapper):
                 "value_data": raw.get("value_data"),
                 "command": raw.get("value_data"),      # ← 规则匹配需要 command
                 "process_name": raw.get("process_name"),
+                "_raw_extra": _compute_raw_extra(raw, self._EXTRACTED_KEYS),
             },
             "severity": raw.get("severity", "medium"),
             "host_id": raw.get("host_id", 0),
@@ -132,6 +184,11 @@ class FileMapper(BaseMapper):
     """文件事件映射器: file_create / file_modify."""
 
     event_types = ["file_create", "file_modify"]
+    _EXTRACTED_KEYS = {
+        "event_type", "file_name", "file_path", "file_size", "sha256",
+        "is_signed", "signer", "process_name", "timestamp", "source_collector",
+        "severity", "host_id",
+    }
 
     def map(self, raw: dict) -> dict | None:
         return {
@@ -148,6 +205,7 @@ class FileMapper(BaseMapper):
                 "is_signed": raw.get("is_signed"),
                 "signer": raw.get("signer"),
                 "process_name": raw.get("process_name"),
+                "_raw_extra": _compute_raw_extra(raw, self._EXTRACTED_KEYS),
             },
             "severity": raw.get("severity", "medium"),
             "host_id": raw.get("host_id", 0),
@@ -158,6 +216,11 @@ class PersistenceMapper(BaseMapper):
     """持久化映射器: persistence_register / scheduled_task / service_operation."""
 
     event_types = ["persistence_register", "scheduled_task", "service_operation"]
+    _EXTRACTED_KEYS = {
+        "event_type", "name", "command", "path", "binary_path", "_persist_path",
+        "display_name", "start_type", "status", "user", "account", "description",
+        "timestamp", "source_collector", "severity", "host_id",
+    }
 
     def map(self, raw: dict) -> dict | None:
         return {
@@ -175,6 +238,7 @@ class PersistenceMapper(BaseMapper):
                 "status": raw.get("status"),                   # 运行状态
                 "user": raw.get("user") or raw.get("account"), # 新版/旧版兼容
                 "description": raw.get("description"),         # 服务描述
+                "_raw_extra": _compute_raw_extra(raw, self._EXTRACTED_KEYS),
             },
             "severity": raw.get("severity", "high"),
             "host_id": raw.get("host_id", 0),
@@ -185,6 +249,10 @@ class WmiMapper(BaseMapper):
     """WMI 订阅映射器: wmi_subscribe."""
 
     event_types = ["wmi_subscribe"]
+    _EXTRACTED_KEYS = {
+        "event_type", "name", "event_filter", "event_consumer", "binding_type",
+        "timestamp", "source_collector", "severity", "host_id",
+    }
 
     def map(self, raw: dict) -> dict | None:
         return {
@@ -197,6 +265,7 @@ class WmiMapper(BaseMapper):
                 "event_filter": raw.get("event_filter"),
                 "event_consumer": raw.get("event_consumer"),
                 "binding_type": raw.get("binding_type"),
+                "_raw_extra": _compute_raw_extra(raw, self._EXTRACTED_KEYS),
             },
             "severity": raw.get("severity", "high"),
             "host_id": raw.get("host_id", 0),
@@ -207,6 +276,11 @@ class BehaviorMapper(BaseMapper):
     """行为告警映射器: behavior_alert."""
 
     event_types = ["behavior_alert"]
+    _EXTRACTED_KEYS = {
+        "event_type", "rule_name", "rule_label", "reason", "severity",
+        "source_process", "source_pid", "detail", "timestamp",
+        "source_collector", "host_id",
+    }
 
     def map(self, raw: dict) -> dict | None:
         return {
@@ -222,6 +296,7 @@ class BehaviorMapper(BaseMapper):
                 "source_process": raw.get("source_process"),
                 "source_pid": raw.get("source_pid"),
                 "detail": raw.get("detail"),
+                "_raw_extra": _compute_raw_extra(raw, self._EXTRACTED_KEYS),
             },
             "severity": raw.get("severity", "high"),
             "host_id": raw.get("host_id", 0),
@@ -232,6 +307,11 @@ class IocMapper(BaseMapper):
     """IOC 命中映射器: ioc_match."""
 
     event_types = ["ioc_match"]
+    _EXTRACTED_KEYS = {
+        "event_type", "ioc_type", "ioc_value", "matched_field", "matched_context",
+        "source", "ioc_matches", "matched_iocs", "timestamp", "source_collector",
+        "severity", "host_id",
+    }
 
     def map(self, raw: dict) -> dict | None:
         matches = raw.get("ioc_matches", raw.get("matched_iocs", []))
@@ -248,6 +328,7 @@ class IocMapper(BaseMapper):
                 "matched_field": raw.get("matched_field"),
                 "matched_context": raw.get("matched_context"),
                 "source": raw.get("source"),
+                "_raw_extra": _compute_raw_extra(raw, self._EXTRACTED_KEYS),
             },
             "ioc_matches": matches,
             "severity": "critical",
@@ -259,6 +340,11 @@ class AuthMapper(BaseMapper):
     """认证事件映射器: user_login / user_logout."""
 
     event_types = ["user_login", "user_logout"]
+    _EXTRACTED_KEYS = {
+        "event_type", "user_name", "username", "user_domain", "logon_type",
+        "source_ip", "logon_session", "process_name", "timestamp",
+        "source_collector", "severity", "host_id",
+    }
 
     def map(self, raw: dict) -> dict | None:
         return {
@@ -273,6 +359,7 @@ class AuthMapper(BaseMapper):
                 "source_ip": raw.get("source_ip"),
                 "logon_session": raw.get("logon_session"),
                 "process_name": raw.get("process_name"),
+                "_raw_extra": _compute_raw_extra(raw, self._EXTRACTED_KEYS),
             },
             "severity": raw.get("severity", "low"),
             "host_id": raw.get("host_id", 0),
@@ -283,6 +370,11 @@ class ModuleMapper(BaseMapper):
     """模块加载映射器: module_load / driver_load."""
 
     event_types = ["module_load", "driver_load"]
+    _EXTRACTED_KEYS = {
+        "event_type", "module_name", "file_name", "file_path", "sha256",
+        "pid", "process_name", "is_signed", "signer", "timestamp",
+        "source_collector", "severity", "host_id",
+    }
 
     def map(self, raw: dict) -> dict | None:
         return {
@@ -298,6 +390,7 @@ class ModuleMapper(BaseMapper):
                 "process_name": raw.get("process_name"),
                 "is_signed": raw.get("is_signed"),
                 "signer": raw.get("signer"),
+                "_raw_extra": _compute_raw_extra(raw, self._EXTRACTED_KEYS),
             },
             "severity": raw.get("severity", "medium"),
             "host_id": raw.get("host_id", 0),
@@ -308,6 +401,10 @@ class PipeMapper(BaseMapper):
     """管道连接映射器: pipe_connect."""
 
     event_types = ["pipe_connect"]
+    _EXTRACTED_KEYS = {
+        "event_type", "pipe_name", "process_name", "pid", "timestamp",
+        "source_collector", "severity", "host_id",
+    }
 
     def map(self, raw: dict) -> dict | None:
         return {
@@ -319,6 +416,7 @@ class PipeMapper(BaseMapper):
                 "pipe_name": raw.get("pipe_name"),
                 "process_name": raw.get("process_name"),
                 "pid": raw.get("pid"),
+                "_raw_extra": _compute_raw_extra(raw, self._EXTRACTED_KEYS),
             },
             "severity": raw.get("severity", "medium"),
             "host_id": raw.get("host_id", 0),

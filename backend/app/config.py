@@ -104,5 +104,8 @@ class Settings:
     MAX_LOG_FILE_SIZE_MB: int = 500        # 单文件大小上限（MB）
     ASYNC_THRESHOLD_MB: int = 100          # 异步处理阈值（MB）
 
+    # ── 规则引擎（Rule Engine）────────────────────────────────
+    USE_BEHAVIOR_DB_RULES: bool = False    # 灰度开关：行为分析引擎从 DB 读取规则
+
 
 settings = Settings()

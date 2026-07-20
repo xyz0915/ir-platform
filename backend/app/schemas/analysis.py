@@ -148,6 +148,7 @@ class RuleResponse(BaseModel):
     label: Optional[str] = None
     source: Optional[str] = None
     mitre_attack: Optional[str] = None
+    engine_type: str = "rule_engine"
 
     class Config:
         from_attributes = True
@@ -164,6 +165,7 @@ class RuleCreate(BaseModel):
     # 本地化中文展示名（F-2）；来源默认 'user'（用户创建）
     label: Optional[str] = None
     source: str = "user"
+    engine_type: str = "rule_engine"
 
 
 class RuleUpdate(BaseModel):
@@ -176,6 +178,7 @@ class RuleUpdate(BaseModel):
     owner: Optional[str] = None
     label: Optional[str] = None
     mitre_attack: Optional[str] = None
+    engine_type: Optional[str] = None
 
 
 class RuleResetResponse(BaseModel):

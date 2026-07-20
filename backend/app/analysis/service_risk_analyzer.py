@@ -16,11 +16,43 @@ from app.analysis.service_constants import (
     TRUSTED_PATHS,
 )
 
+from app.config import settings
+
+# 灰度开关
+USE_BEHAVIOR_DB_RULES: bool = getattr(settings, 'USE_BEHAVIOR_DB_RULES', False)
+
+# 行为引擎规则缓存（60s TTL）
+_behavior_rules_cache: list[dict] = []
+_behavior_rules_cache_ts: float = 0
+_BEHAVIOR_CACHE_TTL: float = 60.0  # 秒
+
 logger = logging.getLogger(__name__)
 
 
 class ServiceRiskAnalyzer:
     """系统服务风险分析器 — 所有方法为静态方法."""
+
+    @staticmethod
+    def _load_behavior_rules() -> list[dict]:
+        """从 rules 表加载 engine_type='behavior_engine' 的已启用规则。
+
+        使用 60s 进程内缓存，避免每次 analyze() 都查库。
+
+        Returns:
+            规则列表，每条包含 condition 中的检测器配置参数。
+            若 USE_BEHAVIOR_DB_RULES=False，返回空列表（使用硬编码常量）。
+        """
+        global _behavior_rules_cache, _behavior_rules_cache_ts
+        if not USE_BEHAVIOR_DB_RULES:
+            return []
+        now = __import__('time').time()
+        if now - _behavior_rules_cache_ts < _BEHAVIOR_CACHE_TTL and _behavior_rules_cache:
+            return _behavior_rules_cache
+        from app.models.rule import Rule
+        rules = Rule.list(engine_type="behavior_engine", enabled=True)
+        _behavior_rules_cache = rules
+        _behavior_rules_cache_ts = now
+        return rules
 
     @staticmethod
     def analyze(raw_data: dict, host_id: int) -> dict:
@@ -48,11 +80,26 @@ class ServiceRiskAnalyzer:
                 "summary": {"total": 0, "high_risk_count": 0},
             }
 
-        # 并行执行 4 个检测器
-        tamper_results = ServiceRiskAnalyzer._detect_tamper(services)
-        shadow_results = ServiceRiskAnalyzer._detect_shadow(services)
-        priv_esc_results = ServiceRiskAnalyzer._detect_priv_esc(services)
-        registry_results = ServiceRiskAnalyzer._detect_registry(services)
+        # 加载行为引擎规则（从 DB 或硬编码）
+        behavior_rules = ServiceRiskAnalyzer._load_behavior_rules()
+
+        if behavior_rules:
+            # DB 模式：按 condition.detector 分发到各检测器
+            tamper_cfg = next((r for r in behavior_rules if r.get("condition", {}).get("detector") == "tamper"), None)
+            shadow_cfg = next((r for r in behavior_rules if r.get("condition", {}).get("detector") == "shadow"), None)
+            priv_esc_cfg = next((r for r in behavior_rules if r.get("condition", {}).get("detector") == "priv_esc"), None)
+            registry_cfg = next((r for r in behavior_rules if r.get("condition", {}).get("detector") == "registry"), None)
+
+            tamper_results = ServiceRiskAnalyzer._detect_tamper(services, condition=tamper_cfg.get("condition") if tamper_cfg else None)
+            shadow_results = ServiceRiskAnalyzer._detect_shadow(services, condition=shadow_cfg.get("condition") if shadow_cfg else None)
+            priv_esc_results = ServiceRiskAnalyzer._detect_priv_esc(services, condition=priv_esc_cfg.get("condition") if priv_esc_cfg else None)
+            registry_results = ServiceRiskAnalyzer._detect_registry(services, condition=registry_cfg.get("condition") if registry_cfg else None)
+        else:
+            # 硬编码模式（Phase 1-2 兼容，使用现有的 service_constants.py）
+            tamper_results = ServiceRiskAnalyzer._detect_tamper(services)
+            shadow_results = ServiceRiskAnalyzer._detect_shadow(services)
+            priv_esc_results = ServiceRiskAnalyzer._detect_priv_esc(services)
+            registry_results = ServiceRiskAnalyzer._detect_registry(services)
 
         # 按服务名分组检测结果
         detections_by_name: dict[str, list[dict]] = {}
@@ -211,7 +258,7 @@ class ServiceRiskAnalyzer:
         return normalized
 
     @staticmethod
-    def _detect_tamper(services: list[dict]) -> list[dict]:
+    def _detect_tamper(services: list[dict], condition: dict | None = None) -> list[dict]:
         """检测安全服务被篡改（P0-1-TAMPER）.
 
         检查安全软件服务（SECURITY_SERVICES 白名单内）的状态是否异常：
@@ -220,15 +267,20 @@ class ServiceRiskAnalyzer:
 
         Args:
             services: 标准化后的服务列表.
+            condition: 来自 DB 规则的 condition 配置（可选），提供后覆盖硬编码常量.
 
         Returns:
             检测结果列表，每项包含 rule_id/rule_name/triggered/severity/weight/detail.
         """
+        security_services = condition.get("security_services", SECURITY_SERVICES) if condition else SECURITY_SERVICES
+        start_type_risk = condition.get("start_type_risk", START_TYPE_RISK) if condition else START_TYPE_RISK
+        weight = condition.get("weight", SCORING_WEIGHTS["P0-1-TAMPER"]) if condition else SCORING_WEIGHTS["P0-1-TAMPER"]
+
         results: list[dict] = []
         for svc in services:
             name = svc.get("name", "")
             name_lower = name.lower()
-            if name_lower not in SECURITY_SERVICES:
+            if name_lower not in security_services:
                 continue
 
             status = (svc.get("status") or "").lower()
@@ -245,7 +297,7 @@ class ServiceRiskAnalyzer:
                 )
 
             # 检查启动类型
-            st_risk = START_TYPE_RISK.get(start_type, 0)
+            st_risk = start_type_risk.get(start_type, 0)
             if st_risk > 0:
                 triggered = True
                 reasons.append(
@@ -257,14 +309,14 @@ class ServiceRiskAnalyzer:
                 "rule_name": "安全服务被篡改",
                 "triggered": triggered,
                 "severity": "critical",
-                "weight": SCORING_WEIGHTS["P0-1-TAMPER"],
+                "weight": weight,
                 "detail": "; ".join(reasons) if reasons else "",
                 "service_name": name,
             })
         return results
 
     @staticmethod
-    def _detect_shadow(services: list[dict]) -> list[dict]:
+    def _detect_shadow(services: list[dict], condition: dict | None = None) -> list[dict]:
         """检测影子服务 / 名称伪装（P0-2-SHADOW）.
 
         三个维度：
@@ -274,10 +326,17 @@ class ServiceRiskAnalyzer:
 
         Args:
             services: 标准化后的服务列表.
+            condition: 来自 DB 规则的 condition 配置（可选），提供后覆盖硬编码常量.
 
         Returns:
             检测结果列表.
         """
+        legit_services = condition.get("legit_services", KNOWN_LEGIT_SERVICES) if condition else KNOWN_LEGIT_SERVICES
+        trusted_paths = condition.get("trusted_paths", TRUSTED_PATHS) if condition else TRUSTED_PATHS
+        similarity_threshold = condition.get("similarity_threshold", SERVICE_NAME_SIMILARITY_THRESHOLD) if condition else SERVICE_NAME_SIMILARITY_THRESHOLD
+        suspicious_keywords = condition.get("suspicious_keywords", SUSPICIOUS_PATH_KEYWORDS) if condition else SUSPICIOUS_PATH_KEYWORDS
+        weight = condition.get("weight", SCORING_WEIGHTS["P0-2-SHADOW"]) if condition else SCORING_WEIGHTS["P0-2-SHADOW"]
+
         results: list[dict] = []
         for svc in services:
             name = svc.get("name", "")
@@ -288,12 +347,12 @@ class ServiceRiskAnalyzer:
             reasons: list[str] = []
 
             # 1. 名称伪装检测
-            if name_lower and name_lower not in KNOWN_LEGIT_SERVICES:
-                for legit_name in KNOWN_LEGIT_SERVICES:
+            if name_lower and name_lower not in legit_services:
+                for legit_name in legit_services:
                     ratio = SequenceMatcher(
                         None, name_lower, legit_name
                     ).ratio()
-                    if ratio >= SERVICE_NAME_SIMILARITY_THRESHOLD:
+                    if ratio >= similarity_threshold:
                         triggered = True
                         reasons.append(
                             f"服务名 {name} 与合法服务 {legit_name} 高度相似（{ratio:.2f}），"
@@ -306,7 +365,7 @@ class ServiceRiskAnalyzer:
                 normalized_path = ServiceRiskAnalyzer._normalize_path(path)
                 in_trusted = any(
                     normalized_path.startswith(tp)
-                    for tp in TRUSTED_PATHS
+                    for tp in trusted_paths
                 )
                 if not in_trusted:
                     triggered = True
@@ -315,7 +374,7 @@ class ServiceRiskAnalyzer:
                     )
 
                 # 3. 可疑路径关键词
-                for keyword in SUSPICIOUS_PATH_KEYWORDS:
+                for keyword in suspicious_keywords:
                     if keyword in normalized_path:
                         triggered = True
                         reasons.append(
@@ -329,14 +388,14 @@ class ServiceRiskAnalyzer:
                     "rule_name": "影子服务/名称伪装",
                     "triggered": True,
                     "severity": "critical",
-                    "weight": SCORING_WEIGHTS["P0-2-SHADOW"],
+                    "weight": weight,
                     "detail": "; ".join(reasons),
                     "service_name": name,
                 })
         return results
 
     @staticmethod
-    def _detect_priv_esc(services: list[dict]) -> list[dict]:
+    def _detect_priv_esc(services: list[dict], condition: dict | None = None) -> list[dict]:
         """检测服务提权风险（P1-PRIVESC）.
 
         当服务以 LocalSystem 或 NT AUTHORITY\\SYSTEM 权限运行，
@@ -344,12 +403,17 @@ class ServiceRiskAnalyzer:
 
         Args:
             services: 标准化后的服务列表.
+            condition: 来自 DB 规则的 condition 配置（可选），提供后覆盖硬编码常量.
 
         Returns:
             检测结果列表.
         """
+        trusted_paths = condition.get("trusted_paths", TRUSTED_PATHS) if condition else TRUSTED_PATHS
+        suspicious_keywords = condition.get("suspicious_keywords", SUSPICIOUS_PATH_KEYWORDS) if condition else SUSPICIOUS_PATH_KEYWORDS
+        high_priv_users = condition.get("high_priv_users", {"localsystem", "nt authority\\system", "system"}) if condition else {"localsystem", "nt authority\\system", "system"}
+        weight = condition.get("weight", SCORING_WEIGHTS["P1-PRIVESC"]) if condition else SCORING_WEIGHTS["P1-PRIVESC"]
+
         results: list[dict] = []
-        high_priv_users = {"localsystem", "nt authority\\system", "system"}
 
         for svc in services:
             user = (svc.get("user") or "").lower()
@@ -365,7 +429,7 @@ class ServiceRiskAnalyzer:
             normalized_path = ServiceRiskAnalyzer._normalize_path(path)
             in_trusted = any(
                 normalized_path.startswith(tp)
-                for tp in TRUSTED_PATHS
+                for tp in trusted_paths
             )
 
             if not in_trusted:
@@ -374,7 +438,7 @@ class ServiceRiskAnalyzer:
                     "rule_name": "服务提权风险",
                     "triggered": True,
                     "severity": "high",
-                    "weight": SCORING_WEIGHTS["P1-PRIVESC"],
+                    "weight": weight,
                     "detail": (
                         f"服务 {name} 以高权限账户 {svc.get('user', '')} 运行，"
                         f"但路径 {path} 不在可信系统目录中"
@@ -383,14 +447,14 @@ class ServiceRiskAnalyzer:
                 })
 
             # 额外检查：高权限账户 + 可疑路径关键词
-            for keyword in SUSPICIOUS_PATH_KEYWORDS:
+            for keyword in suspicious_keywords:
                 if keyword in normalized_path:
                     results.append({
                         "rule_id": "P1-PRIVESC",
                         "rule_name": "服务提权风险",
                         "triggered": True,
                         "severity": "high",
-                        "weight": SCORING_WEIGHTS["P1-PRIVESC"],
+                        "weight": weight,
                         "detail": (
                             f"服务 {name} 以高权限账户 {svc.get('user', '')} 运行，"
                             f"且路径包含可疑关键词: {keyword}"
@@ -402,7 +466,7 @@ class ServiceRiskAnalyzer:
         return results
 
     @staticmethod
-    def _detect_registry(services: list[dict]) -> list[dict]:
+    def _detect_registry(services: list[dict], condition: dict | None = None) -> list[dict]:
         """检测注册表相关服务风险（P1-REGISTRY）.
 
         检查服务是否具有注册表持久化特征：
@@ -411,10 +475,16 @@ class ServiceRiskAnalyzer:
 
         Args:
             services: 标准化后的服务列表.
+            condition: 来自 DB 规则的 condition 配置（可选），提供后覆盖硬编码常量.
 
         Returns:
             检测结果列表.
         """
+        trusted_paths = condition.get("trusted_paths", TRUSTED_PATHS) if condition else TRUSTED_PATHS
+        legit_services = condition.get("legit_services", KNOWN_LEGIT_SERVICES) if condition else KNOWN_LEGIT_SERVICES
+        suspicious_keywords = condition.get("suspicious_keywords", SUSPICIOUS_PATH_KEYWORDS) if condition else SUSPICIOUS_PATH_KEYWORDS
+        weight = condition.get("weight", SCORING_WEIGHTS["P1-REGISTRY"]) if condition else SCORING_WEIGHTS["P1-REGISTRY"]
+
         results: list[dict] = []
         for svc in services:
             name = svc.get("name", "")
@@ -427,14 +497,14 @@ class ServiceRiskAnalyzer:
             normalized_path = ServiceRiskAnalyzer._normalize_path(path)
             in_trusted = any(
                 normalized_path.startswith(tp)
-                for tp in TRUSTED_PATHS
+                for tp in trusted_paths
             )
 
             # 不在可信路径中且不在已知合法服务列表中
-            if not in_trusted and name_lower not in KNOWN_LEGIT_SERVICES:
+            if not in_trusted and name_lower not in legit_services:
                 # 检查是否有注册表相关的可疑特征
                 has_suspicious_keyword = any(
-                    kw in normalized_path for kw in SUSPICIOUS_PATH_KEYWORDS
+                    kw in normalized_path for kw in suspicious_keywords
                 )
                 if has_suspicious_keyword:
                     results.append({
@@ -442,7 +512,7 @@ class ServiceRiskAnalyzer:
                         "rule_name": "注册表关联风险",
                         "triggered": True,
                         "severity": "medium",
-                        "weight": SCORING_WEIGHTS["P1-REGISTRY"],
+                        "weight": weight,
                         "detail": (
                             f"服务 {name} 路径 {path} 不在可信目录且路径包含可疑关键词，"
                             f"可能涉及注册表持久化"

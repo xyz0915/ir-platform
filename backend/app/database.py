@@ -200,6 +200,7 @@ DDL_STATEMENTS = [
         severity        TEXT    DEFAULT 'medium',
         enabled         INTEGER DEFAULT 1,
         version         INTEGER DEFAULT 1,  -- #17 规则版本
+        engine_type     TEXT    NOT NULL DEFAULT 'rule_engine',
         created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
         updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
     )
@@ -1103,7 +1104,8 @@ def _import_default_rules(conn: sqlite3.Connection) -> dict:
                 """
                 UPDATE rules
                 SET description = ?, category = ?, rule_type = ?, condition = ?,
-                    severity = ?, enabled = ?, label = ?, source = 'default', mitre_attack = ?
+                    severity = ?, enabled = ?, label = ?, source = 'default',
+                    mitre_attack = ?, engine_type = 'rule_engine'
                 WHERE name = ?
                 """,
                 (description, category, rule_type, condition_str, severity, enabled,
@@ -1114,8 +1116,9 @@ def _import_default_rules(conn: sqlite3.Connection) -> dict:
             conn.execute(
                 """
                 INSERT INTO rules
-                    (name, description, category, rule_type, condition, severity, enabled, label, source, mitre_attack)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'default', ?)
+                    (name, description, category, rule_type, condition, severity, enabled,
+                     label, source, mitre_attack, engine_type)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'default', ?, 'rule_engine')
                 """,
                 (name, description, category, rule_type, condition_str, severity, enabled,
                  label, mitre_attack),
@@ -2010,6 +2013,17 @@ def _alter_rules_table_for_shadow(conn: sqlite3.Connection) -> None:
             pass  # 列已存在则忽略
 
 
+def _alter_rules_add_engine_type(conn: sqlite3.Connection) -> None:
+    """检测并添加 rules 表 engine_type 列（T02），幂等."""
+    cursor = conn.execute("PRAGMA table_info(rules)")
+    existing_columns: set[str] = {row["name"] for row in cursor.fetchall()}
+    if "engine_type" not in existing_columns:
+        conn.execute(
+            "ALTER TABLE rules ADD COLUMN engine_type TEXT NOT NULL DEFAULT 'rule_engine'"
+        )
+        logger.info("Added column 'engine_type' to rules table")
+
+
 def _migrate_rules_governance(conn: sqlite3.Connection) -> None:
     """检测并添加 rules 表生命周期治理列 + 创建 rule_history 表（T-P1-1）.
 
@@ -2101,6 +2115,7 @@ def init_db() -> None:
         _create_default_admin(conn)
         _alter_rules_table(conn)
         _alter_rules_table_stats(conn)
+        _alter_rules_add_engine_type(conn)
         # 规则草稿表 + 影子运行列（P0-B）
         _create_rule_drafts_table(conn)
         _alter_rules_table_for_shadow(conn)

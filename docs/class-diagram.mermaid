@@ -1,193 +1,146 @@
 classDiagram
-    %% ===== SSE Event Model =====
-    class StreamingEvent {
-        +str event_name
-        +str session_id
-        +str intent
-        +float confidence
-    }
-    class TextChunkEvent {
-        +str type: "text"
-        +str content
-    }
-    class CardEvent {
-        +str type: "card"
-        +str card_type
-        +dict data
-        +list~str~ action_hints
-    }
-    class ActionConfirmEvent {
-        +str type: "action_confirm"
-        +str action
-        +str target
-        +str reason
-        +str confirm_id
-        +bool require_confirm
-    }
-    class ActionResultEvent {
-        +str type: "action_result"
-        +str action
-        +str status
-        +dict result
-        +int exec_time_ms
-        +str error
-    }
-    class PlaybookProgressEvent {
-        +str type: "playbook_progress"
-        +int step
-        +int total
-        +str current_step_name
-        +str status
-    }
-    class QueryEndEvent {
-        +str type: "query_end"
-        +str session_id
-        +dict usage
-        +str confidence
-        +list~str~ source_ids
-        +dict attack_path
-    }
-
-    %% ===== Action Model =====
-    class ActionIntent {
-        +str action
-        +dict target
-        +str reason
-        +bool confirm_required
-        +str confirm_id
-    }
-    class ActionResult {
-        +bool success
-        +str action
-        +str status
-        +dict result
-        +str error
-        +str rule_id
-        +int exec_time_ms
-        +list~str~ affected_hosts
-    }
-    class ActionMapEntry {
-        +str user_intent
-        +str action_name
-        +str backend_api
-        +bool high_risk
-        +str confirm_text
-        +callable executor
-    }
-
-    %% ===== Playbook Model =====
-    class PlaybookDef {
-        +str id
+    class Rule {
+        +int id
         +str name
         +str description
-        +list~PlaybookStep~ steps
-    }
-    class PlaybookStep {
-        +str name
-        +str action
-        +dict params
-        +str prompt
-        +list~str~ depends_on
-    }
-    class PlaybookStatus {
-        +str playbook_id
-        +str playbook_name
-        +str status
-        +int current_step
-        +int total_steps
-        +float progress_pct
-        +list~StepResult~ step_results
-    }
-    class StepResult {
-        +str step_name
-        +str status
-        +str output
-        +str error
-        +float duration_ms
-    }
-
-    %% ===== Context Model =====
-    class ContextState {
-        +int host_id
-        +str host_name
-        +str host_ip
-        +int alert_count
-        +int risk_score
-        +str last_active
-        +bool pinned
-    }
-    class HostOption {
-        +int id
-        +str hostname
-        +str ip_address
-        +str status
-        +int alert_count
-    }
-
-    %% ===== Attack Path Model =====
-    class AttackPathNode {
-        +str id
-        +str label
-        +str type
-        +str ip
+        +str category
+        +str rule_type
+        +dict condition
         +str severity
-        +int risk_score
-        +str detail_url
-    }
-    class AttackPathEdge {
+        +bool enabled
+        +str label
         +str source
-        +str target
-        +str technique_id
-        +str technique_name
-        +str time
-        +str confidence
-        +list~str~ evidence_ids
-    }
-    class AttackPathData {
-        +list~AttackPathNode~ nodes
-        +list~AttackPathEdge~ edges
-        +str summary
-        +int total_alerts
-        +int total_hosts
-    }
-
-    %% ===== Session Summary Model =====
-    class SessionSummary {
-        +str session_id
-        +str purpose
-        +dict coverage
-        +list~str~ key_findings
-        +list~dict~ actions_taken
+        +str mitre_attack
+        +str owner
+        +str engine_type  # 新增
+        +int version
         +str status
-        +str generated_at
+        +str created_at
+        +str updated_at
+        +str approved_by
+        +str deprecated_at
+        +int tenant_id
+        +dict create(name, category, rule_type, condition, severity, description, enabled, label, source, engine_type, changed_by) dict
+        +dict update(rule_id, enabled, condition, severity, changed_by, description, owner, name, label, mitre_attack, engine_type) dict
+        +list list(category, enabled, tenant_id, engine_type) list
+        +dict search(category, severity, rule_type, keyword, engine_type, page, page_size) dict
+        +dict get_by_id(rule_id) dict
+        +bool delete(rule_id, changed_by) bool
     }
 
-    %% ===== File Upload Model =====
-    class FileUpload {
-        +str name
-        +str type
-        +str content_base64
-        +int size_bytes
-    }
-    class FileParseResult {
-        +bool success
-        +str file_type
-        +str parsed_text
-        +str intent
-        +str error
+    class RuleHistory {
+        +int id
+        +int rule_id
+        +int version
+        +str snapshot
+        +str action
+        +str operator
+        +str comment
+        +str approved_by
+        +str created_at
+        +int create(rule_id, version, snapshot, action, operator, comment, approved_by) int
+        +list list_by_rule(rule_id) list
+        +dict get_version(rule_id, version) dict
     }
 
-    %% ===== Relationships =====
-    StreamingEvent <|-- TextChunkEvent
-    StreamingEvent <|-- CardEvent
-    StreamingEvent <|-- ActionConfirmEvent
-    StreamingEvent <|-- ActionResultEvent
-    StreamingEvent <|-- PlaybookProgressEvent
-    StreamingEvent <|-- QueryEndEvent
-    ActionIntent --> ActionResult : executes to
-    ActionMapEntry --> ActionIntent : maps to
-    PlaybookDef *-- PlaybookStep : contains
-    PlaybookStatus *-- StepResult : contains
-    PlaybookDef --> PlaybookStatus : produces
-    AttackPathData *-- AttackPathNode : contains
-    AttackPathData *-- AttackPathEdge : contains
+    class BehaviorRuleCondition {
+        +str detector
+        +list security_services
+        +dict start_type_risk
+        +list legit_services
+        +list trusted_paths
+        +float similarity_threshold
+        +list suspicious_keywords
+        +list high_priv_users
+        +int weight
+    }
+
+    class BaseMapper {
+        +list event_types
+        +set _EXTRACTED_KEYS
+        +dict map(raw) dict
+    }
+
+    class ProcessMapper {
+        +set _EXTRACTED_KEYS
+        +dict map(raw) dict
+    }
+
+    class NetworkMapper {
+        +set _EXTRACTED_KEYS
+        +dict map(raw) dict
+    }
+
+    class RegistryMapper {
+        +set _EXTRACTED_KEYS
+        +dict map(raw) dict
+    }
+
+    class FileMapper {
+        +set _EXTRACTED_KEYS
+        +dict map(raw) dict
+    }
+
+    class PersistenceMapper {
+        +set _EXTRACTED_KEYS
+        +dict map(raw) dict
+    }
+
+    class WmiMapper {
+        +set _EXTRACTED_KEYS
+        +dict map(raw) dict
+    }
+
+    class BehaviorMapper {
+        +set _EXTRACTED_KEYS
+        +dict map(raw) dict
+    }
+
+    class IocMapper {
+        +set _EXTRACTED_KEYS
+        +dict map(raw) dict
+    }
+
+    class AuthMapper {
+        +set _EXTRACTED_KEYS
+        +dict map(raw) dict
+    }
+
+    class ModuleMapper {
+        +set _EXTRACTED_KEYS
+        +dict map(raw) dict
+    }
+
+    class PipeMapper {
+        +set _EXTRACTED_KEYS
+        +dict map(raw) dict
+    }
+
+    class _compute_raw_extra_util {
+        +dict _compute_raw_extra(raw: dict, extracted_keys: set) dict
+    }
+
+    Rule "1" --> "*" RuleHistory : version history
+    Rule ..> BehaviorRuleCondition : condition stores (behavior_engine)
+    BaseMapper <|-- ProcessMapper : extends
+    BaseMapper <|-- NetworkMapper : extends
+    BaseMapper <|-- RegistryMapper : extends
+    BaseMapper <|-- FileMapper : extends
+    BaseMapper <|-- PersistenceMapper : extends
+    BaseMapper <|-- WmiMapper : extends
+    BaseMapper <|-- BehaviorMapper : extends
+    BaseMapper <|-- IocMapper : extends
+    BaseMapper <|-- AuthMapper : extends
+    BaseMapper <|-- ModuleMapper : extends
+    BaseMapper <|-- PipeMapper : extends
+    ProcessMapper ..> _compute_raw_extra_util : uses
+    NetworkMapper ..> _compute_raw_extra_util : uses
+    RegistryMapper ..> _compute_raw_extra_util : uses
+    FileMapper ..> _compute_raw_extra_util : uses
+    PersistenceMapper ..> _compute_raw_extra_util : uses
+    WmiMapper ..> _compute_raw_extra_util : uses
+    BehaviorMapper ..> _compute_raw_extra_util : uses
+    IocMapper ..> _compute_raw_extra_util : uses
+    AuthMapper ..> _compute_raw_extra_util : uses
+    ModuleMapper ..> _compute_raw_extra_util : uses
+    PipeMapper ..> _compute_raw_extra_util : uses

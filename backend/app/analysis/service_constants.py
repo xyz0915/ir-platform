@@ -1,4 +1,6 @@
-"""系统服务风险检测 — 常量定义."""
+"""系统服务风险检测 — 常量定义.
+⚠️ BEHAVIOR_ENGINE_PHASE4: 这些常量在 Phase 4 删除，届时从 rules 表 engine_type='behavior_engine' 的 condition 中读取
+"""
 
 # --- 安全软件服务白名单（小写）---
 SECURITY_SERVICES: list[str] = [
