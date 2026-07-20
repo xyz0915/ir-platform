@@ -1,13 +1,14 @@
 """NL 检索主流程：NL → 意图 → 执行 → 脱敏 → 摘要（§C / §8.2）。
 
-复用：NlQueryGuard（编译+校验）、NormalizedLog.search（参数化查询）、
+复用：NlQueryGuard（编译+校验）、search_events（查询 security_events）、
 data_masking.apply（脱敏）、AgentLLM（生成摘要）、NlQueryAudit（审计）。
 """
 
+import json
 import logging
 from typing import Any, Optional
 
-from app.models.normalized_log import NormalizedLog
+from app.database import get_connection
 from app.models.nl_query_audit import NlQueryAudit
 from app.services.data_masking import apply as mask_apply
 from app.services.agent_llm import AgentLLM
@@ -15,28 +16,23 @@ from app.services.nl_query_guard import NlQueryGuard, WHITELIST_FIELDS
 
 logger = logging.getLogger(__name__)
 
-# 可直接映射到 NormalizedLog.search 参数的白名单字段
+# 可直接映射到 search_events 参数的白名单字段
 _SEARCH_PARAM_MAP = {
     "host_id": "host_id",
-    "hostname": "hostname",
     "event_type": "event_type",
     "severity": "severity",
-    "source_ip": "source_ip",
-    "user_name": "user_name",
-    "process_name": "process_name",
-    "logon_session": "logon_session",
-    "tags": "tag",
-    "log_source": "log_source",
+    "attack_stage": "attack_stage",
+    "source_collector": "source_collector",
+    "status": "status",
     "description": "keyword",
     "command_line": "keyword",
 }
 
-# 结果默认展示列优先顺序
+# 结果默认展示列优先顺序（security_events 字段）
 _DISPLAY_COLUMN_ORDER = [
-    "timestamp", "host_id", "hostname", "log_source", "event_type", "event_label",
-    "severity", "source_ip", "source_hostname", "target_ip", "target_hostname",
-    "user_name", "user_domain", "logon_session", "process_name", "parent_process_name",
-    "command_line", "mitre_attack", "tags", "description",
+    "timestamp", "host_id", "hostname", "event_type", "severity",
+    "attack_stage", "source_collector", "status", "summary",
+    "matched_rules", "evidence",
 ]
 
 
@@ -87,10 +83,9 @@ async def nl_log_search(
             )
             raise ValueError(err)
 
-        # 4. 翻译为参数化查询并执行
+        # 4. 翻译为参数化查询并执行（查询 security_events 表）
         search_params, predicates, page, page_size = _translate(intent)
-        # 内部一次拉取（上限 500）再做 Python 侧后置过滤，保证安全且不拼 SQL
-        result = NormalizedLog.search(**search_params, page=1, page_size=500)
+        result = search_events(**search_params, page=1, page_size=500)
         items = result["items"]
         for pred in predicates:
             items = [it for it in items if pred(it)]
@@ -136,6 +131,103 @@ async def nl_log_search(
             status="error", error_message=str(exc),
         )
         raise ValueError(f"NL 检索失败: {exc}")
+
+
+def search_events(
+    host_id: Optional[int] = None,
+    event_type: Optional[str] = None,
+    severity: Optional[str] = None,
+    attack_stage: Optional[str] = None,
+    source_collector: Optional[str] = None,
+    status: Optional[str] = None,
+    keyword: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    sort: str = "timestamp DESC",
+    page: int = 1,
+    page_size: int = 50,
+) -> dict:
+    """多维度检索安全事件（security_events 表，替代原先的 NormalizedLog.search）。
+
+    Args:
+        host_id: 主机 ID.
+        event_type: 事件类型（逗号分隔）.
+        severity: 严重度（逗号分隔）.
+        attack_stage: 攻击阶段.
+        source_collector: 采集器.
+        status: 事件状态.
+        keyword: 关键字（搜索 summary + evidence）.
+        date_from: 起始时间.
+        date_to: 截止时间.
+        sort: 排序.
+        page: 页码.
+        page_size: 每页条数.
+
+    Returns:
+        {total, page, page_size, items}.
+    """
+    conditions: list[str] = []
+    params: list[Any] = []
+
+    if host_id is not None:
+        conditions.append("se.host_id=?")
+        params.append(int(host_id))
+    if event_type:
+        types = [t.strip() for t in event_type.split(",") if t.strip()]
+        if types:
+            placeholders = ",".join("?" for _ in types)
+            conditions.append(f"se.event_type IN ({placeholders})")
+            params.extend(types)
+    if severity:
+        sevs = [s.strip() for s in severity.split(",") if s.strip()]
+        if sevs:
+            placeholders = ",".join("?" for _ in sevs)
+            conditions.append(f"se.severity IN ({placeholders})")
+            params.extend(sevs)
+    if attack_stage:
+        conditions.append("se.attack_stage=?")
+        params.append(attack_stage)
+    if source_collector:
+        conditions.append("se.source_collector=?")
+        params.append(source_collector)
+    if status:
+        conditions.append("se.status=?")
+        params.append(status)
+    if keyword:
+        kw = f"%{keyword}%"
+        conditions.append("(se.evidence LIKE ? OR se.matched_rules LIKE ? OR se.event_type LIKE ?)")
+        params.extend([kw, kw, kw])
+    if date_from:
+        conditions.append("se.timestamp >= ?")
+        params.append(date_from)
+    if date_to:
+        conditions.append("se.timestamp <= ?")
+        params.append(date_to)
+
+    where_clause = " AND ".join(conditions) if conditions else "1=1"
+    offset = (page - 1) * page_size
+
+    with get_connection() as conn:
+        count_row = conn.execute(
+            f"SELECT COUNT(*) as cnt FROM security_events se WHERE {where_clause}",
+            params,
+        ).fetchone()
+        total = count_row["cnt"] if count_row else 0
+
+        rows = conn.execute(
+            f"""
+            SELECT se.*, h.hostname
+            FROM security_events se
+            LEFT JOIN hosts h ON h.id = se.host_id
+            WHERE {where_clause}
+            ORDER BY se.{sort}
+            LIMIT ? OFFSET ?
+            """,
+            [*params, page_size, offset],
+        ).fetchall()
+
+    items = [dict(r) for r in rows]
+    return {"total": total, "page": page, "page_size": page_size, "items": items}
 
 
 def _translate(intent: dict):

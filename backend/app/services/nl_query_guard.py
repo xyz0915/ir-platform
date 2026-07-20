@@ -17,17 +17,22 @@ from app.services.agent_llm import AgentLLM
 logger = logging.getLogger(__name__)
 
 
-# normalized_logs 真实列名白名单（key=逻辑字段, value=DB 列名）
+# security_events 真实列名白名单（key=逻辑字段, value=查询列名）
 WHITELIST_FIELDS: dict[str, str] = {
     "host_id": "host_id",
     "hostname": "hostname",
-    "log_source": "log_source",
-    "event_id": "event_id",
     "event_type": "event_type",
-    "event_label": "event_label",
-    "mitre_attack": "mitre_attack",
     "severity": "severity",
     "timestamp": "timestamp",
+    "attack_stage": "attack_stage",
+    "source_collector": "source_collector",
+    "status": "status",
+    "summary": "summary",
+    "assignee": "assignee",
+    "log_source": "log_source",
+    "event_id": "event_id",
+    "event_label": "event_label",
+    "mitre_attack": "mitre_attack",
     "source_ip": "source_ip",
     "source_hostname": "source_hostname",
     "target_ip": "target_ip",
