@@ -36,6 +36,9 @@
       @switch-case="onSwitchCase"
     />
 
+    <!-- ═══ NL 检索面板（T-C2）═══ -->
+    <NlSearchPanel />
+
     <!-- ═══ Search Bar (Layer 1) ═══ -->
     <LogSearchBar
       v-model="store.keyword"
@@ -105,6 +108,7 @@ import CaseHostSelector from '@/components/logs/CaseHostSelector.vue'
 import LogSearchBar from '@/components/logs/LogSearchBar.vue'
 import LogResultList from '@/components/logs/LogResultList.vue'
 import LogDetailPanel from '@/components/logs/LogDetailPanel.vue'
+import NlSearchPanel from '@/components/logs/NlSearchPanel.vue'
 
 const route = useRoute()
 const store = useLogSearchStore()

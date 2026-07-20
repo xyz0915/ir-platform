@@ -37,12 +37,12 @@ class ImportService:
             raise ValueError(f"JSON Schema 校验失败: {exc}")
 
     @staticmethod
-    def save_raw_json(host_id: int, data: dict) -> str:
+    def save_raw_json(host_id: int, data_or_bytes: dict | bytes) -> str:
         """保存原始 JSON 到文件系统.
 
         Args:
             host_id: 主机 ID.
-            data: JSON 数据字典.
+            data_or_bytes: JSON 数据字典或原始字节（优先）。
 
         Returns:
             保存的文件路径.
@@ -51,8 +51,13 @@ class ImportService:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         file_name = f"host_{host_id}_{timestamp}.json"
         file_path = Path(settings.UPLOAD_DIR) / file_name
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        if isinstance(data_or_bytes, bytes):
+            # 直接保存原始字节，避免重复序列化（性能优化）
+            with open(file_path, "wb") as f:
+                f.write(data_or_bytes)
+        else:
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(data_or_bytes, f, ensure_ascii=False, indent=2)
         return str(file_path)
 
     @staticmethod
@@ -136,8 +141,8 @@ class ImportService:
             )
             raise
 
-        # 保存原始 JSON
-        file_path = ImportService.save_raw_json(host_id, data)
+        # 保存原始 JSON（直接存上传的字节，避免重序列化）
+        file_path = ImportService.save_raw_json(host_id, file_content)
 
         # 构建数据摘要
         data_summary = ImportService.build_data_summary(data)
@@ -223,6 +228,11 @@ class ImportService:
         try:
             from app.services.event_normalizer import normalize_batch, bulk_insert
             # 构造 raw_events：每条记录加 event_type 和 host_id
+            # 注入 _fallback_ts（仅当 mapper 没有找到更精确的时间时使用）
+            fallback_ts = None
+            metadata = data.get("metadata", {})
+            if isinstance(metadata, dict):
+                fallback_ts = metadata.get("collection_time") or metadata.get("timestamp")
             raw_events = []
             EVENT_TYPE_MAP = {
                 "processes": "process_start",
@@ -252,9 +262,11 @@ class ImportService:
                         if isinstance(item, dict):
                             item["event_type"] = event_type
                             item["host_id"] = host_id
+                            if fallback_ts and "timestamp" not in item:
+                                item["_fallback_ts"] = fallback_ts
                             raw_events.append(item)
             if raw_events:
-                events = normalize_batch(raw_events)
+                events = normalize_batch(raw_events, validate=False)
                 if events:
                     # 规则匹配：自动标记 matched_rules
                     from app.services.event_normalizer import _enrich_with_matched_rules

@@ -94,3 +94,18 @@ class RuleSuppression:
         except Exception as e:
             logger.error("Failed to remove suppression: %s", e)
             return False
+
+    @staticmethod
+    def get_suppressed_rule_names(host_id: int = 0) -> list:
+        """返回指定主机（含全局 host_id=0）当前生效的被抑制规则名列表（P0-3 批量查询辅助）."""
+        try:
+            now_iso = datetime.now().isoformat()
+            with get_connection() as conn:
+                rows = conn.execute(
+                    "SELECT rule_name FROM rule_suppression WHERE (host_id=? OR host_id=0) AND suppressed_until > ?",
+                    [host_id, now_iso],
+                ).fetchall()
+                return [r["rule_name"] for r in rows]
+        except Exception as e:
+            logger.debug("Failed to query suppressed rules: %s", e)
+            return []

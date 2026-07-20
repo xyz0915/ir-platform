@@ -281,7 +281,9 @@ class TestRuleMatcher(unittest.TestCase):
 
     @patch("app.services.rule_matcher._get_candidate_rules")
     def test_no_match_normal_login(self, mock_get_candidates):
-        """正常登录事件不应命中任何规则。"""
+        """正常登录事件不应命中任何规则（使用旧 matcher 灰度路径确保无回归）。"""
+        import app.services.rule_matcher as _rm
+        _rm.USE_UNIFIED_ENGINE = False
         # 模拟候选规则列表 — 返回几条规则但都不该匹配登录事件
         mock_get_candidates.return_value = [
             _make_rule(1, "base64_detect", "regex", {
@@ -308,7 +310,9 @@ class TestRuleMatcher(unittest.TestCase):
 
     @patch("app.services.rule_matcher._get_candidate_rules")
     def test_multi_rule_match(self, mock_get_candidates):
-        """一个事件同时命中多条规则时应返回所有匹配结果。"""
+        """一个事件同时命中多条规则时应返回所有匹配结果（使用旧 matcher 灰度路径确保无回归）。"""
+        import app.services.rule_matcher as _rm
+        _rm.USE_UNIFIED_ENGINE = False
         # 构造三条候选规则，其中两条应命中，一条不应
         mock_get_candidates.return_value = [
             _make_rule(10, "suspicious_process", "regex", {

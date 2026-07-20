@@ -50,19 +50,30 @@
           @update="store.setFilter"
           @reset="store.resetRuleFilters"
         />
-        <button
-          class="ai-trigger-btn"
-          :class="{ loading: store.aiLoading }"
-          :disabled="store.aiLoading"
-          @click="onAiNoiseReduce"
-          :title="'对当前案件所有已匹配事件进行 AI 降噪研判'"
+        <el-dropdown
+          trigger="click"
+          :disabled="store.aiLoading || store.aiVerdictLoading"
+          @command="onAiDropdown"
         >
-          <svg v-if="!store.aiLoading" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M12 2l2 7h7l-5.5 4 2 7L12 17l-5.5 4 2-7L3 9h7z"/>
-          </svg>
-          <span v-else class="ai-spinner"></span>
-          {{ store.aiLoading ? 'AI研判中...' : '🤖 AI降噪研判' }}
-        </button>
+          <button class="ai-trigger-btn">
+            <svg v-if="!store.aiLoading && !store.aiVerdictLoading" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2l2 7h7l-5.5 4 2 7L12 17l-5.5 4 2-7L3 9h7z"/>
+            </svg>
+            <span v-else class="ai-spinner"></span>
+            {{ store.aiLoading || store.aiVerdictLoading ? 'AI处理中...' : 'AI 操作' }}
+            <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="noise" :disabled="store.aiLoading">
+                降噪研判
+              </el-dropdown-item>
+              <el-dropdown-item command="verdict" :disabled="store.aiVerdictLoading">
+                研判打标
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
 
       <!-- 规则名称筛选 (仅已匹配模式) -->
@@ -125,6 +136,7 @@
 <script setup>
 import { computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { ArrowDown } from '@element-plus/icons-vue'
 import { useAnalysisStore } from '@/stores/analysis'
 import CaseHostSelector from '@/components/analysis/CaseHostSelector.vue'
 import MetricsBar from '@/components/analysis/MetricsBar.vue'
@@ -207,6 +219,26 @@ async function onAiNoiseReduce() {
   } catch (e) {
     ElMessage.error('AI 降噪研判失败：' + (e.message || '未知错误'))
   }
+}
+
+// AI 研判打标（生产者）：对勾选事件批量研判，写回 ai_verdict
+async function onAiVerdict() {
+  const ids = store.selectedEventIds
+  if (!ids || ids.length === 0) {
+    ElMessage.warning('请先勾选要研判的事件')
+    return
+  }
+  const result = await store.analyzeEvents(ids)
+  if (result) {
+    // 研判完成后清空选择
+    store.selectedEventIds = []
+  }
+}
+
+// AI 操作下拉菜单路由
+function onAiDropdown(command) {
+  if (command === 'noise') onAiNoiseReduce()
+  else if (command === 'verdict') onAiVerdict()
 }
 
 function onTableSelectEvent(event) {

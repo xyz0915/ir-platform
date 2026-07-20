@@ -59,7 +59,7 @@ class ProcessMapper(BaseMapper):
         return {
             "event_type": raw.get("event_type", "process_start"),
             "event_key": str(raw.get("pid", raw.get("process_name", "unknown"))),
-            "timestamp": raw.get("timestamp", raw.get("start_time", datetime.now(timezone.utc).isoformat())),
+            "timestamp": raw.get("timestamp", raw.get("start_time", raw.get("_fallback_ts", datetime.now(timezone.utc).isoformat()))),
             "source_collector": raw.get("source_collector", "osquery"),
             "evidence": {
                 "name": raw.get("process_name"),       # ← 规则匹配需要 name 字段
@@ -85,7 +85,7 @@ class NetworkMapper(BaseMapper):
         return {
             "event_type": raw.get("event_type", "network_outbound"),
             "event_key": f"{raw.get('remote_address', '')}:{raw.get('remote_port', 0)}",
-            "timestamp": raw.get("timestamp", datetime.now(timezone.utc).isoformat()),
+            "timestamp": raw.get("timestamp", raw.get("_fallback_ts", datetime.now(timezone.utc).isoformat())),
             "source_collector": raw.get("source_collector", "osquery"),
             "evidence": {
                 "protocol": raw.get("protocol"),
@@ -113,7 +113,7 @@ class RegistryMapper(BaseMapper):
         return {
             "event_type": raw.get("event_type", "registry_modify"),
             "event_key": raw.get("key_path", ""),
-            "timestamp": raw.get("timestamp", datetime.now(timezone.utc).isoformat()),
+            "timestamp": raw.get("timestamp", raw.get("_fallback_ts", datetime.now(timezone.utc).isoformat())),
             "source_collector": raw.get("source_collector", "osquery"),
             "evidence": {
                 "key_path": raw.get("key_path"),
@@ -137,7 +137,7 @@ class FileMapper(BaseMapper):
         return {
             "event_type": raw.get("event_type", "file_create"),
             "event_key": raw.get("file_path", raw.get("file_name", "")),
-            "timestamp": raw.get("timestamp", datetime.now(timezone.utc).isoformat()),
+            "timestamp": raw.get("timestamp", raw.get("_fallback_ts", datetime.now(timezone.utc).isoformat())),
             "source_collector": raw.get("source_collector", "osquery"),
             "evidence": {
                 "name": raw.get("file_name"),           # ← 规则匹配需要 name
@@ -163,7 +163,7 @@ class PersistenceMapper(BaseMapper):
         return {
             "event_type": raw.get("event_type", "persistence_register"),
             "event_key": raw.get("name", raw.get("command", "")),
-            "timestamp": raw.get("timestamp", datetime.now(timezone.utc).isoformat()),
+            "timestamp": raw.get("timestamp", raw.get("_fallback_ts", datetime.now(timezone.utc).isoformat())),
             "source_collector": raw.get("source_collector", "osquery"),
             "evidence": {
                 "name": raw.get("name"),
@@ -187,7 +187,7 @@ class WmiMapper(BaseMapper):
         return {
             "event_type": "wmi_subscribe",
             "event_key": raw.get("name", raw.get("event_filter", "")),
-            "timestamp": raw.get("timestamp", datetime.now(timezone.utc).isoformat()),
+            "timestamp": raw.get("timestamp", raw.get("_fallback_ts", datetime.now(timezone.utc).isoformat())),
             "source_collector": raw.get("source_collector", "osquery"),
             "evidence": {
                 "name": raw.get("name"),
@@ -209,7 +209,7 @@ class BehaviorMapper(BaseMapper):
         return {
             "event_type": "behavior_alert",
             "event_key": raw.get("rule_name", raw.get("reason", "alert")),
-            "timestamp": raw.get("timestamp", datetime.now(timezone.utc).isoformat()),
+            "timestamp": raw.get("timestamp", raw.get("_fallback_ts", datetime.now(timezone.utc).isoformat())),
             "source_collector": raw.get("source_collector", "behavior_engine"),
             "evidence": {
                 "rule_name": raw.get("rule_name"),
@@ -237,7 +237,7 @@ class IocMapper(BaseMapper):
         return {
             "event_type": "ioc_match",
             "event_key": "_".join(matches) if matches else raw.get("ioc_value", "ioc"),
-            "timestamp": raw.get("timestamp", datetime.now(timezone.utc).isoformat()),
+            "timestamp": raw.get("timestamp", raw.get("_fallback_ts", datetime.now(timezone.utc).isoformat())),
             "source_collector": raw.get("source_collector", "ioc_engine"),
             "evidence": {
                 "ioc_type": raw.get("ioc_type"),
@@ -261,7 +261,7 @@ class AuthMapper(BaseMapper):
         return {
             "event_type": raw.get("event_type", "user_login"),
             "event_key": raw.get("user_name", raw.get("username", "unknown")),
-            "timestamp": raw.get("timestamp", datetime.now(timezone.utc).isoformat()),
+            "timestamp": raw.get("timestamp", raw.get("_fallback_ts", datetime.now(timezone.utc).isoformat())),
             "source_collector": raw.get("source_collector", "osquery"),
             "evidence": {
                 "user_name": raw.get("user_name", raw.get("username")),
@@ -285,7 +285,7 @@ class ModuleMapper(BaseMapper):
         return {
             "event_type": raw.get("event_type", "module_load"),
             "event_key": raw.get("file_path", raw.get("module_name", "")),
-            "timestamp": raw.get("timestamp", datetime.now(timezone.utc).isoformat()),
+            "timestamp": raw.get("timestamp", raw.get("_fallback_ts", datetime.now(timezone.utc).isoformat())),
             "source_collector": raw.get("source_collector", "osquery"),
             "evidence": {
                 "module_name": raw.get("module_name", raw.get("file_name")),
@@ -310,7 +310,7 @@ class PipeMapper(BaseMapper):
         return {
             "event_type": "pipe_connect",
             "event_key": raw.get("pipe_name", ""),
-            "timestamp": raw.get("timestamp", datetime.now(timezone.utc).isoformat()),
+            "timestamp": raw.get("timestamp", raw.get("_fallback_ts", datetime.now(timezone.utc).isoformat())),
             "source_collector": raw.get("source_collector", "osquery"),
             "evidence": {
                 "pipe_name": raw.get("pipe_name"),
@@ -523,6 +523,7 @@ def bulk_insert(events: list[SecurityEvent]) -> tuple[int, int]:
     skipped = 0
 
     with get_connection() as conn:
+        conn.execute("BEGIN")  # 显式事务：批量 INSERT 合并为一次提交
         for event in events:
             try:
                 conn.execute(

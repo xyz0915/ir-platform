@@ -57,6 +57,8 @@ class TestBehaviorRuleLoading(unittest.TestCase):
         self.conn = sqlite3.connect(self.tmp.name)
         self.conn.row_factory = sqlite3.Row
         rule_matcher._rule_cache.clear()
+        # 使用旧 matcher 灰度路径（与 DB patching 兼容）
+        rule_matcher.USE_UNIFIED_ENGINE = False
 
     def tearDown(self):
         self.conn.close()

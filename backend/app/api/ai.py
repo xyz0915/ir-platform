@@ -34,6 +34,7 @@ from app.services.audit_service import AuditService
 from app.services.dispatch_service import DispatchService
 from app.services.pdf_export_service import PdfExportService
 from app.services.token_stats_service import TokenStatsService
+from app.services.nl_log_search import nl_log_search
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -1192,6 +1193,43 @@ async def chat_with_ai(
         raise
     except Exception as e:
         logger.exception("chat_with_ai error")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ================================================================
+# T-C1: 自然语言日志检索（护栏层 + 摘要）
+# ================================================================
+
+
+@router.post("/nl-log-search")
+async def nl_log_search_endpoint(data: dict, user: dict = Depends(get_current_user)):
+    """自然语言日志检索 — NL→意图→执行→脱敏→摘要（§C）.
+
+    Body:
+        {
+            "nl_text": "查一下昨天来自 1.2.3.4 的高危登录失败",
+            "host_id": 1,            # 可选，限定主机
+            "time_range": {"from": "...", "to": "..."}  # 可选
+        }
+
+    返回：
+        {code:0, data:{columns, rows(脱敏), summary, audit_id, total}, message}
+    拒绝的越权/非法查询返回 {code:1, message:"..."}.
+    """
+    nl_text = (data or {}).get("nl_text", "")
+    if not nl_text or not str(nl_text).strip():
+        return _fail("nl_text 不能为空")
+    host_id = (data or {}).get("host_id")
+    time_range = (data or {}).get("time_range")
+    try:
+        result = await nl_log_search(
+            nl_text=str(nl_text), user=user, host_id=host_id, time_range=time_range
+        )
+        return _ok(result)
+    except ValueError as e:
+        return _fail(str(e))
+    except Exception as e:
+        logger.exception("nl_log_search_endpoint error")
         raise HTTPException(status_code=500, detail=str(e))
 
 

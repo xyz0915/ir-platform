@@ -171,6 +171,11 @@ class RuleUpdate(BaseModel):
     enabled: Optional[bool] = None
     condition: Optional[dict] = None
     severity: Optional[SeverityType] = None
+    description: Optional[str] = None
+    name: Optional[str] = None
+    owner: Optional[str] = None
+    label: Optional[str] = None
+    mitre_attack: Optional[str] = None
 
 
 class RuleResetResponse(BaseModel):

@@ -119,7 +119,22 @@ def cm_row_to_canonical(table: str, row: dict, host_id: int, cfg: dict) -> Canon
     evidence = build_evidence(row, cfg["evidence_fields"])
     evidence["sync_source"] = table
 
-    timestamp = row.get("collected_at") or row.get("created_at") or datetime.now().isoformat()
+    timestamp = row.get("collected_at") or row.get("created_at") or row.get("imported_at")
+    if not timestamp:
+        # 从 hosts.collection_time 取 Agent 采集时间
+        try:
+            from app.database import get_connection as _gc
+            with _gc() as _c:
+                r = _c.execute(
+                    "SELECT collection_time FROM hosts WHERE id=?",
+                    (host_id,)
+                ).fetchone()
+                if r and r["collection_time"]:
+                    timestamp = r["collection_time"]
+        except Exception:
+            pass
+    if not timestamp:
+        timestamp = datetime.now().isoformat()
     status = row.get("status", "pending")
     assignee = row.get("assigned_to")
 

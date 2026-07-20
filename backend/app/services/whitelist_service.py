@@ -187,3 +187,97 @@ class WhitelistService:
             len(processes), len(filtered), len(processes) - len(filtered),
         )
         return filtered
+
+    @staticmethod
+    def is_whitelisted_precise(rule: dict, item: dict) -> bool:
+        """精确加白检查（P0 接入点；P1-1 扩展 signature 指纹豁免）.
+
+        当前实现：复用既有 path / process_name 类别白名单（实体级豁免），
+        signature 类别通过 DB 精确等值匹配（T-P1-2）。
+
+        Args:
+            rule: 规则字典（预留 rule_type/category 维度扩展）。
+            item: 扁平化引擎数据项（读 path / name）。
+
+        Returns:
+            命中白名单返回 True（该命中应被排除、不告警）。
+        """
+        # path 和 process_name 类别走已有逻辑
+        path_match = WhitelistService._match_path(item)
+        if path_match:
+            return True
+
+        name_match = WhitelistService._match_process_name(item)
+        if name_match:
+            return True
+
+        # T-P1-2: signature 类别精确等值匹配
+        # 从 item 中提取可用于签名匹配的字段（command_line 完整值，或 name 完整值）
+        signature_value = None
+        if rule:
+            rule_type = rule.get("rule_type", "")
+            if rule_type == "regex":
+                # 对 regex 规则，取 command_line 作为签名指纹
+                signature_value = str(item.get("command_line", item.get("name", "")))
+            elif rule_type in ("list", "threshold"):
+                # list/threshold 规则，取 name 或 path 作为签名
+                signature_value = str(item.get("name", item.get("path", "")))
+            else:
+                # 默认取 name 作为签名指纹
+                signature_value = str(item.get("name", ""))
+
+        if signature_value:
+            try:
+                with get_connection() as conn:
+                    # 先探明 whitelist 表的列名
+                    cursor = conn.execute("PRAGMA table_info(whitelist)")
+                    cols = {r["name"] for r in cursor.fetchall()}
+                    pattern_col = "pattern" if "pattern" in cols else "value"
+                    row = conn.execute(
+                        f"SELECT COUNT(*) as cnt FROM whitelist WHERE category='signature' AND {pattern_col}=? AND enabled=1",
+                        (signature_value,),
+                    ).fetchone()
+                    if row and row["cnt"] > 0:
+                        logger.debug(
+                            "Signature whitelist exact match: rule=%s, value=%s",
+                            rule.get("name", ""), signature_value[:80],
+                        )
+                        return True
+            except Exception as exc:
+                logger.warning("Signature whitelist check failed: %s", exc)
+
+        return False
+
+    @staticmethod
+    def _match_path(item: dict) -> bool:
+        """检查 item.path 是否匹配 path 类别白名单."""
+        proc_path = str(item.get("path", "")).lower()
+        if not proc_path:
+            return False
+        try:
+            whitelist_items = WhitelistModel.list_all(category="path")
+            enabled_items = [it for it in whitelist_items if it.get("enabled", 0) == 1]
+            for wl in enabled_items:
+                pattern = str(wl.get("pattern", "")).lower()
+                if pattern and pattern in proc_path:
+                    return True
+        except Exception:
+            pass
+        return False
+
+    @staticmethod
+    def _match_process_name(item: dict) -> bool:
+        """检查 item.name 是否匹配 process_name 类别白名单."""
+        proc_name = str(item.get("name", "")).lower()
+        if not proc_name:
+            return False
+        try:
+            whitelist_items = WhitelistModel.list_all(category="process_name")
+            enabled_items = [it for it in whitelist_items if it.get("enabled", 0) == 1]
+            for wl in enabled_items:
+                pattern = str(wl.get("pattern", "")).lower()
+                if pattern and proc_name == pattern:
+                    return True
+        except Exception:
+            pass
+        return False

@@ -23,6 +23,13 @@
       <button v-if="event.status !== 'rejected' && event.status !== 'resolved'" class="btn btn-danger btn-xs" @click="onStatusChange('rejected')">误报</button>
     </div>
 
+    <!-- 上一条/下一条导航 -->
+    <div class="detail-nav" v-if="siblingEvents.length > 1">
+      <button class="nav-btn" :disabled="currentIdx <= 0" @click="navigateSibling(-1)">‹ 上一条</button>
+      <span class="nav-pos">{{ currentIdx + 1 }} / {{ siblingEvents.length }}</span>
+      <button class="nav-btn" :disabled="currentIdx >= siblingEvents.length - 1" @click="navigateSibling(1)">下一条 ›</button>
+    </div>
+
     <!-- 查看详情入口 -->
     <div class="detail-section edv-entry">
       <router-link :to="'/analysis-center/event/' + event.id" class="edv-entry-btn">
@@ -49,14 +56,13 @@
     </div>
 
     <!-- v2 AI 研判区块（已标记原事件） -->
-    <div class="detail-section ai-verdict-section" v-else-if="event.ai_verdict">
+    <div class="detail-section ai-verdict-section" :class="'vl-' + (verdictLabel || 'unknown')" v-else-if="event.ai_verdict">
       <div class="ai-v-header">
-        <span v-if="verdictLabel === 'suspicious'">🟡 待复核</span>
-        <span v-else-if="verdictLabel === 'false_positive'">⚪ AI误报</span>
-        <span v-else>🤖 AI 研判</span>
+        <span class="verdict-badge" :class="'vlabel-' + (verdictLabel || 'unknown')">{{ verdictLabelText }}</span>
       </div>
       <div class="ai-v-body">
         <div class="ai-v-row"><span class="ai-v-label">置信度</span><span class="ai-v-val">{{ aiConfidence }}</span></div>
+        <div class="ai-v-row" v-if="aiAttackType"><span class="ai-v-label">攻击类型</span><span class="ai-v-val">{{ aiAttackType }}</span></div>
         <div class="ai-v-row" v-if="aiReason"><span class="ai-v-label">理由</span><span class="ai-v-val">{{ aiReason }}</span></div>
       </div>
     </div>
@@ -74,7 +80,11 @@
       </div>
       <div class="detail-row">
         <span class="detail-label">主机</span>
-        <span class="detail-value">{{ event.hostname || ('#主机' + event.host_id) }}</span>
+        <span class="detail-value">
+          <span class="host-link" @click="onFilterByHost(event.host_id)">
+            {{ event.hostname || ('#主机' + event.host_id) }}
+          </span>
+        </span>
       </div>
       <div class="detail-row">
         <span class="detail-label">采集器</span>
@@ -126,11 +136,104 @@
         <span class="detail-label">负责人</span>
         <span class="detail-value">{{ event.assignee || '未指派' }}</span>
       </div>
+      <div class="detail-row" v-if="eventFrequency">
+        <span class="detail-label">同类事件</span>
+        <span class="detail-value" :class="{ 'freq-high': eventFrequency.total > 50 }">
+          首次 {{ formatTime(eventFrequency.first_seen) }}
+          · 最近 {{ formatTime(eventFrequency.last_seen) }}
+          · 共 {{ eventFrequency.total }} 次
+          · {{ eventFrequency.affected_hosts }} 台主机
+        </span>
+      </div>
     </div>
 
-    <!-- 风险评分 -->
-    <div class="detail-section" v-if="riskScore > 0">
-      <div class="section-title">风险评分</div>
+    <!-- 威胁指标 -->
+    <div class="detail-section" v-if="iocTotalCount > 0">
+      <div class="section-title">威胁指标 ({{ iocTotalCount }})</div>
+      <div class="ioc-group" v-if="eventIOCs.ips?.length">
+        <span class="ioc-group-label">🌐 IP 地址 ({{ eventIOCs.ips.length }})</span>
+        <span v-for="ip in eventIOCs.ips" :key="ip" class="ioc-chip ioc-ip"
+              :title="ip" @click="copyText(ip)">{{ ip }}</span>
+      </div>
+      <div class="ioc-group" v-if="eventIOCs.sha256?.length">
+        <span class="ioc-group-label">🔑 SHA256 ({{ eventIOCs.sha256.length }})</span>
+        <span v-for="h in eventIOCs.sha256" :key="h" class="ioc-chip ioc-hash"
+              :title="h" @click="copyText(h)">
+          {{ h.substring(0, 16) }}...
+          <a class="ioc-vt-link" @click.stop="openVT(h)">VT</a>
+        </span>
+      </div>
+      <div class="ioc-group" v-if="eventIOCs.domains?.length">
+        <span class="ioc-group-label">🌐 域名 ({{ eventIOCs.domains.length }})</span>
+        <span v-for="d in eventIOCs.domains" :key="d" class="ioc-chip ioc-domain"
+              :title="d" @click="copyText(d)">{{ d }}</span>
+      </div>
+      <div class="ioc-group" v-if="eventIOCs.md5?.length">
+        <span class="ioc-group-label">🔏 MD5 ({{ eventIOCs.md5.length }})</span>
+        <span v-for="m in eventIOCs.md5" :key="m" class="ioc-chip ioc-hash"
+              :title="m" @click="copyText(m)">{{ m.substring(0, 16) }}...</span>
+      </div>
+      <div class="ioc-group" v-if="eventIOCs.file_paths?.length">
+        <span class="ioc-group-label">📁 文件路径 ({{ eventIOCs.file_paths.length }})</span>
+        <div v-for="fp in eventIOCs.file_paths.slice(0, 5)" :key="fp" class="ioc-fp">{{ fp }}</div>
+        <span v-if="eventIOCs.file_paths.length > 5" class="ioc-more">+{{ eventIOCs.file_paths.length - 5 }} 更多</span>
+      </div>
+    </div>
+
+    <!-- 网络连接图 -->
+    <div class="detail-section" v-if="netGraph?.nodes?.length > 1">
+      <div class="section-title">网络连接</div>
+      <div class="net-graph">
+        <svg :width="netGraphWidth" height="120" class="net-svg">
+          <!-- 连接线 -->
+          <line v-for="(e, i) in netGraph.edges" :key="'e'+i"
+                :x1="40" :y1="60" :x2="netGraphWidth - 60" :y2="20 + i * 30"
+                stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 2"/>
+          <line v-for="(e, i) in netGraph.edges" :key="'e2'+i"
+                :x1="40" :y1="60" :x2="netGraphWidth - 60" :y2="20 + i * 30"
+                stroke="#3b82f6" stroke-width="0.5"/>
+          <!-- 本机节点 -->
+          <circle cx="40" cy="60" r="16" fill="#dbeafe" stroke="#3b82f6" stroke-width="2"/>
+          <text x="40" y="64" text-anchor="middle" font-size="9" fill="#1e40af">本机</text>
+          <!-- 远端节点 -->
+          <g v-for="(n, i) in remoteNodes" :key="n.id">
+            <rect :x="netGraphWidth - 80" :y="10 + i * 30" width="60" height="22" rx="4"
+                  :fill="n.ip.startsWith('10.') || n.ip.startsWith('192.') ? '#f0fdf4' : '#fef2f2'"
+                  :stroke="n.ip.startsWith('10.') || n.ip.startsWith('192.') ? '#22c55e' : '#ef4444'"
+                  stroke-width="1.5"/>
+            <text :x="netGraphWidth - 50" :y="25 + i * 30" text-anchor="middle"
+                  font-size="9" fill="#333">{{ n.label }}</text>
+            <text v-if="n.port" :x="netGraphWidth - 50" :y="45 + i * 30"
+                  text-anchor="middle" font-size="8" fill="#888">:{{ n.port }}</text>
+          </g>
+        </svg>
+      </div>
+    </div>
+
+    <!-- 进程树 -->
+    <div class="detail-section" v-if="procTree?.length">
+      <div class="section-title">进程树</div>
+      <div class="proc-tree">
+        <div v-for="(node, i) in procTree" :key="node.pid"
+             class="pt-node" :class="{ current: node.pid === currentProcPid }"
+             :style="{ paddingLeft: (node.depth * 20 + 8) + 'px' }">
+          <svg v-if="i > 0" class="pt-line" width="20" height="28">
+            <line x1="0" y1="0" x2="0" y2="14" stroke="#aaa" stroke-width="1.5"/>
+            <line x1="0" y1="14" x2="14" y2="14" stroke="#aaa" stroke-width="1.5"/>
+          </svg>
+          <span class="pt-icon">⚙</span>
+          <strong>{{ node.name }}</strong>
+          <span class="pt-pid">({{ node.pid }})</span>
+          <span class="pt-cmdline" :title="node.cmdline">{{ node.cmdline ? node.cmdline.substring(0, 60) : '' }}</span>
+        </div>
+      </div>
+    </div>
+
+    <el-collapse v-model="activeCollapse" class="detail-collapse">
+      <el-collapse-item title="更多详情" name="more">
+        <!-- 风险评分 -->
+        <div class="detail-section" v-if="riskScore > 0">
+          <div class="section-title">风险评分</div>
       <div class="risk-score-wrap">
         <div class="rs-big" :style="{ color: riskScoreColor(riskScore) }">{{ riskScore }}</div>
         <div class="rs-breakdown">
@@ -381,11 +484,13 @@
         </button>
       </div>
     </div>
+    </el-collapse-item>
+    </el-collapse>
   </div>
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useAnalysisStore } from '@/stores/analysis'
 
 const props = defineProps({
@@ -397,6 +502,7 @@ const emit = defineEmits(['close', 'update-status', 'assign', 'view-related'])
 
 const store = useAnalysisStore()
 const dispComment = ref('')
+const activeCollapse = ref(['more'])
 
 const SEV_COLORS = {
   critical: '#dc2626', high: '#dc2626', medium: '#d97706',
@@ -485,6 +591,15 @@ const aiVerdict = computed(() => {
   catch { return null }
 })
 const verdictLabel = computed(() => aiVerdict.value?.label || '')
+const verdictLabelText = computed(() => {
+  const labels = {
+    suspicious: '🟡 可疑·待复核',
+    false_positive: '⚪ 误报',
+    benign: '🟢 良性',
+    unknown: '⚫ 未知/降级',
+  }
+  return labels[verdictLabel.value] || '🤖 AI 研判'
+})
 const aiConfidence = computed(() => (aiVerdict.value?.confidence ?? '') + '%')
 const aiReason = computed(() => aiVerdict.value?.reason || '')
 const aiAnalysis = computed(() => props.event?.ai_analysis || '')
@@ -606,6 +721,77 @@ async function onAddDisposition() {
     comment: dispComment.value,
   })
   dispComment.value = ''
+}
+
+// ── IOC 提取展示 ──
+const eventIOCs = computed(() => props.event?.iocs || null)
+const iocTotalCount = computed(() => {
+  const i = eventIOCs.value
+  if (!i) return 0
+  return (i.ips?.length || 0) + (i.domains?.length || 0) + (i.md5?.length || 0)
+       + (i.sha1?.length || 0) + (i.sha256?.length || 0) + (i.file_paths?.length || 0)
+})
+function copyText(text) {
+  navigator.clipboard.writeText(text).then(() => {
+    // 成功
+  }).catch(() => {})
+}
+
+// ── 同类事件统计 ──
+const eventFrequency = computed(() => props.event?.frequency || null)
+
+// ── 进程树 ──
+
+const procTree = ref([])
+const currentProcPid = ref(null)
+const procLoading = ref(false)
+const netGraph = ref(null)
+const netGraphWidth = ref(380)
+
+watch(() => props.event?.id, async (newId) => {
+  if (!newId) return
+  procLoading.value = true
+  // 进程树
+  try {
+    const res = await fetch(`/api/analysis/events/${newId}/process-tree`, {
+      headers: { 'Authorization': 'Bearer ' + (window.__token || '') }
+    })
+    const data = await res.json()
+    if (data.code === 0) {
+      procTree.value = data.data.tree || []
+      currentProcPid.value = data.data.current_pid
+    }
+  } catch (e) {
+    procTree.value = []
+  } finally {
+    procLoading.value = false
+  }
+  // 网络连接图
+  try {
+    const res2 = await fetch(`/api/analysis/events/${newId}/network-graph`, {
+      headers: { 'Authorization': 'Bearer ' + (window.__token || '') }
+    })
+    const data2 = await res2.json()
+    netGraph.value = data2.code === 0 ? data2.data : null
+  } catch (e) {
+    netGraph.value = null
+  }
+}, { immediate: false })
+
+const remoteNodes = computed(() => (netGraph.value?.nodes || []).filter(n => n.type === 'remote'))
+
+// ── 上下文切换 ──
+const siblingEvents = computed(() => store.items || [])
+const currentIdx = computed(() => siblingEvents.value.findIndex(e => e.id === props.event?.id))
+function navigateSibling(delta) {
+  const target = siblingEvents.value[currentIdx.value + delta]
+  if (target) store.fetchEventDetail(target.id)
+}
+function onFilterByHost(hostId) {
+  store.ruleFilters.hostId = hostId
+  store.ruleFilters.page = 1
+  store.fetchRuleEvents()
+  emit('close')
 }
 </script>
 
@@ -732,6 +918,12 @@ async function onAddDisposition() {
   background: var(--color-canvas-subtle, #fafafa);
   border-left: 3px solid #16a34a;
 }
+/* 按 label 上色的左边框（可靠的类选择器，替代脆弱的 :has(:contains)） */
+.ai-verdict-section.vl-suspicious { border-left-color: #d97706; }
+.ai-verdict-section.vl-false_positive { border-left-color: #a3a3a3; }
+.ai-verdict-section.vl-benign { border-left-color: #16a34a; }
+.ai-verdict-section.vl-unknown { border-left-color: #64748b; }
+/* 兼容旧式 :has 写法（部分浏览器） */
 .ai-verdict-section:has(.ai-v-header:contains('🟡')) {
   border-left-color: #d97706;
 }
@@ -743,6 +935,20 @@ async function onAddDisposition() {
   font-weight: 500;
   margin-bottom: 8px;
 }
+/* 按 label 上色的徽章 */
+.verdict-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 4px;
+  line-height: 1.4;
+}
+.verdict-badge.vlabel-suspicious { background: rgba(217,119,6,0.15); color: #d97706; border: 0.5px solid rgba(217,119,6,0.3); }
+.verdict-badge.vlabel-false_positive { background: rgba(163,163,163,0.15); color: #6b7280; border: 0.5px solid rgba(163,163,163,0.3); }
+.verdict-badge.vlabel-benign { background: rgba(22,163,74,0.15); color: #16a34a; border: 0.5px solid rgba(22,163,74,0.3); }
+.verdict-badge.vlabel-unknown { background: rgba(100,116,139,0.15); color: #64748b; border: 0.5px solid rgba(100,116,139,0.3); }
 .ai-v-body {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -1314,4 +1520,44 @@ async function onAddDisposition() {
   word-break: break-all;
   line-height: 1.5;
 }
+
+/* 导航 */
+.detail-nav { display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: var(--color-canvas-subtle); border-radius: 6px; margin: 0 12px 8px; font-size: 12px; }
+.nav-btn { padding: 2px 10px; border: 0.5px solid var(--color-border-default); border-radius: 4px; background: var(--color-canvas-default); cursor: pointer; font-size: 12px; color: var(--color-fg-default); }
+.nav-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.nav-pos { color: var(--color-fg-subtle); font-size: 11px; }
+.host-link { cursor: pointer; color: var(--color-accent-fg, #2563eb); text-decoration: underline; }
+.host-link:hover { opacity: 0.8; }
+.ioc-group { margin: 8px 0; }
+.ioc-group-label { display: block; font-size: 11px; color: var(--color-fg-subtle); margin-bottom: 4px; }
+.ioc-chip { display: inline-block; padding: 2px 8px; margin: 2px 4px 2px 0; border-radius: 4px; font-size: 11px; cursor: pointer; font-family: monospace; transition: all 0.1s; }
+.ioc-chip:hover { transform: scale(1.05); }
+.ioc-ip { background: #dbeafe; color: #1e40af; }
+.ioc-hash { background: #fce7f3; color: #9d174d; }
+.ioc-domain { background: #d1fae5; color: #065f46; }
+.ioc-fp { font-size: 11px; font-family: monospace; padding: 2px 4px; color: var(--color-fg-subtle); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 300px; }
+.ioc-vt-link { margin-left: 4px; color: #2563eb; text-decoration: underline; cursor: pointer; }
+.ioc-more { font-size: 11px; color: var(--color-fg-light); }
+
+/* collapse 面板 */
+.detail-collapse { border: none; margin: 0 12px; }
+.detail-collapse :deep(.el-collapse-item__header) { font-size: 12px; font-weight: 500; padding-left: 0; color: var(--color-accent-fg, #2563eb); border: none; }
+.detail-collapse :deep(.el-collapse-item__wrap) { border: none; }
+.detail-collapse :deep(.el-collapse-item__content) { padding: 4px 0; }
+
+/* 进程树 */
+.proc-tree { font-size: 12px; }
+.pt-node { display: flex; align-items: center; gap: 4px; padding: 3px 0; white-space: nowrap; overflow: hidden; }
+.pt-node.current { background: var(--color-accent-subtle, #eff6ff); border-radius: 4px; }
+.pt-line { flex-shrink: 0; }
+.pt-icon { font-size: 13px; }
+.pt-pid { color: var(--color-fg-subtle); font-size: 11px; }
+.pt-cmdline { color: var(--color-fg-light); font-size: 11px; margin-left: 4px; overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
+
+/* 同类事件统计 */
+.freq-high { color: #dc2626; font-weight: 600; }
+
+/* 网络连接图 */
+.net-graph { overflow-x: auto; padding: 4px 0; }
+.net-svg { display: block; min-width: 360px; }
 </style>

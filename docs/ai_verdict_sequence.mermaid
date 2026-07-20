@@ -1,0 +1,43 @@
+sequenceDiagram
+    autonumber
+    actor U as 用户(前端)
+    participant FE as AnalysisCenterView.vue
+    participant API as VerdictRouter (POST /api/security-events/ai-verdict)
+    participant Svc as EventVerdictService
+    participant DB as security_events (SQLite)
+    participant LLM as AgentLLM (大模型)
+    participant Corr as IncidentCorrelator (下游消费者)
+
+    U->>FE: 勾选事件 → 点击「🤖 AI 研判打标」
+    FE->>API: POST {event_ids, force?, confidence_threshold?}
+    API->>API: Depends(get_current_user) 鉴权；去重；>200 → 400
+    API->>Svc: analyze_events(event_ids, user, force, threshold)
+
+    loop 逐条 event_id
+        Svc->>DB: SELECT id,evidence,ai_verdict WHERE id=?
+        alt 事件不存在
+            Svc-->>API: detail(status=failed, error=event_not_found)
+        else 已研判且 force=False
+            Svc-->>API: detail(status=skipped)
+        else 需研判
+            Svc->>Svc: data_masking.apply(evidence) 脱敏 → 构造 prompt
+            Svc->>LLM: await call(prompt, user=user)
+            alt degraded / 无内容 / 解析失败
+                Svc->>Svc: 写 {label:"unknown", confidence:0, reason:"AI降级:...", attack_type:""}
+                Svc-->>API: detail(status=degraded, label=unknown)
+            else 正常
+                Svc->>Svc: _parse_llm → _normalize(阈值降级 suspicious→benign)
+                Svc->>DB: UPDATE ai_verdict=? (参数化)，可选 ai_analysis
+                Svc-->>API: detail(status=processed, label)
+            end
+        end
+    end
+
+    Svc-->>API: {processed, skipped, degraded, failed, limit, details}
+    API-->>FE: {code:0, data:..., message:"success"}
+    FE-->>U: toast 汇总（研判/跳过/降级/失败）
+    FE->>DB: 刷新列表与统计（含 ai_suspicious 计数）
+
+    Note over Corr,DB: 后续（独立触发）：IncidentCorrelator 读取
+    Corr->>DB: SELECT * WHERE json_extract(ai_verdict,'$.label')='suspicious'
+    DB-->>Corr: 已研判的可疑事件（生产者产出）

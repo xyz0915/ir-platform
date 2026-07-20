@@ -1,0 +1,1 @@
+F...FFFF.F...F                                                           [100%][safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":51,"threshold":50,"scope":"turn","targets":["\\\\?\\C:\\Users\\xyz\\AppData\\Local\\Temp\\pytest-of-xyz\\garbage-1eb5ae4e-51a1-42c0-ba22-19047fe29540"],"targetCount":1}

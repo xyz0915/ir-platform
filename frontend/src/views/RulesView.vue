@@ -335,6 +335,10 @@ const isAdmin = computed(() => authStore.user?.role === 'admin')
 
 const rules = ref([])
 const loading = ref(false)
+const statsData = ref(null)
+async function loadStats() {
+  try { const r = await request.get('/rules/stats'); statsData.value = r.data } catch (e) {}
+}
 const filterCategory = ref('')
 const searchKeyword = ref('')
 const selectedRows = ref([])
@@ -370,6 +374,7 @@ const conditionPlaceholder = computed(() => {
 
 onMounted(() => {
   loadRules()
+  loadStats()
 })
 
 async function loadRules() {

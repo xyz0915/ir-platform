@@ -44,6 +44,11 @@ const routes = [
         component: () => import('@/views/RulesView.vue')
       },
       {
+        path: 'rule-drafts',
+        name: 'RuleDrafts',
+        component: () => import('@/views/RuleDraftView.vue')
+      },
+      {
         path: 'whitelist',
         name: 'Whitelist',
         component: () => import('@/views/WhitelistView.vue')
@@ -112,6 +117,26 @@ const routes = [
         path: 'log-search',
         name: 'LogSearch',
         component: () => import('@/views/LogSearchView.vue')
+      },
+      {
+        path: 'agent-orchestration',
+        name: 'AgentOrchestration',
+        component: () => import('@/views/AgentRunView.vue')
+      },
+      {
+        path: 'incident-clusters',
+        name: 'IncidentClusters',
+        component: () => import('@/views/IncidentClusterView.vue')
+      },
+      {
+        path: 'root-cause',
+        name: 'RootCause',
+        component: () => import('@/views/RootCauseView.vue')
+      },
+      {
+        path: 'kb-feedback',
+        name: 'KbFeedback',
+        component: () => import('@/views/KbFeedbackView.vue')
       },
       // 系统设置路由
       {

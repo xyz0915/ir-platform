@@ -88,3 +88,8 @@ export function toEvent(id) {
 export function getTrend(params) {
   return request.get(`${BASE_V2}/trend`, { params })
 }
+
+/** 自然语言日志检索（AI 护栏 + 脱敏）— 对应后端 POST /api/ai/nl-log-search */
+export function nlLogSearch(data) {
+  return request.post('/ai/nl-log-search', data)
+}

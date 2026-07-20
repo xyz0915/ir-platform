@@ -19,6 +19,7 @@ import {
   getDispositions,
   addDisposition,
   triggerAiNoiseReduce,
+  triggerEventVerdict,
 } from '@/api/events'
 
 export const useAnalysisStore = defineStore('analysis', () => {
@@ -251,6 +252,36 @@ export const useAnalysisStore = defineStore('analysis', () => {
     }
   }
 
+  // AI 研判打标（生产者）：对选中事件批量研判，写回 ai_verdict
+  const aiVerdictLoading = ref(false)
+
+  async function analyzeEvents(ids, opts = {}) {
+    if (!ids || ids.length === 0) {
+      ElMessage.warning('请先勾选要研判的事件')
+      return null
+    }
+    aiVerdictLoading.value = true
+    try {
+      const res = await triggerEventVerdict(ids, opts)
+      const d = res.data || {}
+      const parts = []
+      if (d.processed) parts.push(`研判 ${d.processed} 条`)
+      if (d.skipped) parts.push(`跳过 ${d.skipped} 条`)
+      if (d.degraded) parts.push(`降级 ${d.degraded} 条`)
+      if (d.failed) parts.push(`失败 ${d.failed} 条`)
+      ElMessage.success('AI 研判完成：' + (parts.join('，') || '0 条'))
+      // 刷新列表与统计（含 ai_suspicious 计数）
+      store.fetchRuleEvents()
+      store.fetchStats()
+      return d
+    } catch (e) {
+      ElMessage.error('AI 研判失败：' + (e.message || '未知错误'))
+      return null
+    } finally {
+      aiVerdictLoading.value = false
+    }
+  }
+
   // ── 新增：设置单个筛选 ──
   function setFilter(key, value) {
     ruleFilters[key] = value
@@ -390,6 +421,20 @@ export const useAnalysisStore = defineStore('analysis', () => {
     pagination.page = 1
   }
 
+  // ── 事件书签（纯前端，localStorage 持久化） ──
+  const BOOKMARK_KEY = 'analysis_bookmarked_ids'
+  const bookmarkedIds = ref(new Set(
+    JSON.parse(localStorage.getItem(BOOKMARK_KEY) || '[]')
+  ))
+
+  function toggleBookmark(id) {
+    const s = new Set(bookmarkedIds.value)
+    if (s.has(id)) { s.delete(id) } else { s.add(id) }
+    bookmarkedIds.value = s
+    localStorage.setItem(BOOKMARK_KEY, JSON.stringify([...s]))
+  }
+  function isBookmarked(id) { return bookmarkedIds.value.has(id) }
+
   return {
     // state — 原有
     events,
@@ -444,5 +489,12 @@ export const useAnalysisStore = defineStore('analysis', () => {
     // AI 降噪
     aiLoading,
     triggerNoiseReduce,
+    // AI 研判打标
+    aiVerdictLoading,
+    analyzeEvents,
+    // 事件书签
+    bookmarkedIds,
+    toggleBookmark,
+    isBookmarked,
   }
 })

@@ -1,0 +1,63 @@
+classDiagram
+    class EventVerdictService {
+        +MAX_BATCH: int = 200
+        +DEFAULT_THRESHOLD: float = 0.6
+        +ALLOWED_LABELS: set = {suspicious, false_positive, benign, unknown}
+        -_llm: AgentLLM
+        +analyze_events(event_ids, user, force, confidence_threshold) dict
+        -_process_one(event_id, user, force, threshold) dict
+        -_build_prompt(row, masked_evidence) str
+        -_parse_llm(content) dict|None
+        -_normalize(parsed, threshold) dict
+        -_write_back(event_id, verdict, ai_analysis) void
+    }
+
+    class AgentLLM {
+        +call(prompt, user, budget) dict
+    }
+
+    class AiVerdict {
+        <<JSON 写回结构>>
+        label: str
+        confidence: float
+        reason: str
+        attack_type: str
+    }
+
+    class VerdictRouter {
+        +POST /ai-verdict
+    }
+
+    class VerdictRequest {
+        event_ids: List[Any]
+        force: bool = false
+        confidence_threshold: float = 0.6
+    }
+
+    class VerdictDetail {
+        event_id: str
+        status: str
+        label: str|None
+        reason: str|None
+        error: str|None
+    }
+
+    class VerdictResponse {
+        processed: int
+        skipped: int
+        degraded: int
+        failed: int
+        limit: int
+        details: List[VerdictDetail]
+    }
+
+    class IncidentCorrelator {
+        +_fetch_suspicious_events(host_id, time_window_minutes) list
+    }
+
+    EventVerdictService --> AgentLLM : 调用(call)
+    EventVerdictService ..> AiVerdict : 写回 security_events.ai_verdict
+    VerdictRouter ..> VerdictRequest : 接收
+    VerdictRouter ..> EventVerdictService : 委托
+    VerdictRouter ..> VerdictResponse : 返回
+    IncidentCorrelator ..> AiVerdict : 读取 label='suspicious'

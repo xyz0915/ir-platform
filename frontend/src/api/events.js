@@ -114,3 +114,11 @@ export function triggerAiNoiseReduce(caseId, hostId = null) {
   if (hostId) params.host_id = hostId
   return request.post('/ai/noise-reduce', null, { params, timeout: 200000 })
 }
+
+// AI 研判打标（对选中事件批量研判，写回 ai_verdict；挂载于 /api/security-events）
+export function triggerEventVerdict(eventIds, opts = {}) {
+  const data = { event_ids: eventIds }
+  if (opts.force !== undefined) data.force = opts.force
+  if (opts.threshold !== undefined) data.confidence_threshold = opts.threshold
+  return request.post('/security-events/ai-verdict', data, { timeout: 600000 })
+}

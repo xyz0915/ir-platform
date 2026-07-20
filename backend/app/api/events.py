@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from app.database import get_connection
@@ -536,7 +536,34 @@ def get_event(event_id: str, current_user: dict = Depends(get_current_user)):
         """, (event_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="事件不存在")
-    return success(_row_to_dict(row))
+    event_dict = _row_to_dict(row)
+    # IOC 自动提取
+    try:
+        from app.services.ioc_extractor import extract_iocs
+        evidence_raw = json.loads(event_dict["evidence"]) if isinstance(event_dict.get("evidence"), str) else event_dict.get("evidence", {})
+        if evidence_raw:
+            event_dict["iocs"] = extract_iocs(evidence_raw)
+        else:
+            event_dict["iocs"] = {}
+    except Exception as exc:
+        logger.warning("IOC extraction failed: %s", exc)
+        event_dict["iocs"] = {}
+    # 同类事件统计
+    try:
+        event_key = row.get("event_key") if isinstance(row, dict) else row["event_key"]
+        if event_key:
+            with get_connection() as conn2:
+                freq = conn2.execute("""
+                    SELECT COUNT(*) as total, MIN(timestamp) as first_seen,
+                           MAX(timestamp) as last_seen,
+                           COUNT(DISTINCT host_id) as affected_hosts
+                    FROM security_events WHERE event_key = ?
+                """, (event_key,)).fetchone()
+            if freq:
+                event_dict["frequency"] = dict(freq)
+    except Exception as exc:
+        logger.warning("Frequency fetch failed: %s", exc)
+    return success(event_dict)
 
 
 @router.get("/events/{event_id}/display")
@@ -978,6 +1005,162 @@ def batch_match_rules(
 
 
 # ===================================================================
+#  进程树
+# ===================================================================
+
+@router.get("/events/{event_id}/process-tree")
+def get_process_tree(
+    event_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """获取事件所在主机的进程树."""
+    with get_connection() as conn:
+        row = conn.execute("""
+            SELECT se.evidence, se.host_id, se.timestamp
+            FROM security_events se WHERE se.id = ?
+        """, (event_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="事件不存在")
+    evidence = json.loads(row["evidence"]) if isinstance(row["evidence"], str) else row.get("evidence", {})
+    host_id = row["host_id"]
+    current_pid = evidence.get("pid")
+    current_name = evidence.get("process_name") or evidence.get("name", "?")
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT se.evidence FROM security_events se
+            WHERE se.host_id = ? AND se.event_type = 'process_start'
+        """, (host_id,)).fetchall()
+    proc_map = {}
+    for r in rows:
+        ev = json.loads(r["evidence"]) if isinstance(r["evidence"], str) else r.get("evidence", {})
+        pid = ev.get("pid")
+        if pid:
+            proc_map[pid] = {"pid": pid, "name": ev.get("process_name") or ev.get("name", "?"),
+                             "ppid": ev.get("ppid"), "cmdline": ev.get("command_line") or ev.get("cmdline", "")}
+    tree = []
+    visited = set()
+    pid = current_pid
+    depth = 0
+    while pid and pid in proc_map and pid not in visited and depth < 10:
+        info = proc_map[pid]
+        tree.append({"pid": pid, "name": info["name"], "ppid": info["ppid"],
+                      "cmdline": info["cmdline"], "depth": depth})
+        visited.add(pid)
+        pid = info.get("ppid")
+        depth += 1
+    tree.reverse()
+    return success({"tree": tree, "current_pid": current_pid, "current_name": current_name})
+
+
+# ===================================================================
+#  批量操作
+# ===================================================================
+
+@router.post("/events/batch-status")
+def batch_update_status(
+    body: dict = Body(...),
+    current_user: dict = Depends(get_current_user),
+):
+    ids = body.get("ids", [])
+    status = body.get("status")
+    comment = body.get("comment", "")
+    if not ids or not status:
+        raise HTTPException(status_code=400, detail="ids 和 status 不能为空")
+    with get_connection() as conn:
+        for eid in ids:
+            conn.execute("UPDATE security_events SET status = ?, updated_at = ? WHERE id = ?",
+                         (status, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), eid))
+        conn.commit()
+    return success({"updated": len(ids)})
+
+
+@router.post("/events/batch-assign")
+def batch_assign(
+    body: dict = Body(...),
+    current_user: dict = Depends(get_current_user),
+):
+    ids = body.get("ids", [])
+    assignee = body.get("assignee", "")
+    if not ids or not assignee:
+        raise HTTPException(status_code=400, detail="ids 和 assignee 不能为空")
+    with get_connection() as conn:
+        for eid in ids:
+            conn.execute("UPDATE security_events SET assignee = ?, updated_at = ? WHERE id = ?",
+                         (assignee, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), eid))
+        conn.commit()
+    return success({"updated": len(ids)})
+
+
+@router.post("/events/batch-link-case")
+def batch_link_case(
+    body: dict = Body(...),
+    current_user: dict = Depends(get_current_user),
+):
+    ids = body.get("ids", [])
+    case_id = body.get("case_id")
+    if not ids or not case_id:
+        raise HTTPException(status_code=400, detail="ids 和 case_id 不能为空")
+    with get_connection() as conn:
+        for eid in ids:
+            host_row = conn.execute("SELECT host_id FROM security_events WHERE id = ?", (eid,)).fetchone()
+            if host_row:
+                conn.execute("UPDATE hosts SET case_id = ? WHERE id = ?", (case_id, host_row["host_id"]))
+        conn.commit()
+    return success({"updated": len(ids)})
+
+
+# ===================================================================
+#  网络连接图
+# ===================================================================
+
+@router.get("/events/{event_id}/network-graph")
+def get_network_graph(
+    event_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """获取事件网络连接关系图数据."""
+    with get_connection() as conn:
+        row = conn.execute("""SELECT se.evidence, se.host_id, h.hostname, h.ip_address
+            FROM security_events se LEFT JOIN hosts h ON h.id = se.host_id WHERE se.id = ?""", (event_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="事件不存在")
+    rd = dict(row)
+    evidence = json.loads(rd["evidence"]) if isinstance(rd["evidence"], str) else rd.get("evidence", {})
+    hostname = rd.get("hostname", "") or ("#主机" + str(rd["host_id"]))
+    local_ip = rd.get("ip_address") or "?"
+    # 兼容两种 evidence 结构：network_connections[] 和单条 flat 结构
+    connections = []
+    if isinstance(evidence.get("network_connections"), list):
+        connections = evidence["network_connections"]
+    elif isinstance(evidence.get("connections"), list):
+        connections = evidence["connections"]
+    elif evidence.get("remote_address") or evidence.get("remote_ip"):
+        connections = [evidence]
+    nodes, edges, seen_remote = [], [], []
+    local_id = "local"
+    nodes.append({"id": local_id, "label": hostname, "type": "host", "ip": local_ip})
+    for c in connections:
+        rip = c.get("remote_address") or c.get("remote_ip") or c.get("dest_ip", "")
+        rport = c.get("remote_port") or c.get("dest_port", 0)
+        proto = c.get("protocol", "TCP")
+        if not rip:
+            continue
+        if rip not in seen_remote:
+            nid = f"r_{rip}"
+            nodes.append({"id": nid, "label": rip, "type": "remote", "ip": rip, "port": rport})
+            seen_remote.append(rip)
+        else:
+            nid = f"r_{rip}"
+        edges.append({"source": local_id, "target": nid, "protocol": proto, "port": rport, "count": 1})
+    em = {}
+    for e in edges:
+        k = f"{e['source']}→{e['target']}:{e['port']}"
+        if k in em: em[k]["count"] += 1
+        else: em[k] = e
+    return success({"nodes": nodes, "edges": list(em.values()), "local_ip": local_ip})
+
+
+# ===================================================================
 #  事件上下文（T4）
 # ===================================================================
 
@@ -1021,3 +1204,37 @@ def get_event_impact(
 
     result = assess_impact_scope(event_id)
     return {"code": 0, "data": result}
+
+
+# ===================================================================
+#  根因归因（T-G1 / P1-G）
+# ===================================================================
+
+@router.post("/root-cause")
+async def root_cause_analysis(
+    body: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    """根因归因：传入 {host_id, event_id?}，返回进程树回溯的因果链.
+
+    返回结构（统一经 data_masking 脱敏）：
+        {host_id, event_id, root_node, causal_chain, confidence,
+         evidence, summary, llm_explanation, process_tree}
+    """
+    from app.services.agents.root_cause_agent import RootCauseAgent
+    from app.services.data_masking import apply as mask_apply
+
+    host_id = body.get("host_id")
+    event_id = body.get("event_id")
+    if not host_id:
+        raise HTTPException(status_code=400, detail="host_id 不能为空")
+
+    agent = RootCauseAgent()
+    # RootCauseAgent.analyze(ctx, task) — ctx 携带鉴权用户，task 携带业务参数
+    result = await agent.analyze(
+        ctx={"user": current_user},
+        task={"host_id": host_id, "event_id": event_id},
+    )
+    # 输出脱敏（符合 §8 的 PII 屏蔽约定）
+    result = mask_apply(result)
+    return success(result)

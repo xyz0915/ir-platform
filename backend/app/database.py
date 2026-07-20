@@ -829,6 +829,153 @@ DDL_STATEMENTS = [
     """
     CREATE INDEX IF NOT EXISTS idx_import_results_key_hash ON import_results(event_key_hash)
     """,
+    # data_purge_log — 清案（被遗忘权）操作留痕表（永不参与任何清除）
+    """
+    CREATE TABLE IF NOT EXISTS data_purge_log (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        case_id         INTEGER NOT NULL,
+        case_number     TEXT,
+        case_name       TEXT,
+        operator_id     INTEGER,
+        operator_name   TEXT,
+        purged_at       TEXT NOT NULL DEFAULT (datetime('now')),
+        total_rows      INTEGER,
+        table_counts    TEXT,
+        snapshot_path   TEXT,
+        client_ip       TEXT,
+        status          TEXT DEFAULT 'done'
+    )
+    """,
+    # ── ① 多智能体运行主表（第①批 T-F1）──
+    """
+    CREATE TABLE IF NOT EXISTS agent_runs (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id        TEXT    NOT NULL UNIQUE,
+        event_id      TEXT,
+        case_id       INTEGER,
+        title         TEXT,
+        stage         TEXT    NOT NULL DEFAULT 'triage',
+        status        TEXT    NOT NULL DEFAULT 'pending',
+        current_agent TEXT,
+        priority      TEXT    DEFAULT 'P2',
+        confidence    REAL    DEFAULT 0.0,
+        result_json   TEXT    DEFAULT '{}',
+        user_id       INTEGER,
+        created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_agent_runs_event ON agent_runs(event_id)
+    """,
+    # ── ② 单步执行审计表（第①批 T-F1）──
+    """
+    CREATE TABLE IF NOT EXISTS agent_run_steps (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id        TEXT    NOT NULL,
+        stage         TEXT,
+        agent         TEXT,
+        status        TEXT,
+        input_json    TEXT    DEFAULT '{}',
+        output_json   TEXT    DEFAULT '{}',
+        confidence    REAL    DEFAULT 0.0,
+        evidence_json TEXT    DEFAULT '[]',
+        audit_log_id  INTEGER,
+        created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_agent_run_steps_run ON agent_run_steps(run_id)
+    """,
+    # ── ③ 人在回路审批表（第①批 T-F1）──
+    """
+    CREATE TABLE IF NOT EXISTS hitl_approvals (
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id              TEXT    NOT NULL,
+        step_id             INTEGER,
+        action              TEXT    NOT NULL,
+        target_json         TEXT    DEFAULT '{}',
+        requested_by        INTEGER,
+        status              TEXT    NOT NULL DEFAULT 'pending',
+        decided_by          INTEGER,
+        decided_at          TEXT,
+        auto_rollback_plan  TEXT    DEFAULT '{}',
+        reason              TEXT,
+        created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_hitl_status ON hitl_approvals(status)
+    """,
+    # ── ④ NL 查询审计表（第①批 T-C1）──
+    """
+    CREATE TABLE IF NOT EXISTS nl_query_audit (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id         INTEGER,
+        nl_text         TEXT,
+        intent_json     TEXT    DEFAULT '{}',
+        executed_sql_json TEXT  DEFAULT '{}',
+        row_count       INTEGER DEFAULT 0,
+        masked          INTEGER DEFAULT 1,
+        status          TEXT    DEFAULT 'ok',
+        error_message   TEXT,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_nl_audit_user ON nl_query_audit(user_id)
+    """,
+    # ── ⑤ 语义级事件归并簇表（第③批 T-D1 / P1-D）──
+    """
+    CREATE TABLE IF NOT EXISTS incident_clusters (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        cluster_id        TEXT NOT NULL UNIQUE,
+        title             TEXT,
+        severity          TEXT DEFAULT 'medium',
+        confidence        REAL DEFAULT 0.0,
+        member_event_ids  TEXT DEFAULT '[]',
+        host_ids          TEXT DEFAULT '[]',
+        summary           TEXT,
+        ai_verdict_agg    TEXT DEFAULT '{}',
+        created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_incident_clusters_sev ON incident_clusters(severity)
+    """,
+    # ── ⑥ 知识库自进化反馈表（第⑤批 T-H1 / P2-H）──
+    """
+    CREATE TABLE IF NOT EXISTS kb_feedback (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        feedback_type      TEXT NOT NULL DEFAULT 'false_positive',
+        is_false_positive  INTEGER DEFAULT 0,
+        rule_id            INTEGER,
+        alert_id           INTEGER,
+        event_id           TEXT,
+        rule_name          TEXT,
+        host_id            INTEGER,
+        content            TEXT,
+        source_user        TEXT,
+        applied_to_kb      INTEGER DEFAULT 0,
+        kb_entry_id        TEXT,
+        suppression_id     INTEGER,
+        knowledge_draft_id INTEGER,
+        entry_ref          TEXT,
+        summary            TEXT,
+        created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_kb_feedback_type ON kb_feedback(feedback_type)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_kb_feedback_applied ON kb_feedback(applied_to_kb)
+    """,
 ]
 
 
@@ -845,8 +992,11 @@ def get_connection() -> Generator[sqlite3.Connection, None, None]:
     conn = sqlite3.connect(
         settings.DB_PATH,
         check_same_thread=False,
+        timeout=5,
     )
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout = 5000")
+    conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
     try:
         yield conn
@@ -1220,6 +1370,20 @@ def _alter_security_events_add_ai_verdict(conn: sqlite3.Connection) -> None:
     if 'ai_verdict' not in existing_columns:
         conn.execute("ALTER TABLE security_events ADD COLUMN ai_verdict TEXT DEFAULT '{}'")
         logger.info("Migrated: security_events.ai_verdict")
+
+
+def _alter_security_events_add_ai_analysis(conn: sqlite3.Connection) -> None:
+    """检测并添加 security_events 表的 ai_analysis 列（AI 研判详细分析，可选）.
+
+    该列用于承载 LLM 原始分析文本，仅作详情展示（消费者 IncidentCorrelator
+    不读取）。使用 PRAGMA 守卫 ALTER，列缺失才添加，可重复执行。
+    服务层写回 ai_analysis 用 try/except 包裹，列缺失不阻断 ai_verdict 写回。
+    """
+    cursor = conn.execute("PRAGMA table_info(security_events)")
+    existing_columns: set[str] = {row["name"] for row in cursor.fetchall()}
+    if "ai_analysis" not in existing_columns:
+        conn.execute("ALTER TABLE security_events ADD COLUMN ai_analysis TEXT DEFAULT NULL")
+        logger.info("Migrated: security_events.ai_analysis")
 
 
 def _alter_events_create_disposition_log(conn: sqlite3.Connection) -> None:
@@ -1792,6 +1956,106 @@ def _migrate_import_records() -> None:
         conn.commit()
 
 
+def _create_rule_drafts_table(conn: sqlite3.Connection) -> None:
+    """创建规则草稿表（P0-B）：AI 生成的候选检测规则，经影子运行与人审后启用."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS rule_drafts (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            name                 TEXT    NOT NULL UNIQUE,
+            category             TEXT,
+            rule_type            TEXT,
+            condition_json       TEXT    DEFAULT '{}',
+            severity             TEXT    DEFAULT 'medium',
+            label                TEXT,
+            status               TEXT    NOT NULL DEFAULT 'draft',
+            shadow_hit_count     INTEGER DEFAULT 0,
+            sample_hits_json     TEXT,
+            source               TEXT    DEFAULT 'ai',
+            generated_by         INTEGER,
+            reviewed_by          INTEGER,
+            reject_reason        TEXT,
+            rationale            TEXT,
+            expected_fields      TEXT,
+            confidence           REAL,
+            dsl                  TEXT,
+            hit_count            INTEGER DEFAULT 0,
+            false_positive_count INTEGER DEFAULT 0,
+            tuned_version        INTEGER DEFAULT 0,
+            tuning_history_json  TEXT,
+            parent_draft_id      INTEGER,
+            created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+
+
+def _alter_rules_table_for_shadow(conn: sqlite3.Connection) -> None:
+    """为 rules 表追加影子运行支持列（P0-B），幂等."""
+    for col, col_type in [
+        ("is_shadow", "INTEGER DEFAULT 0"),
+        ("shadow_hit_count", "INTEGER DEFAULT 0"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE rules ADD COLUMN {col} {col_type}")
+        except Exception:
+            pass  # 列已存在则忽略
+
+
+def _migrate_rules_governance(conn: sqlite3.Connection) -> None:
+    """检测并添加 rules 表生命周期治理列 + 创建 rule_history 表（T-P1-1）.
+
+    使用 PRAGMA table_info 检测列是否已存在，不存在才 ALTER ADD COLUMN，
+    保证旧行不被破坏、可重复执行。
+    """
+    cursor = conn.execute("PRAGMA table_info(rules)")
+    existing_columns: set[str] = {row["name"] for row in cursor.fetchall()}
+
+    new_columns: list[tuple[str, str]] = [
+        ("owner", "TEXT"),
+        ("created_by", "TEXT"),
+        ("status", "TEXT DEFAULT 'active'"),
+        ("deprecated_at", "TEXT"),
+        ("approved_by", "TEXT"),
+    ]
+
+    for col_name, col_type in new_columns:
+        if col_name not in existing_columns:
+            conn.execute(
+                f"ALTER TABLE rules ADD COLUMN {col_name} {col_type}"
+            )
+            logger.info("Added column '%s' to rules table", col_name)
+
+    # 创建 rule_history 表（版本快照 + 审批留痕，回滚用）
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS rule_history (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            rule_id     INTEGER NOT NULL,
+            version     INTEGER NOT NULL,
+            snapshot    TEXT NOT NULL,
+            action      VARCHAR(8) NOT NULL,
+            operator    VARCHAR(64) NOT NULL,
+            comment     TEXT DEFAULT '',
+            approved_by VARCHAR(64) DEFAULT '',
+            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (rule_id) REFERENCES rules(id)
+        )
+        """
+    )
+    try:
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_rule_history_rule_id ON rule_history(rule_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_rule_history_version ON rule_history(rule_id, version)"
+        )
+    except Exception:
+        pass
+    logger.info("rule_history table ready")
+
+
 def init_db() -> None:
     """初始化数据库：创建目录、执行建表语句、迁移旧数据、ALTER表、创建默认用户、导入默认规则、导入默认白名单."""
     # 确保数据目录存在
@@ -1830,8 +2094,15 @@ def init_db() -> None:
         _create_default_admin(conn)
         _alter_rules_table(conn)
         _alter_rules_table_stats(conn)
+        # 规则草稿表 + 影子运行列（P0-B）
+        _create_rule_drafts_table(conn)
+        _alter_rules_table_for_shadow(conn)
         # 规则版本管理（P2 #17）
         _alter_add_column("rules", "version", "INTEGER DEFAULT 1")
+        # T-P1-1: 规则生命周期治理列 + rule_history 表
+        _migrate_rules_governance(conn)
+        # T-P2-1: 多租户脚手架 — 幂等加 tenant_id 列
+        _alter_add_column("rules", "tenant_id", "INTEGER DEFAULT 0")
         _import_default_rules(conn)
         _alter_abnormal_processes_table(conn)
         _alter_suspicious_connections_table(conn)
@@ -1849,6 +2120,8 @@ def init_db() -> None:
         _alter_security_events_add_matched_rules(conn)
         # AI 降噪研判结果列：security_events 加 ai_verdict 列（避免 event_stats 等接口 500）
         _alter_security_events_add_ai_verdict(conn)
+        # AI 研判详细分析列（P1 可选，缺失不阻断 ai_verdict 写回）
+        _alter_security_events_add_ai_analysis(conn)
         # event_disposition_log 表 + security_events 联合索引
         _alter_events_create_disposition_log(conn)
         _alter_security_events_add_index(conn)

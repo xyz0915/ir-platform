@@ -1378,34 +1378,6 @@ function contextMenu(cmd, data) {
 
 // ===== T-004: 剧本执行与会话摘要 =====
 
-// 剧本步骤参数 → 自然语言查询映射
-const stepQueryMap = {
-  'failed_logon': '登录失败的日志',
-  'successful_logon': '登录成功的日志',
-  'alerts_high': '严重告警',
-  'network_connections': '网络连接信息',
-  'abnormal_processes': '异常进程',
-  'file_hashes': '文件哈希',
-  'extract_ips': '来源IP',
-  'stats': '统计信息',
-}
-
-function mapStepToQuery(params) {
-  if (!params) return '统计信息'
-  const qt = params.query_type
-  if (qt === 'logs') {
-    if (params.event_type === 'failed_logon') return '登录失败的日志'
-    if (params.event_type === 'successful_logon') return '登录成功的日志'
-    return '最近的日志'
-  }
-  if (qt === 'alerts') return params.severity === 'high' ? '严重告警' : '告警信息'
-  if (qt === 'network_connections') return '网络连接信息'
-  if (qt === 'abnormal_processes') return '异常进程信息'
-  if (qt === 'file_hashes') return '文件哈希信息'
-  if (qt === 'extract_ips') return '来源IP地址'
-  return stepQueryMap[params.event_type] || '统计信息'
-}
-
 async function startPlaybook(playbookId) {
   const sessionId = activeSessionId.value || Date.now().toString(36)
   const playbook = playbookList.find(p => p.id === playbookId)
@@ -1434,34 +1406,29 @@ async function startPlaybook(playbookId) {
       await new Promise(r => setTimeout(r, 400))
 
       const stepRes = await getPlaybookStep()
+      const stepResult = stepRes?.data?.result || {}
       const stepName = playbook.steps?.[stepIdx]?.name || `步骤 ${stepIdx + 1}`
       const stepType = stepRes?.data?.step_type || 'query'
-      const stepParams = stepRes?.data?.params || {}
+      const output = stepResult.output
 
       if (stepType === 'llm') {
-        // LLM 分析：仅收集到 allResults
+        // LLM 步：后端已真实调用大模型（或安全降级），output 为分析文本
+        const detail = typeof output === 'string' ? output : JSON.stringify(output)
         allResults.push({
-          step: stepName, type: 'llm',
-          detail: stepParams?.prompt?.slice(0, 150) || 'AI 分析'
+          step: stepName,
+          type: 'llm',
+          detail: (detail || 'AI 分析完成').slice(0, 300),
         })
       } else {
-        // 查询：调用真实 API 获取数据
-        const queryText = mapStepToQuery(stepParams)
-        try {
-          const apiRes = await aiQuery(queryText)
-          const data = apiRes?.data || {}
-          const items = Array.isArray(data.data) ? data.data : []
-          allResults.push({
-            step: stepName,
-            type: 'query',
-            count: items.length,
-            summary: data.summary || '',
-            intent: data.intent || 'alerts',
-            samples: items.slice(0, 3),
-          })
-        } catch (e) {
-          allResults.push({ step: stepName, type: 'query', count: 0, summary: '查询失败', error: e.message })
-        }
+        // 查询步：后端已按 query_type 查询本地真实数据，output 为结果数组
+        const items = Array.isArray(output) ? output : []
+        allResults.push({
+          step: stepName,
+          type: 'query',
+          count: items.length,
+          summary: stepResult.summary || '',
+          samples: items.slice(0, 3),
+        })
       }
     }
 

@@ -146,6 +146,7 @@ def _register_scheduled_tasks() -> None:
         @scheduler.scheduled_job("cron", hour=3, minute=30, id="cleanup_uploaded_logs")
         def _cleanup_uploaded_logs_job() -> None:
             """每天 3:30 清理过期的上传日志文件."""
+            import os as _os
             import shutil as _shutil
             from datetime import datetime as _datetime, timedelta as _timedelta
             from app.config import settings as _settings
@@ -155,25 +156,25 @@ def _register_scheduled_tasks() -> None:
             cutoff = _datetime.now() - _timedelta(days=retention_days)
             cleaned = 0
 
-            if not os.path.isdir(upload_base):
+            if not _os.path.isdir(upload_base):
                 return
 
-            for root, dirs, files in os.walk(upload_base):
+            for root, dirs, files in _os.walk(upload_base):
                 for f in files:
-                    fpath = os.path.join(root, f)
+                    fpath = _os.path.join(root, f)
                     try:
-                        mtime = _datetime.fromtimestamp(os.path.getmtime(fpath))
+                        mtime = _datetime.fromtimestamp(_os.path.getmtime(fpath))
                         if mtime < cutoff:
-                            os.remove(fpath)
+                            _os.remove(fpath)
                             cleaned += 1
                     except Exception:
                         continue
                 # 清理空目录
                 for d in dirs:
-                    dpath = os.path.join(root, d)
+                    dpath = _os.path.join(root, d)
                     try:
-                        if not os.listdir(dpath):
-                            os.rmdir(dpath)
+                        if not _os.listdir(dpath):
+                            _os.rmdir(dpath)
                     except Exception:
                         continue
 
@@ -193,6 +194,7 @@ from app.api import auth, cases, hosts, import_data, analysis, report, agent, ru
 from app.api import threat_intel  # noqa: E402
 from app.api import baseline  # noqa: E402  # v1.3.0 差分基线
 from app.api import knowledge_draft  # noqa: E402  # AI 自动知识入库
+from app.api import knowledge  # noqa: E402  # P2-H 知识库自进化闭环
 from app.api import process_events  # noqa: E402  # T-P2-3 进程事件流入口（PoC）
 from app.api import rule_suppression  # noqa: E402  # #18 规则抑制
 from app.api import dashboard  # noqa: E402  # 全局态势仪表盘
@@ -208,10 +210,12 @@ from app.api import sync  # noqa: E402  # v2 SyncLayer 同步 API
 from app.api import log_search  # noqa: E402  # 日志检索模块 v2
 from app.api import disposition  # noqa: E402  # 处置记录 API
 from app.api import ai_noise  # noqa: E402  # AI 降噪 + 路由注册
+from app.api import event_verdict  # noqa: E402  # AI 事件研判打标（生产者）
 from app.api import import_logs  # noqa: E402  # 手工日志导入
 from app.api import users  # noqa: E402  # 用户管理
 from app.api import audit_logs  # noqa: E402  # 审计日志
 from app.api import settings_api  # noqa: E402  # 系统参数
+from app.api import rules_coverage  # noqa: E402  # T-P1-3 规则覆盖率看板
 
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(case_hosts.router, prefix="/api", tags=["案件"])  # 必须在 cases.router 之前注册
@@ -228,6 +232,7 @@ app.include_router(whitelist.router, prefix="/api", tags=["白名单"])
 app.include_router(iocs.router, prefix="/api/iocs", tags=["IOC"])
 app.include_router(threat_intel.router, prefix="/api/threat-intel", tags=["威胁情报外联"])
 app.include_router(knowledge_draft.router, prefix="/api/knowledge", tags=["知识入库"])
+app.include_router(knowledge.router, prefix="/api/kb", tags=["知识自进化"])  # P2-H 自进化闭环
 app.include_router(process_events.router, prefix="/api", tags=["进程事件"])  # T-P2-3 进程事件流入口
 app.include_router(rule_suppression.router, prefix="/api", tags=["规则抑制"])  # #18 规则抑制
 app.include_router(dashboard.router, prefix="/api", tags=["仪表盘"])  # 全局态势仪表盘
@@ -243,10 +248,12 @@ app.include_router(sync.router, prefix="/api/sync", tags=["同步"])  # v2 SyncL
 app.include_router(log_search.router, prefix="/api/log-search", tags=["日志检索"])  # 日志检索 v2
 app.include_router(disposition.router, tags=["处置"])  # 处置记录
 app.include_router(ai_noise.router, prefix="/api/ai", tags=["AI降噪"])  # AI 降噪研判
+app.include_router(event_verdict.router, prefix="/api/security-events", tags=["AI研判"])  # AI 事件研判打标
 app.include_router(import_logs.router, tags=["手工日志导入"])  # 手工日志导入
 app.include_router(users.router, prefix="/api", tags=["用户管理"])  # 用户管理
 app.include_router(audit_logs.router, prefix="/api/audit-logs", tags=["审计日志"])  # 审计日志
 app.include_router(settings_api.router, prefix="/api/settings", tags=["系统参数"])  # 系统参数
+app.include_router(rules_coverage.router, tags=["规则覆盖率"])  # T-P1-3 规则覆盖率看板
 
 
 @app.get("/api/health")

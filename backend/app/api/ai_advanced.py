@@ -16,6 +16,8 @@ from app.services.auth_service import get_current_user
 from app.services.ai_service import AiService
 from app.models.ai_config import AiConfigProfile
 from app.database import get_connection
+from app.services.incident_correlator import IncidentCorrelator
+from app.models.incident_cluster import IncidentCluster
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -25,113 +27,80 @@ router = APIRouter()
 # ─────────────────────────────────────────────
 
 @router.post("/ai/correlate-incidents")
-def correlate_incidents(
+async def correlate_incidents(
     host_id: Optional[int] = Query(None),
     time_window_minutes: int = Query(60),
+    mode: str = Query("keyword", pattern="^(keyword|semantic)$"),
     current_user: dict = Depends(get_current_user),
 ):
-    """基于已有告警数据 + 时间窗口 + 攻击链自动归并事件."""
-    from app.models.incident import IncidentCorrelation
-    from app.database import get_connection
-    from collections import defaultdict
+    """事件归并.
 
-    # 直接 SQL 获取告警
+    - mode=keyword（默认，向后兼容）：按规则名 + 攻击链阶段分组，落库 incident_correlations。
+    - mode=semantic：跨主机对 suspicious 安全事件做 AI 语义聚类，落库 incident_clusters。
+    """
+    if mode == "semantic":
+        clusters = await IncidentCorrelator().cluster(
+            mode="semantic",
+            host_id=host_id,
+            time_window_minutes=time_window_minutes,
+            user=current_user,
+        )
+        return {
+            "success": True,
+            "data": {"clusters": clusters, "total": len(clusters), "mode": "semantic"},
+        }
+
+    # ── keyword 模式（既有行为，保持兼容）──
+    from app.models.incident import IncidentCorrelation
+
     with get_connection() as conn:
         if host_id:
             rows = conn.execute(
                 "SELECT * FROM alerts WHERE host_id=? ORDER BY last_seen_at DESC LIMIT 200",
-                [host_id]
+                [host_id],
             ).fetchall()
         else:
             rows = conn.execute(
                 "SELECT * FROM alerts ORDER BY last_seen_at DESC LIMIT 200"
             ).fetchall()
-    all_alerts = [dict(r) for r in rows]
+    alerts = [dict(r) for r in rows]
 
-    if not all_alerts:
-        return {"success": True, "data": {"incidents": [], "message": "无告警数据，无法归并"}}
-
-    # 按规则分组
-    from collections import defaultdict
-    rule_groups = defaultdict(list)
-    for a in all_alerts:
-        rule_groups[a.get("rule_name", "unknown")].append(a)
-
-    # 攻击链关键词 → 攻击阶段映射
-    KILL_CHAIN_MAP = {
-        "recon": ["scan", "probe", "recon"],
-        "initial_access": ["4625", "brute", "phishing", "exploit"],
-        "execution": ["4688", "process_create", "cmd", "powershell"],
-        "persistence": ["4698", "7045", "scheduled_task", "service_install", "startup"],
-        "credential_access": ["mimikatz", "procdump", "lsass", "sekurlsa"],
-        "lateral_movement": ["4672", "4648", "psexec", "wmic", "winrm"],
-        "exfiltration": ["5156", "connection_outbound", "c2", "beacon"],
-        "defense_evasion": ["1102", "audit_clear", "wevtutil"],
-    }
-
-    incidents = []
-    processed_ids = set()
-
-    for rule_name, group in rule_groups.items():
-        if not group:
-            continue
-        # 判断攻击阶段
-        stage = "general"
-        rule_lower = rule_name.lower()
-        for s, keywords in KILL_CHAIN_MAP.items():
-            if any(kw in rule_lower for kw in keywords):
-                stage = s
-                break
-
-        first_seen = min(a.get("first_seen_at") or a.get("last_seen_at") or "" for a in group)
-        last_seen = max(a.get("last_seen_at") or a.get("first_seen_at") or "" for a in group)
-        hosts = list(set(str(a.get("host_id", "")) for a in group if a.get("host_id")))
-
-        title_map = {
-            "recon": "侦察扫描",
-            "initial_access": "初始入侵",
-            "execution": "代码执行",
-            "persistence": "持久化驻留",
-            "credential_access": "凭据窃取",
-            "lateral_movement": "横向移动",
-            "exfiltration": "外连C2",
-            "defense_evasion": "防御绕过",
-            "general": "通用告警",
+    if not alerts:
+        return {
+            "success": True,
+            "data": {"incidents": [], "message": "无告警数据，无法归并", "mode": "keyword"},
         }
 
-        alerts_sorted = sorted(group, key=lambda x: x.get("last_seen_at") or "")
-        mitre_ids = []
-        for a in group:
-            if a.get("mitre_attack"):
-                mitre_ids.append(a["mitre_attack"])
-
-        incident = {
-            "title": f"{title_map.get(stage, '通用告警')}: {rule_name}",
-            "description": f"规则 {rule_name} 触发 {len(group)} 次告警。"
-                           f"时间窗口: {first_seen} ~ {last_seen}。"
-                           f"涉及主机: {', '.join(hosts)}。",
-            "severity": group[0].get("severity", "medium"),
-            "host_ids": hosts,
-            "alert_ids": [a.get("id") for a in group if a.get("id")],
-            "kill_chain": stage,
-            "mitre_ids": list(set(mitre_ids)),
-            "alert_count": len(group),
-            "first_seen": first_seen,
-            "last_seen": last_seen,
-        }
-        incidents.append(incident)
-
-    # 存库
+    # 复用 IncidentCorrelator 的 keyword 分组逻辑（单一来源，不重写）
+    incidents = await IncidentCorrelator().cluster(alerts, mode="keyword")
     for inc in incidents:
         IncidentCorrelation.create(
             title=inc["title"], description=inc["description"],
             severity=inc["severity"], host_ids=inc["host_ids"],
             alert_ids=inc["alert_ids"], kill_chain=inc["kill_chain"],
             mitre_ids=inc["mitre_ids"],
-            recommendations=f"建议排查相关主机 {', '.join(inc['host_ids'])} 的 {inc['kill_chain']} 阶段活动。",
+            recommendations=(
+                f"建议排查相关主机 {', '.join(inc['host_ids'])} 的 "
+                f"{inc['kill_chain']} 阶段活动。"
+            ),
         )
 
-    return {"success": True, "data": {"incidents": incidents, "total": len(incidents)}}
+    return {
+        "success": True,
+        "data": {"incidents": incidents, "total": len(incidents), "mode": "keyword"},
+    }
+
+
+@router.get("/ai/incidents/clusters")
+def list_incident_clusters(
+    severity: Optional[str] = Query(None, pattern="^(critical|high|medium|low)?$"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    current_user: dict = Depends(get_current_user),
+):
+    """列出语义级事件归并簇（incident_clusters），支持 severity 过滤与分页."""
+    data = IncidentCluster.list(severity=severity, page=page, page_size=page_size)
+    return {"success": True, "data": data}
 
 
 # ─────────────────────────────────────────────

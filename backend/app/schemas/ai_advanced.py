@@ -135,6 +135,7 @@ class StepResult(BaseModel):
     step_id: str = ""
     status: str = ""  # pending / running / completed / failed / skipped
     output: Any = None
+    summary: str = ""  # 人类可读的查询摘要（如"共 N 条"），供前端展示
     error: str = ""
     started_at: str = ""
     completed_at: str = ""

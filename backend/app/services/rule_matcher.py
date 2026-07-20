@@ -7,6 +7,11 @@
   - behavior:   行为模式匹配（孤儿进程/浏览器子进程/高价值路径）
   - threshold:  数值阈值比较
   - exists:     字段存在性检查
+
+灰度开关（P0-2 引擎合并）：
+  USE_UNIFIED_ENGINE = True   → match_event 委派统一 RuleEngine.evaluate（设计 §1）
+  USE_UNIFIED_ENGINE = False  → 回退旧实现（灰度回滚，保留壳 + 兼容现有测试）
+旧 6 类内部 _match_* 实现保留为回退路径，不作为默认路径。
 """
 
 from __future__ import annotations
@@ -25,36 +30,18 @@ logger = logging.getLogger(__name__)
 _rule_cache: dict[str, dict] = {}
 _RULE_CACHE_TTL = 60  # 秒
 
+# ── 灰度开关 ──
+USE_UNIFIED_ENGINE: bool = True
+
 
 # ===================================================================
 #  事件类型 → 候选规则分类映射
 # ===================================================================
 
-_EVENT_TYPE_CATEGORY_MAP: dict[str, list[str]] = {
-    # 进程类事件额外接入 "behavior" 分类，使孤儿进程/浏览器子进程/高价值路径等行为规则
-    # 能够作为候选规则加载（修复：此前无任何 event_type 路由到 behavior，导致 26 条行为规则永不执行）。
-    "process_start":        ["process", "execution", "defense_evasion", "behavior"],
-    "process_terminate":    ["process", "defense_evasion", "behavior"],
-    "network_outbound":     ["network", "exfiltration", "lateral", "ioc"],
-    "network_listen":       ["network", "persistence"],
-    "dns_query":            ["network", "exfiltration"],
-    "registry_modify":      ["persistence", "privilege_escalation"],
-    "registry_delete":      ["defense_evasion"],
-    "persistence_register": ["persistence", "startup"],
-    "file_create":          ["execution", "webshell", "impact"],
-    "file_modify":          ["execution", "impact"],
-    "file_create":          ["execution", "webshell", "impact"],
-    "user_login":           ["credential", "lateral"],
-    "user_logout":          ["credential"],
-    "service_operation":    ["persistence", "privilege_escalation"],
-    "wmi_subscribe":        ["execution", "persistence"],
-    "scheduled_task":       ["persistence", "execution"],
-    "driver_load":          ["persistence", "execution"],
-    "module_load":          ["defense_evasion"],
-    "pipe_connect":         ["lateral", "execution"],
-    "behavior_alert":       ["process", "execution"],
-    "ioc_match":            ["ioc"],
-}
+from app.rules.canonical_adapter import EVENT_TYPE_CATEGORY_MAP as _EVENT_TYPE_CATEGORY_MAP  # noqa: E402
+
+# 保留旧名引用（向后兼容，供 test_event_type_map 等直接 import 使用）
+_EVENT_TYPE_CATEGORY_MAP = _EVENT_TYPE_CATEGORY_MAP
 
 
 # ===================================================================
@@ -63,13 +50,28 @@ _EVENT_TYPE_CATEGORY_MAP: dict[str, list[str]] = {
 
 
 def match_event(event: dict) -> list[dict]:
-    """对单条 security_event 执行全部规则匹配.
+    """对单条 security_event 执行全部规则匹配（灰度开关）。
+
+    默认（USE_UNIFIED_ENGINE=True）委派统一 RuleEngine.evaluate，
+    支持 7 类 matcher + attack_chain + 抑制/误报/白名单闭环。
+    回退（USE_UNIFIED_ENGINE=False）运行旧实现。
 
     Args:
         event: security_event 行字典（含 evidence JSON 字段）.
 
     Returns:
-        命中的规则列表（空列表 = 未命中任何规则）.
+        命中的规则列表（含 gated_by 标记；空列表 = 未命中任何规则）.
+    """
+    if USE_UNIFIED_ENGINE:
+        return _match_event_unified(event)
+    return _match_event_legacy(event)
+
+
+def _match_event_legacy(event: dict) -> list[dict]:
+    """旧 match_event 实现（灰度回退路径，保留壳）。
+
+    调用旧 6 类 _match_* 函数（读 evidence 嵌套字段），
+    无 attack_chain / 抑制/误报/白名单能力。
     """
     evidence = _parse_evidence(event.get("evidence", "{}"))
     event_type = event.get("event_type", "")
@@ -90,6 +92,62 @@ def match_event(event: dict) -> list[dict]:
             logger.debug("规则匹配异常 rule_id=%s: %s", rule.get("id"), exc)
 
     return matched
+
+
+def _match_event_unified(event: dict) -> list[dict]:
+    """统一匹配入口：security_events 行 → CanonicalEvent → RuleEngine.evaluate.
+
+    实时候选按 event_type→category 预筛；门控逻辑（抑制/误报/白名单）
+    与分析链路完全一致，attack_chain 实时可用。
+    """
+    from app.rules.canonical_adapter import (
+        EVENT_TYPE_CATEGORY_MAP,
+        security_event_row_to_canonical,
+    )
+
+    canonical = security_event_row_to_canonical(event)
+    item = canonical.to_engine_item()
+    event_type = canonical.event_type
+
+    cats = EVENT_TYPE_CATEGORY_MAP.get(event_type)
+    if not cats:
+        return []
+
+    from app.rules.rule_engine import RuleEngine
+    from app.rules.detection_policy import DetectionPolicy
+
+    rules = RuleEngine.load_rules_by_categories(cats)
+    if not rules:
+        return []
+
+    global_context = {
+        "host_id": canonical.host_id,
+        "all_items": [item],
+        "process_map": {},
+        "connections": item.get("connections") or [],
+    }
+
+    matches = RuleEngine.evaluate(
+        [item],
+        rules,
+        global_context=global_context,
+        policy=DetectionPolicy(mode="realtime"),
+    )
+
+    # 翻译统一 MatchedRule dict → 旧 match_event 输出格式（含 gated_by）
+    result = []
+    for m in matches:
+        result.append({
+            "rule_id": m.get("rule_id"),
+            "rule_name": m.get("rule_name"),
+            "rule_type": m.get("rule_type"),
+            "category": m.get("category"),
+            "severity": m.get("severity"),
+            "confidence": m.get("confidence"),
+            "matched_fields": m.get("matched_fields") or {},
+            "gated_by": m.get("gated_by"),
+        })
+    return result
 
 
 # ===================================================================

@@ -1,5 +1,33 @@
 <template>
   <div class="event-table-wrapper" ref="wrapperRef">
+    <!-- 批量操作栏 -->
+    <div class="batch-bar" v-if="selectedCount >= 2">
+      <span class="batch-count">已选 {{ selectedCount }} 条</span>
+      <span class="batch-sep"></span>
+      <button class="batch-btn" @click="$emit('batch-reject')">标记误报</button>
+      <button class="batch-btn" @click="$emit('batch-assign')">指派</button>
+      <button class="batch-btn" @click="$emit('batch-link-case')">关联案件</button>
+      <button class="batch-btn" @click="$emit('batch-export')">导出</button>
+      <button class="batch-btn batch-cancel" @click="$emit('clear-selection')">取消选择</button>
+    </div>
+    <!-- 自定义列选择器 -->
+    <div class="col-picker">
+      <el-dropdown trigger="click" @command="toggleCol">
+        <button class="col-picker-btn">
+          自定义列 <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+        </button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item v-for="c in allColumns" :key="c.key" :command="c.key">
+              <span class="col-pick-item">
+                <span class="col-pick-check">{{ colVis[c.key] ? '☑' : '☐' }}</span>
+                {{ c.label }}
+              </span>
+            </el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+    </div>
     <el-table
       :data="events"
       style="width: 100%"
@@ -12,6 +40,15 @@
       @selection-change="onSelectionChange"
       @sort-change="onSortChange"
     >
+      <!-- 书签列 -->
+      <el-table-column width="30" fixed>
+        <template #default="{ row }">
+          <span class="bm-icon" :class="{ active: store.isBookmarked(row.id) }"
+                @click.stop="store.toggleBookmark(row.id)">
+            {{ store.isBookmarked(row.id) ? '⚑' : '⚐' }}
+          </span>
+        </template>
+      </el-table-column>
       <!-- 多选列 -->
       <el-table-column type="selection" width="40" fixed>
         <template #default="{ row }">
@@ -20,7 +57,7 @@
       </el-table-column>
 
       <!-- 严重等级 -->
-      <el-table-column label="等级" width="80" sortable="custom" prop="severity">
+      <el-table-column v-if="colVis.severity" label="等级" width="80" sortable="custom" prop="severity">
         <template #default="{ row }">
           <div class="severity-cell">
             <span class="severity-bar" :style="{ backgroundColor: sevColor(row.severity) }" />
@@ -30,7 +67,7 @@
       </el-table-column>
 
       <!-- 风险分 -->
-      <el-table-column label="风险" width="72" sortable="custom" prop="risk_score">
+      <el-table-column v-if="colVis.risk_score" label="风险" width="72" sortable="custom" prop="risk_score">
         <template #default="{ row }">
           <div class="rs">
             <span class="rs-val" :style="{ color: riskScoreColor(row._risk_score || 0) }">{{ row._risk_score || '-' }}</span>
@@ -42,14 +79,14 @@
       </el-table-column>
 
       <!-- 时间戳 -->
-      <el-table-column label="时间" width="170" sortable="custom" prop="timestamp">
+      <el-table-column v-if="colVis.timestamp" label="时间" width="170" sortable="custom" prop="timestamp">
         <template #default="{ row }">
           {{ formatTime(row.timestamp) }}
         </template>
       </el-table-column>
 
       <!-- T-code / 事件类型 -->
-      <el-table-column label="T-code" width="90" sortable="custom" prop="t_code">
+      <el-table-column v-if="colVis.t_code" label="T-code" width="90" sortable="custom" prop="t_code">
         <template #default="{ row }">
           <span class="tcode-badge">{{ row.t_code || '—' }}</span>
           <span class="etype-sub">{{ eventTypeLabel(row.event_type) }}</span>
@@ -57,14 +94,14 @@
       </el-table-column>
 
       <!-- 案件名称 -->
-      <el-table-column label="案件" width="120" prop="case_name">
+      <el-table-column v-if="colVis.case_name" label="案件" width="120" prop="case_name">
         <template #default="{ row }">
           <span :title="'案件ID: ' + row.case_id" class="case-name-text">{{ row.case_name || ('案件#' + row.case_id) }}</span>
         </template>
       </el-table-column>
 
       <!-- 主机 -->
-      <el-table-column label="主机" width="140" sortable="custom" prop="host_id">
+      <el-table-column v-if="colVis.hostname" label="主机" width="140" sortable="custom" prop="host_id">
         <template #default="{ row }">
           <span class="host-name">{{ row.hostname || ('#主机' + row.host_id) }}</span>
           <span v-if="row.ip_address" class="host-ip">({{ row.ip_address }})</span>
@@ -72,7 +109,7 @@
       </el-table-column>
 
       <!-- ATT&CK 阶段 -->
-      <el-table-column label="ATT&CK 阶段" width="120" sortable="custom" prop="attack_stage">
+      <el-table-column v-if="colVis.attack_stage" label="ATT&CK 阶段" width="120" sortable="custom" prop="attack_stage">
         <template #default="{ row }">
           <span
             v-if="row.attack_stage"
@@ -84,18 +121,19 @@
         </template>
       </el-table-column>
 
-      <!-- 摘要（恢复原始：不混入 ai_analysis） -->
-      <el-table-column label="摘要" min-width="200">
+      <!-- 摘要 -->
+      <el-table-column v-if="colVis.summary" label="摘要" min-width="200">
         <template #default="{ row }">
           <span class="summary-cell" :title="row.summary">{{ row.summary || eventTypeLabel(row.event_type) || '—' }}</span>
         </template>
       </el-table-column>
 
-      <!-- AI 分析（独立列，仅 AI 推荐事件显示） -->
-      <el-table-column label="AI分析" min-width="200" v-if="hasAiContent">
+      <!-- AI 分析 -->
+      <el-table-column v-if="colVis.ai_analysis && hasAiContent" label="AI分析" min-width="200">
         <template #default="{ row }">
-          <div class="summary-wrap" v-if="row.event_type === 'ai_recommended' || row.ai_analysis">
-            <span class="ai-badge-sm">🤖 AI</span>
+          <div class="summary-wrap" v-if="row.event_type === 'ai_recommended' || row.ai_analysis || getVerdictLabel(row)">
+            <span v-if="getVerdictLabel(row)" class="verdict-tag-sm" :class="'vlabel-' + getVerdictLabel(row)">{{ verdictShort(getVerdictLabel(row)) }}</span>
+            <span v-if="row.event_type === 'ai_recommended' || row.ai_analysis" class="ai-badge-sm">🤖 AI</span>
             <span class="ai-text-cell" :title="row.ai_analysis">{{ row.ai_analysis }}</span>
           </div>
           <span v-else class="summary-cell">—</span>
@@ -103,7 +141,7 @@
       </el-table-column>
 
       <!-- 状态 -->
-      <el-table-column label="状态" width="100" sortable="custom" prop="status">
+      <el-table-column v-if="colVis.status" label="状态" width="100" sortable="custom" prop="status">
         <template #default="{ row }">
           <span class="status-tag" :class="'status-' + row.status">
             {{ statusLabel(row.status) }}
@@ -112,14 +150,14 @@
       </el-table-column>
 
       <!-- 告警来源 -->
-      <el-table-column label="来源" width="80" prop="source">
+      <el-table-column v-if="colVis.source" label="来源" width="80" prop="source">
         <template #default="{ row }">
           <span class="source-tag" :class="'src-' + (row.source || '未知')">{{ row.source || '—' }}</span>
         </template>
       </el-table-column>
 
       <!-- 规则匹配 -->
-      <el-table-column label="规则匹配" width="200">
+      <el-table-column v-if="colVis.matched_rules" label="规则匹配" width="200">
         <template #default="{ row }">
           <div class="c-rt">
             <template v-if="row.matched_rules && row.matched_rules.length">
@@ -142,6 +180,31 @@
         </template>
       </el-table-column>
 
+      <!-- 额外可选列 -->
+      <el-table-column v-if="colVis.event_type" label="事件类型" width="120" prop="event_type" sortable="custom">
+        <template #default="{ row }">{{ eventTypeLabel(row.event_type) }}</template>
+      </el-table-column>
+      <el-table-column v-if="colVis.source_collector" label="采集器" width="100" prop="source_collector">
+        <template #default="{ row }">{{ row.source_collector || '—' }}</template>
+      </el-table-column>
+      <el-table-column v-if="colVis.attack_chain_id" label="攻击链ID" width="150" prop="attack_chain_id">
+        <template #default="{ row }">{{ row.attack_chain_id || '—' }}</template>
+      </el-table-column>
+      <el-table-column v-if="colVis.assignee" label="负责人" width="100" prop="assignee" sortable="custom">
+        <template #default="{ row }">{{ row.assignee || '—' }}</template>
+      </el-table-column>
+      <el-table-column v-if="colVis.ai_verdict" label="AI研判" width="90" prop="ai_verdict">
+        <template #default="{ row }">
+          <span v-if="row.ai_verdict?.label" class="verdict-tag-sm" :class="'vlabel-' + row.ai_verdict.label">
+            {{ verdictShort(row.ai_verdict.label) }}
+          </span>
+          <span v-else>—</span>
+        </template>
+      </el-table-column>
+      <el-table-column v-if="colVis.created_at" label="入库时间" width="170" prop="created_at">
+        <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+      </el-table-column>
+
     </el-table>
 
     <!-- 分页 -->
@@ -161,7 +224,58 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { useAnalysisStore } from '@/stores/analysis'
+import { ArrowDown } from '@element-plus/icons-vue'
+
+const store = useAnalysisStore()
+
+// 自定义列配置
+const COL_KEY = 'event_table_cols'
+const DEFAULT_COLS = {
+  severity: true, risk_score: true, timestamp: true, t_code: true,
+  case_name: true, hostname: true, attack_stage: true, summary: true,
+  ai_analysis: true, status: true, source: true, matched_rules: true,
+  event_type: false, source_collector: false, attack_chain_id: false,
+  assignee: false, ai_verdict: false, created_at: false,
+}
+
+function loadColVis() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(COL_KEY))
+    if (saved) return { ...DEFAULT_COLS, ...saved }
+  } catch {}
+  return { ...DEFAULT_COLS }
+}
+const colVis = reactive(loadColVis())
+
+function toggleCol(key) {
+  colVis[key] = !colVis[key]
+  const toSave = {}
+  for (const k in colVis) toSave[k] = colVis[k]
+  localStorage.setItem(COL_KEY, JSON.stringify(toSave))
+}
+
+const allColumns = [
+  { key: 'severity', label: '等级' },
+  { key: 'risk_score', label: '风险' },
+  { key: 'timestamp', label: '时间' },
+  { key: 't_code', label: 'T-code' },
+  { key: 'case_name', label: '案件' },
+  { key: 'hostname', label: '主机' },
+  { key: 'attack_stage', label: 'ATT&CK 阶段' },
+  { key: 'summary', label: '摘要' },
+  { key: 'ai_analysis', label: 'AI分析' },
+  { key: 'status', label: '状态' },
+  { key: 'source', label: '来源' },
+  { key: 'matched_rules', label: '规则匹配' },
+  { key: 'event_type', label: '事件类型' },
+  { key: 'source_collector', label: '采集器' },
+  { key: 'attack_chain_id', label: '攻击链ID' },
+  { key: 'assignee', label: '负责人' },
+  { key: 'ai_verdict', label: 'AI研判标签' },
+  { key: 'created_at', label: '入库时间' },
+]
 
 const props = defineProps({
   events: { type: Array, default: () => [] },
@@ -171,12 +285,19 @@ const props = defineProps({
   selectedIds: { type: Array, default: () => [] },
 })
 
+const selectedCount = computed(() => props.selectedIds?.length || 0)
+
 const emit = defineEmits([
   'select-event',
   'selection-change',
   'page-change',
   'sort-change',
   'update-status',
+  'batch-reject',
+  'batch-assign',
+  'batch-link-case',
+  'batch-export',
+  'clear-selection',
 ])
 
 // 动态表格高度: ResizeObserver 跟踪父容器实际高度
@@ -285,8 +406,25 @@ function calcRiskScore(row) {
 
 // 检查当前数据中是否有 AI 分析内容，控制 AI 分析列显示
 const hasAiContent = computed(() => {
-  return props.events?.some(r => r.event_type === 'ai_recommended' || r.ai_analysis)
+  return props.events?.some(r => r.event_type === 'ai_recommended' || r.ai_analysis || getVerdictLabel(r))
 })
+
+// 从列表行中解析 ai_verdict（列表接口返回为 JSON 字符串）取出 label
+function getVerdictLabel(row) {
+  const raw = row?.ai_verdict
+  if (!raw) return ''
+  let v = raw
+  if (typeof raw === 'string') {
+    try { v = JSON.parse(raw) } catch { return '' }
+  }
+  return (v && v.label) ? v.label : ''
+}
+
+// label → 中文短标签
+function verdictShort(label) {
+  const m = { suspicious: '可疑', false_positive: '误报', benign: '良性', unknown: '降级' }
+  return m[label] || label
+}
 
 watch(() => props.events, (events) => {
   if (events?.length) {
@@ -411,6 +549,14 @@ function rowClassName({ row }) {
   border: none;
 }
 
+/* 批量操作栏 */
+.batch-bar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: var(--color-accent-subtle, #eff6ff); border-radius: 6px; margin-bottom: 6px; font-size: 12px; }
+.batch-count { font-weight: 600; color: var(--color-accent-fg, #2563eb); }
+.batch-sep { width: 1px; height: 16px; background: var(--color-border-default); }
+.batch-btn { padding: 3px 10px; border: 0.5px solid var(--color-border-default); border-radius: 4px; background: #fff; cursor: pointer; font-size: 12px; }
+.batch-btn:hover { background: var(--color-canvas-subtle); }
+.batch-cancel { margin-left: auto; color: var(--color-fg-subtle); }
+
 .event-table-wrapper :deep(.el-table th.el-table__cell) {
   font-size: 11px;
   font-weight: 500;
@@ -438,6 +584,18 @@ function rowClassName({ row }) {
 .event-table-wrapper :deep(.el-table__body tr.current-row > td.el-table__cell) {
   background: var(--color-accent-subtle, #eff6ff) !important;
 }
+
+/* 书签图标 */
+.bm-icon { cursor: pointer; font-size: 15px; opacity: 0.35; transition: all 0.15s; user-select: none; }
+.bm-icon:hover { opacity: 0.8; transform: scale(1.2); }
+.bm-icon.active { opacity: 1; color: #f59e0b; }
+
+/* 列选择器 */
+.col-picker { display: flex; justify-content: flex-end; margin-bottom: 4px; }
+.col-picker-btn { padding: 3px 10px; font-size: 11px; border: 0.5px solid var(--color-border-default); border-radius: 4px; background: var(--color-canvas-default); cursor: pointer; color: var(--color-fg-subtle); display: inline-flex; align-items: center; gap: 4px; }
+.col-picker-btn:hover { background: var(--color-canvas-subtle); color: var(--color-fg-default); }
+.col-pick-item { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.col-pick-check { font-size: 14px; }
 
 /* 左侧严重度色条行 */
 .event-table-wrapper :deep(.el-table__row) {
@@ -854,6 +1012,22 @@ function rowClassName({ row }) {
   color: #fff;
   flex-shrink: 0;
 }
+
+/* 已研判标记（读 row.ai_verdict.label） */
+.verdict-tag-sm {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 0 5px;
+  margin-right: 4px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.verdict-tag-sm.vlabel-suspicious { background: rgba(217,119,6,0.15); color: #d97706; }
+.verdict-tag-sm.vlabel-false_positive { background: rgba(163,163,163,0.15); color: #6b7280; }
+.verdict-tag-sm.vlabel-benign { background: rgba(22,163,74,0.15); color: #16a34a; }
+.verdict-tag-sm.vlabel-unknown { background: rgba(100,116,139,0.15); color: #64748b; }
 .summary-wrap {
   display: flex;
   align-items: center;

@@ -1,5 +1,6 @@
 """数据导入接口."""
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -29,10 +30,12 @@ async def import_agent_json(
 
     file_content = await file.read()
     try:
-        record = ImportService.import_json(
-            host_id=host_id,
-            file_content=file_content,
-            file_name=file.filename or "upload.json",
+        record = await asyncio.get_event_loop().run_in_executor(
+            None,  # 默认线程池
+            ImportService.import_json,
+            host_id,
+            file_content,
+            file.filename or "upload.json",
         )
         return {"code": 0, "data": record, "message": "success"}
     except ValueError as exc:

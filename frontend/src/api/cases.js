@@ -15,5 +15,15 @@ export default {
   },
   delete(id) {
     return request.delete(`/cases/${id}`)
+  },
+  // ── 清空案件（被遗忘权）────────────────────
+  purgePreview(id) {
+    return request.get(`/cases/purge-preview/${id}`)
+  },
+  purge(data) {
+    return request.post('/cases/purge', data)
+  },
+  getCasesWithHosts() {
+    return request.get('/cases/with-hosts')
   }
 }

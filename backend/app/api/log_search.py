@@ -1,6 +1,6 @@
 """日志检索 API 路由模块.
 
-提供 8 个端点（前缀 /api/log-search）:
+提供 9 个端点（前缀 /api/log-search）:
   POST   /import                 导入 Agent JSON
   GET    /imports                导入记录列表（分页+筛选）
   GET    /imports/{id}           导入详情
@@ -9,6 +9,9 @@
   GET    /search/raw             返回纯文本 JSON
   GET    /search/export          导出搜索结果（JSON/CSV）
   POST   /imports/{id}/to-event  一键生成 SecurityEvent
+  GET    /trend                  日志量趋势数据
+
+【第①批 T-C1 安全加固】全模块端点已加 ``Depends(get_current_user)`` 鉴权.
 """
 
 from __future__ import annotations
@@ -19,10 +22,11 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from app.services import log_importer
+from app.services.auth_service import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +47,7 @@ def _error(message: str = "请求失败", data: Any = None) -> dict:
 
 
 @router.post("/import", summary="导入 Agent JSON 数据")
-def api_import(body: dict):
+def api_import(body: dict, user: dict = Depends(get_current_user)):
     """导入单条 Agent JSON 数据.
 
     Body:
@@ -90,6 +94,7 @@ def api_list_imports(
     collector_type: str | None = Query(None, description="采集器类型"),
     start_time: str | None = Query(None, description="起始时间"),
     end_time: str | None = Query(None, description="截止时间"),
+    user: dict = Depends(get_current_user),
 ):
     """获取导入记录的分页列表，支持多维筛选."""
     result = log_importer.list_imports(
@@ -108,7 +113,7 @@ def api_list_imports(
 
 
 @router.get("/imports/{import_id}", summary="导入详情（含完整 raw_json）")
-def api_get_import(import_id: int):
+def api_get_import(import_id: int, user: dict = Depends(get_current_user)):
     """获取单条导入记录详情."""
     record = log_importer.get_import(import_id)
     if record is None:
@@ -129,6 +134,7 @@ def api_search(
     end_time: str | None = Query(None, description="截止时间"),
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页条数"),
+    user: dict = Depends(get_current_user),
 ):
     """全文检索 agent_imports+ 结构化筛选，支持 FTS5 语法."""
     result = log_importer.search(
@@ -154,6 +160,7 @@ def api_search_advanced(
     host_id: int | None = Query(None, description="主机 ID"),
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页条数"),
+    user: dict = Depends(get_current_user),
 ):
     """使用字段运算符语法进行高级搜索.
 
@@ -180,7 +187,10 @@ def api_search_advanced(
 
 
 @router.get("/search/raw", summary="返回纯文本 JSON")
-def api_search_raw(id: int = Query(..., description="导入记录 ID")):
+def api_search_raw(
+    id: int = Query(..., description="导入记录 ID"),
+    user: dict = Depends(get_current_user),
+):
     """返回指定导入记录的原始 JSON 内容（纯文本）. """
     record = log_importer.get_import(id)
     if record is None:
@@ -205,6 +215,7 @@ def api_search_export(
     end_time: str | None = Query(None, description="截止时间"),
     format: str = Query("json", regex="^(json|csv)$", description="导出格式"),
     page_size: int = Query(1000, ge=1, le=10000, description="导出条数上限"),
+    user: dict = Depends(get_current_user),
 ):
     """导出搜索结果为 JSON 或 CSV 文件."""
     result = log_importer.search(
@@ -250,7 +261,7 @@ def api_search_export(
 
 
 @router.post("/imports/{import_id}/to-event", summary="一键生成 SecurityEvent")
-def api_to_event(import_id: int):
+def api_to_event(import_id: int, user: dict = Depends(get_current_user)):
     """将导入记录归一化为 SecurityEvent 并写入分析中心."""
     try:
         result = log_importer.to_event(import_id)
@@ -263,7 +274,7 @@ def api_to_event(import_id: int):
 
 
 @router.get("/trend", summary="日志量趋势数据（按小时聚合）")
-def api_trend(hours: int = 24):
+def api_trend(hours: int = 24, user: dict = Depends(get_current_user)):
     """获取近 N 小时的日志量趋势数据."""
     data = log_importer.get_trend_data(hours=hours)
     return _success(data)

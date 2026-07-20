@@ -69,7 +69,8 @@ async function handleImport() {
     visible.value = false
     emit('success', res.data)
   } catch (error) {
-    // 错误已在拦截器中处理
+    const msg = error?.response?.data?.detail || error?.message || '导入失败，请检查后端是否正常运行'
+    ElMessage.error(msg)
   } finally {
     loading.value = false
   }

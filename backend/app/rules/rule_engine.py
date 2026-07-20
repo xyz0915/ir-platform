@@ -21,6 +21,29 @@ def _max_severity(a: str, b: str) -> str:
     """取两个严重级别中较高的一个."""
     return a if _SEVERITY_RANK.get(a, 0) >= _SEVERITY_RANK.get(b, 0) else b
 
+
+# ── MatchedRule 默认置信度（按规则类型；设计 §4.4）────────────────────
+_CONFIDENCE_DEFAULT: dict = {
+    "regex": 0.9,
+    "list": 1.0,
+    "threshold": 0.8,
+    "behavior": 0.7,
+    "composite": 0.85,
+    "exists": 0.7,
+    "attack_chain": 0.95,
+}
+
+# 行为模式置信度（兼容旧 rule_matcher 语义，保证实时=分析置信一致）
+_BEHAVIOR_CONFIDENCE: dict = {
+    "orphan_process": 0.75,
+    "child_of_office": 0.85,
+    "child_of_browser": 0.80,
+    "high_value_path": 0.70,
+}
+
+# 严重级别 → 风险分（命中统计 avg_risk_score 用）
+_RISK_MAP: dict = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+
 # ── 已知的 C2 框架命令行特征 ──────────────────────────────────────────
 _C2_FRAMEWORK_SIGNATURES: list[str] = [
     "cobaltstrike", "metasploit", "empire", "powersploit",
@@ -77,6 +100,10 @@ BEHAVIOR_PATTERNS: set[str] = {
     "cross_session",           # 跨会话/跨用户父子（需 session 字段）
     "injection_window",        # 注入行为窗口异常（需事件流）
     "vanished_process",        # 快照间出现又消失的进程（需 process_events 表）
+    # ── 兼容旧 rule_matcher 行为模式（保证实时=分析语义一致）───────
+    "child_of_office",         # Office/文档子进程（旧实时 matcher 行为模式）
+    "child_of_browser",        # 浏览器子进程（旧实时 matcher 行为模式）
+    "high_value_path",         # 高价值路径（temp/downloads 等）
 }
 
 # ── 进程名伪装检测（process_name_spoof）相关常量 ────────────────────────
@@ -576,111 +603,151 @@ class RuleEngine:
         })
 
     @staticmethod
-    def evaluate(data_items: list, rules: list, global_context: Optional[dict] = None) -> list:
-        """对数据项列表执行规则匹配.
+    def evaluate(
+        data_items: list,
+        rules: list,
+        global_context: Optional[dict] = None,
+        policy: Optional["DetectionPolicy"] = None,
+    ) -> list:
+        """对数据项列表执行统一规则匹配（单一引擎：实时=分析共用）.
+
+        判定顺序（设计 §8）：
+          ① 候选加载 → ② 抑制检查 is_suppressed → ③ match_rule →
+          ④ 白名单精确检查 is_whitelisted_precise → ⑤ 误报模式检查
+          FalsePositivePattern.match → ⑥ 真实命中产 MatchedRule。
+
+        抑制为最宽门控（命中则整条规则不告警），命中点再做实体级精确豁免，
+        最后误报模式收口。所有产出的 MatchedRule 均带 ``gated_by`` 标记
+        （null | "suppression" | "whitelist" | "false_positive"）。
 
         Args:
-            data_items: 待检测的数据项列表.
-            rules: 规则列表.
-            global_context: 全局上下文（可选），包含 process_map 和 all_items 等信息，
-                            用于 behavior 模式中需要跨进程数据的检测（如 process_chain/time_cluster）.
-                            本方法会在入口一次性加载 enabled=1 的 IOC，按类型分组写入
-                            global_context["iocs_by_type"]，供 list 类规则动态引用。
+            data_items: 待检测的数据项列表（to_engine_item 扁平 dict）。
+            rules: 规则列表。
+            global_context: 全局上下文（host_id / process_map / all_items / connections）。
+            policy: 检测策略门控（实时与分析共用同一实例保证一致）。
 
         Returns:
-            匹配结果列表 [{item, rule, reason}].
+            MatchedRule 字典列表（含被门控排除的命中，gated_by 标记其被排除原因）。
         """
-        # 归一并确保为可变字典（便于注入动态 IOC 上下文）
         if global_context is None:
             global_context = {}
 
-        # 确保 datetime 在本地作用域可用（避免条件 import 导致的 UnboundLocalError）
+        # 确保 datetime 在本地作用域可用
         from datetime import datetime
 
-        # ── 动态 IOC 引用：入口一次性加载（非逐条数据）──────────────
-        # 不持久缓存，每次评估实时读取，保证增删/启用开关立即可生效。
+        if policy is None:
+            from app.rules.detection_policy import DetectionPolicy
+            policy = DetectionPolicy()
+
+        # ── 动态 IOC 引用：入口一次性加载 ──
         global_context["iocs_by_type"] = RuleEngine._load_iocs_by_type()
 
-        # ── 威胁情报平台回灌（外部 Enrichment）：仅在总开关开启时加载 ──
-        # 关闭时不加载，保证零影响。结构: {value_lower: {level, provider}}
-        # 仅取该 indicator 最新一条且 judgments 含 malicious/suspicious。
+        # ── 威胁情报平台回灌 ──
         if settings.ENABLE_THREAT_INTEL_ENRICHMENT:
             global_context["threat_level_by_value"] = RuleEngine._load_threat_level_by_value()
         else:
             global_context["threat_level_by_value"] = {}
-        # 记录 list 类规则命中的威胁情报（供下方构造 match 时回灌升级）
         global_context["_ti_hits"] = {}
 
-        # T-P2-4: 预排序 all_items 供 time_cluster 二分计数，降 O(n²) 为 O(n log n)
+        # 预排序 all_items 供 time_cluster 二分计数
         if global_context and isinstance(global_context.get("all_items"), list):
-
             sorted_items = RuleEngine._build_sorted_items(global_context["all_items"])
             global_context["_tc_sorted"] = sorted_items
-            # 并行的时间戳列表（None → datetime.min），供 bisect 二分计数
             global_context["_tc_dts"] = [
                 d if d is not None else datetime.min for d, _ in sorted_items
             ]
 
-        matches = []
-        # 攻击链是主机级关联规则，需在 evaluate 末尾按 host_id 下钻统一评估，
-        # 不进入「逐条数据项」匹配循环。
+        host_id = global_context.get("host_id")
+        # ── 门控结果缓存（进程内复用，避免逐事件重复 DB 查询）──
+        suppressed_cache: dict = global_context.setdefault("_suppressed_cache", {})
+        fp_cache: dict = global_context.setdefault("_fp_cache", {})
+
+        matches: list = []
         per_item_rules = [r for r in rules if r.get("rule_type") != "attack_chain"]
         attack_chain_rules = [r for r in rules if r.get("rule_type") == "attack_chain"]
+
         for item in data_items:
             if not isinstance(item, dict):
                 continue
             for rule in per_item_rules:
-                if RuleEngine.match_rule(item, rule, global_context=global_context):
-                    severity = rule.get("severity", "medium")
-                    reason = RuleEngine._build_reason(item, rule)
-                    # ── 威胁情报平台回灌：仅作用于 list 类规则命中 ──
-                    # malicious → severity 升到 high 且 reason 加【威胁情报平台判黑】
-                    # suspicious → reason 加【威胁情报平台可疑】，severity 不变
-                    ti_hits = global_context.get("_ti_hits", {}).get(id(item), [])
-                    for hit in ti_hits:
-                        if hit.get("level") == "high":
-                            severity = _max_severity(severity, "high")
-                            reason += "【威胁情报平台判黑】"
-                        elif hit.get("level") == "medium":
-                            reason += "【威胁情报平台可疑】"
-                    matches.append({
-                        "item": item,
-                        "rule": rule,
-                        "rule_name": rule.get("name", ""),
-                        "severity": severity,
-                        "reason": reason,
-                        "matched_dimension": item.get("_matched_dimension") if rule.get("rule_type") == "behavior" else None,
-                    })
-                    # ── 规则命中统计（#10/#16）──────────────────────
-                    _risk_map = {"low": 1, "medium": 2, "high": 3, "critical": 4}
-                    rule["_hit_updated"] = True
-                    rule["hit_count"] = rule.get("hit_count", 0) + 1
-                    rule["last_hit_at"] = datetime.now().isoformat()
-                    hit_cnt = rule["hit_count"]
-                    cur_avg = rule.get("avg_risk_score", 0.0) or 0.0
-                    rule["avg_risk_score"] = (cur_avg * (hit_cnt - 1) + _risk_map.get(severity, 2)) / hit_cnt
+                # ③ 匹配
+                if not RuleEngine.match_rule(item, rule, global_context=global_context):
+                    continue
+                # 影子模式：仅计数不告警（不进入门控，保持原行为）
+                if rule.get("is_shadow"):
+                    rule["_shadow_hit_updated"] = True
+                    rule["shadow_hit_count"] = rule.get("shadow_hit_count", 0) + 1
+                    _shadow_samples = rule.setdefault("_shadow_sample_hits", [])
+                    if len(_shadow_samples) < 20:
+                        _shadow_samples.append(
+                            {k: item.get(k) for k in ("id","event_type","event_label",
+                               "process_name","source_ip","timestamp","hostname","host_id") if k in item}
+                        )
+                    continue
+                # ② 抑制检查（规则级，最宽）
+                if RuleEngine._is_suppressed(rule, host_id, suppressed_cache):
+                    matches.append(RuleEngine._make_matched_rule(item, rule, global_context, gated_by="suppression"))
+                    continue
+                # ④ 白名单精确检查（实体级）
+                if RuleEngine._is_whitelisted(rule, item):
+                    matches.append(RuleEngine._make_matched_rule(item, rule, global_context, gated_by="whitelist"))
+                    continue
+                # ⑤ 误报模式检查（自增 hit_count，不告警）
+                if RuleEngine._is_false_positive(rule, item, host_id, fp_cache):
+                    matches.append(RuleEngine._make_matched_rule(item, rule, global_context, gated_by="false_positive"))
+                    continue
+                # ⑥ 真实命中
+                matches.append(RuleEngine._make_matched_rule(item, rule, global_context, gated_by=None))
 
-        # ── 攻击链关联检测（主机级）──────────────────────────────────
-        # 跨 dimension 顺序匹配，命中时强制 severity=critical，reason 含步骤明细。
-        if attack_chain_rules:
-            host_id = global_context.get("host_id") if global_context else None
+        # ── 攻击链关联检测（主机级，实时=分析共用）──
+        if policy.enable_attack_chain and attack_chain_rules:
             if host_id is not None:
                 host_events = RuleEngine._build_host_events(global_context)
                 for ac_rule in attack_chain_rules:
+                    if ac_rule.get("is_shadow"):
+                        ac_rule["_shadow_hit_updated"] = True
+                        ac_rule["shadow_hit_count"] = ac_rule.get("shadow_hit_count", 0) + 1
+                        continue
+                    if RuleEngine._is_suppressed(ac_rule, host_id, suppressed_cache):
+                        continue
                     result = RuleEngine._match_attack_chain(ac_rule, global_context, host_events)
                     if result:
-                        matches.append({
+                        ac_match = {
                             "item": {
                                 "host_id": host_id,
                                 "_attack_chain": True,
                                 "attack_chain_steps": result["steps"],
                             },
                             "rule": ac_rule,
+                            "rule_id": ac_rule.get("id"),
                             "rule_name": ac_rule.get("name", ""),
+                            "rule_type": "attack_chain",
+                            "category": ac_rule.get("category"),
                             "severity": "critical",
+                            "confidence": _CONFIDENCE_DEFAULT.get("attack_chain", 0.95),
                             "reason": result["reason"],
-                        })
-                        # 攻击链规则同样统计
+                            "matched_fields": {},
+                            "matched_dimension": None,
+                            "attack_chain": result,
+                            "gated_by": None,
+                        }
+                        # T-P1-4: 攻击链命中自动 Playbook（critical 必走 HITL）
+                        try:
+                            from app.services.rule_hit_response import RuleHitResponseService
+                            pb_result = RuleHitResponseService.maybe_trigger(ac_match)
+                            ac_match["auto_playbook"] = {
+                                "auto_playbook_triggered": pb_result.get("auto_playbook_triggered", False),
+                                "triggered_playbook_id": pb_result.get("triggered_playbook_id"),
+                                "trigger_message": pb_result.get("trigger_message"),
+                            }
+                        except Exception as exc:  # noqa: BLE001
+                            logger.debug("AttackChain AutoPlaybook 安全降级: %s", exc)
+                            ac_match["auto_playbook"] = {
+                                "auto_playbook_triggered": False,
+                                "triggered_playbook_id": None,
+                                "trigger_message": f"降级: {exc}",
+                            }
+                        matches.append(ac_match)
                         ac_rule["_hit_updated"] = True
                         ac_rule["hit_count"] = ac_rule.get("hit_count", 0) + 1
                         ac_rule["last_hit_at"] = datetime.now().isoformat()
@@ -688,9 +755,7 @@ class RuleEngine:
                         cur_avg2 = ac_rule.get("avg_risk_score", 0.0) or 0.0
                         ac_rule["avg_risk_score"] = (cur_avg2 * (hit_cnt2 - 1) + 4) / hit_cnt2
             else:
-                logger.debug(
-                    "存在 attack_chain 规则但 global_context 缺少 host_id，跳过攻击链评估"
-                )
+                logger.debug("存在 attack_chain 规则但 global_context 缺少 host_id，跳过攻击链评估")
 
         # ── 批量更新规则命中统计到 DB ──
         RuleEngine._update_rule_stats(rules)
@@ -708,6 +773,7 @@ class RuleEngine:
             rules: 本次评估的规则列表（已原地更新 hit_count/last_hit_at/avg_risk_score）.
         """
         updated: list[tuple] = []
+        shadow_updated: list[tuple] = []
         for rule in rules:
             if rule.get("_hit_updated"):
                 updated.append((
@@ -716,28 +782,43 @@ class RuleEngine:
                     rule.get("avg_risk_score", 0.0),
                     rule.get("name", ""),
                 ))
-        if not updated:
+            if rule.get("_shadow_hit_updated"):
+                shadow_updated.append((
+                    rule.get("shadow_hit_count", 0),
+                    rule.get("name", ""),
+                ))
+        if not updated and not shadow_updated:
             return
         try:
             from app.database import get_connection
             with get_connection() as conn:
-                conn.executemany(
-                    """
-                    UPDATE rules SET
-                        hit_count = ?,
-                        last_hit_at = ?,
-                        avg_risk_score = ?
-                    WHERE name = ?
-                    """,
-                    updated,
-                )
-            logger.debug("Batch updated %d rule stats", len(updated))
+                if updated:
+                    conn.executemany(
+                        """
+                        UPDATE rules SET
+                            hit_count = ?,
+                            last_hit_at = ?,
+                            avg_risk_score = ?
+                        WHERE name = ?
+                        """,
+                        updated,
+                    )
+                if shadow_updated:
+                    conn.executemany(
+                        """
+                        UPDATE rules SET shadow_hit_count = ? WHERE name = ?
+                        """,
+                        shadow_updated,
+                    )
+            logger.debug(
+                "Batch updated %d rule stats (%d shadow)", len(updated), len(shadow_updated)
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning("批量更新规则命中统计失败: %s", exc)
 
     @staticmethod
     def match_rule(data_item: dict, rule: dict, global_context: Optional[dict] = None) -> bool:
-        """检查单个数据项是否匹配规则.
+        """检查单个数据项是否匹配规则（通过 MatcherRegistry 分发）.
 
         Args:
             data_item: 数据项字典.
@@ -755,27 +836,174 @@ class RuleEngine:
             except json.JSONDecodeError:
                 return False
 
-        if rule_type == "regex":
-            return RuleEngine._match_regex(data_item, condition)
-        elif rule_type == "list":
-            return RuleEngine._match_list(data_item, condition, global_context=global_context)
-        elif rule_type == "threshold":
-            return RuleEngine._match_threshold(data_item, condition)
-        elif rule_type == "behavior":
-            matched = RuleEngine._match_behavior(data_item, condition, global_context=global_context)
-            if matched:
-                # #19: 注入行为维度归属
-                data_item["_matched_dimension"] = RuleEngine._infer_dimension(condition.get("pattern", ""))
-            return matched
-        elif rule_type == "composite":
-            return RuleEngine._match_composite(data_item, condition, global_context=global_context)
-        elif rule_type == "exists":
-            return RuleEngine._match_exists(data_item, condition)
-        elif rule_type == "attack_chain":
-            # 攻击链是「主机级」关联规则，不针对单条数据项匹配；
-            # 真正的匹配在 evaluate() 末尾统一按 host_id 下钻执行。
+        from app.rules.matchers.registry import MatcherRegistry
+        matched = MatcherRegistry.dispatch(rule_type, data_item, condition, global_context)
+        if matched and rule_type == "behavior":
+            data_item["_matched_dimension"] = RuleEngine._infer_dimension(
+                condition.get("pattern", "") if isinstance(condition, dict) else ""
+            )
+        return matched
+
+    @staticmethod
+    def load_rules_by_categories(categories: list) -> list:
+        """按多个类别加载启用的规则（实时候选预筛用）.
+
+        Args:
+            categories: 规则类别列表（如 ["process", "behavior"]）.
+
+        Returns:
+            规则字典列表（condition 已解析，enabled 已归一化为 bool）.
+        """
+        if not categories:
+            return []
+        from app.models.rule import Rule
+        return Rule.list_categories(categories, enabled=True)
+
+    @staticmethod
+    def _is_suppressed(rule: dict, host_id, cache: dict) -> bool:
+        """抑制检查（缓存复用，避免逐事件重复 DB 查询）."""
+        name = rule.get("name")
+        if not name:
             return False
-        return False
+        key = (name, host_id)
+        if key in cache:
+            return cache[key]
+        try:
+            from app.models.rule_suppression import RuleSuppression
+            result = bool(RuleSuppression.is_suppressed(name, host_id or 0))
+        except Exception as exc:
+            logger.debug("抑制检查失败（降级为不抑制）: %s", exc)
+            result = False
+        cache[key] = result
+        return result
+
+    @staticmethod
+    def _is_whitelisted(rule: dict, item: dict) -> bool:
+        """白名单精确检查（调用 WhitelistService.is_whitelisted_precise）."""
+        try:
+            from app.services.whitelist_service import WhitelistService
+            return bool(WhitelistService.is_whitelisted_precise(rule, item))
+        except Exception as exc:
+            logger.debug("白名单检查失败（降级为不豁免）: %s", exc)
+            return False
+
+    @staticmethod
+    def _is_false_positive(rule: dict, item: dict, host_id, cache: dict) -> bool:
+        """误报模式检查（命中则自增 hit_count，cache 复用）."""
+        name = rule.get("name")
+        if not name:
+            return False
+        source_process = str(item.get("name") or item.get("process_name") or "")
+        key = (name, source_process, host_id)
+        if key in cache:
+            return cache[key]
+        try:
+            from app.models.false_positive import FalsePositivePattern
+            result = bool(FalsePositivePattern.match(name, source_process, host_id or 0))
+        except Exception as exc:
+            logger.debug("误报模式检查失败（降级为不误报）: %s", exc)
+            result = False
+        cache[key] = result
+        return result
+
+    @staticmethod
+    def _make_matched_rule(item: dict, rule: dict, global_context: dict, gated_by: Optional[str]) -> dict:
+        """构造 MatchedRule 字典（含门控标记、置信度、威胁情报回灌）.
+
+        T-P1-4: 若为真实命中（gated_by=None）且置信度≥阈值，
+        自动触发 Playbook（含 HITL 审批），通过 try/except 安全降级。
+        """
+        from app.rules.matched_rule import MatchedRule
+        severity = rule.get("severity", "medium")
+        reason = RuleEngine._build_reason(item, rule)
+        ti_hits = global_context.get("_ti_hits", {}).get(id(item), [])
+        for hit in ti_hits:
+            if hit.get("level") == "high":
+                severity = _max_severity(severity, "high")
+                reason += "【威胁情报平台判黑】"
+            elif hit.get("level") == "medium":
+                reason += "【威胁情报平台可疑】"
+        confidence = RuleEngine._confidence_for(rule)
+        mr = MatchedRule(
+            item=item,
+            rule=rule,
+            rule_id=rule.get("id"),
+            rule_name=rule.get("name", ""),
+            rule_type=rule.get("rule_type", ""),
+            category=rule.get("category"),
+            severity=severity,
+            confidence=confidence,
+            reason=reason,
+            matched_fields=RuleEngine._extract_matched_fields(item, rule),
+            matched_dimension=item.get("_matched_dimension") if rule.get("rule_type") == "behavior" else None,
+            attack_chain=None,
+            gated_by=gated_by,
+        )
+        if gated_by is None:
+            rule["_hit_updated"] = True
+            rule["hit_count"] = rule.get("hit_count", 0) + 1
+            rule["last_hit_at"] = datetime.now().isoformat()
+            hit_cnt = rule["hit_count"]
+            cur_avg = rule.get("avg_risk_score", 0.0) or 0.0
+            rule["avg_risk_score"] = (cur_avg * (hit_cnt - 1) + _RISK_MAP.get(severity, 2)) / hit_cnt
+
+        # ── T-P1-4: 自动 Playbook 触发（高置信真实命中） ──
+        # maybe_trigger 内部判断置信度阈值，此处对所有非门控真实命中尝试触发
+        if gated_by is None:
+            try:
+                from app.services.rule_hit_response import RuleHitResponseService
+                pb_result = RuleHitResponseService.maybe_trigger(mr.to_dict())
+                mr.auto_playbook = {
+                    "auto_playbook_triggered": pb_result.get("auto_playbook_triggered", False),
+                    "triggered_playbook_id": pb_result.get("triggered_playbook_id"),
+                    "trigger_message": pb_result.get("trigger_message"),
+                }
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("AutoPlaybook 安全降级（make_matched_rule）: %s", exc)
+                mr.auto_playbook = {
+                    "auto_playbook_triggered": False,
+                    "triggered_playbook_id": None,
+                    "trigger_message": f"降级: {exc}",
+                }
+
+        return mr.to_dict()
+
+    @staticmethod
+    def _confidence_for(rule: dict) -> float:
+        """根据规则类型与行为模式计算置信度."""
+        rt = rule.get("rule_type", "")
+        if rt == "behavior":
+            cond = rule.get("condition") or {}
+            if isinstance(cond, str):
+                try:
+                    cond = json.loads(cond)
+                except (json.JSONDecodeError, TypeError):
+                    cond = {}
+            if isinstance(cond, dict):
+                pat = cond.get("pattern", "")
+                if pat in _BEHAVIOR_CONFIDENCE:
+                    return _BEHAVIOR_CONFIDENCE[pat]
+            return 0.7
+        return _CONFIDENCE_DEFAULT.get(rt, 0.8)
+
+    @staticmethod
+    def _extract_matched_fields(item: dict, rule: dict) -> dict:
+        """从触发命中中提取匹配字段快照（供 MatchedRule.matched_fields 使用）."""
+        cond = rule.get("condition") or {}
+        if isinstance(cond, str):
+            try:
+                cond = json.loads(cond)
+            except (json.JSONDecodeError, TypeError):
+                cond = {}
+        fields: dict = {}
+        field = cond.get("field") if isinstance(cond, dict) else None
+        if field is not None and item.get(field) is not None:
+            fields[field] = str(item.get(field))[:200]
+        if rule.get("rule_type") == "behavior":
+            for f in ("name", "path", "command_line", "ppid", "parent_name", "process_name"):
+                if item.get(f) is not None and f not in fields:
+                    fields[f] = str(item.get(f))[:200]
+        return fields
 
     # ── 正则匹配 ────────────────────────────────────────────────────────
 
@@ -1505,6 +1733,23 @@ class RuleEngine:
             return RuleEngine._match_injection_window(data_item, condition, global_context)
         elif pattern == "vanished_process":
             return RuleEngine._match_vanished_process(data_item, condition, global_context)
+
+        # ── 兼容旧 rule_matcher 行为模式（P0-1 适配层）──────────────
+        elif pattern == "child_of_office":
+            parent = str(data_item.get("parent_name") or data_item.get("parent_process_name") or "").lower().strip()
+            if not parent:
+                return False
+            return any(x in parent for x in ("winword", "excel", "powerpnt", "outlook", "wordpad"))
+
+        elif pattern == "child_of_browser":
+            parent = str(data_item.get("parent_name") or data_item.get("parent_process_name") or "").lower().strip()
+            if not parent:
+                return False
+            return any(x in parent for x in ("chrome", "firefox", "msedge", "iexplore", "opera"))
+
+        elif pattern == "high_value_path":
+            path = str(data_item.get("process_path") or data_item.get("path") or "").lower()
+            return any(x in path for x in (r"\temp", r"\tmp", r"\downloads", r"\appdata\local\temp"))
 
         # ── 未知模式 ──────────────────────────────────────────────
         logger.warning("Unknown behavior pattern: %s", pattern)
@@ -2621,3 +2866,16 @@ class RuleEngine:
         except Exception as exc:  # noqa: BLE001
             logger.warning("读取攻击链命中失败 host=%d: %s", host_id, exc)
             return []
+
+
+# ── 注册 7 类 matcher 到 MatcherRegistry（P0-1 适配层）────────
+# P0 期注册表直接委派 RuleEngine 既有静态方法；P2 期改为动态加载模块。
+from app.rules.matchers.registry import MatcherRegistry  # noqa: E402
+
+MatcherRegistry.register("regex", lambda item, cond, ctx=None: RuleEngine._match_regex(item, cond))
+MatcherRegistry.register("list", lambda item, cond, ctx=None: RuleEngine._match_list(item, cond, global_context=ctx))
+MatcherRegistry.register("threshold", lambda item, cond, ctx=None: RuleEngine._match_threshold(item, cond))
+MatcherRegistry.register("behavior", lambda item, cond, ctx=None: RuleEngine._match_behavior(item, cond, global_context=ctx))
+MatcherRegistry.register("composite", lambda item, cond, ctx=None: RuleEngine._match_composite(item, cond, global_context=ctx))
+MatcherRegistry.register("exists", lambda item, cond, ctx=None: RuleEngine._match_exists(item, cond))
+MatcherRegistry.register("attack_chain", lambda item, cond, ctx=None: False)
