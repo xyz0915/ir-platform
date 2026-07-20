@@ -129,15 +129,6 @@ def build_events_where(params: dict) -> tuple[str, list]:
         # 非 AI 筛选模式下，排除 AI 推荐事件（避免普通视图混入）
         conditions.append("se.event_type != 'ai_recommended'")
 
-    # 引擎来源（source_collector，逗号分隔多选）
-    source_collector = params.get("source_collector")
-    if source_collector:
-        sc_list = [s.strip() for s in source_collector.split(",") if s.strip()]
-        if sc_list:
-            placeholders = ",".join("?" for _ in sc_list)
-            conditions.append(f"se.source_collector IN ({placeholders})")
-            sql_params.extend(sc_list)
-
     # 时间范围预设
     time_range = params.get("time_range")
     if time_range and time_range != "all":
