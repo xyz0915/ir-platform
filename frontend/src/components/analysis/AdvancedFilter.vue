@@ -76,7 +76,7 @@
             class="af-chip"
             :class="{ active: filters.ruleCategory.includes(c.category) }"
             @click="toggleArray('ruleCategory', c.category)"
-          >{{ c.category }} <span class="af-cnt">{{ c.count }}</span></span>
+          >{{ RULE_CATEGORY_LABELS[c.category] || c.category }} <span class="af-cnt">{{ c.count }}</span></span>
         </div>
       </div>
       <div class="af-row">
@@ -127,6 +127,15 @@ const activeCount = computed(() => {
   return c
 })
 
+const RULE_CATEGORY_LABELS = {
+  process: '进程', network: '网络', persistence: '持久化',
+  startup: '启动项', behavior: '行为', ioc: '情报',
+  credential: '凭据', discovery: '发现', execution: '执行',
+  lateral: '横向', impact: '影响', defense_evasion: '防御规避',
+  privilege_escalation: '提权', exfiltration: '数据外泄',
+  webshell: 'WebShell', memory_shell: '内存马',
+  attack_chain: '攻击链',
+}
 const SEV_COLORS = {
   critical: '#dc2626', high: '#dc2626', medium: '#d97706',
   low: '#2563eb', info: '#a3a3a3',

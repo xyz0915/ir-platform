@@ -579,7 +579,7 @@ function statusLabel(s) {
 }
 
 const categoryLabel = computed(() => {
-  const labels = { process: '进程', network: '网络', persistence: '持久化', startup: '启动项', behavior: '行为', ioc: '情报', credential: '凭据', discovery: '发现', execution: '执行', lateral: '横向', c2: 'C2', impact: '影响' }
+  const labels = { process: '进程', network: '网络', persistence: '持久化', startup: '启动项', behavior: '行为', ioc: '情报', credential: '凭据', discovery: '发现', execution: '执行', lateral: '横向', c2: 'C2', impact: '影响', defense_evasion: '防御规避', privilege_escalation: '提权', exfiltration: '数据外泄', webshell: 'WebShell', memory_shell: '内存马', attack_chain: '攻击链' }
   return labels[props.event?.category] || props.event?.category || ''
 })
 
