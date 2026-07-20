@@ -193,7 +193,7 @@ def _load_rules_by_categories(categories: list[str]) -> list[dict]:
     with get_connection() as conn:
         rows = conn.execute(
             f"SELECT id, name, rule_type, category, severity, condition FROM rules "
-            f"WHERE enabled=1 AND category IN ({placeholders})",
+            f"WHERE enabled=1 AND (engine_type IS NULL OR engine_type != 'behavior_engine') AND category IN ({placeholders})",
             categories,
         ).fetchall()
 

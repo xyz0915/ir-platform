@@ -165,10 +165,14 @@ class AnalysisService:
         active_policy = DetectionPolicy.get_active()
         if active_policy and active_policy.get("rule_ids"):
             rules = RuleEngine.load_rules_by_ids(active_policy["rule_ids"])
+            # 过滤掉行为引擎规则（仅 ServiceRiskAnalyzer 使用）
+            rules = [r for r in rules if r.get("engine_type") != "behavior_engine"]
             policy_name = active_policy.get("name", "未命名")
             logger.info("Using active policy '%s': %d rules", policy_name, len(rules))
         else:
             rules = RuleEngine.load_rules()
+            # 过滤掉行为引擎规则（仅 ServiceRiskAnalyzer 使用）
+            rules = [r for r in rules if r.get("engine_type") != "behavior_engine"]
             logger.warning("No active policy — fallback to all enabled rules (%d rules)", len(rules))
 
         # 3. 构建主机画像
