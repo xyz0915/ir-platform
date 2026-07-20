@@ -575,12 +575,7 @@ def bulk_insert(events: list[SecurityEvent]) -> tuple[int, int]:
 
 
 def _enrich_with_matched_rules(events: list[SecurityEvent]) -> None:
-    """对事件列表执行规则匹配，填充 matched_rules 字段.
-
-    Args:
-        events: SecurityEvent 实例列表（原地修改）.
-    """
-    # 惰性导入避免循环依赖
+    """对事件列表执行规则匹配，填充 matched_rules 字段."""
     from app.services.rule_matcher import match_event
 
     for event in events:
