@@ -253,6 +253,18 @@ class ImportService:
                 "users": "user_login",
                 "network_interfaces": "network_listen",
             }
+            # 构建 persistence.services 交叉索引（用于服务事件补全 path）
+            persistence_data = data.get("persistence", {})
+            if isinstance(persistence_data, dict):
+                persist_services = persistence_data.get("services", [])
+            else:
+                persist_services = []
+            persist_map: dict[str, str] = {}
+            if isinstance(persist_services, list):
+                for ps in persist_services:
+                    if isinstance(ps, dict) and ps.get("name"):
+                        persist_map[ps["name"]] = ps.get("command")
+
             for key, event_type in EVENT_TYPE_MAP.items():
                 items = data.get(key, [])
                 if not items:
@@ -262,6 +274,9 @@ class ImportService:
                         if isinstance(item, dict):
                             item["event_type"] = event_type
                             item["host_id"] = host_id
+                            # 服务事件注入 persistence 路径映射
+                            if event_type == "service_operation" and persist_map:
+                                item["_persist_path"] = persist_map.get(item.get("name"))
                             if fallback_ts and "timestamp" not in item:
                                 item["_fallback_ts"] = fallback_ts
                             raw_events.append(item)

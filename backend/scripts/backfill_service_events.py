@@ -47,13 +47,24 @@ def backfill():
             fail += 1
             continue
 
+        # 从 services 匹配基本字段
         services = raw.get("services", [])
         svc = None
         for s in services:
-            # 用 name 匹配
             if s.get("name") == get_name_from_event(old_ev):
                 svc = s
                 break
+
+        # 从 persistence.services 补 path（command 字段）
+        persist_path = None
+        persist_data = raw.get("persistence", {})
+        if isinstance(persist_data, dict):
+            persist_svcs = persist_data.get("services", [])
+            if isinstance(persist_svcs, list):
+                for ps in persist_svcs:
+                    if isinstance(ps, dict) and ps.get("name") == get_name_from_event(old_ev):
+                        persist_path = ps.get("command")
+                        break
         if not svc:
             fail += 1
             continue
@@ -61,7 +72,7 @@ def backfill():
         # 构建新 evidence
         new_ev = {
             "name": svc.get("name"),
-            "path": svc.get("path") or svc.get("binary_path"),  # 兼容 path/binary_path
+            "path": (svc.get("path") or svc.get("binary_path") or persist_path),  # 优先原始字段，再交叉补
             "display_name": svc.get("display_name"),
             "start_type": svc.get("start_type"),
             "status": svc.get("status"),

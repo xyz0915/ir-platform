@@ -73,7 +73,61 @@ def test_new_agent_binary_path_field():
 
 
 # ===================================================================
-#  Agent 旧版数据（无 path，用 account 代替 user）
+#  persistence.services 交叉补全
+# ===================================================================
+def test_persistence_crossref_path():
+    """无 path/binary_path，但有 _persist_path（从 persistence.services.command 注入）→ path 取 _persist_path."""
+    raw = {
+        "name": "AeLookupSvc",
+        "display_name": "Application Experience",
+        "status": "stopped",
+        "start_type": "manual",
+        "account": "localSystem",
+        "_persist_path": r"\SystemRoot\System32\svchost.exe -k netsvcs",
+        "host_id": 1,
+        "event_type": "service_operation",
+    }
+    result = mapper.map(raw)
+    assert result is not None
+    ev = result["evidence"]
+    assert ev["name"] == "AeLookupSvc"
+    assert ev["path"] == r"\SystemRoot\System32\svchost.exe -k netsvcs"
+
+
+def test_persistence_crossref_not_found():
+    """无 _persist_path → path 依旧 None."""
+    raw = {
+        "name": "UnknownSvc",
+        "display_name": "Unknown",
+        "status": "stopped",
+        "start_type": "manual",
+        "host_id": 1,
+        "event_type": "service_operation",
+    }
+    result = mapper.map(raw)
+    assert result is not None
+    ev = result["evidence"]
+    assert ev["name"] == "UnknownSvc"
+    assert ev["path"] is None
+
+
+def test_persistence_crossref_existing_path_wins():
+    """同时有 path 和 _persist_path → path 优先（原始字段优先）."""
+    raw = {
+        "name": "TestSvc",
+        "path": r"C:\Program Files\test.exe",
+        "_persist_path": r"\SystemRoot\System32\test.exe",
+        "host_id": 1,
+        "event_type": "service_operation",
+    }
+    result = mapper.map(raw)
+    assert result is not None
+    ev = result["evidence"]
+    assert ev["path"] == r"C:\Program Files\test.exe"  # path 比 _persist_path 优先级高
+
+
+# ===================================================================
+#  旧版 Agent（无 path，用 account 代替 user）
 # ===================================================================
 def test_old_agent_account_fallback():
     """旧版 Agent：account→user 兼容."""
