@@ -391,7 +391,18 @@ def build_event_summary(event: dict) -> str:
 
     elif event_type in ("persistence_register", "scheduled_task", "service_operation", "wmi_subscribe"):
         name = _g("name", "task_name", "service_name", default="?")
-        parts.append(f"注册持久化项 {name}")
+        # service_operation：从 path 提取可执行文件名
+        if event_type == "service_operation":
+            svc_path = _g("path", default="")
+            if svc_path and svc_path != "?":
+                import re
+                m = re.search(r'([^\\\/]+\.\w+)', svc_path, re.I)
+                exe = m.group(1) if m else svc_path.split()[-1][:40]
+                parts.append(f"服务 {name} ({exe})")
+            else:
+                parts.append(f"服务 {name}")
+        else:
+            parts.append(f"注册持久化项 {name}")
 
     elif event_type in ("user_login", "user_logout"):
         action = "登录" if event_type == "user_login" else "登出"

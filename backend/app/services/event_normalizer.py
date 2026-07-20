@@ -167,11 +167,12 @@ class PersistenceMapper(BaseMapper):
             "source_collector": raw.get("source_collector", "osquery"),
             "evidence": {
                 "name": raw.get("name"),
-                "command": raw.get("command"),
-                "location": raw.get("location"),
-                "type": raw.get("type"),
-                "user": raw.get("user"),
-                "details": raw.get("details"),
+                "path": raw.get("path"),                       # Agent 实际字段（二进制路径）
+                "display_name": raw.get("display_name"),       # 服务显示名
+                "start_type": raw.get("start_type"),           # 启动类型
+                "status": raw.get("status"),                   # 运行状态
+                "user": raw.get("user") or raw.get("account"), # 新版/旧版兼容
+                "description": raw.get("description"),         # 服务描述
             },
             "severity": raw.get("severity", "high"),
             "host_id": raw.get("host_id", 0),
