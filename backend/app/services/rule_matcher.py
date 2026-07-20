@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 # ── 缓存配置 ──
 _rule_cache: dict[str, dict] = {}
-_RULE_CACHE_TTL = 60  # 秒
+_RULE_CACHE_TTL = 300  # 秒（原 60，减少 80% 回源查询）
 
 # ── 灰度开关 ──
 USE_UNIFIED_ENGINE: bool = True

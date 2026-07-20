@@ -1,6 +1,7 @@
 """全局态势仪表盘 API — 聚合查询各维度数据（全数据驱动版本）. """
 import json
 import logging
+import time
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -9,6 +10,10 @@ from app.database import get_connection
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["仪表盘"])
+
+# 仪表盘缓存（TTL 60s，减少重复查询）
+_dash_cache: dict[str, tuple[float, dict]] = {}
+_DASH_CACHE_TTL = 60
 
 # 告警类别 rule_name → 中文标签映射
 _RULE_LABEL_MAP: dict[str, str] = {
@@ -64,7 +69,13 @@ def _label_for_rule(rule_name: str) -> str:
 def dashboard_stats(
     time_range: str = Query("7d", alias="range", description="时间范围: 24h / 7d / 30d / all"),
 ):
-    """聚合仪表盘全局统计数据."""
+    """聚合仪表盘全局统计数据（缓存 60s，减少重复查询）。"""
+    key = f"dash:{time_range}"
+    now = time.time()
+    if key in _dash_cache:
+        ts, data = _dash_cache[key]
+        if now - ts < _DASH_CACHE_TTL:
+            return data
     result = {
         "metrics": {},
         "trend": {},
@@ -357,4 +368,5 @@ def dashboard_stats(
         result["error"] = str(e)
 
     result["range"] = time_range
+    _dash_cache[key] = (time.time(), result)
     return result

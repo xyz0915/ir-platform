@@ -687,6 +687,13 @@ DDL_STATEMENTS = [
     """
     CREATE INDEX IF NOT EXISTS idx_security_events_assignee ON security_events(assignee)
     """,
+    # 性能优化：matched_rules 查询 + hosts 复合索引
+    """
+    CREATE INDEX IF NOT EXISTS idx_security_events_matched ON security_events(matched_rules)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_hosts_case_status ON hosts(case_id, status)
+    """,
     # status_history — 状态变更审计表
     """
     CREATE TABLE IF NOT EXISTS status_history (

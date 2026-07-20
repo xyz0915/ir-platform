@@ -1067,9 +1067,11 @@ def batch_update_status(
     if not ids or not status:
         raise HTTPException(status_code=400, detail="ids 和 status 不能为空")
     with get_connection() as conn:
-        for eid in ids:
-            conn.execute("UPDATE security_events SET status = ?, updated_at = ? WHERE id = ?",
-                         (status, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), eid))
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        ph = ",".join("?" for _ in ids)
+        conn.execute(
+            f"UPDATE security_events SET status = ?, updated_at = ? WHERE id IN ({ph})",
+            [status, now] + ids)
         conn.commit()
     return success({"updated": len(ids)})
 
@@ -1084,9 +1086,11 @@ def batch_assign(
     if not ids or not assignee:
         raise HTTPException(status_code=400, detail="ids 和 assignee 不能为空")
     with get_connection() as conn:
-        for eid in ids:
-            conn.execute("UPDATE security_events SET assignee = ?, updated_at = ? WHERE id = ?",
-                         (assignee, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), eid))
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        ph = ",".join("?" for _ in ids)
+        conn.execute(
+            f"UPDATE security_events SET assignee = ?, updated_at = ? WHERE id IN ({ph})",
+            [assignee, now] + ids)
         conn.commit()
     return success({"updated": len(ids)})
 
@@ -1101,12 +1105,15 @@ def batch_link_case(
     if not ids or not case_id:
         raise HTTPException(status_code=400, detail="ids 和 case_id 不能为空")
     with get_connection() as conn:
-        for eid in ids:
-            host_row = conn.execute("SELECT host_id FROM security_events WHERE id = ?", (eid,)).fetchone()
-            if host_row:
-                conn.execute("UPDATE hosts SET case_id = ? WHERE id = ?", (case_id, host_row["host_id"]))
+        ph = ",".join("?" for _ in ids)
+        host_rows = conn.execute(
+            f"SELECT DISTINCT host_id FROM security_events WHERE id IN ({ph})", ids).fetchall()
+        host_ids = list(set(r["host_id"] for r in host_rows if r["host_id"]))
+        hph = ",".join("?" for _ in host_ids)
+        if host_ids:
+            conn.execute(f"UPDATE hosts SET case_id = ? WHERE id IN ({hph})", [case_id] + host_ids)
         conn.commit()
-    return success({"updated": len(ids)})
+    return success({"updated": len(host_ids)})
 
 
 # ===================================================================
