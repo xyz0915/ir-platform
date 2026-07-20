@@ -61,7 +61,7 @@ def backfill():
         # 构建新 evidence
         new_ev = {
             "name": svc.get("name"),
-            "path": svc.get("path"),
+            "path": svc.get("path") or svc.get("binary_path"),  # 兼容 path/binary_path
             "display_name": svc.get("display_name"),
             "start_type": svc.get("start_type"),
             "status": svc.get("status"),

@@ -167,7 +167,7 @@ class PersistenceMapper(BaseMapper):
             "source_collector": raw.get("source_collector", "osquery"),
             "evidence": {
                 "name": raw.get("name"),
-                "path": raw.get("path"),                       # Agent 实际字段（二进制路径）
+                "path": raw.get("path") or raw.get("binary_path"),  # 兼容 path/binary_path
                 "display_name": raw.get("display_name"),       # 服务显示名
                 "start_type": raw.get("start_type"),           # 启动类型
                 "status": raw.get("status"),                   # 运行状态

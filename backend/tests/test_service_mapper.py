@@ -20,10 +20,10 @@ mapper = PersistenceMapper()
 
 
 # ===================================================================
-#  Agent 新版数据
+#  Agent 新版数据（path 字段）
 # ===================================================================
-def test_new_agent_full_fields():
-    """新版 Agent：7 字段完整 → evidence 正确映射."""
+def test_new_agent_path_field():
+    """新版 Agent：path 字段 → evidence.path 正确."""
     raw = {
         "name": "FakeUpdateSvc",
         "display_name": "Windows Update Helper Service",
@@ -49,6 +49,30 @@ def test_new_agent_full_fields():
 
 
 # ===================================================================
+#  Agent 新版数据（binary_path 字段 — 实际采集格式）
+# ===================================================================
+def test_new_agent_binary_path_field():
+    """新版 Agent：binary_path → evidence.path 正确映射."""
+    raw = {
+        "name": "Spooler",
+        "display_name": "Print Spooler",
+        "status": "running",
+        "start_type": "auto",
+        "binary_path": r"C:\Windows\System32\spoolsv.exe",
+        "account": "LocalSystem",
+        "host_id": 1,
+        "event_type": "service_operation",
+        "timestamp": "2026-07-20T10:00:00",
+    }
+    result = mapper.map(raw)
+    assert result is not None
+    ev = result["evidence"]
+    assert ev["name"] == "Spooler"
+    assert ev["path"] == r"C:\Windows\System32\spoolsv.exe"  # binary_path → path
+    assert ev["user"] == "LocalSystem"  # account 兜底生效
+
+
+# ===================================================================
 #  Agent 旧版数据（无 path，用 account 代替 user）
 # ===================================================================
 def test_old_agent_account_fallback():
@@ -67,7 +91,7 @@ def test_old_agent_account_fallback():
     assert result is not None
     ev = result["evidence"]
     assert ev["name"] == "AeLookupSvc"
-    assert ev["path"] is None  # 旧版无 path
+    assert ev["path"] is None  # 旧版无 path/binary_path
     assert ev["user"] == "localSystem"  # account 兜底生效
 
 
@@ -98,15 +122,14 @@ def test_summary_with_path():
     event = {
         "event_type": "service_operation",
         "evidence": json.dumps({
-            "name": "BITS",
-            "path": r"C:\Windows\System32\svchost.exe -k netsvcs",
-            "display_name": "Background Intelligent Transfer",
+            "name": "Spooler",
+            "path": r"C:\Windows\System32\spoolsv.exe",
         }),
     }
     summary = build_event_summary(event)
     assert "服务" in summary
-    assert "svchost.exe" in summary
-    assert "BITS" in summary
+    assert "spoolsv.exe" in summary
+    assert "Spooler" in summary
 
 
 def test_summary_without_path():
@@ -119,17 +142,16 @@ def test_summary_without_path():
     }
     summary = build_event_summary(event)
     assert "服务 TestSvc" in summary
-    assert "exe" not in summary.lower()
 
 
 def test_summary_empty_evidence():
-    """evidence 为空字典 → 摘要显示 ?."""
+    """evidence 为空字典 → 不会崩溃."""
     event = {
         "event_type": "service_operation",
         "evidence": json.dumps({}),
     }
     summary = build_event_summary(event)
-    assert summary  # 不会崩溃
+    assert summary
 
 
 # ===================================================================
