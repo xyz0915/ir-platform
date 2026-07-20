@@ -75,6 +75,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     ruleId: null,
     ruleCategory: [],
     confidenceMin: null,
+    sourceCollector: [],
     keyword: '',
     page: 1,
     pageSize: 20,
@@ -142,6 +143,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     if (ruleFilters.ruleId) params.rule_id = ruleFilters.ruleId
     if (ruleFilters.ruleCategory.length) params.rule_category = ruleFilters.ruleCategory.join(',')
     if (ruleFilters.confidenceMin) params.rule_confidence_min = ruleFilters.confidenceMin
+    if (ruleFilters.sourceCollector.length) params.source_collector = ruleFilters.sourceCollector.join(',')
     if (ruleFilters.keyword) params.keyword = ruleFilters.keyword
     // AI 降噪筛选（v2）
     if (['recommended', 'suspicious', 'false_positive'].includes(ruleFilters.viewFilter)) {
@@ -304,6 +306,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     ruleFilters.ruleId = null
     ruleFilters.ruleCategory = []
     ruleFilters.confidenceMin = null
+    ruleFilters.sourceCollector = []
     ruleFilters.keyword = ''
     ruleFilters.page = 1
     ruleFilters.pageSize = 20

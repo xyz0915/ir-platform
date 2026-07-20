@@ -79,6 +79,21 @@
           >{{ RULE_CATEGORY_LABELS[c.category] || c.category }} <span class="af-cnt">{{ c.count }}</span></span>
         </div>
       </div>
+
+      <!-- Row: 引擎来源 -->
+      <div class="af-row">
+        <span class="af-row-label">引擎来源</span>
+        <div class="af-chips">
+          <span
+            v-for="sc in sourceCollectors"
+            :key="sc.value"
+            class="af-chip"
+            :class="{ active: filters.sourceCollector.includes(sc.value) }"
+            @click="toggleArray('sourceCollector', sc.value)"
+          >{{ sc.label }}</span>
+        </div>
+      </div>
+
       <div class="af-row">
         <span class="af-row-label">置信度</span>
         <select class="af-select" :value="filters.confidenceMin" @change="onConfidenceChange">
@@ -113,6 +128,11 @@ const timeOptions = [
   { key: 'all', label: '全部' },
 ]
 
+const sourceCollectors = [
+  { value: 'osquery', label: '规则引擎' },
+  { value: 'cm', label: '行为分析' },
+]
+
 const eventTypes = computed(() => props.meta.eventTypeCounts || [])
 const severities = computed(() => props.meta.severityCounts || [])
 const ruleCategories = computed(() => props.meta.hitRuleCategories || [])
@@ -123,6 +143,7 @@ const activeCount = computed(() => {
   if (props.filters.eventType.length) c++
   if (props.filters.severity.length) c++
   if (props.filters.ruleCategory.length) c++
+  if (props.filters.sourceCollector.length) c++
   if (props.filters.confidenceMin) c++
   return c
 })

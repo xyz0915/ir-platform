@@ -2,7 +2,7 @@
 
 支持的参数: case_id, host_id, filter, severity, event_type,
            rule_id, rule_category, rule_confidence_min,
-           time_range, keyword, start_time, end_time
+           source_collector, time_range, keyword, start_time, end_time
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ def build_events_where(params: dict) -> tuple[str, list]:
             - rule_id (int|str): 规则 ID
             - rule_category (str): 规则分类
             - rule_confidence_min (float): 最小置信度 0.0-1.0
+            - source_collector (str): 逗号分隔，如 "osquery,cm"
             - time_range (str): "1h" / "24h" / "7d" / "all"
             - keyword (str): 关键字搜索
             - start_time (str): 自定义开始时间 ISO
@@ -66,6 +67,15 @@ def build_events_where(params: dict) -> tuple[str, list]:
             placeholders = ",".join("?" * len(sev_list))
             conditions.append(f"se.severity IN ({placeholders})")
             sql_params.extend(sev_list)
+
+    # 引擎来源
+    source_collector = params.get("source_collector")
+    if source_collector:
+        sc_list = [s.strip() for s in source_collector.split(",") if s.strip()]
+        if sc_list:
+            placeholders = ",".join("?" for _ in sc_list)
+            conditions.append(f"se.source_collector IN ({placeholders})")
+            sql_params.extend(sc_list)
 
     # 事件类型
     event_type = params.get("event_type")
@@ -118,6 +128,15 @@ def build_events_where(params: dict) -> tuple[str, list]:
     else:
         # 非 AI 筛选模式下，排除 AI 推荐事件（避免普通视图混入）
         conditions.append("se.event_type != 'ai_recommended'")
+
+    # 引擎来源（source_collector，逗号分隔多选）
+    source_collector = params.get("source_collector")
+    if source_collector:
+        sc_list = [s.strip() for s in source_collector.split(",") if s.strip()]
+        if sc_list:
+            placeholders = ",".join("?" for _ in sc_list)
+            conditions.append(f"se.source_collector IN ({placeholders})")
+            sql_params.extend(sc_list)
 
     # 时间范围预设
     time_range = params.get("time_range")
