@@ -1,7 +1,7 @@
 /** 日志检索 Pinia Store */
 
 import { defineStore } from 'pinia'
-import { searchLogs, searchAdvanced, getTrend } from '@/api/logs'
+import { searchLogs, getTrend } from '@/api/logs'
 import request from '@/api/index'
 
 export const useLogSearchStore = defineStore('logSearch', {
@@ -10,6 +10,16 @@ export const useLogSearchStore = defineStore('logSearch', {
     keyword: '',
     selectedCaseId: null,
     selectedHostId: null,
+
+    // 筛选条件（P0-2）
+    filterEventType: '',
+    filterSeverity: '',
+    filterAttackStage: '',
+    filterSourceCollector: '',
+    filterStatus: '',
+
+    // 搜索范围（P2 统一跨表检索）
+    searchScope: 'events',  // events / imports / all
 
     // 分页
     page: 1,
@@ -82,17 +92,23 @@ export const useLogSearchStore = defineStore('logSearch', {
       try {
         const params = {
           keyword: this.keyword,
-          case_id: this.selectedCaseId || undefined,
           host_id: this.selectedHostId || undefined,
+          event_type: this.filterEventType || undefined,
+          severity: this.filterSeverity || undefined,
+          attack_stage: this.filterAttackStage || undefined,
+          source_collector: this.filterSourceCollector || undefined,
+          status: this.filterStatus || undefined,
           page: this.page,
           page_size: this.pageSize,
         }
 
-        // 判断是否使用高级搜索
         let res
-        if (this.keyword && (this.keyword.includes('==') || this.keyword.includes('!=') || this.keyword.includes('~') || this.keyword.includes('contains') || this.keyword.includes(' in '))) {
-          res = await searchAdvanced({ query: this.keyword, ...params })
+        if (this.searchScope === 'all' || this.searchScope === 'imports') {
+          // 统一检索或原始日志检索
+          params.scope = this.searchScope
+          res = await request.get('/log-search/unified-search', { params })
         } else {
+          // 默认：安全事件检索
           res = await searchLogs(params)
         }
 

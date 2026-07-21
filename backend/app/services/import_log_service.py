@@ -306,7 +306,22 @@ class ImportLogService:
             ImportLogService._run_rule_matching(new_events)
             ImportLogService._create_alerts(new_events)
 
-            # 8. 更新 ImportRecord 状态
+            # 8. 写入 agent_imports 表（日志检索模块可用，非阻塞）
+            try:
+                from app.services.log_importer import import_batch as log_import_batch
+                records_to_import = [{
+                    "collector_type": log_source,
+                    "collector_name": log_source,
+                    "raw_json": json.dumps(parsed_items, ensure_ascii=False),
+                }]
+                log_import_batch(host_id, records_to_import, case_id=None)
+                logger.info("Written %d items to agent_imports for host %d", len(parsed_items), host_id)
+            except ImportError:
+                logger.info("log_importer not available, skipping agent_imports write")
+            except Exception as exc:
+                logger.warning("agent_imports write failed (non-blocking): %s", exc)
+
+            # 9. 更新 ImportRecord 状态
             ImportRecord.update_status(
                 record_id=record_id,
                 status="completed",

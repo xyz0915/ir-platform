@@ -4,14 +4,16 @@
   POST   /import                 导入 Agent JSON
   GET    /imports                导入记录列表（分页+筛选）
   GET    /imports/{id}           导入详情
-  GET    /search                 全文检索 + 结构化筛选
-  GET    /search/advanced        字段运算符高级搜索
+  GET    /search                 全文检索 + 结构化筛选（搜索 security_events）
+  GET    /unified-search         统一跨表检索（security_events + agent_imports）
   GET    /search/raw             返回纯文本 JSON
   GET    /search/export          导出搜索结果（JSON/CSV）
   POST   /imports/{id}/to-event  一键生成 SecurityEvent
   GET    /trend                  日志量趋势数据
 
 【第①批 T-C1 安全加固】全模块端点已加 ``Depends(get_current_user)`` 鉴权.
+【P0-1 改造】/search 和 /search/export 已从 agent_imports FTS5 改为 security_events 表.
+【P2 新增】/unified-search 统一跨表检索（security_events + agent_imports）.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ import csv
 import io
 import json
 import logging
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -27,6 +30,7 @@ from fastapi.responses import StreamingResponse
 
 from app.services import log_importer
 from app.services.auth_service import get_current_user
+from app.services.nl_log_search import search_events
 
 logger = logging.getLogger(__name__)
 
@@ -121,69 +125,137 @@ def api_get_import(import_id: int, user: dict = Depends(get_current_user)):
     return _success(record)
 
 
-# ── 4. GET /search — 全文检索 ──
+# ── 4. GET /unified-search — 统一跨表检索引擎 ──
 
 
-@router.get("/search", summary="全文检索 + 结构化筛选")
+@router.get("/unified-search", summary="统一跨表检索（security_events + agent_imports）")
+def api_unified_search(
+    keyword: str = Query("", description="搜索关键字"),
+    scope: str = Query("events", regex="^(events|imports|all)$", description="搜索范围: events/imports/all"),
+    host_id: int | None = Query(None),
+    event_type: str | None = Query(None),
+    severity: str | None = Query(None),
+    start_time: str | None = Query(None, alias="start_time"),
+    end_time: str | None = Query(None, alias="end_time"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    user: dict = Depends(get_current_user),
+):
+    """统一跨表检索。
+
+    scope=events: 只搜 security_events（默认）
+    scope=imports: 只搜 agent_imports（FTS5）
+    scope=all: 搜两张表，合并按时间排序
+    """
+    start_ts = time.time()
+
+    if scope == "events":
+        result = search_events(
+            host_id=host_id,
+            event_type=event_type,
+            severity=severity,
+            keyword=keyword if keyword else None,
+            date_from=start_time, date_to=end_time,
+            page=page, page_size=page_size,
+        )
+        # 标记来源
+        for item in result["items"]:
+            item["_source"] = "security_events"
+        result["elapsed_ms"] = int((time.time() - start_ts) * 1000)
+        return _success(result)
+
+    elif scope == "imports":
+        result = log_importer.search(
+            keyword=keyword,
+            host_id=host_id,
+            start_time=start_time, end_time=end_time,
+            page=page, page_size=page_size,
+        )
+        for item in result["items"]:
+            item["_source"] = "agent_imports"
+        result["elapsed_ms"] = result.get("elapsed_ms", int((time.time() - start_ts) * 1000))
+        return _success(result)
+
+    else:  # scope == "all"
+        # 从两张表各取最多 500 条，合并排序
+        se_result = search_events(
+            host_id=host_id,
+            event_type=event_type, severity=severity,
+            keyword=keyword if keyword else None,
+            date_from=start_time, date_to=end_time,
+            page=1, page_size=500,
+        )
+        ai_result = log_importer.search(
+            keyword=keyword,
+            host_id=host_id,
+            start_time=start_time, end_time=end_time,
+            page=1, page_size=500,
+        )
+
+        # 标记来源并合并
+        all_items = []
+        for item in se_result.get("items", []):
+            item["_source"] = "security_events"
+            all_items.append(item)
+        for item in ai_result.get("items", []):
+            item["_source"] = "agent_imports"
+            all_items.append(item)
+
+        # 按 timestamp 降序排序
+        all_items.sort(key=lambda x: x.get("timestamp", "") or x.get("imported_at", "") or "", reverse=True)
+
+        total = len(all_items)
+        start = (page - 1) * page_size
+        paged = all_items[start:start + page_size]
+
+        return _success({
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "elapsed_ms": int((time.time() - start_ts) * 1000),
+            "items": paged,
+        })
+
+
+# ── 5. GET /search — 全文检索（搜索 security_events 表）──
+
+
+@router.get("/search", summary="全文检索 + 结构化筛选（搜索 security_events）")
 def api_search(
-    keyword: str = Query("", description="搜索关键字（空值返回最近 24h）"),
-    case_id: int | None = Query(None, description="案件 ID"),
+    keyword: str = Query("", description="搜索关键字（空值返回所有，按时间倒序）"),
     host_id: int | None = Query(None, description="主机 ID"),
-    collector_type: str | None = Query(None, description="采集器类型"),
-    start_time: str | None = Query(None, description="起始时间"),
-    end_time: str | None = Query(None, description="截止时间"),
+    event_type: str | None = Query(None, description="事件类型（逗号分隔）"),
+    severity: str | None = Query(None, description="严重度（逗号分隔）"),
+    attack_stage: str | None = Query(None, description="攻击阶段"),
+    source_collector: str | None = Query(None, description="采集器来源"),
+    status: str | None = Query(None, description="事件状态"),
+    start_time: str | None = Query(None, alias="start_time", description="起始时间"),
+    end_time: str | None = Query(None, alias="end_time", description="截止时间"),
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页条数"),
     user: dict = Depends(get_current_user),
 ):
-    """全文检索 agent_imports+ 结构化筛选，支持 FTS5 语法."""
-    result = log_importer.search(
-        keyword=keyword,
-        case_id=case_id,
+    """搜索安全事件（security_events 表），替代原先的 agent_imports FTS5 搜索。"""
+    start_ts = time.time()
+    result = search_events(
         host_id=host_id,
-        collector_type=collector_type,
-        start_time=start_time,
-        end_time=end_time,
+        event_type=event_type,
+        severity=severity,
+        attack_stage=attack_stage,
+        source_collector=source_collector,
+        status=status,
+        keyword=keyword if keyword else None,
+        date_from=start_time,
+        date_to=end_time,
         page=page,
         page_size=page_size,
     )
+    elapsed_ms = int((time.time() - start_ts) * 1000)
+    result["elapsed_ms"] = elapsed_ms
     return _success(result)
 
 
-# ── 5. GET /search/advanced — 高级搜索 ──
-
-
-@router.get("/search/advanced", summary="字段运算符高级搜索")
-def api_search_advanced(
-    query: str = Query(..., description="高级搜索表达式"),
-    case_id: int | None = Query(None, description="案件 ID"),
-    host_id: int | None = Query(None, description="主机 ID"),
-    page: int = Query(1, ge=1, description="页码"),
-    page_size: int = Query(20, ge=1, le=100, description="每页条数"),
-    user: dict = Depends(get_current_user),
-):
-    """使用字段运算符语法进行高级搜索.
-
-    语法: ip=="1.1.1.1" and severity=="high"
-    支持: ==, !=, ~, contains, in + and/or
-    """
-    if not query or not query.strip():
-        return _error("查询表达式不能为空")
-
-    try:
-        result = log_importer.search_advanced(
-            query_str=query,
-            case_id=case_id,
-            host_id=host_id,
-            page=page,
-            page_size=page_size,
-        )
-        return _success(result)
-    except ValueError as exc:
-        return _error(f"语法解析错误: {exc}")
-
-
-# ── 6. GET /search/raw — 返回纯文本 JSON ──
+# ── 5. GET /search/raw — 返回纯文本 JSON ──
 
 
 @router.get("/search/raw", summary="返回纯文本 JSON")
@@ -202,29 +274,29 @@ def api_search_raw(
         return _success({"raw_json": record["raw_json"]})
 
 
-# ── 7. GET /search/export — 导出搜索结果 ──
+# ── 6. GET /search/export — 导出搜索结果（搜索 security_events）──
 
 
 @router.get("/search/export", summary="导出搜索结果（JSON/CSV）")
 def api_search_export(
     keyword: str = Query("", description="搜索关键字"),
-    case_id: int | None = Query(None, description="案件 ID"),
     host_id: int | None = Query(None, description="主机 ID"),
-    collector_type: str | None = Query(None, description="采集器类型"),
+    event_type: str | None = Query(None, description="事件类型（逗号分隔）"),
+    severity: str | None = Query(None, description="严重度（逗号分隔）"),
     start_time: str | None = Query(None, description="起始时间"),
     end_time: str | None = Query(None, description="截止时间"),
     format: str = Query("json", regex="^(json|csv)$", description="导出格式"),
     page_size: int = Query(1000, ge=1, le=10000, description="导出条数上限"),
     user: dict = Depends(get_current_user),
 ):
-    """导出搜索结果为 JSON 或 CSV 文件."""
-    result = log_importer.search(
-        keyword=keyword,
-        case_id=case_id,
+    """导出 security_events 搜索结果（替代原先的 agent_imports FTS5 导出）。"""
+    result = search_events(
         host_id=host_id,
-        collector_type=collector_type,
-        start_time=start_time,
-        end_time=end_time,
+        event_type=event_type,
+        severity=severity,
+        keyword=keyword if keyword else None,
+        date_from=start_time,
+        date_to=end_time,
         page=1,
         page_size=page_size,
     )
@@ -233,11 +305,11 @@ def api_search_export(
     if format == "csv":
         output = io.StringIO()
         writer = csv.writer(output)
-        # 写入表头
+        # security_events 表头
         headers = [
-            "id", "import_batch_id", "case_id", "host_id", "hostname",
-            "ip_address", "case_name", "collector_type", "collector_name",
-            "item_count", "imported_at", "event_id", "event_created",
+            "id", "host_id", "hostname", "event_type", "severity",
+            "attack_stage", "source_collector", "status", "timestamp",
+            "summary", "matched_rules", "evidence",
         ]
         writer.writerow(headers)
         for item in items:
@@ -246,18 +318,18 @@ def api_search_export(
         return StreamingResponse(
             iter([output.getvalue()]),
             media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=log_search_export.csv"},
+            headers={"Content-Disposition": "attachment; filename=security_events_export.csv"},
         )
     else:
         # JSON 格式
         return StreamingResponse(
             iter([json.dumps(items, ensure_ascii=False, indent=2)]),
             media_type="application/json",
-            headers={"Content-Disposition": "attachment; filename=log_search_export.json"},
+            headers={"Content-Disposition": "attachment; filename=security_events_export.json"},
         )
 
 
-# ── 8. POST /imports/{id}/to-event — 一键生成事件 ──
+# ── 7. POST /imports/{id}/to-event — 一键生成事件 ──
 
 
 @router.post("/imports/{import_id}/to-event", summary="一键生成 SecurityEvent")
@@ -270,7 +342,7 @@ def api_to_event(import_id: int, user: dict = Depends(get_current_user)):
         return _error(str(exc))
 
 
-# ── 9. GET /trend — 日志量趋势数据 ──
+# ── 8. GET /trend — 日志量趋势数据 ──
 
 
 @router.get("/trend", summary="日志量趋势数据（按小时聚合）")

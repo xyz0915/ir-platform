@@ -51,6 +51,57 @@
       @quick-filter="onQuickFilter"
     />
 
+    <!-- ═══ Filter Bar (P0-2) ═══ -->
+    <div class="filter-bar">
+      <select class="fi" v-model="store.filterEventType" @change="store.search()" style="width:140px;">
+        <option value="">全部事件类型</option>
+        <option value="process_start">进程启动</option>
+        <option value="network_outbound">出站连接</option>
+        <option value="registry_modify">注册表写入</option>
+        <option value="file_create">文件创建</option>
+        <option value="user_login">用户登录</option>
+        <option value="service_operation">服务操作</option>
+      </select>
+      <select class="fi" v-model="store.filterSeverity" @change="store.search()" style="width:110px;">
+        <option value="">全部严重度</option>
+        <option value="critical">严重</option>
+        <option value="high">高危</option>
+        <option value="medium">中危</option>
+        <option value="low">低危</option>
+        <option value="info">信息</option>
+      </select>
+      <select class="fi" v-model="store.filterAttackStage" @change="store.search()" style="width:130px;">
+        <option value="">全部攻击阶段</option>
+        <option value="persistence">持久化</option>
+        <option value="defense_evasion">防御规避</option>
+        <option value="privilege_escalation">提权</option>
+        <option value="discovery">发现</option>
+        <option value="lateral">横向移动</option>
+        <option value="exfiltration">数据外泄</option>
+        <option value="impact">影响</option>
+      </select>
+      <select class="fi" v-model="store.filterSourceCollector" @change="store.search()" style="width:120px;">
+        <option value="">全部引擎</option>
+        <option value="osquery">规则引擎</option>
+        <option value="cm">行为分析</option>
+      </select>
+      <select class="fi" v-model="store.filterStatus" @change="store.search()" style="width:120px;">
+        <option value="">全部状态</option>
+        <option value="pending">待处理</option>
+        <option value="investigating">调查中</option>
+        <option value="resolved">已解决</option>
+        <option value="dismissed">已忽略</option>
+      </select>
+      <button class="btn btn-ghost btn-sm" @click="resetFilters" style="margin-left:8px;">重置筛选</button>
+      <span style="flex:1"></span>
+      <span style="font-size:12px;color:var(--color-fg-subtle);margin-right:4px;">范围</span>
+      <select class="fi" v-model="store.searchScope" @change="store.search()" style="width:100px;">
+        <option value="events">安全事件</option>
+        <option value="imports">原始日志</option>
+        <option value="all">全部</option>
+      </select>
+    </div>
+
     <!-- ═══ Result Area (Layer 2) ═══ -->
     <LogResultList
       :items="store.items"
@@ -208,6 +259,17 @@ function onQuickFilter(tag) {
   fetchData()
 }
 
+function resetFilters() {
+  store.filterEventType = ''
+  store.filterSeverity = ''
+  store.filterAttackStage = ''
+  store.filterSourceCollector = ''
+  store.filterStatus = ''
+  store.searchScope = 'events'
+  store.page = 1
+  store.search()
+}
+
 function showDetail(item) {
   detailRecord.value = item
   showDetailPanel.value = true
@@ -232,6 +294,11 @@ async function exportResults(format) {
       keyword: store.keyword,
       case_id: store.selectedCaseId,
       host_id: store.selectedHostId,
+      event_type: store.filterEventType || undefined,
+      severity: store.filterSeverity || undefined,
+      attack_stage: store.filterAttackStage || undefined,
+      source_collector: store.filterSourceCollector || undefined,
+      status: store.filterStatus || undefined,
       format,
     })
     const url = URL.createObjectURL(blob)
@@ -363,6 +430,24 @@ function saveSearchCondition() {
 .btn:disabled {
   opacity: 0.4;
   pointer-events: none;
+}
+
+/* ── Filter Bar (P0-2) ── */
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  flex-wrap: wrap;
+}
+.filter-bar .fi {
+  height: 32px;
+  border: 1px solid var(--color-border-secondary, #d1d5db);
+  border-radius: 6px;
+  padding: 0 8px;
+  font-size: 13px;
+  background: var(--color-bg-primary, #fff);
+  color: var(--color-fg-primary, #111);
 }
 
 /* ── Modal ── */
