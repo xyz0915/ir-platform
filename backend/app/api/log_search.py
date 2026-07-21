@@ -128,6 +128,23 @@ def api_get_import(import_id: int, user: dict = Depends(get_current_user)):
 # ── 4. GET /unified-search — 统一跨表检索引擎 ──
 
 
+def _normalize_import_item(item: dict) -> dict:
+    """将 agent_imports 字段映射到 security_events 统一 schema.
+
+    前端 LogResultList 按 security_events 字段渲染，需要做映射。
+    """
+    return {
+        **item,
+        "_source": "agent_imports",
+        "event_type": item.get("collector_type", ""),
+        "timestamp": item.get("imported_at", ""),
+        "source_collector": "agent",
+        "severity": "info",  # agent_imports 无严重度字段
+        "status": "已处理" if item.get("event_created") else "未处理",
+        "evidence": item.get("raw_json", "{}"),
+    }
+
+
 @router.get("/unified-search", summary="统一跨表检索（security_events + agent_imports）")
 def api_unified_search(
     keyword: str = Query("", description="搜索关键字"),
@@ -173,6 +190,13 @@ def api_unified_search(
         )
         for item in result["items"]:
             item["_source"] = "agent_imports"
+            # 字段映射：agent_imports → security_events schema
+            item["event_type"] = item.get("collector_type", "")
+            item["timestamp"] = item.get("imported_at", "")
+            item["source_collector"] = "agent"
+            item["severity"] = "info"
+            item["status"] = "已处理" if item.get("event_created") else "未处理"
+            item["evidence"] = item.get("raw_json", "{}")
         result["elapsed_ms"] = result.get("elapsed_ms", int((time.time() - start_ts) * 1000))
         return _success(result)
 
@@ -198,8 +222,7 @@ def api_unified_search(
             item["_source"] = "security_events"
             all_items.append(item)
         for item in ai_result.get("items", []):
-            item["_source"] = "agent_imports"
-            all_items.append(item)
+            all_items.append(_normalize_import_item(item))
 
         # 按 timestamp 降序排序
         all_items.sort(key=lambda x: x.get("timestamp", "") or x.get("imported_at", "") or "", reverse=True)
