@@ -16,27 +16,24 @@
             <span class="info-value">{{ record.id }}</span>
           </div>
           <div class="info-item">
-            <span class="info-label">案件</span>
-            <span class="info-value">{{ record.case_name || `#${record.case_id}` }}</span>
-          </div>
-          <div class="info-item">
             <span class="info-label">主机</span>
             <span class="info-value">{{ record.hostname || `#${record.host_id}` }}</span>
           </div>
           <div class="info-item">
-            <span class="info-label">采集器</span>
-            <span class="info-value">{{ record.collector_type }}</span>
+            <span class="info-label">事件类型</span>
+            <span class="info-value">{{ record.event_type }}</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">严重度</span>
+            <span class="info-value">{{ record.severity }}</span>
           </div>
           <div class="info-item">
             <span class="info-label">时间</span>
-            <span class="info-value">{{ record.imported_at }}</span>
+            <span class="info-value">{{ record.timestamp }}</span>
           </div>
           <div class="info-item">
-            <span class="info-label">状态</span>
-            <span class="info-value">
-              <el-tag v-if="record.event_created" type="success" size="small">已生成事件</el-tag>
-              <el-tag v-else type="info" size="small">未处理</el-tag>
-            </span>
+            <span class="info-label">来源</span>
+            <span class="info-value">{{ record.source_collector || '-' }}</span>
           </div>
         </div>
       </div>
@@ -190,27 +187,38 @@ const visible = computed({
   set: (v) => emit('update:modelValue', v),
 })
 
-// 解析 JSON
+// 解析 JSON（security_events 的 evidence 字段）
 const parsedJson = computed(() => {
-  if (!props.record?.raw_json) return null
+  if (!props.record?.evidence) return null
   try {
-    return JSON.parse(props.record.raw_json)
+    return typeof props.record.evidence === 'string'
+      ? JSON.parse(props.record.evidence)
+      : props.record.evidence
   } catch {
     return null
   }
 })
 
 const rawJsonText = computed(() => {
-  if (!props.record?.raw_json) return '{}'
+  if (!props.record?.evidence) return '{}'
   try {
-    return JSON.stringify(JSON.parse(props.record.raw_json), null, 2)
+    const data = typeof props.record.evidence === 'string'
+      ? JSON.parse(props.record.evidence)
+      : props.record.evidence
+    return JSON.stringify(data, null, 2)
   } catch {
-    return props.record.raw_json
+    return typeof props.record.evidence === 'string'
+      ? props.record.evidence
+      : JSON.stringify(props.record.evidence, null, 2)
   }
 })
 
 function copyJson() {
-  const text = props.record?.raw_json || '{}'
+  const text = props.record?.evidence
+    ? (typeof props.record.evidence === 'string'
+      ? props.record.evidence
+      : JSON.stringify(props.record.evidence, null, 2))
+    : '{}'
   navigator.clipboard.writeText(text).then(() => {
     ElMessage.success('已复制到剪贴板')
   }).catch(() => {
