@@ -22,6 +22,7 @@ from collectors.resource_budget import (
     is_young_process,
 )
 from utils.platform import (
+    get_timestamp,
     is_windows,
     is_linux,
     run_command,
@@ -89,6 +90,7 @@ class ProcessesCollector(BaseCollector):
                     "start_time": start_time,
                     "threads": info.get("num_threads", 0) or 0,
                     "connections": conn_map.get(pid, []),
+                    "collected_at": get_timestamp(),
                 }
                 # ── 富化：session / state / memory_sections ──
                 self._enrich(process_data)
@@ -138,6 +140,18 @@ class ProcessesCollector(BaseCollector):
                             ppid = int(ppid_str) if ppid_str and ppid_str.isdigit() else 0
                         except ValueError:
                             ppid = 0
+                        # 从 wmic creationdate 解析进程启动时间
+                        cdate_idx = _find_col(headers, "CreationDate")
+                        wmic_ct = row[cdate_idx].strip() if cdate_idx < len(row) else ""
+                        start_time = ""
+                        if wmic_ct:
+                            try:
+                                # wmic 格式: 20260711230710.123456+480 (YYYYMMDDHHMMSS.ffffff±ZZZ)
+                                wmic_ct = wmic_ct.strip()
+                                dt_str = wmic_ct.split(".")[0]
+                                start_time = f"{dt_str[0:4]}-{dt_str[4:6]}-{dt_str[6:8]}T{dt_str[8:10]}:{dt_str[10:12]}:{dt_str[12:14]}"
+                            except Exception:
+                                start_time = ""
                         pd = {
                             "pid": pid,
                             "ppid": ppid,
@@ -145,9 +159,10 @@ class ProcessesCollector(BaseCollector):
                             "path": row[path_idx].strip() if path_idx < len(row) else "",
                             "command_line": row[cmd_idx].strip() if cmd_idx < len(row) else "",
                             "user": "",
-                            "start_time": "",
+                            "start_time": start_time,
                             "threads": 0,
                             "connections": [],
+                            "collected_at": get_timestamp(),
                         }
                         self._enrich(pd)
                         processes.append(pd)
@@ -179,6 +194,7 @@ class ProcessesCollector(BaseCollector):
                     "start_time": "",
                     "threads": 0,
                     "connections": [],
+                    "collected_at": get_timestamp(),
                 }
                 self._enrich(pd)
                 processes.append(pd)

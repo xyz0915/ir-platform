@@ -98,7 +98,7 @@ class ProcessMapper(BaseMapper):
         return {
             "event_type": raw.get("event_type", "process_start"),
             "event_key": str(raw.get("pid", raw.get("process_name", "unknown"))),
-            "timestamp": raw.get("timestamp", raw.get("start_time", raw.get("_fallback_ts", datetime.now(timezone.utc).isoformat()))),
+            "timestamp": (raw.get("timestamp") or raw.get("start_time") or raw.get("_fallback_ts") or datetime.now(timezone.utc).isoformat()),
             "source_collector": raw.get("source_collector", "osquery"),
             "evidence": {
                 "name": raw.get("process_name"),       # ← 规则匹配需要 name 字段
@@ -124,14 +124,14 @@ class NetworkMapper(BaseMapper):
         "event_type", "protocol", "local_address", "local_addr", "local_port",
         "remote_address", "remote_addr", "remote_port", "state", "process_name",
         "pid", "query", "query_type", "timestamp", "source_collector",
-        "severity", "host_id",
+        "collected_at", "severity", "host_id",
     }
 
     def map(self, raw: dict) -> dict | None:
         return {
             "event_type": raw.get("event_type", "network_outbound"),
             "event_key": f"{raw.get('remote_address', '')}:{raw.get('remote_port', 0)}",
-            "timestamp": raw.get("timestamp", raw.get("_fallback_ts", datetime.now(timezone.utc).isoformat())),
+            "timestamp": (raw.get("timestamp") or raw.get("start_time") or raw.get("collected_at") or raw.get("_fallback_ts") or datetime.now(timezone.utc).isoformat()),
             "source_collector": raw.get("source_collector", "osquery"),
             "evidence": {
                 "protocol": raw.get("protocol"),
@@ -157,14 +157,15 @@ class RegistryMapper(BaseMapper):
     event_types = ["registry_modify", "registry_delete"]
     _EXTRACTED_KEYS = {
         "event_type", "key_path", "value_name", "value_type", "value_data",
-        "process_name", "timestamp", "source_collector", "severity", "host_id",
+        "process_name", "timestamp", "source_collector",
+        "collected_at", "last_write_time", "severity", "host_id",
     }
 
     def map(self, raw: dict) -> dict | None:
         return {
             "event_type": raw.get("event_type", "registry_modify"),
             "event_key": raw.get("key_path", ""),
-            "timestamp": raw.get("timestamp", raw.get("_fallback_ts", datetime.now(timezone.utc).isoformat())),
+            "timestamp": (raw.get("timestamp") or raw.get("last_write_time") or raw.get("collected_at") or raw.get("_fallback_ts") or datetime.now(timezone.utc).isoformat()),
             "source_collector": raw.get("source_collector", "osquery"),
             "evidence": {
                 "key_path": raw.get("key_path"),
@@ -187,14 +188,14 @@ class FileMapper(BaseMapper):
     _EXTRACTED_KEYS = {
         "event_type", "file_name", "file_path", "file_size", "sha256",
         "is_signed", "signer", "process_name", "timestamp", "source_collector",
-        "severity", "host_id",
+        "collected_at", "severity", "host_id",
     }
 
     def map(self, raw: dict) -> dict | None:
         return {
             "event_type": raw.get("event_type", "file_create"),
             "event_key": raw.get("file_path", raw.get("file_name", "")),
-            "timestamp": raw.get("timestamp", raw.get("_fallback_ts", datetime.now(timezone.utc).isoformat())),
+            "timestamp": (raw.get("timestamp") or raw.get("collected_at") or raw.get("_fallback_ts") or datetime.now(timezone.utc).isoformat()),
             "source_collector": raw.get("source_collector", "osquery"),
             "evidence": {
                 "name": raw.get("file_name"),           # ← 规则匹配需要 name
@@ -219,14 +220,15 @@ class PersistenceMapper(BaseMapper):
     _EXTRACTED_KEYS = {
         "event_type", "name", "command", "path", "binary_path", "_persist_path",
         "display_name", "start_type", "status", "user", "account", "description",
-        "timestamp", "source_collector", "severity", "host_id",
+        "timestamp", "source_collector",
+        "collected_at", "severity", "host_id",
     }
 
     def map(self, raw: dict) -> dict | None:
         return {
             "event_type": raw.get("event_type", "persistence_register"),
             "event_key": raw.get("name", raw.get("command", "")),
-            "timestamp": raw.get("timestamp", raw.get("_fallback_ts", datetime.now(timezone.utc).isoformat())),
+            "timestamp": (raw.get("timestamp") or raw.get("start_time") or raw.get("collected_at") or raw.get("_fallback_ts") or datetime.now(timezone.utc).isoformat()),
             "source_collector": raw.get("source_collector", "osquery"),
             "evidence": {
                 "name": raw.get("name"),
@@ -251,14 +253,15 @@ class WmiMapper(BaseMapper):
     event_types = ["wmi_subscribe"]
     _EXTRACTED_KEYS = {
         "event_type", "name", "event_filter", "event_consumer", "binding_type",
-        "timestamp", "source_collector", "severity", "host_id",
+        "timestamp", "source_collector",
+        "collected_at", "severity", "host_id",
     }
 
     def map(self, raw: dict) -> dict | None:
         return {
             "event_type": "wmi_subscribe",
             "event_key": raw.get("name", raw.get("event_filter", "")),
-            "timestamp": raw.get("timestamp", raw.get("_fallback_ts", datetime.now(timezone.utc).isoformat())),
+            "timestamp": (raw.get("timestamp") or raw.get("collected_at") or raw.get("_fallback_ts") or datetime.now(timezone.utc).isoformat()),
             "source_collector": raw.get("source_collector", "osquery"),
             "evidence": {
                 "name": raw.get("name"),
@@ -279,14 +282,14 @@ class BehaviorMapper(BaseMapper):
     _EXTRACTED_KEYS = {
         "event_type", "rule_name", "rule_label", "reason", "severity",
         "source_process", "source_pid", "detail", "timestamp",
-        "source_collector", "host_id",
+        "collected_at", "source_collector", "host_id",
     }
 
     def map(self, raw: dict) -> dict | None:
         return {
             "event_type": "behavior_alert",
             "event_key": raw.get("rule_name", raw.get("reason", "alert")),
-            "timestamp": raw.get("timestamp", raw.get("_fallback_ts", datetime.now(timezone.utc).isoformat())),
+            "timestamp": (raw.get("timestamp") or raw.get("collected_at") or raw.get("_fallback_ts") or datetime.now(timezone.utc).isoformat()),
             "source_collector": raw.get("source_collector", "behavior_engine"),
             "evidence": {
                 "rule_name": raw.get("rule_name"),
@@ -310,7 +313,7 @@ class IocMapper(BaseMapper):
     _EXTRACTED_KEYS = {
         "event_type", "ioc_type", "ioc_value", "matched_field", "matched_context",
         "source", "ioc_matches", "matched_iocs", "timestamp", "source_collector",
-        "severity", "host_id",
+        "collected_at", "severity", "host_id",
     }
 
     def map(self, raw: dict) -> dict | None:
@@ -320,7 +323,7 @@ class IocMapper(BaseMapper):
         return {
             "event_type": "ioc_match",
             "event_key": "_".join(matches) if matches else raw.get("ioc_value", "ioc"),
-            "timestamp": raw.get("timestamp", raw.get("_fallback_ts", datetime.now(timezone.utc).isoformat())),
+            "timestamp": (raw.get("timestamp") or raw.get("collected_at") or raw.get("_fallback_ts") or datetime.now(timezone.utc).isoformat()),
             "source_collector": raw.get("source_collector", "ioc_engine"),
             "evidence": {
                 "ioc_type": raw.get("ioc_type"),
@@ -343,14 +346,14 @@ class AuthMapper(BaseMapper):
     _EXTRACTED_KEYS = {
         "event_type", "user_name", "username", "user_domain", "logon_type",
         "source_ip", "logon_session", "process_name", "timestamp",
-        "source_collector", "severity", "host_id",
+        "collected_at", "source_collector", "severity", "host_id",
     }
 
     def map(self, raw: dict) -> dict | None:
         return {
             "event_type": raw.get("event_type", "user_login"),
             "event_key": raw.get("user_name", raw.get("username", "unknown")),
-            "timestamp": raw.get("timestamp", raw.get("_fallback_ts", datetime.now(timezone.utc).isoformat())),
+            "timestamp": (raw.get("timestamp") or raw.get("start_time") or raw.get("collected_at") or raw.get("_fallback_ts") or datetime.now(timezone.utc).isoformat()),
             "source_collector": raw.get("source_collector", "osquery"),
             "evidence": {
                 "user_name": raw.get("user_name", raw.get("username")),
@@ -373,14 +376,14 @@ class ModuleMapper(BaseMapper):
     _EXTRACTED_KEYS = {
         "event_type", "module_name", "file_name", "file_path", "sha256",
         "pid", "process_name", "is_signed", "signer", "timestamp",
-        "source_collector", "severity", "host_id",
+        "collected_at", "source_collector", "severity", "host_id",
     }
 
     def map(self, raw: dict) -> dict | None:
         return {
             "event_type": raw.get("event_type", "module_load"),
             "event_key": raw.get("file_path", raw.get("module_name", "")),
-            "timestamp": raw.get("timestamp", raw.get("_fallback_ts", datetime.now(timezone.utc).isoformat())),
+            "timestamp": (raw.get("timestamp") or raw.get("collected_at") or raw.get("_fallback_ts") or datetime.now(timezone.utc).isoformat()),
             "source_collector": raw.get("source_collector", "osquery"),
             "evidence": {
                 "module_name": raw.get("module_name", raw.get("file_name")),
@@ -403,14 +406,14 @@ class PipeMapper(BaseMapper):
     event_types = ["pipe_connect"]
     _EXTRACTED_KEYS = {
         "event_type", "pipe_name", "process_name", "pid", "timestamp",
-        "source_collector", "severity", "host_id",
+        "collected_at", "source_collector", "severity", "host_id",
     }
 
     def map(self, raw: dict) -> dict | None:
         return {
             "event_type": "pipe_connect",
             "event_key": raw.get("pipe_name", ""),
-            "timestamp": raw.get("timestamp", raw.get("_fallback_ts", datetime.now(timezone.utc).isoformat())),
+            "timestamp": (raw.get("timestamp") or raw.get("collected_at") or raw.get("_fallback_ts") or datetime.now(timezone.utc).isoformat()),
             "source_collector": raw.get("source_collector", "osquery"),
             "evidence": {
                 "pipe_name": raw.get("pipe_name"),

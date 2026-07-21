@@ -1,59 +1,17 @@
 sequenceDiagram
-    participant Client as Agent 数据
-    participant SRA as ServiceRiskAnalyzer
-    participant SC as service_constants
-    participant DB as rules 表
-    participant SW as USE_BEHAVIOR_DB_RULES
+    participant Agent as Agent Collector
+    participant JSON as JSON File
+    participant Mapper as Mapper (or 链)
+    participant DB as Security Events DB
 
-    Note over SRA,SW: Phase 1-2: 硬编码模式 (USE_BEHAVIOR_DB_RULES=False)
+    Note over Agent: Phase 2: 改进采集
+    Agent->>Agent: processes.py: 采集 start_time + collected_at
+    Agent->>Agent: network.py: 采集 creation_time + collected_at
+    Agent->>Agent: registry.py: 采集 last_write_time + collected_at
+    Agent->>Agent: services.py: 采集 collected_at
+    Agent->>JSON: 写入 JSON 文件
 
-    SRA->>SW: 检查灰度开关
-    SW-->>SRA: False
-    SRA->>SC: 读取 SECURITY_SERVICES
-    SRA->>SC: 读取 TRUSTED_PATHS
-    SRA->>SC: 读取 KNOWN_LEGIT_SERVICES
-    SRA->>SC: 读取 START_TYPE_RISK
-    SRA->>SRA: _detect_tamper(services) ← 硬编码参数
-    SRA->>SRA: _detect_shadow(services)  ← 硬编码参数
-    SRA->>SRA: _detect_priv_esc(services) ← 硬编码参数
-    SRA->>SRA: _detect_registry(services) ← 硬编码参数
-    SRA-->>Client: 返回分析结果
-
-    Note over SRA,SW: Phase 3-4: DB 模式 (USE_BEHAVIOR_DB_RULES=True)
-
-    SRA->>SW: 检查灰度开关
-    SW-->>SRA: True
-    SRA->>SRA: _load_behavior_rules()
-    SRA->>DB: SELECT * FROM rules WHERE engine_type='behavior_engine' AND enabled=1
-    DB-->>SRA: [TAMPER规则, SHADOW规则, PRIVESC规则, REGISTRY规则]
-    SRA->>SRA: 按 condition.detector 分发
-    SRA->>SRA: _detect_tamper(services, condition)        ← condition 参数
-    SRA->>SRA: _detect_shadow(services, condition)         ← condition 参数
-    SRA->>SRA: _detect_priv_esc(services, condition)       ← condition 参数
-    SRA->>SRA: _detect_registry(services, condition)       ← condition 参数
-    SRA-->>Client: 返回分析结果
-
-    participant Normalizer as event_normalizer
-    participant Mapper as ProcessMapper
-    participant Util as _compute_raw_extra
-    participant RMatcher as rule_matcher
-    participant SE as security_events
-
-    Note over Normalizer,SE: 归一化管道：_raw_extra 注入
-
-    Agent->>Normalizer: raw={"event_type":"process_start","pid":1234,"process_name":"cmd.exe","command_line":"...","is_64bit":true,"session":1}
-    Normalizer->>Normalizer: validate_schema(raw)
-    Normalizer->>Mapper: map(raw)
-    Mapper->>Mapper: 提取显式字段 {name, pid, ppid, process_name, process_path, command_line, parent_name, session}
-    Mapper->>Util: _compute_raw_extra(raw, self._EXTRACTED_KEYS)
-    Util->>Util: 计算差集: raw.keys() - extracted_keys
-    Util->>Util: 过滤内部字段(_开头)、非标量值、_raw_extra自身
-    Util-->>Mapper: {"is_64bit": true, ...}
-    Mapper->>Mapper: 注入到 evidence._raw_extra
-    Mapper-->>Normalizer: fields = {evidence: {name:"cmd.exe",..., _raw_extra: {is_64bit:true, ...}}}
-    Normalizer->>Normalizer: infer_attack_stage()
-    Normalizer->>Normalizer: build SecurityEvent
-    Normalizer->>RMatcher: match_event(event_dict)
-    RMatcher->>RMatcher: _get_nested(evidence, "_raw_extra.is_64bit")
-    RMatcher-->>Normalizer: matched_rules
-    Normalizer->>SE: bulk_insert([event])
+    Note over JSON,Mapper: Phase 1: 修复回退链
+    Mapper->>JSON: 读取 raw dict
+    Mapper->>Mapper: timestamp = raw.get("timestamp")<br/>    or raw.get("start_time")<br/>    or raw.get("collected_at")<br/>    or raw.get("_fallback_ts")<br/>    or datetime.now().isoformat()
+    Mapper->>DB: 写入 security_events

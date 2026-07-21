@@ -121,6 +121,13 @@ class RegistryCollector(BaseCollector):
         for hive, key_path in run_paths:
             try:
                 with winreg.OpenKey(hive, key_path) as key:
+                    # 获取注册表键的最后写入时间
+                    try:
+                        info = winreg.QueryInfoKey(key)
+                        lwt = info[2]
+                        last_write_str = lwt.isoformat() if lwt else ""
+                    except Exception:
+                        last_write_str = ""
                     index = 0
                     while True:
                         try:
@@ -131,6 +138,7 @@ class RegistryCollector(BaseCollector):
                                 "value": value,
                                 "hive": "HKLM" if hive == winreg.HKEY_LOCAL_MACHINE else "HKCU",
                                 "value_type": _reg_type_name(value_type),
+                                "last_write_time": last_write_str,
                             })
                             index += 1
                         except OSError:

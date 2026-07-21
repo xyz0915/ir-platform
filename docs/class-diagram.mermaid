@@ -1,127 +1,107 @@
 classDiagram
-    class Rule {
-        +int id
-        +str name
-        +str description
-        +str category
-        +str rule_type
-        +dict condition
-        +str severity
-        +bool enabled
-        +str label
-        +str source
-        +str mitre_attack
-        +str owner
-        +str engine_type  # 新增
-        +int version
-        +str status
-        +str created_at
-        +str updated_at
-        +str approved_by
-        +str deprecated_at
-        +int tenant_id
-        +dict create(name, category, rule_type, condition, severity, description, enabled, label, source, engine_type, changed_by) dict
-        +dict update(rule_id, enabled, condition, severity, changed_by, description, owner, name, label, mitre_attack, engine_type) dict
-        +list list(category, enabled, tenant_id, engine_type) list
-        +dict search(category, severity, rule_type, keyword, engine_type, page, page_size) dict
-        +dict get_by_id(rule_id) dict
-        +bool delete(rule_id, changed_by) bool
-    }
-
-    class RuleHistory {
-        +int id
-        +int rule_id
-        +int version
-        +str snapshot
-        +str action
-        +str operator
-        +str comment
-        +str approved_by
-        +str created_at
-        +int create(rule_id, version, snapshot, action, operator, comment, approved_by) int
-        +list list_by_rule(rule_id) list
-        +dict get_version(rule_id, version) dict
-    }
-
-    class BehaviorRuleCondition {
-        +str detector
-        +list security_services
-        +dict start_type_risk
-        +list legit_services
-        +list trusted_paths
-        +float similarity_threshold
-        +list suspicious_keywords
-        +list high_priv_users
-        +int weight
-    }
-
     class BaseMapper {
-        +list event_types
-        +set _EXTRACTED_KEYS
-        +dict map(raw) dict
+        +list~str~ event_types
+        +map(raw: dict) dict | None
     }
 
     class ProcessMapper {
-        +set _EXTRACTED_KEYS
-        +dict map(raw) dict
+        +list~str~ event_types
+        +map(raw: dict) dict | None
     }
 
     class NetworkMapper {
-        +set _EXTRACTED_KEYS
-        +dict map(raw) dict
+        +list~str~ event_types
+        +map(raw: dict) dict | None
     }
 
     class RegistryMapper {
-        +set _EXTRACTED_KEYS
-        +dict map(raw) dict
+        +list~str~ event_types
+        +map(raw: dict) dict | None
     }
 
     class FileMapper {
-        +set _EXTRACTED_KEYS
-        +dict map(raw) dict
+        +list~str~ event_types
+        +map(raw: dict) dict | None
     }
 
     class PersistenceMapper {
-        +set _EXTRACTED_KEYS
-        +dict map(raw) dict
+        +list~str~ event_types
+        +map(raw: dict) dict | None
     }
 
     class WmiMapper {
-        +set _EXTRACTED_KEYS
-        +dict map(raw) dict
+        +list~str~ event_types
+        +map(raw: dict) dict | None
     }
 
     class BehaviorMapper {
-        +set _EXTRACTED_KEYS
-        +dict map(raw) dict
+        +list~str~ event_types
+        +map(raw: dict) dict | None
     }
 
     class IocMapper {
-        +set _EXTRACTED_KEYS
-        +dict map(raw) dict
+        +list~str~ event_types
+        +map(raw: dict) dict | None
     }
 
     class AuthMapper {
-        +set _EXTRACTED_KEYS
-        +dict map(raw) dict
+        +list~str~ event_types
+        +map(raw: dict) dict | None
     }
 
     class ModuleMapper {
-        +set _EXTRACTED_KEYS
-        +dict map(raw) dict
+        +list~str~ event_types
+        +map(raw: dict) dict | None
     }
 
     class PipeMapper {
-        +set _EXTRACTED_KEYS
-        +dict map(raw) dict
+        +list~str~ event_types
+        +map(raw: dict) dict | None
     }
 
-    class _compute_raw_extra_util {
-        +dict _compute_raw_extra(raw: dict, extracted_keys: set) dict
+    class ProcessesCollector {
+        +str name
+        +list~str~ platform
+        +collect() list
+        +_collect_fallback() list
+        +_build_connection_map(psutil) dict
+        +_enrich(proc: dict) void
     }
 
-    Rule "1" --> "*" RuleHistory : version history
-    Rule ..> BehaviorRuleCondition : condition stores (behavior_engine)
+    class NetworkCollector {
+        +str name
+        +list~str~ platform
+        +collect() dict
+        +_collect_windows_connections() dict
+        +_build_network_connections(connections: list) list
+        +_get_connections() list
+    }
+
+    class RegistryCollector {
+        +str name
+        +list~str~ platform
+        +collect() dict
+        +_build_registry_keys(run_keys, services, shell_extensions) list
+        +_get_run_keys() list
+        +_get_shell_extensions() list
+    }
+
+    class StartupItemsCollector {
+        +str name
+        +list~str~ platform
+        +collect() list
+        +_collect_windows() list
+        +_get_registry_run_keys() list
+    }
+
+    class ServicesCollector {
+        +str name
+        +list~str~ platform
+        +collect() list
+        +_collect_windows() list
+        +_collect_linux() list
+    }
+
     BaseMapper <|-- ProcessMapper : extends
     BaseMapper <|-- NetworkMapper : extends
     BaseMapper <|-- RegistryMapper : extends
@@ -133,14 +113,3 @@ classDiagram
     BaseMapper <|-- AuthMapper : extends
     BaseMapper <|-- ModuleMapper : extends
     BaseMapper <|-- PipeMapper : extends
-    ProcessMapper ..> _compute_raw_extra_util : uses
-    NetworkMapper ..> _compute_raw_extra_util : uses
-    RegistryMapper ..> _compute_raw_extra_util : uses
-    FileMapper ..> _compute_raw_extra_util : uses
-    PersistenceMapper ..> _compute_raw_extra_util : uses
-    WmiMapper ..> _compute_raw_extra_util : uses
-    BehaviorMapper ..> _compute_raw_extra_util : uses
-    IocMapper ..> _compute_raw_extra_util : uses
-    AuthMapper ..> _compute_raw_extra_util : uses
-    ModuleMapper ..> _compute_raw_extra_util : uses
-    PipeMapper ..> _compute_raw_extra_util : uses

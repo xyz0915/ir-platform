@@ -4,7 +4,7 @@ import logging
 from typing import Any
 
 from collectors.base_collector import BaseCollector
-from utils.platform import is_windows, is_linux, run_command
+from utils.platform import is_windows, is_linux, run_command, get_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,8 @@ class ServicesCollector(BaseCollector):
             if line.startswith("SERVICE_NAME") or line.startswith("服务名称"):
                 if current:
                     services.append(current)
-                current = {"name": line.split(":", 1)[-1].strip() if ":" in line else ""}
+                current = {"name": line.split(":", 1)[-1].strip() if ":" in line else "",
+                            "collected_at": get_timestamp()}
             elif line.startswith("DISPLAY_NAME") or line.startswith("显示名称"):
                 current["display_name"] = line.split(":", 1)[-1].strip() if ":" in line else ""
             elif line.startswith("STATE") or line.startswith("状态"):
@@ -96,5 +97,6 @@ class ServicesCollector(BaseCollector):
                         "start_type": "auto" if "enabled" in load_state else "manual",
                         "binary_path": "",
                         "account": "",
+                        "collected_at": get_timestamp(),
                     })
         return services

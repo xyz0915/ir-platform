@@ -67,7 +67,7 @@ class NetworkCollector(BaseCollector):
             ps_cmd = (
                 'powershell -NoProfile -Command '
                 '"& { Get-NetTCPConnection | '
-                'Select-Object LocalAddress,LocalPort,RemoteAddress,RemotePort,State,OwningProcess | '
+                'Select-Object LocalAddress,LocalPort,RemoteAddress,RemotePort,State,OwningProcess,CreationTime | '
                 'ConvertTo-Json -Compress }"'
             )
             output = run_command(ps_cmd, timeout=30)
@@ -83,6 +83,8 @@ class NetworkCollector(BaseCollector):
                         "remote_port": int(conn.get("RemotePort", 0)),
                         "state": str(conn.get("State", "")),
                         "owning_process": int(conn.get("OwningProcess", 0)),
+                        "creation_time": str(conn.get("CreationTime", "")),
+                        "collected_at": get_timestamp(),
                     })
                 logger.info(
                     "Collected %d TCP connections via PowerShell",
@@ -209,6 +211,7 @@ class NetworkCollector(BaseCollector):
                         "state": conn.status if conn.status else "",
                         "pid": pid or 0,
                         "process_name": process_name,
+                        "collected_at": get_timestamp(),
                     })
                 except Exception:
                     continue
@@ -260,6 +263,7 @@ class NetworkCollector(BaseCollector):
                     "remote_address": ra, "remote_port": rp,
                     "state": state,
                     "pid": pid, "process_name": "",
+                    "collected_at": get_timestamp(),
                 })
         return connections
 

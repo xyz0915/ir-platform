@@ -5,7 +5,7 @@ import os
 from typing import Any
 
 from collectors.base_collector import BaseCollector
-from utils.platform import is_windows, is_linux, run_command
+from utils.platform import is_windows, is_linux, run_command, get_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +60,13 @@ class StartupItemsCollector(BaseCollector):
         for hive, key_path, location, user in run_keys:
             try:
                 with winreg.OpenKey(hive, key_path) as key:
+                    # 获取注册表键的最后写入时间
+                    try:
+                        info = winreg.QueryInfoKey(key)
+                        lwt = info[2]
+                        last_write_str = lwt.isoformat() if lwt else ""
+                    except Exception:
+                        last_write_str = ""
                     index = 0
                     while True:
                         try:
@@ -70,6 +77,8 @@ class StartupItemsCollector(BaseCollector):
                                 "location": f"{location}\\{key_path}",
                                 "user": user,
                                 "type": "registry",
+                                "last_write_time": last_write_str,
+                                "collected_at": get_timestamp(),
                             })
                             index += 1
                         except OSError:
@@ -109,6 +118,7 @@ class StartupItemsCollector(BaseCollector):
                         "location": path,
                         "user": user,
                         "type": "startup_folder",
+                        "collected_at": get_timestamp(),
                     })
             except (PermissionError, OSError):
                 continue
@@ -137,6 +147,7 @@ class StartupItemsCollector(BaseCollector):
                         "location": "Task Scheduler",
                         "user": "",
                         "type": "scheduled_task",
+                        "collected_at": get_timestamp(),
                     }
                 elif key in ("Task To Run", "要运行的任务"):
                     if current:
