@@ -55,9 +55,10 @@
           </div>
         </div>
 
-        <!-- JSON 预览（IOC 高亮） -->
-        <div class="card-preview">
-          <pre class="json-preview" v-html="formatEvidence(item.evidence)" />
+        <!-- JSON 预览（IOC 高亮，原始日志仅显示摘要） -->
+        <div class="card-preview" :class="{ 'card-preview-truncated': item._source === 'agent_imports' }">
+          <pre class="json-preview" v-html="formatEvidence(item.evidence, item._source)" />
+          <div v-if="isTruncated(item)" class="preview-more" @click="$emit('view-detail', item)">... 点击查看详情查看完整内容</div>
         </div>
 
         <!-- 操作按钮 -->
@@ -128,13 +129,18 @@ function formatTime(ts) {
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
-function formatEvidence(evidence) {
+function formatEvidence(evidence, source) {
   if (!evidence) return '（无证据数据）'
   let parsed
   try {
     parsed = typeof evidence === 'string' ? JSON.parse(evidence) : evidence
   } catch {
-    return typeof evidence === 'string' ? evidence.substring(0, 2000) : ''
+    // 非 JSON → 直接截断
+    const raw = typeof evidence === 'string' ? evidence : ''
+    if (source === 'agent_imports' && raw.length > 200) {
+      return escapeHtml(raw.substring(0, 200))
+    }
+    return escapeHtml(raw)
   }
   let formatted = JSON.stringify(parsed, null, 2)
   // 高亮 IP 地址
@@ -142,7 +148,21 @@ function formatEvidence(evidence) {
     /(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?)/g,
     '<span class="ioc-highlight">$1</span>',
   )
+  // 原始日志过长时截断
+  if (source === 'agent_imports' && formatted.length > 200) {
+    formatted = formatted.substring(0, 200)
+  }
   return formatted
+}
+
+function isTruncated(item) {
+  return item._source === 'agent_imports'
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div')
+  div.textContent = str
+  return div.innerHTML
 }
 
 function copyJson(item) {
@@ -389,6 +409,22 @@ function onPageChange() {
   color: var(--color-danger-fg, #dc2626);
   padding: 0 2px;
   border-radius: 2px;
+}
+
+/* 原始日志截断提示 */
+.card-preview-truncated {
+  position: relative;
+  cursor: pointer;
+}
+.preview-more {
+  font-size: 11px;
+  color: var(--color-accent-fg, #2563eb);
+  padding: 4px 0 0;
+  cursor: pointer;
+  text-align: center;
+}
+.preview-more:hover {
+  text-decoration: underline;
 }
 
 /* ===== 操作按钮 ===== */
