@@ -38,10 +38,12 @@
 
         <div class="card-header">
           <div class="card-meta">
-            <span class="meta-tag">{{ item.case_name || `案件 #${item.case_id}` }}</span>
-            <span class="meta-tag">{{ item.hostname || `主机 #${item.host_id}` }}</span>
-            <span class="meta-tag">{{ item.collector_type }}</span>
-            <span class="card-time">{{ formatTime(item.imported_at) }}</span>
+            <span class="meta-tag">{{ item.severity || 'info' }}</span>
+            <span class="meta-tag">{{ item.event_type }}</span>
+            <span v-if="item.attack_stage" class="meta-tag">阶段: {{ item.attack_stage }}</span>
+            <span class="meta-tag">{{ item.source_collector || 'unknown' }}</span>
+            <span v-if="item.status && item.status !== 'pending'" class="meta-tag">{{ item.status }}</span>
+            <span class="card-time">{{ formatTime(item.timestamp) }}</span>
           </div>
           <div class="card-severity">
             <span
@@ -50,34 +52,19 @@
             >
               {{ item.severity || 'info' }}
             </span>
-            <!-- IOC 命中标记 -->
-            <span v-if="item.ioc_hit" class="ioc-hit-tag">IOC</span>
           </div>
         </div>
 
         <!-- JSON 预览（IOC 高亮） -->
         <div class="card-preview">
-          <pre class="json-preview" v-html="highlightIoc(item.raw_json)" />
+          <pre class="json-preview" v-html="formatEvidence(item.evidence)" />
         </div>
 
         <!-- 操作按钮 -->
         <div class="card-actions">
           <button class="btn btn-text" @click="$emit('view-detail', item)">查看详情</button>
           <button class="btn btn-text" @click="copyJson(item)">复制 JSON</button>
-
-          <template v-if="item.event_created && item.event_id">
-            <button class="btn btn-text btn-disabled" disabled>
-              已生成事件
-            </button>
-            <button class="btn btn-link" @click="goToAnalysis(item)">
-              查看分析中心
-            </button>
-          </template>
-          <template v-else>
-            <button class="btn btn-primary btn-sm" @click="$emit('generate-event', item)">
-              一键生成事件
-            </button>
-          </template>
+          <button class="btn btn-link" @click="goToAnalysis(item)">查看分析中心</button>
         </div>
       </div>
     </div>
@@ -115,7 +102,6 @@ const props = defineProps({
 
 const emit = defineEmits([
   'view-detail',
-  'generate-event',
   'update:page',
   'update:pageSize',
   'change',
@@ -135,11 +121,6 @@ function severityCardClass(severity) {
   return ''
 }
 
-function severityDotColor(severity) {
-  const map = { critical: '#dc2626', high: '#dc2626', medium: '#d97706', low: '#2563eb', info: '#a3a3a3' }
-  return map[severity] || '#a3a3a3'
-}
-
 function formatTime(ts) {
   if (!ts) return ''
   const d = new Date(ts)
@@ -147,23 +128,24 @@ function formatTime(ts) {
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
-function highlightIoc(rawJson) {
-  if (!rawJson) return '{}'
+function formatEvidence(evidence) {
+  if (!evidence) return '（无证据数据）'
   try {
-    const formatted = JSON.stringify(JSON.parse(rawJson), null, 2)
-    // 简单 IOC 高亮：匹配 IP 地址
+    const parsed = JSON.parse(evidence)
+    const formatted = JSON.stringify(parsed, null, 2)
+    // 高亮 IP 地址
     const highlighted = formatted.replace(
       /(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?)/g,
       '<span class="ioc-highlight">$1</span>',
     )
-    return highlighted.substring(0, 300) + (highlighted.length > 300 ? '...' : '')
+    return highlighted.substring(0, 500) + (highlighted.length > 500 ? '...' : '')
   } catch {
-    return String(rawJson).substring(0, 300)
+    return String(evidence).substring(0, 500)
   }
 }
 
 function copyJson(item) {
-  const text = item.raw_json || '{}'
+  const text = item.evidence || JSON.stringify(item)
   navigator.clipboard.writeText(text).then(() => {
     copied.value = true
     setTimeout(() => { copied.value = false }, 2000)
@@ -178,7 +160,7 @@ function goToHost(item) {
 }
 
 function goToAnalysis(item) {
-  window.open(`/analysis-center?event_id=${item.event_id}`, '_blank')
+  if (item.id) window.open(`/analysis-center?event_id=${item.id}`, '_blank')
 }
 
 function onPageChange() {
