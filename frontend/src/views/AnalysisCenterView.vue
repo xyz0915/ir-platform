@@ -50,30 +50,6 @@
           @update="store.setFilter"
           @reset="store.resetRuleFilters"
         />
-        <el-dropdown
-          trigger="click"
-          :disabled="store.aiLoading || store.aiVerdictLoading"
-          @command="onAiDropdown"
-        >
-          <button class="ai-trigger-btn">
-            <svg v-if="!store.aiLoading && !store.aiVerdictLoading" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 2l2 7h7l-5.5 4 2 7L12 17l-5.5 4 2-7L3 9h7z"/>
-            </svg>
-            <span v-else class="ai-spinner"></span>
-            {{ store.aiLoading || store.aiVerdictLoading ? 'AI处理中...' : 'AI 操作' }}
-            <el-icon class="el-icon--right"><ArrowDown /></el-icon>
-          </button>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="noise" :disabled="store.aiLoading">
-                降噪研判
-              </el-dropdown-item>
-              <el-dropdown-item command="verdict" :disabled="store.aiVerdictLoading">
-                研判打标
-              </el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
       </div>
 
       <!-- 规则名称筛选 (仅已匹配模式) -->
@@ -98,6 +74,36 @@
               <span class="rt-stat">案件 <strong>{{ currentCaseName }}</strong></span>
               <span class="rt-d"></span>
               <span class="rt-stat">主机 <strong>{{ currentHostName }}</strong></span>
+              <span v-if="store.selectedEventIds.length" class="rt-d"></span>
+              <span v-if="store.selectedEventIds.length" class="rt-stat">
+                已选中 <strong style="color:var(--color-accent-fg,#2563eb)">{{ store.selectedEventIds.length }}</strong> 条
+              </span>
+            </div>
+            <div class="rt-r">
+              <el-dropdown
+                trigger="click"
+                :disabled="store.selectedEventIds.length === 0 || store.aiLoading || store.aiVerdictLoading"
+                @command="onAiDropdown"
+              >
+                <button class="ai-trigger-btn" :class="{ disabled: store.selectedEventIds.length === 0 }">
+                  <svg v-if="!store.aiLoading && !store.aiVerdictLoading" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 2l2 7h7l-5.5 4 2 7L12 17l-5.5 4 2-7L3 9h7z"/>
+                  </svg>
+                  <span v-else class="ai-spinner"></span>
+                  {{ store.aiLoading || store.aiVerdictLoading ? '处理中...' : 'AI 操作' }}
+                  <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+                </button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="noise" :disabled="store.aiLoading">
+                      降噪研判
+                    </el-dropdown-item>
+                    <el-dropdown-item command="verdict" :disabled="store.aiVerdictLoading">
+                      研判打标
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
             </div>
           </div>
           <EventTable
@@ -359,44 +365,38 @@ function onCloseDetail() {
   border-bottom: 0.5px solid var(--color-border-default);
 }
 
-/* AI 降噪研判按钮 */
+/* AI 操作按钮 — 工具栏右侧幽灵按钮 */
 .ai-trigger-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 14px;
+  gap: 4px;
+  padding: 4px 10px;
   font-size: 12px;
-  font-weight: 500;
-  border: 0.5px solid var(--color-accent-fg, #2563eb);
+  font-weight: 400;
+  border: 0.5px solid var(--color-border-default, #d1d5db);
   border-radius: var(--r-btn, 6px);
-  background: #2563eb;
-  color: #fff;
+  background: var(--color-canvas-default, #fff);
+  color: var(--color-fg-default, #111);
   cursor: pointer;
   transition: all 0.15s;
   white-space: nowrap;
-  align-self: flex-end;
 }
 .ai-trigger-btn:hover {
-  background: #1d4ed8;
-  border-color: #1d4ed8;
+  background: var(--color-canvas-subtle, #f3f4f6);
+  border-color: var(--color-border-secondary, #9ca3af);
 }
-.ai-trigger-btn:active {
-  background: #1e40af;
-}
-.ai-trigger-btn.loading {
-  opacity: 0.7;
-  cursor: not-allowed;
-}
+.ai-trigger-btn.disabled,
 .ai-trigger-btn:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
   cursor: not-allowed;
+  pointer-events: none;
 }
 .ai-spinner {
   display: inline-block;
   width: 12px;
   height: 12px;
-  border: 2px solid rgba(255,255,255,0.3);
-  border-top-color: #fff;
+  border: 2px solid var(--color-border-default, #d1d5db);
+  border-top-color: var(--color-fg-default, #111);
   border-radius: 50%;
   animation: ai-spin 0.6s linear infinite;
 }
@@ -461,6 +461,13 @@ function onCloseDetail() {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.rt-r {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .rt-stat {
