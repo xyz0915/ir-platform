@@ -130,18 +130,19 @@ function formatTime(ts) {
 
 function formatEvidence(evidence) {
   if (!evidence) return '（无证据数据）'
+  let parsed
   try {
-    const parsed = JSON.parse(evidence)
-    const formatted = JSON.stringify(parsed, null, 2)
-    // 高亮 IP 地址
-    const highlighted = formatted.replace(
-      /(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?)/g,
-      '<span class="ioc-highlight">$1</span>',
-    )
-    return highlighted.substring(0, 500) + (highlighted.length > 500 ? '...' : '')
+    parsed = typeof evidence === 'string' ? JSON.parse(evidence) : evidence
   } catch {
-    return String(evidence).substring(0, 500)
+    return typeof evidence === 'string' ? evidence.substring(0, 2000) : ''
   }
+  let formatted = JSON.stringify(parsed, null, 2)
+  // 高亮 IP 地址
+  formatted = formatted.replace(
+    /(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?)/g,
+    '<span class="ioc-highlight">$1</span>',
+  )
+  return formatted
 }
 
 function copyJson(item) {
@@ -358,23 +359,28 @@ function onPageChange() {
 /* ===== JSON 预览 ===== */
 .card-preview {
   background: var(--color-canvas-inset, #f5f5f5);
-  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  border: 0.5px solid var(--color-border-default, #e5e7eb);
   border-radius: var(--r-btn, 6px);
   padding: 8px 12px;
-  max-height: 80px;
-  overflow: hidden;
   margin-bottom: 12px;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 100%;
 }
 
 .json-preview {
   margin: 0;
+  padding: 0;
   font-size: 11px;
   font-weight: 400;
   font-family: 'Courier New', monospace;
   white-space: pre-wrap;
   word-break: break-all;
-  line-height: 1.4;
+  line-height: 1.5;
   color: var(--color-fg-default, #111111);
+  width: fit-content;
+  max-width: 100%;
+  min-width: 100%;
 }
 
 :deep(.ioc-highlight) {
