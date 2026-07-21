@@ -14,7 +14,9 @@ import request from './index'
  * @returns {Promise<{run_id:string, status:string, stage:string, [k]:any}>}
  */
 export function createAgentRun(payload = {}) {
-  return request.post('/agents/run', payload)
+  // 编排闭环需串行执行 3 个 LLM 调用（triage + investigation + responder），
+  // 每调用约 10-15s，总耗时可能超过默认的 30s 全局超时，故显式设为 3 分钟。
+  return request.post('/agents/run', payload, { timeout: 180000 })
 }
 
 /**
