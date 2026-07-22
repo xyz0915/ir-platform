@@ -123,6 +123,7 @@ def _get_processes_from_security_events(host_id: int, limit: int = 200) -> list[
         ev = json.loads(r["evidence"]) if isinstance(r["evidence"], str) else {}
         extra = ev.get("_raw_extra", {})
         results.append({
+            "id": r["id"],                      # ← 新增：security_events.id 作为进程引用 ID
             "event_time": r["timestamp"],
             "timestamp": r["timestamp"],
             "pid": ev.get("pid") or extra.get("pid"),
