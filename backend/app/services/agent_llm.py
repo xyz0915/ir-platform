@@ -11,6 +11,7 @@
 返回结构：``{"content": str, "usage": dict, "degraded": bool, "error": Optional[str]}``
 """
 
+import httpx
 import logging
 import time
 from typing import Any, Optional
@@ -95,25 +96,26 @@ class AgentLLM:
                 latency_ms=int((time.time() - start_ts) * 1000),
                 profile=profile,
             )
-        except Exception as exc:  # noqa: BLE001
-            msg = str(exc)
-            if "ConnectError" in type(exc).__name__ or "connect" in msg.lower():
-                mapped = "无法连接 AI 服务，请检查 API 地址"
-            elif "Timeout" in type(exc).__name__ or "timeout" in msg.lower():
-                mapped = "AI 服务调用超时"
-            else:
-                try:
-                    mapped = map_http_error(exc) if hasattr(exc, "response") else msg
-                except Exception:
-                    mapped = msg
-            logger.error("AgentLLM call failed: %s", mapped)
-            return self._degraded(
-                error=mapped,
-                user_id=user_id,
-                prompt=prompt,
-                latency_ms=int((time.time() - start_ts) * 1000),
-                profile=profile,
-            )
+        except httpx.ConnectError:
+            mapped = "网络连接异常"
+        except httpx.TimeoutException:
+            mapped = "AI 服务调用超时"
+        except httpx.HTTPStatusError as exc:
+            try:
+                mapped = map_http_error(exc)
+            except Exception:
+                mapped = f"AI 服务返回错误: {exc.response.status_code}"
+        except Exception as exc:
+            msg = str(exc) or type(exc).__name__
+            mapped = f"AI 服务内部错误: {msg}"
+        logger.error("AgentLLM call failed: %s", mapped)
+        return self._degraded(
+            error=mapped,
+            user_id=user_id,
+            prompt=prompt,
+            latency_ms=int((time.time() - start_ts) * 1000),
+            profile=profile,
+        )
 
         # 4. 解析响应
         choices = resp.get("choices", []) if isinstance(resp, dict) else []

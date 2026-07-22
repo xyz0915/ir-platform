@@ -12,8 +12,8 @@ import json
 import logging
 from typing import Any, Optional
 
+from app.shared.ai_constants import DEGRADED_MESSAGE_TEMPLATE
 from app.database import get_connection
-from app.services.agent_llm import AgentLLM
 from app.services.agents.base_agent import BaseAgent, AgentResult
 from app.services.agents import prompts
 from app.services.agents.data_provider import _json_loads
@@ -31,7 +31,6 @@ class ReporterAgent(BaseAgent):
 
     def __init__(self) -> None:
         super().__init__()
-        self._llm = AgentLLM()
 
     async def run(self, ctx: dict, task: dict) -> AgentResult:
         """生成复盘报告并沉淀案例。"""
@@ -65,7 +64,7 @@ class ReporterAgent(BaseAgent):
         if llm_unavailable:
             report = (
                 f"{report}\n\n"
-                "[LLM 摘要不可用：以上报告由分诊/调查/处置各阶段真实步骤记录汇总生成]"
+                f"{DEGRADED_MESSAGE_TEMPLATE}"
             )
 
         # 沉淀案例（cases 持久化 + RAG 索引刷新）
@@ -160,6 +159,9 @@ class ReporterAgent(BaseAgent):
     @staticmethod
     def _build_report(triage_out: str, invest_out: str, resp_out: str, hitl_text: str) -> str:
         """构造数据驱动的复盘报告（Markdown）。"""
+        # P2: 基于事件类型的加固建议
+        hardening_tips = ReporterAgent._hardening_tips_from_triage(triage_out)
+
         sections = [
             "# 安全事件复盘报告（多智能体闭环）",
             "## 1. 事件概述（分诊）",
@@ -171,11 +173,34 @@ class ReporterAgent(BaseAgent):
             "## 4. HITL 审批",
             hitl_text or "（未触发 HITL 审批）",
             "## 5. 后续加固建议",
-            "1. 复盘根因假设，修补对应暴露面；",
-            "2. 将本次处置经验沉淀为案例，持续丰富 RAG 知识库；",
-            "3. 对同类检测规则命中加强监控。",
-        ]
+        ] + [f"{i+1}. {tip}" for i, tip in enumerate(hardening_tips)]
         return "\n\n".join(sections)
+
+    @staticmethod
+    def _hardening_tips_from_triage(triage_summary: str) -> list[str]:
+        """基于分诊摘要推断事件类型，返回对应的加固建议列表。"""
+        if not triage_summary:
+            return [
+                "复盘根因假设，修补对应暴露面",
+                "将本次处置经验沉淀为案例，持续丰富知识库",
+                "对同类检测规则命中加强监控",
+            ]
+        summary = triage_summary or ""
+        if "进程" in summary or "process" in summary.lower():
+            return [
+                "加强应用白名单控制，限制非授权进程执行",
+                "部署进程行为监控，对异常父子进程关系告警",
+            ]
+        if "网络" in summary or "连接" in summary:
+            return [
+                "限制对外连方向访问策略，仅放行业务必需端口",
+                "部署网络流量分析，检测异常 C2 通信行为",
+            ]
+        return [
+            "复盘根因假设，修补对应暴露面",
+            "将本次处置经验沉淀为案例，持续丰富知识库",
+            "对同类检测规则命中加强监控",
+        ]
 
     @staticmethod
     def _format_hitl(hitl_decision: dict) -> str:
@@ -198,16 +223,57 @@ class ReporterAgent(BaseAgent):
 
     # ── 案例沉淀 ──
     @staticmethod
-    def _sink_case(run_id: Optional[str], report: str, ctx: dict) -> None:
-        """将复盘报告持久化到 cases 表，并刷新 RAG 索引。"""
-        name = f"智能体处置案例-{run_id or 'unknown'}"
+    def _sink_case(run_id: Optional[str], report: str, ctx: dict) -> Optional[int]:
+        """将复盘报告持久化到 cases 表，并刷新 RAG 索引。
+
+        Returns:
+            写入的 case_id，失败返回 None。
+        """
+        case_id: Optional[int] = None
+        full_report = report[:4000] if report else ""
+        case_title = run_id or "unknown"
+        event_ids = ctx.get("event_ids") or []
+        run_info = ctx.get("triage", {}) or {}
+        severity = run_info.get("severity", "medium")
+        confidence = run_info.get("confidence", 0.0)
+        summary = run_info.get("summary", "")
+        priority = getattr(summary, "get", lambda k, d=None: d)("priority", "P2") if isinstance(summary, dict) else "P2"
+
         try:
             with get_connection() as conn:
-                conn.execute(
-                    "INSERT INTO cases (name, description, status, created_at, updated_at) "
-                    "VALUES (?, ?, 'closed', datetime('now'), datetime('now'))",
-                    (name, report[:4000]),
-                )
+                # 尝试写入含扩展字段的 INSERT（若表结构不支持则降级）
+                try:
+                    conn.execute("""
+                        INSERT INTO cases (name, description, status, severity, priority, confidence, created_at, updated_at)
+                        VALUES (?, ?, 'closed', ?, ?, ?, datetime('now'), datetime('now'))
+                    """, (
+                        f"编排闭环-{case_title}",
+                        full_report,
+                        severity,
+                        priority,
+                        confidence,
+                    ))
+                except Exception:  # noqa: BLE001
+                    # 降级：severity/priority/confidence 列不存在，将额外信息写入 description
+                    desc_extra = json.dumps({
+                        "event_ids": event_ids,
+                        "run_id": run_id,
+                        "severity": severity,
+                        "confidence": confidence,
+                    }, ensure_ascii=False)
+                    cursor = conn.execute(
+                        "INSERT INTO cases (name, description, status, created_at, updated_at) "
+                        "VALUES (?, ?, 'closed', datetime('now'), datetime('now'))",
+                        (f"编排闭环-{case_title}", full_report + f"\n\n{desc_extra}"),
+                    )
+                case_id = cursor.lastrowid
+
+                # 如果有 event_ids，追加到 description
+                if event_ids and case_id:
+                    conn.execute(
+                        "UPDATE cases SET description = ? WHERE id = ?",
+                        (full_report + f"\n\n关联事件: {json.dumps(event_ids, ensure_ascii=False)}", case_id),
+                    )
         except Exception as exc:  # noqa: BLE001
             logger.warning("写 cases 表失败: %s", exc)
 
@@ -217,3 +283,5 @@ class ReporterAgent(BaseAgent):
             KnowledgeRetriever.rebuild_seed_index()
         except Exception as exc:  # noqa: BLE001
             logger.debug("RAG 索引刷新跳过: %s", exc)
+
+        return case_id

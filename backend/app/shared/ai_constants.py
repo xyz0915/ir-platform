@@ -116,6 +116,12 @@ RARE_HIGH_SIGNALS: list[str] = [
 AUDIENCE_DEFAULT: str = "both"  # both | technical | executive
 
 
+# ---- 降级消息模板 — 当 LLM 不可用时各 Agent 统一使用此文案 ----
+DEGRADED_MESSAGE_TEMPLATE = (
+    "当前 LLM 服务不可用，以上结论基于真实数据自动生成"
+)
+
+
 # ---- 脱敏规则 ----
 
 

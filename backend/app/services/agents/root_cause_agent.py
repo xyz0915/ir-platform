@@ -17,7 +17,6 @@
 import logging
 from typing import Any, Optional
 
-from app.services.agent_llm import AgentLLM
 from app.services.agents.base_agent import BaseAgent, AgentResult
 from app.analysis.process_tree_builder import ProcessTreeBuilder
 from app.services.agents import data_provider
@@ -35,7 +34,7 @@ class RootCauseAgent(BaseAgent):
 
     def __init__(self) -> None:
         super().__init__()
-        self._llm = AgentLLM()
+        # self._llm 由 BaseAgent.__init__ 统一实例化
 
     # ────────────────────────────────────────────────────────────────
     # 编排器 / Investigator 入口（返回 AgentResult）

@@ -3,8 +3,11 @@
 管理数据库路径、密钥、上传目录等全局配置.
 """
 
+import logging
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 class Settings:
@@ -106,6 +109,19 @@ class Settings:
 
     # ── 规则引擎（Rule Engine）────────────────────────────────
     USE_BEHAVIOR_DB_RULES: bool = False    # 灰度开关：行为分析引擎从 DB 读取规则
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._warn_default_encryption_key()
+
+    def _warn_default_encryption_key(self) -> None:
+        """生产环境若未设置 IR_AI_ENCRYPTION_KEY，发出告警。"""
+        default_key = "QSLeoOZ1ZXDfBM0SrbJq1cBcRznji1L62SMCJae7nEo="
+        if self.AI_ENCRYPTION_KEY == default_key:
+            logger.warning(
+                "⚠️ AI_ENCRYPTION_KEY 使用默认开发密钥！"
+                "生产环境请设置环境变量 IR_AI_ENCRYPTION_KEY"
+            )
 
 
 settings = Settings()

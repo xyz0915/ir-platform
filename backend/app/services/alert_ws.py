@@ -1,5 +1,6 @@
 """告警 WebSocket 连接管理器."""
 import logging
+from typing import Union
 from fastapi import WebSocket
 
 logger = logging.getLogger(__name__)
@@ -22,13 +23,20 @@ class AlertWebSocketManager:
             conns.remove(ws)
         logger.info("WebSocket disconnected: user=%d, total=%d", user_id, self.connection_count)
 
-    async def broadcast(self, data: dict):
-        """广播消息到所有 WebSocket 连接."""
+    async def broadcast(self, message: Union[str, dict]) -> None:
+        """广播消息到所有 WebSocket 连接.
+
+        Args:
+            message: 字符串文本或字典（自动按 JSON 发送）。
+        """
         disconnected = []
         for user_id, conns in self._connections.items():
             for ws in conns:
                 try:
-                    await ws.send_json(data)
+                    if isinstance(message, str):
+                        await ws.send_text(message)
+                    else:
+                        await ws.send_json(message)
                 except Exception:
                     disconnected.append((user_id, ws))
         for uid, ws in disconnected:

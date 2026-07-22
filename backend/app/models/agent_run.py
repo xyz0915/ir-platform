@@ -23,6 +23,7 @@ class AgentRun:
         priority: str = "P2",
         confidence: float = 0.0,
         user_id: Optional[int] = None,
+        ctx_json: Optional[str] = None,
     ) -> dict:
         """创建一次 agent_run。"""
         with get_connection() as conn:
@@ -30,11 +31,11 @@ class AgentRun:
                 """
                 INSERT INTO agent_runs
                 (run_id, event_id, case_id, title, stage, status, priority,
-                 confidence, user_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 confidence, user_id, ctx_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (run_id, event_id, case_id, title, stage, status, priority,
-                 confidence, user_id),
+                 confidence, user_id, ctx_json),
             )
             rid = cursor.lastrowid
         return AgentRun.get_by_id(rid)
@@ -60,7 +61,7 @@ class AgentRun:
         """更新字段（stage/status/confidence/current_agent/result_json 等）。"""
         allowed = {
             "event_id", "case_id", "title", "stage", "status", "priority",
-            "current_agent", "confidence", "result_json",
+            "current_agent", "confidence", "result_json", "ctx_json",
         }
         data = {k: v for k, v in kwargs.items() if k in allowed}
         if not data:

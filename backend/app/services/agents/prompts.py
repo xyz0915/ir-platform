@@ -10,6 +10,21 @@
 """
 
 # ───────────────────────────────────────────────────────────────────────────
+# 结构化输出格式规范 — 追加到每个 Agent prompt 末尾
+_OUTPUT_FORMAT_SPEC = """
+请严格按以下 JSON Schema 格式输出（仅返回 JSON，不要额外注释）：
+
+{
+  "analysis": "分析结论的文字描述",
+  "confidence": 0.0-1.0,
+  "key_findings": ["发现1", "发现2"],
+  "evidence_refs": ["证据引用1", "证据引用2"],
+  "severity": "critical|high|medium|low|info",
+  "recommendation": "处置建议（可选）"
+}
+"""
+
+# ───────────────────────────────────────────────────────────────────────────
 # 分诊智能体（TriageAgent）
 # ───────────────────────────────────────────────────────────────────────────
 TRIAGE_SYSTEM_PROMPT = """你是一名安全事件分诊（Triage）专家。
@@ -89,7 +104,8 @@ def build_triage_prompt(event_summary: str, logs: str, rules_hit: str = "") -> s
     return (
         f"# 事件概要\n{event_summary}\n\n"
         f"# 相关范式化日志（脱敏后）\n{logs}{rules_block}\n\n"
-        "请基于以上真实数据给出分诊结论（优先级 / 是否深入 / 初步归因 / 一句话结论）。"
+        "请基于以上真实数据给出分诊结论（优先级 / 是否深入 / 初步归因 / 一句话结论）。\n\n"
+        f"{_OUTPUT_FORMAT_SPEC}"
     )
 
 
@@ -105,7 +121,8 @@ def build_investigator_prompt(triage_result: str, evidence: str, rag_cases: str 
     return (
         f"# 分诊结论\n{triage_result}\n\n"
         f"# 原始证据\n{evidence}{rag_block}\n\n"
-        "请还原攻击时间线、攻击手法、影响面与根因假设，并附 evidence_refs。"
+        "请还原攻击时间线、攻击手法、影响面与根因假设，并附 evidence_refs。\n\n"
+        f"{_OUTPUT_FORMAT_SPEC}"
     )
 
 
@@ -117,7 +134,8 @@ def build_responder_prompt(investigation_result: str) -> str:
     """
     return (
         f"# 调查结论\n{investigation_result}\n\n"
-        "请给出可逆、低危的处置建议（标注是否需 HITL、动作目标、回滚预案）。"
+        "请给出可逆、低危的处置建议（标注是否需 HITL、动作目标、回滚预案）。\n\n"
+        f"{_OUTPUT_FORMAT_SPEC}"
     )
 
 
@@ -136,5 +154,6 @@ def build_reporter_prompt(triage_result: str, investigation_result: str,
         f"# 分诊结论\n{triage_result}\n\n"
         f"# 调查结论\n{investigation_result}\n\n"
         f"# 处置结论\n{response_result}{hitl_block}\n\n"
-        "请汇总为一份结构化复盘报告，并提炼可沉淀的案例经验。"
+        "请汇总为一份结构化复盘报告，并提炼可沉淀的案例经验。\n\n"
+        f"{_OUTPUT_FORMAT_SPEC}"
     )

@@ -659,6 +659,8 @@ DDL_STATEMENTS = [
         status              TEXT    NOT NULL DEFAULT 'pending',
         assignee            TEXT,
         related_events      TEXT    DEFAULT '[]',
+        matched_rules       TEXT    DEFAULT '[]',
+        matched_at          TEXT    DEFAULT NULL,
         created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
         updated_at          TEXT    NOT NULL DEFAULT (datetime('now'))
     )
@@ -868,6 +870,7 @@ DDL_STATEMENTS = [
         priority      TEXT    DEFAULT 'P2',
         confidence    REAL    DEFAULT 0.0,
         result_json   TEXT    DEFAULT '{}',
+        ctx_json      TEXT    DEFAULT NULL,
         user_id       INTEGER,
         created_at    TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at    TEXT NOT NULL DEFAULT (datetime('now'))

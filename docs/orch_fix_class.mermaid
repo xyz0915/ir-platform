@@ -1,0 +1,152 @@
+classDiagram
+    class Orchestrator {
+        +STATUS_PENDING: str
+        +STATUS_RUNNING: str
+        +STATUS_WAITING_HITL: str
+        +STATUS_COMPLETED: str
+        +STATUS_FAILED: str
+        +STATUS_CANCELLED: str
+        +start_run(event_id, case_id, title, stage, priority, user) dict
+        +dispatch(run_id, agent, ctx, task) AgentResult
+        +wait_hitl(run_id, action, requested_by, step_id, target_json, auto_rollback_plan, reason) dict
+        +run_pipeline(run_id, user, ctx) dict
+        +resume(run_id, approval, decided_by, user) dict
+        -_state_machine(run_id, result, failed) void
+        -_finish_with_reporter(run_id, ctx, user, hitl_decision, executed) dict
+        -_is_final_stage(stage) bool
+        -_persist_ctx(run_id, ctx) void
+        -_rebuild_ctx(run, user) dict
+    }
+
+    class BaseAgent {
+        <<abstract>>
+        +name: str
+        +role: str
+        +requires_hitl: bool
+        +confidence_threshold: float
+        +_shared_llm: AgentLLM
+        +run(ctx, task) AgentResult*
+        +_build_prompt(ctx, task) str
+        +_parse(resp, ctx) AgentResult
+        +_stage() str
+        +_get_llm() AgentLLM
+    }
+
+    class AgentResult {
+        +str stage
+        +str output
+        +float confidence
+        +list evidence
+        +bool hitl
+        +int execution_duration_ms
+        +int llm_calls_count
+        +dict usage
+        +str error
+        +list data_sources
+        +to_dict() dict
+        +from_dict(data) AgentResult
+    }
+
+    class TriageAgent {
+        +name = "triage_agent"
+        +role = "安全事件分诊"
+        +requires_hitl = False
+        +run(ctx, task) AgentResult
+        -_resolve_event_ids(ctx, task) list
+        -_data_driven(events, logs) tuple
+        -_build_data_summary(events, logs, rules_hit, priority) str
+        -_log_preview(logs, max_chars) str
+        -_apply_masking(result) void
+    }
+
+    class InvestigatorAgent {
+        +name = "investigator_agent"
+        +role = "安全事件调查"
+        +requires_hitl = False
+        +run(ctx, task) AgentResult
+        -_build_timeline(procs, logs) list
+        -_local_root_cause(procs, logs) str
+        -_try_root_cause(host_id, procs, ctx, fallback) str
+        -_build_data_summary(host, timeline, root_cause, proc_count, log_count) str
+        -_apply_masking(result) void
+    }
+
+    class ResponderAgent {
+        +name = "responder_agent"
+        +role = "安全事件处置"
+        +requires_hitl = True
+        +run(ctx, task) AgentResult
+        +execute_action(action, target, event_id, operator) tuple
+        -_derive_action(host, logs, investigation) tuple
+        -_build_recommendation(action, target, rollback, host) str
+        -_rollback_for(action, target) dict
+        -_apply_masking(result) void
+    }
+
+    class ReporterAgent {
+        +name = "reporter_agent"
+        +role = "安全事件复盘报告"
+        +requires_hitl = False
+        +run(ctx, task) AgentResult
+        -_collect_stage_outputs(run_id, ctx) tuple
+        -_collect_evidence(run_id, ctx) list
+        -_collect_confidences(run_id, ctx) list
+        -_build_report(triage_out, invest_out, resp_out, hitl_text) str
+        -_format_hitl(hitl_decision) str
+        -_sink_case(run_id, report, ctx) void
+    }
+
+    class AgentLLM {
+        -_profile: dict
+        +call(prompt, user, budget) dict
+        -_degraded(error, user_id, prompt, latency_ms, profile) dict
+    }
+
+    class NotificationService {
+        +notify_hitl_pending(run_id, approval_id, action, reason) void
+        +notify_run_update(run_id, status, stage) void
+    }
+
+    class AlertWebSocketManager {
+        -_connections: dict
+        +connect(user_id, ws) void
+        +disconnect(user_id, ws) void
+        +broadcast(data) void
+    }
+
+    class AgentRun {
+        +create(run_id, event_id, case_id, title, stage, status, priority, confidence, user_id, ctx_json) dict
+        +get_by_id(rid) dict
+        +get_by_run_id(run_id) dict
+        +update(run_id, **kwargs) dict
+        +list_all(status, page, page_size) dict
+    }
+
+    class AgentRunStep {
+        +add(run_id, stage, agent, status, input_json, output_json, confidence, evidence_json, audit_log_id) dict
+        +list_by_run(run_id) list
+        +get_by_id(step_id) dict
+    }
+
+    class HitlApproval {
+        +create(run_id, step_id, action, requested_by, target_json, auto_rollback_plan, reason) dict
+        +get_by_id(id) dict
+        +update_status(id, status, decided_by, reason) void
+        +list_pending() list
+    }
+
+    BaseAgent <|-- TriageAgent : extends
+    BaseAgent <|-- InvestigatorAgent : extends
+    BaseAgent <|-- ResponderAgent : extends
+    BaseAgent <|-- ReporterAgent : extends
+    BaseAgent --> AgentResult : produces
+    BaseAgent --> AgentLLM : uses
+
+    Orchestrator --> BaseAgent : dispatches
+    Orchestrator --> AgentResult : returns
+    Orchestrator --> AgentRun : manages
+    Orchestrator --> AgentRunStep : writes
+    Orchestrator --> HitlApproval : creates(wait_hitl)
+    Orchestrator --> NotificationService : triggers
+
+    NotificationService --> AlertWebSocketManager : broadcasts via

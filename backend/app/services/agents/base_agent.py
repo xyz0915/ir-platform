@@ -5,6 +5,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from app.services.agent_llm import AgentLLM
+
 logger = logging.getLogger(__name__)
 
 
@@ -18,6 +20,11 @@ class AgentResult:
         confidence: 置信度 0~1（默认 0.0）。
         evidence: 证据列表，元素为 ``{"type": str, "ref": str}``，指向真实数据域。
         hitl: 是否触发人在回路（requires_hitl 且未达免审批阈值时置 True）。
+        execution_duration_ms: 本阶段执行耗时（毫秒）。
+        llm_calls_count: LLM 调用次数。
+        usage: Token 用量。
+        error: 异常信息。
+        data_sources: 数据源引用列表。
     """
 
     stage: str = "triage"
@@ -25,6 +32,12 @@ class AgentResult:
     confidence: float = 0.0
     evidence: list[dict] = field(default_factory=list)
     hitl: bool = False
+    # 新增字段
+    execution_duration_ms: float = 0.0
+    llm_calls_count: int = 0
+    usage: dict = field(default_factory=dict)
+    error: Optional[str] = None
+    data_sources: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
         """序列化为 dict（写入 agent_run_steps.output_json / result_json）。"""
@@ -34,17 +47,27 @@ class AgentResult:
             "confidence": self.confidence,
             "evidence": self.evidence,
             "hitl": self.hitl,
+            "execution_duration_ms": self.execution_duration_ms,
+            "llm_calls_count": self.llm_calls_count,
+            "usage": self.usage,
+            "error": self.error,
+            "data_sources": self.data_sources,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "AgentResult":
-        """从 dict 还原 AgentResult。"""
+        """从 dict 还原 AgentResult（使用 .get() 兼容旧数据）。"""
         return cls(
             stage=data.get("stage", "triage"),
             output=data.get("output", ""),
             confidence=float(data.get("confidence", 0.0)),
             evidence=data.get("evidence", []) or [],
             hitl=bool(data.get("hitl", False)),
+            execution_duration_ms=float(data.get("execution_duration_ms", 0.0)),
+            llm_calls_count=int(data.get("llm_calls_count", 0)),
+            usage=data.get("usage", {}) or {},
+            error=data.get("error"),
+            data_sources=data.get("data_sources", []) or [],
         )
 
 
@@ -62,7 +85,7 @@ class BaseAgent(abc.ABC):
     confidence_threshold: float = 0.7
 
     def __init__(self) -> None:
-        pass
+        self._llm = AgentLLM()
 
     @abc.abstractmethod
     async def run(self, ctx: dict, task: dict) -> "AgentResult":

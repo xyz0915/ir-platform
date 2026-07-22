@@ -1,4 +1,5 @@
 """Agent 注册/心跳/断开 API + 主机在线状态."""
+import asyncio
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -18,6 +19,7 @@ from app.schemas.agent_run import (
     AgentRejectRequest,
     AgentRunCreate,
 )
+from app.services.alert_ws import alert_ws_manager
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -45,28 +47,70 @@ async def create_agent_run(
 
     默认零自主：responder 必然触发 HITL 网关，run 进入 waiting_hitl 并暂停，
     待管理员在 /approve 决议后由 reporter 收尾。
+
+    该端点立即返回，pipeline 在后台异步执行（P1-5 BackgroundTasks）。
     """
     event_id = body.event_id
     event_ids = body.event_ids or ([event_id] if event_id else [])
     case_id = body.case_id
-    title = f"智能体闭环-{event_id or (event_ids[0] if event_ids else 'batch')}"
+    title = body.title or f"智能体闭环-{event_id or (event_ids[0] if event_ids else 'batch')}"
 
-    run = _orchestrator.start_run(
-        event_id=event_id,
-        case_id=case_id,
-        title=title,
-        priority="P2",
-        user=current_user,
-    )
-    run_id = run["run_id"]
     ctx: Dict[str, Any] = {
+        "run_id": "",  # 占位，start_run 后填充
         "event_id": event_id,
         "event_ids": event_ids,
         "case_id": case_id,
         "user": current_user,
     }
-    outcome = await _orchestrator.run_pipeline(run_id, current_user, ctx)
-    return {"code": 0, "data": outcome, "message": "success"}
+
+    run = _orchestrator.start_run(
+        event_id=event_id,
+        case_id=case_id,
+        title=title,
+        priority=body.priority or "P2",
+        user=current_user,
+        ctx_json=_safe_json(ctx),
+    )
+    run_id = run["run_id"]
+    ctx["run_id"] = run_id
+
+    # 后台异步执行 pipeline（不阻塞 HTTP 响应）
+    asyncio.create_task(_orchestrator.run_pipeline(run_id, current_user, ctx))
+
+    return {"code": 0, "data": {"run_id": run_id, "status": "pending"}, "message": "pipeline started"}
+
+
+@router.post("/agents/runs/{run_id}/cancel")
+def cancel_agent_run(
+    run_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """取消正在运行的编排（仅管理员）。"""
+    _require_admin(current_user)
+    run = AgentRun.get_by_run_id(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if run.get("status") not in ("pending", "running", "waiting_hitl"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot cancel run in status: {run.get('status')}",
+        )
+    AgentRun.update(run_id, status="cancelled")
+    return {"code": 0, "data": {"run_id": run_id, "status": "cancelled"}}
+
+
+@router.websocket("/agents/ws")
+async def agent_orchestration_websocket(websocket: WebSocket):
+    """Agent 编排 WebSocket — 接收前端连接并广播状态变更。"""
+    await alert_ws_manager.connect(0, websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            # 接受 ping/pong 维持连接
+            if data == "ping":
+                await websocket.send_text("pong")
+    except WebSocketDisconnect:
+        alert_ws_manager.disconnect(0, websocket)
 
 
 @router.get("/agents/runs")
@@ -282,3 +326,13 @@ def get_agent_stats(
         "offline": int(row["offline"]) if row and row["offline"] else 0,
     }
     return {"code": 0, "data": data, "message": "success"}
+
+
+def _safe_json(obj: Any) -> str:
+    """安全 JSON 序列化（失败退回字符串）。"""
+    import json
+
+    try:
+        return json.dumps(obj, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return str(obj)

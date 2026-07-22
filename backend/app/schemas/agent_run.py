@@ -15,6 +15,8 @@ class AgentRunCreate(BaseModel):
     event_id: Optional[str] = Field(None, description="单个安全事件 ID")
     event_ids: Optional[List[str]] = Field(None, description="批量事件 ID 列表")
     case_id: Optional[int] = Field(None, description="关联案件 ID")
+    priority: Optional[str] = Field(None, description="覆盖默认 P2 优先级")
+    title: Optional[str] = Field(None, description="覆盖自动生成的标题")
 
 
 class AgentApprovalRequest(BaseModel):
@@ -42,3 +44,28 @@ class AgentRunListItem(BaseModel):
     status: str = "pending"
     priority: str = "P2"
     confidence: float = 0.0
+    user_id: Optional[int] = None
+    current_agent: Optional[str] = None
+    result_json: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class AgentRunResponse(BaseModel):
+    """agent_runs 详情返回（比 ListItem 多一些字段）。"""
+
+    run_id: str
+    event_id: Optional[str] = None
+    case_id: Optional[int] = None
+    title: Optional[str] = None
+    stage: str = "triage"
+    status: str = "pending"
+    priority: str = "P2"
+    confidence: float = 0.0
+    current_agent: Optional[str] = None
+    user_id: Optional[int] = None
+    result_json: Optional[str] = None
+    ctx_json: Optional[str] = None
+    steps: Optional[List[dict]] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None

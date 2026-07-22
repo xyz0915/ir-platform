@@ -1,0 +1,102 @@
+sequenceDiagram
+    participant F as 前端
+    participant API as api/agents.py
+    participant O as Orchestrator
+    participant DB as SQLite
+    participant AG as BaseAgent
+    participant LLM as AgentLLM
+    participant DP as data_provider
+    participant NS as NotificationService
+    participant WS as WebSocket
+
+    Note over F,WS: 阶段1: 创建 Run（异步）
+    F->>API: POST /agents/run
+    API->>O: start_run()
+    O->>DB: INSERT agent_runs (status=pending, ctx_json={...})
+    O-->>API: {run_id, status=pending}
+    API->>O: run_pipeline() [asyncio.create_task]
+    API-->>F: {run_id, status="pending", message="已提交"}
+
+    Note over F,WS: 阶段2: 前端轮询
+    F->>API: GET /agents/runs/{run_id}
+    API->>DB: SELECT agent_runs
+    DB-->>API: {status, stage, ...}
+    API-->>F: {run, steps}
+
+    Note over O,DP: 阶段3: 串行编排（后台异步）
+    O->>DB: UPDATE agent_runs (status=running)
+    
+    rect rgb(240, 248, 255)
+        Note over O,DP: 3a: Triage（分诊）
+        O->>AG: TriageAgent.run(ctx, task)
+        AG->>DP: get_events(event_ids)
+        DP-->>AG: events[]
+        AG->>DP: get_logs_by_host(host_id)
+        DP-->>AG: logs[]
+        AG->>LLM: call(triage_prompt)
+        LLM-->>AG: {content, degraded}
+        AG-->>O: AgentResult(stage=triage)
+        O->>DB: INSERT agent_run_steps (triage)
+        O->>DB: UPDATE agent_runs (stage=triage, ctx_json=...)
+        Note over O: _state_machine: 仅更新 stage，status 保持 running
+    end
+
+    rect rgb(245, 255, 230)
+        Note over O,DP: 3b: Investigation（调查）
+        O->>AG: InvestigatorAgent.run(ctx, task)
+        AG->>DP: get_process_events(host_id)
+        Note over DP: 优先 process_events 表
+        Note over DP: 兜底：从 security_events 补充
+        DP-->>AG: procs[]
+        AG->>DP: get_logs_by_host(host_id)
+        DP-->>AG: logs[]
+        AG->>LLM: call(investigator_prompt)
+        LLM-->>AG: {content, degraded}
+        AG-->>O: AgentResult(stage=investigation)
+        O->>DB: INSERT agent_run_steps (investigation)
+        O->>DB: UPDATE agent_runs (stage=investigation, ctx_json=...)
+    end
+
+    rect rgb(255, 245, 230)
+        Note over O,DP: 3c: Responder（处置 → HITL）
+        O->>AG: ResponderAgent.run(ctx, task)
+        AG->>DP: get_host(host_id)
+        DP-->>AG: host
+        AG->>LLM: call(responder_prompt)
+        LLM-->>AG: {content, degraded}
+        AG-->>O: AgentResult(stage=response, hitl=True)
+        O->>DB: INSERT agent_run_steps (response)
+        O->>O: wait_hitl()
+        O->>DB: INSERT hitl_approvals (status=pending)
+        O->>DB: UPDATE agent_runs (status=waiting_hitl)
+        O->>NS: notify_hitl_pending(run_id, approval_id, action)
+        NS->>WS: broadcast({type:"hitl_pending", ...})
+        O-->>API: {status: waiting_hitl}
+    end
+
+    Note over F,WS: 阶段4: 管理员审批
+    WS-->>F: {type:"hitl_pending", run_id, action}
+    F->>API: POST /agents/runs/{run_id}/approve
+    API->>DB: UPDATE hitl_approvals (status=approved)
+    API->>O: resume(run_id, approval, user)
+    O->>DB: SELECT agent_runs (读取 ctx_json)
+    O->>O: _rebuild_ctx(run, user)
+    Note over O: 从 ctx_json 恢复 triage/investigation 上下文
+
+    rect rgb(230, 240, 255)
+        Note over O,DP: 3d: Reporter（收尾）
+        O->>AG: ReporterAgent.run(ctx, {hitl_decision})
+        AG->>DB: SELECT agent_run_steps (读取各阶段输出)
+        AG->>LLM: call(reporter_prompt)
+        LLM-->>AG: {content, degraded}
+        AG->>AG: _sink_case(run_id, report, ctx)
+        AG->>DB: INSERT INTO cases (含 event_ids/run_id/severity/confidence)
+        AG-->>O: AgentResult(stage=report)
+        O->>DB: INSERT agent_run_steps (report)
+        O->>DB: UPDATE agent_runs (stage=report, status=completed)
+        Note over O: _state_machine: 最终 stage → 置 completed
+        O->>NS: notify_run_update(run_id, completed, report)
+    end
+
+    F->>API: GET /agents/runs/{run_id}
+    API-->>F: {status: "completed", steps: [...]}

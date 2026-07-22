@@ -12,7 +12,7 @@
 import logging
 from typing import Any, Optional
 
-from app.services.agent_llm import AgentLLM
+from app.shared.ai_constants import DEGRADED_MESSAGE_TEMPLATE
 from app.services.agents.base_agent import BaseAgent, AgentResult
 from app.services.agents import prompts
 from app.services.agents import data_provider
@@ -38,7 +38,6 @@ class InvestigatorAgent(BaseAgent):
 
     def __init__(self) -> None:
         super().__init__()
-        self._llm = AgentLLM()
 
     async def run(self, ctx: dict, task: dict) -> AgentResult:
         """执行调查。"""
@@ -59,6 +58,16 @@ class InvestigatorAgent(BaseAgent):
         root_cause = self._local_root_cause(procs, logs)
         root_cause = await self._try_root_cause(host_id, procs, ctx, root_cause)
 
+        # P0: 收集 security_events 统计数据
+        event_ids = ctx.get("event_ids") or task.get("event_ids") or []
+        if isinstance(event_ids, str):
+            event_ids = [event_ids]
+        security_events_count = 0
+        if event_ids:
+            security_events_count = len(event_ids)
+        elif ctx.get("event_id"):
+            security_events_count = 1
+
         evidence = data_provider.extract_process_refs(procs, 20) + data_provider.extract_log_refs(logs, 10)
 
         # RAG 检索历史案例（仅供参照，不阻断）
@@ -75,7 +84,7 @@ class InvestigatorAgent(BaseAgent):
         except Exception as exc:  # noqa: BLE001
             logger.warning("Investigator RAG 检索失败（跳过）: %s", exc)
 
-        data_summary = self._build_data_summary(host, timeline, root_cause, len(procs), len(logs))
+        data_summary = self._build_data_summary(host, timeline, root_cause, len(procs), len(logs), security_events_count)
         llm_unavailable = False
         try:
             resp = await self._llm.call(
@@ -97,7 +106,7 @@ class InvestigatorAgent(BaseAgent):
         if llm_unavailable:
             output = (
                 f"{data_summary}\n\n"
-                "[LLM 摘要不可用：以上结论由真实数据（进程事件/日志/主机画像）直接驱动]"
+                f"{DEGRADED_MESSAGE_TEMPLATE}"
             )
 
         ctx["investigation"] = {
@@ -132,7 +141,7 @@ class InvestigatorAgent(BaseAgent):
         """构造攻击时间线（真实时间戳升序）。"""
         items: list[dict] = []
         for p in procs:
-            ts = p.get("event_time") or p.get("start_time") or ""
+            ts = p.get("timestamp") or p.get("event_time") or p.get("start_time") or ""
             items.append({
                 "time": ts,
                 "kind": "process",
@@ -164,12 +173,12 @@ class InvestigatorAgent(BaseAgent):
             return "无进程事件与高严重度日志，无法推断第一触发点（建议补充采集）。"
         first = min(
             procs,
-            key=lambda p: (p.get("event_time") or p.get("start_time") or "9"),
+            key=lambda p: (p.get("timestamp") or p.get("event_time") or p.get("start_time") or "9"),
         )
         return (
             f"第一触发点（最早进程事件）：process_events.id={first.get('id')} "
             f"process={first.get('process_name')} pid={first.get('pid')} "
-            f"parent={first.get('parent_name')} time={first.get('event_time') or first.get('start_time')}。"
+            f"parent={first.get('parent_name')} time={first.get('timestamp') or first.get('event_time') or first.get('start_time')}。"
             f"共回溯 {len(procs)} 条进程事件。"
         )
 
@@ -204,7 +213,7 @@ class InvestigatorAgent(BaseAgent):
     @staticmethod
     def _build_data_summary(
         host: Optional[dict], timeline: list[dict], root_cause: str,
-        proc_count: int, log_count: int
+        proc_count: int, log_count: int, security_events_count: int = 0
     ) -> str:
         """构造数据驱动的调查概要。"""
         lines = []
@@ -213,6 +222,7 @@ class InvestigatorAgent(BaseAgent):
                 f"主机画像：{host.get('hostname')}（id={host.get('id')}, "
                 f"ip={host.get('ip_address')}, os={host.get('os_type')} {host.get('os_version')}）"
             )
+        lines.append(f"关联安全事件条数：{security_events_count}")
         lines.append(f"进程事件条数：{proc_count}")
         lines.append(f"范式化日志条数：{log_count}")
         lines.append(f"时间线条数：{len(timeline)}")

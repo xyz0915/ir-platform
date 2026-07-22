@@ -13,7 +13,7 @@ confidence 由数据驱动，并在 output 标注"LLM 摘要不可用"。绝不�
 import logging
 from typing import Any, Optional
 
-from app.services.agent_llm import AgentLLM
+from app.shared.ai_constants import DEGRADED_MESSAGE_TEMPLATE
 from app.services.agents.base_agent import BaseAgent, AgentResult
 from app.services.agents import prompts
 from app.services.agents import data_provider
@@ -47,7 +47,6 @@ class TriageAgent(BaseAgent):
 
     def __init__(self) -> None:
         super().__init__()
-        self._llm = AgentLLM()
 
     # ── 主入口 ──
     async def run(self, ctx: dict, task: dict) -> AgentResult:
@@ -106,7 +105,12 @@ class TriageAgent(BaseAgent):
             llm_unavailable = True
 
         if llm_unavailable:
-            output = data_summary + "\n\n[LLM 摘要不可用：以上结论由真实数据直接驱动]"
+            output = data_summary + f"\n\n{DEGRADED_MESSAGE_TEMPLATE}"
+
+        # P1-8: 当 host_id 为 None 时在 output 中加入提示
+        if not host_id:
+            missing_host_note = "\n\n注意：该事件缺少 host_id，无法获取关联范式化日志，分诊仅基于事件自身数据。"
+            output += missing_host_note
 
         # 下游共享上下文
         ctx["host_id"] = host_id
@@ -167,6 +171,37 @@ class TriageAgent(BaseAgent):
         if len(events) > 1:
             confidence += 0.1
         confidence = min(round(confidence, 2), 0.95)
+
+        # P2 增强：多事件聚合效应
+        if len(events) > 3:
+            high_count = sum(1 for e in events if e.get("severity") in ("high", "critical"))
+            if high_count >= len(events) * 0.6:
+                priority = min(priority, 1) if isinstance(priority, int) else priority
+
+        # P2 增强：时间聚集效应（多事件时间跨度 < 5 分钟 → 优先级提升一级）
+        timestamps = []
+        for e in events:
+            ts = e.get("timestamp")
+            if ts:
+                timestamps.append(ts)
+        if len(timestamps) > 1:
+            try:
+                from datetime import datetime
+                parsed = []
+                for t in timestamps:
+                    if isinstance(t, str):
+                        parsed.append(datetime.fromisoformat(t.replace("Z", "+00:00")))
+                    elif isinstance(t, (int, float)):
+                        from datetime import timezone
+                        parsed.append(datetime.fromtimestamp(t, tz=timezone.utc))
+                if len(parsed) > 1:
+                    span = (max(parsed) - min(parsed)).total_seconds()
+                    if span < 300:  # 5 分钟内
+                        if isinstance(priority, str) and _PRIORITY_ORDER.get(priority, 3) > 0:
+                            priority = [k for k, v in sorted(_PRIORITY_ORDER.items(), key=lambda x: x[1]) if v < _PRIORITY_ORDER[priority]][0] if any(v < _PRIORITY_ORDER[priority] for v in _PRIORITY_ORDER.values()) else priority
+            except Exception:  # noqa: BLE001
+                pass
+
         return priority, confidence
 
     @staticmethod

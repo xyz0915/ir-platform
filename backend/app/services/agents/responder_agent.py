@@ -11,7 +11,7 @@
 import logging
 from typing import Any, Optional
 
-from app.services.agent_llm import AgentLLM
+from app.shared.ai_constants import DEGRADED_MESSAGE_TEMPLATE
 from app.services.agents.base_agent import BaseAgent, AgentResult
 from app.services.agents import prompts
 from app.services.agents import data_provider
@@ -30,7 +30,6 @@ class ResponderAgent(BaseAgent):
 
     def __init__(self) -> None:
         super().__init__()
-        self._llm = AgentLLM()
 
     async def run(self, ctx: dict, task: dict) -> AgentResult:
         """生成处置建议；写入 ctx['responder_action'] 供 HITL 网关使用。"""
@@ -61,8 +60,7 @@ class ResponderAgent(BaseAgent):
         if llm_unavailable:
             recommendation = (
                 f"{recommendation}\n\n"
-                "[LLM 摘要不可用：以上处置建议由真实数据直接驱动；本平台默认零自主，"
-                "该动作需管理员在 HITL 审批后才会执行]"
+                f"{DEGRADED_MESSAGE_TEMPLATE}"
             )
 
         # 写入上下文供 Orchestrator.wait_hitl 提取（dispatch 会从 ctx 读取）
@@ -111,7 +109,24 @@ class ResponderAgent(BaseAgent):
             if ip and sev in ("high", "critical"):
                 suspicious_ips.append(ip)
         if suspicious_ips:
-            ip = suspicious_ips[0]
+            # P2: 频次排序（取最可疑的 IP）
+            if len(suspicious_ips) > 1:
+                from collections import Counter
+                ip_counter = Counter(suspicious_ips)
+                ip = ip_counter.most_common(1)[0][0]
+            else:
+                ip = suspicious_ips[0]
+
+            # P2: IP 白名单检查 — 跳过内网/保留地址
+            _WHITELIST_PREFIXES = ("10.", "172.16.", "192.168.", "127.", "0.", "169.254.")
+            if any(ip.startswith(prefix) for prefix in _WHITELIST_PREFIXES):
+                # 白名单 IP 不执行封禁，降级为上报
+                return (
+                    "report_ip",
+                    {"ip": ip, "reason": "白名单内网 IP，已跳过封禁"},
+                    {"reversible": True, "plan": f"无需回滚（白名单 IP {ip} 仅上报未封禁）"},
+                )
+
             return (
                 "block_ip",
                 {"ip": ip},
@@ -143,6 +158,7 @@ class ResponderAgent(BaseAgent):
             "block_ip": "封禁可疑外连 IP",
             "isolate_host": "隔离失陷主机",
             "export_report": "导出取证/处置报告",
+            "report_ip": "上报可疑 IP（白名单跳过封禁）",
         }.get(action, action)
         lines = [
             f"建议处置动作：{action_cn}（action={action}）",
@@ -203,6 +219,7 @@ class ResponderAgent(BaseAgent):
             "block_ip": f"在防火墙上删除对应封禁规则（撤销对 {target.get('ip')} 的封锁）",
             "isolate_host": f"恢复主机 {target.get('hostname')} 的网络连接（解除隔离）",
             "export_report": "报告为只读产物，无需回滚",
+            "report_ip": "白名单 IP 仅上报未封禁，无需回滚",
         }
         return {"reversible": True, "plan": plans.get(action, "无回滚预案")}
 

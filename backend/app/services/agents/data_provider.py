@@ -32,54 +32,115 @@ def _json_loads(value: Any, default: Any = None) -> Any:
         return default
 
 
+# P2: security_events 核心字段列表（替代 SELECT *）
+_SECURITY_EVENTS_COLUMNS = (
+    "id, event_type, severity, host_id, timestamp, evidence, "
+    "matched_rules, status, attack_stage, source_collector, "
+    "ai_verdict, event_key"
+)
+
+
 def get_event(event_id: str) -> Optional[dict]:
     """按 id 获取单条安全事件。"""
     if not event_id:
         return None
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT * FROM security_events WHERE id = ?", (event_id,)
+            f"SELECT {_SECURITY_EVENTS_COLUMNS} FROM security_events WHERE id = ?", (event_id,)
         ).fetchone()
     return dict(row) if row else None
 
 
 def get_events(event_ids: list[str]) -> list[dict]:
-    """批量获取安全事件。"""
+    """批量获取安全事件。
+
+    P2: 使用显式字段列表替代 SELECT *，并确保带 LIMIT 500 保护。
+    """
     if not event_ids:
         return []
     placeholders = ",".join("?" for _ in event_ids)
     with get_connection() as conn:
         rows = conn.execute(
-            f"SELECT * FROM security_events WHERE id IN ({placeholders})",
+            f"SELECT {_SECURITY_EVENTS_COLUMNS} FROM security_events "
+            f"WHERE id IN ({placeholders}) LIMIT 500",
             tuple(event_ids),
         ).fetchall()
     return [dict(r) for r in rows]
 
 
 def get_logs_by_host(host_id: int, limit: int = 200) -> list[dict]:
-    """获取主机的范式化日志（按时间升序），用于分诊/调查证据。"""
+    """获取主机的范式化日志（按时间升序），用于分诊/调查证据。
+
+    P2: 使用显式字段列表替代 SELECT *。
+    """
     if not host_id:
         return []
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT * FROM normalized_logs WHERE host_id = ? "
+            "SELECT id, host_id, event_type, severity, timestamp, source_ip, "
+            "target_ip, process_name, command_line, mitre_attack "
+            "FROM normalized_logs WHERE host_id = ? "
             "ORDER BY timestamp ASC LIMIT ?",
             (host_id, limit),
         ).fetchall()
     return [dict(r) for r in rows]
 
 
-def get_process_events(host_id: int, limit: int = 500) -> list[dict]:
-    """获取主机的进程事件（按事件时间升序），用于攻击链/根因回溯。"""
+def _query_process_events(host_id: int, limit: int = 500) -> list[dict]:
+    """查询 process_events 表（内部方法，供 get_process_events 调用）。
+
+    P2: 使用显式字段列表替代 SELECT *。
+    """
     if not host_id:
         return []
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT * FROM process_events WHERE host_id = ? "
+            "SELECT id, host_id, pid, ppid, process_name, process_path, command_line, "
+            "parent_name, event_time, start_time, session, detail "
+            "FROM process_events WHERE host_id = ? "
             "ORDER BY COALESCE(event_time, start_time) ASC LIMIT ?",
             (host_id, limit),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def _get_processes_from_security_events(host_id: int, limit: int = 200) -> list[dict]:
+    """从 security_events 表提取进程启动事件，补充到 process_events 数据源。
+
+    当 process_events 表为空时，此函数作为兜底。
+    """
+    from app.database import get_connection
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT id, event_type, timestamp, evidence FROM security_events
+            WHERE host_id = ? AND event_type = 'process_start'
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (host_id, limit)).fetchall()
+
+    results = []
+    for r in rows:
+        ev = json.loads(r["evidence"]) if isinstance(r["evidence"], str) else {}
+        extra = ev.get("_raw_extra", {})
+        results.append({
+            "event_time": r["timestamp"],
+            "timestamp": r["timestamp"],
+            "pid": ev.get("pid") or extra.get("pid"),
+            "process_name": ev.get("process_name") or extra.get("name"),
+            "process_path": ev.get("process_path") or extra.get("path"),
+            "command_line": ev.get("command_line") or extra.get("command_line"),
+            "start_time": extra.get("start_time", r["timestamp"]),
+            "_source": "security_events_fallback",
+        })
+    return results
+
+
+def get_process_events(host_id: int, limit: int = 200) -> list[dict]:
+    """获取主机的进程事件，当 process_events 表为空时从 security_events 兜底。"""
+    procs = _query_process_events(host_id, limit)
+    if not procs:
+        procs = _get_processes_from_security_events(host_id, limit)
+    return procs
 
 
 def get_host(host_id: int) -> Optional[dict]:
@@ -98,7 +159,7 @@ def get_enabled_rules(limit: int = 50) -> list[dict]:
     """获取已启用的检测规则（分诊参考命中规则）。"""
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT id, name, category, severity, description FROM rules "
+            "SELECT id, name, category AS label, severity, description FROM rules "
             "WHERE enabled = 1 ORDER BY severity DESC LIMIT ?",
             (limit,),
         ).fetchall()
@@ -117,7 +178,7 @@ def get_rules_hit_summary(event: dict, rules: list[dict]) -> str:
     etype = (event.get("event_type") or "").lower()
     hits: list[str] = []
     for rule in rules:
-        category = (rule.get("category") or "").lower()
+        category = (rule.get("label") or "").lower()
         name = (rule.get("name") or "").lower()
         desc = (rule.get("description") or "").lower()
         if etype and (etype in category or etype in name or etype in desc):
