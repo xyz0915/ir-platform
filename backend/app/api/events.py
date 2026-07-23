@@ -71,44 +71,58 @@ def _resolve_event_id(conn, event_id: str) -> str | None:
     import re as _re
 
     # 按精确→宽泛顺序排列，确保最长/最确定模式优先匹配
-    patterns: list[tuple[str, str]] = [
+    # 每个模式会生成多个候选（处理 prefix 自身是否含 cm 前缀的歧义）
+    patterns: list[tuple[str, callable]] = [
         # (1) 标准完整格式: cm:suspicious_startup_items:127
-        (r'^cm:([a-z_]+):(\d+)$', 'cm:{0}:{1}'),
-        # (2) 缺 cm 后冒号: cmsuspicious_startup_items:127 → cm:suspicious_startup_items:127
-        (r'^cm([a-z_]+?):(\d+)$', 'cm:{0}:{1}'),
-        # (3) 缺数字前冒号: cm:abnormal_processes494 → cm:abnormal_processes:494
-        (r'^cm:([a-z_]+?)(\d+)$', 'cm:{0}:{1}'),
-        # (4) 完全无冒号: cmsuspicious_startup_items127 → cm:suspicious_startup_items:127
-        (r'^cm([a-z_]+?)(\d+)$', 'cm:{0}:{1}'),
-        # (5) 缺 cm 前缀但有冒号: suspicious_startup_items:127 → cm:suspicious_startup_items:127
-        (r'^([a-z_]+?):(\d+)$', 'cm:{0}:{1}'),
-        # (6) 缺 cm 前缀且无冒号: suspicious_startup_items127 → cm:suspicious_startup_items:127
-        (r'^([a-z_]+?)(\d+)$', 'cm:{0}:{1}'),
+        (r'^cm:([a-z_]+):(\d+)$',
+         lambda p, n: [f"cm:{p}:{n}", f"{p}:{n}"]),
+        # (2) 缺 cm 后冒号: cmsuspicious_startup_items:127
+        (r'^cm([a-z_]+?):(\d+)$',
+         lambda p, n: [f"cm:{p}:{n}", f"{p}:{n}"]),
+        # (3) 缺数字前冒号: cm:abnormal_processes494
+        (r'^cm:([a-z_]+?)(\d+)$',
+         lambda p, n: [f"cm:{p}:{n}", f"{p}:{n}"]),
+        # (4) 完全无冒号: cmsuspicious_startup_items127
+        (r'^cm([a-z_]+?)(\d+)$',
+         lambda p, n: [f"cm:{p}:{n}", f"{p}:{n}"]),
+        # (5) 缺 cm 前缀但有冒号: suspicious_startup_items:127 或 cmsuspicious_startup_items:143
+        (r'^([a-z_]+?):(\d+)$',
+         lambda p, n: (
+             [f"cm:{p}:{n}"] if not p.startswith("cm")
+             else [f"{p}:{n}", f"cm:{p[2:]}:{n}"]  # prefix 含 cm: 去重再加 cm
+         )),
+        # (6) 缺 cm 前缀且无冒号: suspicious_startup_items127 或 cmsuspicious_startup_items143
+        (r'^([a-z_]+?)(\d+)$',
+         lambda p, n: (
+             [f"cm:{p}:{n}"] if not p.startswith("cm")
+             else [f"{p}:{n}", f"cm:{p[2:]}:{n}"]
+         )),
     ]
 
-    for regex, tmpl in patterns:
+    for regex, build_candidates in patterns:
         m = _re.match(regex, event_id)
         if m:
-            candidate = tmpl.format(m.group(1), m.group(2))
-            row = conn.execute(
-                "SELECT id FROM security_events WHERE id = ?", (candidate,)
-            ).fetchone()
-            if row:
-                return row["id"]
+            candidates = build_candidates(m.group(1), m.group(2))
+            for candidate in candidates:
+                row = conn.execute(
+                    "SELECT id FROM security_events WHERE id = ?", (candidate,)
+                ).fetchone()
+                if row:
+                    return row["id"]
 
     # ── Level 4: 模糊前缀匹配 ──
-    for regex, tmpl in patterns:
+    for regex, build_candidates in patterns:
         m = _re.match(regex, event_id)
         if m:
-            candidate = tmpl.format(m.group(1), m.group(2))
-            # 取前两段作为前缀: cm:suspicious_startup_items:127 → cm:suspicious_startup_items
-            prefix_part = ':'.join(candidate.split(':')[:2])
-            row = conn.execute(
-                "SELECT id FROM security_events WHERE id LIKE ? ORDER BY id DESC LIMIT 1",
-                (f"{prefix_part}:%",),
-            ).fetchone()
-            if row:
-                return row["id"]
+            for candidate in build_candidates(m.group(1), m.group(2)):
+                # 取前两段作为前缀: cm:suspicious_startup_items:127 → cm:suspicious_startup_items
+                prefix_part = ':'.join(candidate.split(':')[:2])
+                row = conn.execute(
+                    "SELECT id FROM security_events WHERE id LIKE ? ORDER BY id DESC LIMIT 1",
+                    (f"{prefix_part}:%",),
+                ).fetchone()
+                if row:
+                    return row["id"]
 
     return None
 
