@@ -630,8 +630,76 @@ def event_stats(
 
 
 # ===================================================================
-#  事件详情
+#  事件详情（注意：/events/timeline 必须在 /events/{event_id} 之前注册，
+#  否则 FastAPI 会把 "timeline" 当成 event_id 匹配到 /events/{event_id}）
 # ===================================================================
+
+@router.get("/events/timeline")
+def timeline_data(
+    keyword: Optional[str] = Query(None),
+    start_time: Optional[str] = Query(None),
+    end_time: Optional[str] = Query(None),
+    event_types: Optional[str] = Query(None),
+    severities: Optional[str] = Query(None),
+    statuses: Optional[str] = Query(None),
+    attack_stages: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
+):
+    """攻击链时间轴数据 — 按 attack_chain_id 分组."""
+    where, params = _build_where_clause(
+        keyword=keyword, start_time=start_time, end_time=end_time,
+        event_types=event_types, severities=severities, statuses=statuses,
+        attack_stages=attack_stages,
+    )
+
+    # 获取有 attack_chain_id 的事件和无 chain 的事件
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM security_events {where} ORDER BY timestamp ASC",
+            params,
+        ).fetchall()
+
+    items = [_row_to_dict(r) for r in rows]
+
+    # 按 attack_chain_id 分组
+    chains_map: dict[str, dict] = {}
+    ungrouped: list[dict] = []
+
+    for ev in items:
+        cid = ev.get("attack_chain_id")
+        if cid:
+            if cid not in chains_map:
+                chains_map[cid] = {
+                    "chain_id": cid,
+                    "stage": ev.get("attack_stage", "unknown"),
+                    "events": [],
+                }
+            chains_map[cid]["events"].append(ev)
+        else:
+            # 单事件作为独立链
+            fake_id = f"single_{ev['id']}"
+            chains_map[fake_id] = {
+                "chain_id": None,
+                "stage": ev.get("attack_stage", "unknown"),
+                "events": [ev],
+            }
+
+    chains = list(chains_map.values())
+    return success({
+        "chains": chains,
+        "total_groups": len(chains),
+        "events": [
+            {
+                "id": ev.get("id"),
+                "timestamp": ev.get("timestamp"),
+                "event_type": ev.get("event_type"),
+                "severity": ev.get("severity"),
+                "host_id": ev.get("host_id"),
+            }
+            for ev in items
+        ],
+    })
+
 
 @router.get("/events/{event_id}")
 def get_event(event_id: str, current_user: dict = Depends(get_current_user)):
@@ -860,77 +928,6 @@ def batch_assign(
         ).fetchone()["cnt"]
 
     return success({"updated_count": updated_count})
-
-
-# ===================================================================
-#  攻击链时间轴数据
-# ===================================================================
-
-@router.get("/events/timeline")
-def timeline_data(
-    keyword: Optional[str] = Query(None),
-    start_time: Optional[str] = Query(None),
-    end_time: Optional[str] = Query(None),
-    event_types: Optional[str] = Query(None),
-    severities: Optional[str] = Query(None),
-    statuses: Optional[str] = Query(None),
-    attack_stages: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_user),
-):
-    """攻击链时间轴数据 — 按 attack_chain_id 分组."""
-    where, params = _build_where_clause(
-        keyword=keyword, start_time=start_time, end_time=end_time,
-        event_types=event_types, severities=severities, statuses=statuses,
-        attack_stages=attack_stages,
-    )
-
-    # 获取有 attack_chain_id 的事件和无 chain 的事件
-    with get_connection() as conn:
-        rows = conn.execute(
-            f"SELECT * FROM security_events {where} ORDER BY timestamp ASC",
-            params,
-        ).fetchall()
-
-    items = [_row_to_dict(r) for r in rows]
-
-    # 按 attack_chain_id 分组
-    chains_map: dict[str, dict] = {}
-    ungrouped: list[dict] = []
-
-    for ev in items:
-        cid = ev.get("attack_chain_id")
-        if cid:
-            if cid not in chains_map:
-                chains_map[cid] = {
-                    "chain_id": cid,
-                    "stage": ev.get("attack_stage", "unknown"),
-                    "events": [],
-                }
-            chains_map[cid]["events"].append(ev)
-        else:
-            # 单事件作为独立链
-            fake_id = f"single_{ev['id']}"
-            chains_map[fake_id] = {
-                "chain_id": None,
-                "stage": ev.get("attack_stage", "unknown"),
-                "events": [ev],
-            }
-
-    chains = list(chains_map.values())
-    return success({
-        "chains": chains,
-        "total_groups": len(chains),
-        "events": [
-            {
-                "id": ev.get("id"),
-                "timestamp": ev.get("timestamp"),
-                "event_type": ev.get("event_type"),
-                "severity": ev.get("severity"),
-                "host_id": ev.get("host_id"),
-            }
-            for ev in items
-        ],
-    })
 
 
 # ===================================================================
