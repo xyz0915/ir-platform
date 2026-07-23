@@ -765,8 +765,8 @@ def get_event_display(
         result = {
             "event": d,
             "projection": {
-                "required": {},
-                "auxiliary": {},
+                "required": [],
+                "auxiliary": [],
                 "evidence_views": {
                     "normalized": raw_ev,
                     "raw": raw_ev,

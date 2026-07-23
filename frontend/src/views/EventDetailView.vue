@@ -162,20 +162,23 @@ const evidenceViews = computed(() => {
 })
 
 // 自适应主体
-const auxiliary = computed(() => projection.value?.projection?.auxiliary || projection.value?.auxiliary || [])
+const auxiliary = computed(() => {
+  const aux = projection.value?.projection?.auxiliary
+  return Array.isArray(aux) ? aux : []
+})
 
 const processSubject = computed(() => {
   const et = (eventData.value?.event_type || '')
   if (!et.startsWith('process') && et !== 'ioc_match') return null
-  const aux = auxiliary.value.find(f => f.key === 'process_subject')
-  return aux?.value || null
+  const f = auxiliary.value.find(f => f.key === 'process_subject')
+  return f?.value || null
 })
 
 const networkSubject = computed(() => {
   const et = (eventData.value?.event_type || '')
   if (!et.startsWith('network') && et !== 'dns_query') return null
-  const aux = auxiliary.value.find(f => f.key === 'network_subject')
-  return aux?.value || null
+  const f = auxiliary.value.find(f => f.key === 'network_subject')
+  return f?.value || null
 })
 
 const persistenceTarget = computed(() => {
@@ -188,7 +191,11 @@ const persistenceTarget = computed(() => {
 // ── 风险评分 ──
 const riskScore = computed(() => {
   if (!eventData.value) return 0
-  const required = projection.value?.projection?.required || projection.value?.required || []
+  const required = Array.isArray(projection.value?.projection?.required)
+    ? projection.value.projection.required
+    : Array.isArray(projection.value?.required)
+    ? projection.value.required
+    : []
   const f = required.find(r => r.key === 'risk_score')
   return f?.value || 0
 })

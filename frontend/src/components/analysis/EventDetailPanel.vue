@@ -657,8 +657,14 @@ function impactLabel(key) {
 
 // ── v2.1 展示投影 ──
 const projection = computed(() => props.display?.projection || props.display || {})
-const requiredFields = computed(() => projection.value.required || [])
-const auxiliaryFields = computed(() => projection.value.auxiliary || [])
+const requiredFields = computed(() => {
+  const f = projection.value.required
+  return Array.isArray(f) ? f : []
+})
+const auxiliaryFields = computed(() => {
+  const f = projection.value.auxiliary
+  return Array.isArray(f) ? f : []
+})
 const evidenceViews = computed(() => projection.value.evidence_views || null)
 const evidenceViewMode = ref('normalized')
 
