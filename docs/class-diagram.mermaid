@@ -1,120 +1,75 @@
 classDiagram
-    class ThreeColumnLayout {
-        <<container>>
-        +slots: left, center, right
-        +responsiveBreakpoint: number = 1200
-    }
-
-    class TopNavigation {
-        <<props>>
-        +event: Object
-        +caseInfo: Object
-        <<emits>>
-        +back()
-        +viewCase(caseId)
-    }
-
-    class DecisionBar {
-        <<props>>
-        +event: Object
-        +riskScore: number
-        <<emits>>
-        +updateStatus(status: string)
-        +deepInvestigation()
+    class EventItem {
+        +string id
+        +string event_type
+        +string attack_stage
+        +string severity
+        +string timestamp
+        +string process_name
+        +number pid
+        +number ppid
+        +string hostname
+        +string remote_address
+        +number remote_port
+        +string local_address
+        +number local_port
+        +string file_name
+        +string file_path
+        +string registry_key
+        +string summary
+        +object evidence
     }
 
     class AttackChainTimeline {
-        <<props>>
-        +timelineEvents: Array
-        +currentEventId: string
-        +currentStage: string
-        <<emits>>
-        +selectEvent(eventId: string)
-        +toggleStage(stage: string)
+        <<Vue Component>>
+        +Props: timelineEvents~EventItem[]
+        +Props: currentEventId~string
+        +Props: currentStage~string
+        +Props: loading~boolean (P1)
+        +Props: error~string (P1)
+        +Emits: select-event(eventId)
+        +Emits: toggle-stage(stage)
+        +Emits: retry() (P1)
+        -expandedStages: Ref~Record~string,boolean~~
+        -showAllStages: Ref~Record~string,boolean~~
+        -eventRefs: Record~string,HTMLElement~
+        +MAX_VISIBLE_EVENTS: 50
+        +computed: stageGroups()
+        +computed: displayStages()
+        +computed: stagesWithEvents()
+        +computed: totalEventCount()
+        +computed: firstEventTime()
+        +computed: lastEventTime()
+        +method: toggleStage(stage)
+        +method: onSelectEvent(eventId)
+        +method: extractEventFields(evt)
+        +method: formatTimestamp(isoString)
+        +method: getStageMaxSeverity(events) (P1)
     }
 
-    class EventSummaryCard {
-        <<props>>
-        +event: Object
-        +frequency: Object
-        <<emits>>
-        +filterByHost(hostId: number)
+    class EventDetailView {
+        <<Vue Component>>
+        +eventId: computed~string~
+        +eventData: Ref~object~
+        +loading: Ref~boolean~
+        +error: Ref~string~
+        +method: loadAllPhases()
+        +method: handleSelectEvent(id)
+        +method: handleToggleStage(stage)
+        -uses: AttackChainTimeline
     }
 
-    class MatchedRulesList {
-        <<props>>
-        +rules: Array
+    class AnalysisStore {
+        <<Pinia Store>>
+        +timelineEvents: Ref~EventItem[]~
+        +timelineData: Ref~object[]~
+        +timelineLoading: Ref~boolean~ (P1)
+        +timelineError: Ref~string~ (P1)
+        +getter: timelineByStage()
+        +getter: currentStageEvents()
+        +method: fetchTimeline()
     }
 
-    class EvidenceViewer {
-        <<props>>
-        +evidenceViews: Object
-        +eventType: string
-        +processSubject: Object
-        +networkSubject: Object
-        +persistenceTarget: string
-    }
-
-    class ProcessTree {
-        <<props>>
-        +tree: Array
-        +currentPid: number
-        +loading: boolean
-    }
-
-    class RelatedEventsList {
-        <<props>>
-        +relatedIds: Array
-        <<emits>>
-        +viewEvent(eventId: string)
-    }
-
-    class AiVerdictPanel {
-        <<props>>
-        +aiVerdict: Object
-        +aiAnalysis: string
-    }
-
-    class IocIndicators {
-        <<props>>
-        +iocs: Object
-    }
-
-    class RelatedAlerts {
-        <<props>>
-        +alerts: Array
-    }
-
-    class RemediationSuggestions {
-        <<props>>
-        +severity: string
-    }
-
-    class HostOverview {
-        <<props>>
-        +hostStats: Object
-        +hostname: string
-    }
-
-    class DispositionPanel {
-        <<props>>
-        +dispositions: Array
-        +eventId: string
-        <<emits>>
-        +addDisposition(comment: string)
-    }
-
-    TopNavigation --* ThreeColumnLayout : slot=top
-    DecisionBar --* ThreeColumnLayout : slot=decision
-    AttackChainTimeline --* ThreeColumnLayout : slot=left
-    EventSummaryCard --* ThreeColumnLayout : slot=center-top
-    MatchedRulesList --* ThreeColumnLayout : slot=center-mid
-    ProcessTree --* ThreeColumnLayout : slot=center-mid2
-    EvidenceViewer --* ThreeColumnLayout : slot=center-bottom
-    RelatedEventsList --* ThreeColumnLayout : slot=center-bottom2
-    AiVerdictPanel --* ThreeColumnLayout : slot=right-top
-    IocIndicators --* ThreeColumnLayout : slot=right-mid
-    RelatedAlerts --* ThreeColumnLayout : slot=right-mid2
-    RemediationSuggestions --* ThreeColumnLayout : slot=right-mid3
-    HostOverview --* ThreeColumnLayout : slot=right-mid4
-    DispositionPanel --* ThreeColumnLayout : slot=right-bottom
+    EventDetailView --> AttackChainTimeline : ❮uses❯
+    EventDetailView --> AnalysisStore : ❮uses❯
+    AttackChainTimeline ..> EventItem : ❮renders❯

@@ -30,8 +30,11 @@
             :timeline-events="store.timelineEvents"
             :current-event-id="eventId"
             :current-stage="eventData.attack_stage"
+            :loading="store.timelineLoading"
+            :error="store.timelineError"
             @select-event="handleSelectEvent"
             @toggle-stage="handleToggleStage"
+            @retry="handleTimelineRetry"
           />
         </template>
         <template #center>
@@ -310,6 +313,10 @@ function handleSelectEvent(selectedId) {
 
 function handleToggleStage(stage) {
   // 左栏阶段折叠/展开由 AttackChainTimeline 内部管理
+}
+
+function handleTimelineRetry() {
+  store.fetchTimeline()
 }
 
 function handleFilterByHost(hostId) {

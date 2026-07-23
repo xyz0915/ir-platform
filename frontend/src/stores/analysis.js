@@ -68,6 +68,10 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const processTreeLoading = ref(false)
   const currentProcessPid = ref(null)
 
+  // ── 新增：时间线加载/错误状态 ──
+  const timelineLoading = ref(false)
+  const timelineError = ref('')
+
   // ── 新增 getter：按 attack_stage 聚合时间线 ──
   const timelineByStage = computed(() => {
     const stages = [
@@ -378,6 +382,8 @@ export const useAnalysisStore = defineStore('analysis', () => {
 
   // ── 原有 Action：获取时间轴数据 ──
   async function fetchTimeline() {
+    timelineLoading.value = true
+    timelineError.value = ''
     try {
       const res = await getTimelineData(buildParams())
       timelineData.value = res.data.chains || []
@@ -385,6 +391,9 @@ export const useAnalysisStore = defineStore('analysis', () => {
     } catch (e) {
       timelineData.value = []
       timelineEvents.value = []
+      timelineError.value = e.message || '时间线数据加载失败'
+    } finally {
+      timelineLoading.value = false
     }
   }
 
@@ -566,6 +575,9 @@ export const useAnalysisStore = defineStore('analysis', () => {
     processTree,
     processTreeLoading,
     currentProcessPid,
+    // state — 新增时间线状态
+    timelineLoading,
+    timelineError,
     // getters — 新增
     timelineByStage,
     currentStageEvents,
