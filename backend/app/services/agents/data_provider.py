@@ -247,3 +247,72 @@ def extract_process_refs(procs: list[dict], max_refs: int = 20) -> list[dict]:
             "parent_name": p.get("parent_name"),
         })
     return refs
+
+
+def get_security_events_by_host(host_id: int, limit: int = 5000) -> list[dict]:
+    """获取主机的安全事件（按时间降序），仅返回命中规则的事件。
+
+    security_events 比 normalized_logs 包含更丰富的信息：
+    - event_type: process_start, registry_modify, file_create, persistence_register, network_outbound 等
+    - severity: medium/high（真实安全事件）
+    - matched_rules: 命中规则详情
+    - evidence: JSON 证据（process_name, pid, path, command_line 等）
+    - ioc_matches: IOC 匹配数据
+
+    仅查询 matched_rules 非空的事件（即真正命中规则的，而非所有安全事件）。
+
+    默认 limit=5000 足够覆盖全部命中规则的安全事件（全量约 400-500 条），
+    如需更高性能可传较小值（如 50、200）。
+    """
+    if not host_id:
+        return []
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, event_type, severity, timestamp, matched_rules, evidence, ioc_matches, "
+            "source_collector, attack_stage, status "
+            "FROM security_events WHERE host_id = ? "
+            "AND matched_rules IS NOT NULL AND length(matched_rules) > 5 "
+            "ORDER BY timestamp DESC LIMIT ?",
+            (host_id, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def build_security_events_summary(events: list[dict]) -> str:
+    """构建 security_events 的摘要文本，供 Agent 分析。
+
+    逐条列出所有命中规则的安全事件（含 event_type, severity, matched_rules）。
+    每条 matched_rules 截断至 120 字符以控制 token 预算。
+    独立函数，供所有 Agent 复用。
+    """
+    if not events:
+        return ""
+    from collections import Counter
+    by_type: Counter[str] = Counter()
+    for e in events:
+        by_type[e.get("event_type", "unknown")] += 1
+    
+    high_sev = sum(1 for e in events if e.get("severity") == "high")
+    medium_sev = sum(1 for e in events if e.get("severity") == "medium")
+    parts = [f"共 {len(events)} 条命中规则的安全事件（High={high_sev}, Medium={medium_sev}）"]
+
+    parts.append("按类型分布：")
+    for t, c in by_type.most_common():
+        parts.append(f"  - {t}: {c}条")
+
+    # 按严重度分组：先 High 后 Medium
+    high_events = [e for e in events if e.get("severity") == "high"]
+    medium_events = [e for e in events if e.get("severity") == "medium"]
+
+    if high_events:
+        parts.append(f"\n▸ High 严重度（{len(high_events)} 条）:")
+        for e in high_events:
+            mr = (e.get("matched_rules") or "")[:120]
+            parts.append(f"  [{e.get('event_type')}] {mr}")
+    if medium_events:
+        parts.append(f"\n▸ Medium 严重度（{len(medium_events)} 条）:")
+        for e in medium_events:
+            mr = (e.get("matched_rules") or "")[:120]
+            parts.append(f"  [{e.get('event_type')}] {mr}")
+
+    return "\n".join(parts)

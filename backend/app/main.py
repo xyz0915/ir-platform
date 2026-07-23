@@ -191,6 +191,7 @@ def _register_scheduled_tasks() -> None:
 
 # 注册 API 路由
 from app.api import auth, cases, hosts, import_data, analysis, report, agent, rules, ai, whitelist, iocs  # noqa: E402
+from app.api import agent_sse  # noqa: E402  # SSE 流端点
 from app.api import threat_intel  # noqa: E402
 from app.api import baseline  # noqa: E402  # v1.3.0 差分基线
 from app.api import knowledge_draft  # noqa: E402  # AI 自动知识入库
@@ -200,6 +201,7 @@ from app.api import rule_suppression  # noqa: E402  # #18 规则抑制
 from app.api import dashboard  # noqa: E402  # 全局态势仪表盘
 from app.api import alerts  # noqa: E402  # 实时告警管理
 from app.api import agents  # noqa: E402  # Agent 注册与心跳
+from app.api import agent_management  # noqa: E402  # Phase 2 智能体管理
 from app.api import case_hosts  # noqa: E402  # 案件→主机级联数据
 from app.api import logs  # noqa: E402  # 日志分析中心
 from app.api import policies  # noqa: E402  # 检测策略配置
@@ -225,6 +227,7 @@ app.include_router(import_data.router, prefix="/api", tags=["导入"])
 app.include_router(analysis.router, prefix="/api", tags=["分析"])
 app.include_router(report.router, prefix="/api", tags=["报告"])
 app.include_router(agent.router, prefix="/api/agent", tags=["Agent"])
+app.include_router(agent_sse.router, prefix="/api", tags=["SSE"])  # SSE 流端点
 app.include_router(rules.router, prefix="/api/rules", tags=["规则"])
 app.include_router(ai.router, prefix="/api/ai", tags=["AI分析"])
 app.include_router(baseline.router, prefix="/api/baselines", tags=["差分基线"])
@@ -238,6 +241,7 @@ app.include_router(rule_suppression.router, prefix="/api", tags=["规则抑制"]
 app.include_router(dashboard.router, prefix="/api", tags=["仪表盘"])  # 全局态势仪表盘
 app.include_router(alerts.router, prefix="/api", tags=["告警"])  # 实时告警
 app.include_router(agents.router, prefix="/api", tags=["Agent管理"])  # Agent 管理
+app.include_router(agent_management.router, tags=["智能体管理"])  # Phase 2 智能体管理（路由已带 /api/agent-management 前缀）
 app.include_router(case_hosts.router, prefix="/api", tags=["案件"])  # 案件→主机级联
 app.include_router(logs.router, prefix="/api", tags=["日志分析"])  # 日志分析中心
 app.include_router(policies.router, prefix="/api", tags=["策略配置"])  # 检测策略配置

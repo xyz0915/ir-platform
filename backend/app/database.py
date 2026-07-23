@@ -987,6 +987,34 @@ DDL_STATEMENTS = [
     """
     CREATE INDEX IF NOT EXISTS idx_kb_feedback_applied ON kb_feedback(applied_to_kb)
     """,
+    # ── Agent 管理 Phase 2: agent_definitions 表 ──
+    """
+    CREATE TABLE IF NOT EXISTS agent_definitions (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        name            TEXT NOT NULL UNIQUE,
+        display_name    TEXT NOT NULL,
+        type            TEXT NOT NULL DEFAULT 'custom',
+        description     TEXT DEFAULT '',
+        data_sources    TEXT DEFAULT '[]',
+        depends_on      TEXT DEFAULT '[]',
+        prompt_template TEXT DEFAULT '',
+        config          TEXT DEFAULT '{}',
+        enabled         INTEGER NOT NULL DEFAULT 1,
+        hitl            INTEGER NOT NULL DEFAULT 0,
+        created_at      TEXT DEFAULT (datetime('now')),
+        updated_at      TEXT DEFAULT (datetime('now'))
+    )
+    """,
+    # ── Agent 管理 Phase 2: pipeline_presets 表 ──
+    """
+    CREATE TABLE IF NOT EXISTS pipeline_presets (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        name        TEXT NOT NULL UNIQUE,
+        description TEXT DEFAULT '',
+        agents      TEXT NOT NULL DEFAULT '[]',
+        created_at  TEXT DEFAULT (datetime('now'))
+    )
+    """,
 ]
 
 

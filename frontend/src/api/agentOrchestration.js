@@ -60,3 +60,12 @@ export function rejectAgentRun(runId, payload) {
 export function listPendingApprovals(status = 'pending') {
   return request.get('/agents/approvals', { params: { status } })
 }
+
+/**
+ * 获取 SSE 流 URL
+ * @param {string} runId
+ * @returns {string}
+ */
+export function getSSEUrl(runId) {
+  return `/api/agents/runs/${runId}/stream`
+}

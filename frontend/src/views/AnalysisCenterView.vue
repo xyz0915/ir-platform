@@ -2,63 +2,86 @@
   <div class="analysis-center">
     <!-- Main area -->
     <div class="main-area">
-      <!-- Topbar -->
-      <div class="topbar">
-        <div class="breadcrumbs">
-          <span class="breadcrumb-item">分析中心</span>
-          <span class="breadcrumb-sep">/</span>
-          <span class="breadcrumb-item active">规则匹配降噪</span>
+      <!-- ===== 折叠吸顶条（滚动后可见） ===== -->
+      <div class="compact-bar" v-show="collapsed">
+        <div class="cb-inner">
+          <span class="cb-title">分析中心</span>
+          <span class="cb-sep"></span>
+          <span class="cb-stat">共 <strong>{{ store.total }}</strong> 条</span>
+          <span class="cb-dot"></span>
+          <span class="cb-stat">已匹配 <strong>{{ store.stats.matchedEvents }}</strong></span>
+          <span class="cb-dot"></span>
+          <span class="cb-stat">案件 {{ store.ruleFilters.caseId ? '#'+store.ruleFilters.caseId : '全部' }}</span>
+          <span class="cb-dot"></span>
+          <span class="cb-stat">主机 {{ store.ruleFilters.hostId ? '#'+store.ruleFilters.hostId : '全部' }}</span>
+          <span class="cb-spacer"></span>
+          <button class="cb-expand" @click="collapsed = false" title="展开工具栏">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 9L7 5L11 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            展开
+          </button>
         </div>
       </div>
 
-      <!-- 案件 / 主机级联选择 -->
-      <div class="layer-chs">
-        <CaseHostSelector
-          :cases="store.filterMeta.cases"
-          :hosts="store.filterMeta.hosts"
-          :selectedCaseId="store.ruleFilters.caseId"
-          :selectedHostId="store.ruleFilters.hostId"
-          @update:caseId="onCaseChange"
-          @update:hostId="onHostChange"
-        />
-      </div>
+      <!-- ===== 可折叠头部（初始全部可见） ===== -->
+      <div class="collapsible-header" :class="{ 'is-collapsed': collapsed }">
+        <!-- Topbar -->
+        <div class="topbar">
+          <div class="breadcrumbs">
+            <span class="breadcrumb-item">分析中心</span>
+            <span class="breadcrumb-sep">/</span>
+            <span class="breadcrumb-item active">规则匹配降噪</span>
+          </div>
+        </div>
 
-      <!-- 统计卡片 -->
-      <div class="layer-metrics">
-        <MetricsBar :stats="store.stats" />
-      </div>
+        <!-- 案件 / 主机级联选择 -->
+        <div class="layer-chs">
+          <CaseHostSelector
+            :cases="store.filterMeta.cases"
+            :hosts="store.filterMeta.hosts"
+            :selectedCaseId="store.ruleFilters.caseId"
+            :selectedHostId="store.ruleFilters.hostId"
+            @update:caseId="onCaseChange"
+            @update:hostId="onHostChange"
+          />
+        </div>
 
-      <!-- 视图切换 + 高级筛选 -->
-      <div class="layer-controls">
-        <ViewFilter
-          :active="store.ruleFilters.viewFilter"
-          :counts="{
-            all: store.stats.totalEvents,
-            matched: store.stats.matchedEvents,
-            unmatched: store.stats.unmatchedEvents,
-          }"
-          :aiCounts="{
-            recommended: store.stats.aiRecommended || 0,
-            suspicious: store.stats.aiSuspicious || 0,
-            false_positive: store.stats.aiFalsePositive || 0,
-          }"
-          @switch="onViewSwitch"
-        />
-        <AdvancedFilter
-          :filters="store.ruleFilters"
-          :meta="store.filterMeta"
-          @update="store.setFilter"
-          @reset="store.resetRuleFilters"
-        />
-      </div>
+        <!-- 统计卡片 -->
+        <div class="layer-metrics">
+          <MetricsBar :stats="store.stats" />
+        </div>
 
-      <!-- 规则名称筛选 (仅已匹配模式) -->
-      <div class="layer-rule-filter" v-if="store.ruleFilters.viewFilter === 'matched'">
-        <RuleNameFilter
-          :rules="store.filterMeta.hitRules"
-          :selected="store.ruleFilters.ruleId"
-          @select="store.setFilter('ruleId', $event)"
-        />
+        <!-- 视图切换 + 高级筛选 -->
+        <div class="layer-controls">
+          <ViewFilter
+            :active="store.ruleFilters.viewFilter"
+            :counts="{
+              all: store.stats.totalEvents,
+              matched: store.stats.matchedEvents,
+              unmatched: store.stats.unmatchedEvents,
+            }"
+            :aiCounts="{
+              recommended: store.stats.aiRecommended || 0,
+              suspicious: store.stats.aiSuspicious || 0,
+              false_positive: store.stats.aiFalsePositive || 0,
+            }"
+            @switch="onViewSwitch"
+          />
+          <AdvancedFilter
+            :filters="store.ruleFilters"
+            :meta="store.filterMeta"
+            @update="store.setFilter"
+            @reset="store.resetRuleFilters"
+          />
+        </div>
+
+        <!-- 规则名称筛选 (仅已匹配模式) -->
+        <div class="layer-rule-filter" v-if="store.ruleFilters.viewFilter === 'matched'">
+          <RuleNameFilter
+            :rules="store.filterMeta.hitRules"
+            :selected="store.ruleFilters.ruleId"
+            @select="store.setFilter('ruleId', $event)"
+          />
+        </div>
       </div>
 
       <!-- Content: 事件表格 + 详情 -->
@@ -117,6 +140,7 @@
             @page-change="onPageChange"
             @sort-change="onSortChange"
             @update-status="onUpdateStatus"
+            @scroll-change="onTableScrollChange"
           />
         </div>
         <div class="layer-detail" v-if="store.detailVisible">
@@ -140,7 +164,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ArrowDown } from '@element-plus/icons-vue'
 import { useAnalysisStore } from '@/stores/analysis'
@@ -153,6 +177,13 @@ import EventTable from '@/components/analysis/EventTable.vue'
 import EventDetailPanel from '@/components/analysis/EventDetailPanel.vue'
 
 const store = useAnalysisStore()
+
+// ===== 表格滚动折叠 =====
+const collapsed = ref(false)
+
+function onTableScrollChange(scrolled) {
+  collapsed.value = scrolled
+}
 
 const currentCaseName = computed(() => {
   if (!store.ruleFilters.caseId) return '全部'
@@ -299,6 +330,86 @@ function onCloseDetail() {
   overflow: hidden;
 }
 
+
+/* ===== 折叠吸顶条 ===== */
+.compact-bar {
+  flex-shrink: 0;
+  z-index: 20;
+  background: var(--color-canvas-default);
+  border-bottom: 0.5px solid var(--color-border-default);
+  padding: 6px 16px;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+}
+.cb-inner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  font-size: 12px;
+  color: var(--color-fg-subtle);
+}
+.cb-title {
+  font-weight: 500;
+  color: var(--color-fg-default);
+  white-space: nowrap;
+}
+.cb-sep {
+  width: 1px;
+  height: 14px;
+  background: var(--color-border-default);
+  flex-shrink: 0;
+}
+.cb-stat {
+  white-space: nowrap;
+  font-size: 11px;
+}
+.cb-stat strong {
+  font-weight: 500;
+  color: var(--color-fg-default);
+}
+.cb-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--color-border-default);
+  flex-shrink: 0;
+}
+.cb-spacer {
+  flex: 1;
+}
+.cb-expand {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 8px;
+  font-size: 11px;
+  border: 0.5px solid var(--color-border-default);
+  border-radius: 4px;
+  background: var(--color-canvas-subtle);
+  color: var(--color-accent-fg);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.cb-expand:hover {
+  background: var(--color-accent-subtle);
+}
+
+/* ===== 可折叠头部 ===== */
+.collapsible-header {
+  overflow: hidden;
+  transition: max-height 0.35s ease, opacity 0.3s ease, padding 0.3s ease;
+  max-height: 500px;
+  opacity: 1;
+}
+.collapsible-header.is-collapsed {
+  max-height: 0;
+  opacity: 0;
+  padding: 0;
+}
+
 .main-area {
   flex: 1;
   display: flex;
@@ -313,9 +424,6 @@ function onCloseDetail() {
   padding: 6px 16px;
   background: var(--color-canvas-default);
   border-bottom: 0.5px solid var(--color-border-default);
-  position: sticky;
-  top: 0;
-  z-index: 10;
 }
 
 .breadcrumbs {
@@ -415,6 +523,7 @@ function onCloseDetail() {
   flex: 1;
   display: flex;
   overflow: hidden;
+  min-height: 0;
 }
 
 .layer-table {
@@ -422,6 +531,7 @@ function onCloseDetail() {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-height: 0;
   background: var(--color-canvas-default);
 }
 

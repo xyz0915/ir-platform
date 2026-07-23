@@ -34,6 +34,10 @@
             <el-icon><VideoPlay /></el-icon>
             启动闭环
           </el-button>
+          <el-button @click="onOpenAgentMgmt">
+            <el-icon><Connection /></el-icon>
+            选择智能体
+          </el-button>
           <el-button :loading="store.loading" @click="refreshAll">
             <el-icon><Refresh /></el-icon>
             刷新
@@ -43,6 +47,9 @@
       <div class="toolbar-hint">
         闭环顺序：分诊(Triage) → 调查(Investigation) → 处置(Responder，触发 HITL) → 报告(Reporter)。
         处置动作默认零自主，需管理员在 HITL 面板批准后执行。
+        <el-link type="primary" @click="router.push('/agent-management')" style="margin-left: 8px;">
+          自定义智能体组合 →
+        </el-link>
       </div>
     </el-card>
 
@@ -131,85 +138,19 @@
         />
       </div>
     </el-card>
-
-    <!-- ===== 运行详情抽屉 ===== -->
-    <el-drawer
-      v-model="detailVisible"
-      :title="detailTitle"
-      size="52%"
-      direction="rtl"
-    >
-      <div v-if="currentRun" class="detail">
-        <el-descriptions :column="2" border size="small" class="detail-meta">
-          <el-descriptions-item label="Run ID">
-            <span class="mono">{{ currentRun.run?.run_id }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="状态">
-            <el-tag :type="statusTag(currentRun.run?.status)" size="small" effect="light">
-              {{ statusLabel(currentRun.run?.status) }}
-            </el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item label="优先级">
-            <el-tag :type="priorityTag(currentRun.run?.priority)" size="small" effect="dark">
-              {{ currentRun.run?.priority }}
-            </el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item label="置信度">
-            {{ formatConfidence(currentRun.run?.confidence) }}
-          </el-descriptions-item>
-        </el-descriptions>
-
-        <div class="detail-steps-title">
-          <el-icon><Connection /></el-icon> 阶段步骤（证据可溯源）
-        </div>
-
-        <div class="steps">
-          <div
-            v-for="(step, idx) in currentRun.steps"
-            :key="step.id || idx"
-            class="step"
-          >
-            <div class="step-head">
-              <span class="step-index">{{ idx + 1 }}</span>
-              <span class="step-agent">{{ step.agent }}</span>
-              <el-tag size="small" effect="plain" class="step-stage">{{ stageLabel(step.stage) }}</el-tag>
-              <el-tag :type="step.status === 'success' ? 'success' : 'danger'" size="small" effect="light">
-                {{ step.status === 'success' ? '成功' : '失败' }}
-              </el-tag>
-              <span class="step-confidence">置信度 {{ formatConfidence(step.confidence) }}</span>
-            </div>
-
-            <pre class="step-output">{{ stepOutput(step) }}</pre>
-
-            <div v-if="stepEvidence(step).length" class="step-evidence">
-              <div class="evidence-label">证据 evidence</div>
-              <el-tag
-                v-for="(ev, ei) in stepEvidence(step)"
-                :key="ei"
-                size="small"
-                effect="light"
-                class="evidence-tag"
-              >
-                {{ ev.type }}: {{ ev.ref }}
-              </el-tag>
-            </div>
-          </div>
-        </div>
-      </div>
-      <el-empty v-else description="加载中…" />
-    </el-drawer>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Cpu, VideoPlay, Refresh, Stamp, List, Connection } from '@element-plus/icons-vue'
 import { useAgentOrchestrationStore } from '@/stores/agents'
 import HitlApprovalPanel from '@/components/agents/HitlApprovalPanel.vue'
 
 const route = useRoute()
+const router = useRouter()
 const store = useAgentOrchestrationStore()
 
 // ===== 新建表单 =====
@@ -223,23 +164,20 @@ const priorityFilter = ref('')
 const page = ref(1)
 const pageSize = ref(20)
 
-// ===== 详情抽屉 =====
-const detailVisible = ref(false)
-const currentRun = computed(() => store.currentRun)
-
-const detailTitle = computed(() => {
-  const r = currentRun.value?.run
-  return r ? `运行详情 · ${r.run_id}` : '运行详情'
-})
-
 // ===== 生命周期 =====
 onMounted(() => {
+  // 从 URL 查询参数自动填充事件 ID 和案件 ID（来自分析中心跳转）
+  if (route.query.eventId) {
+    eventId.value = route.query.eventId
+  }
+  if (route.query.caseId) {
+    caseId.value = String(route.query.caseId)
+  }
   refreshAll()
-  // 若通过 HITL 面板跳转带 runId，自动打开详情
+  // 若通过 HITL 面板跳转带 runId，自动跳转详情页
   const q = route.query.runId
   if (q) {
-    store.fetchRunDetail(q)
-    detailVisible.value = true
+    router.push(`/agent-orchestration/${q}`)
   }
 })
 
@@ -247,8 +185,7 @@ watch(
   () => route.query.runId,
   (q) => {
     if (q) {
-      store.fetchRunDetail(q)
-      detailVisible.value = true
+      router.push(`/agent-orchestration/${q}`)
     }
   }
 )
@@ -299,9 +236,12 @@ async function onStartRun() {
   }
 }
 
+function onOpenAgentMgmt() {
+  router.push('/agent-management')
+}
+
 function onRowClick(row) {
-  store.fetchRunDetail(row.run_id)
-  detailVisible.value = true
+  router.push(`/agent-orchestration/${row.run_id}`)
 }
 
 function onPageChange(p) {
@@ -310,10 +250,10 @@ function onPageChange(p) {
 }
 
 function onApprovalResolved() {
-  // 审批后刷新列表与详情
+  // 审批后刷新列表
   refreshRuns()
-  if (currentRun.value?.run?.run_id) {
-    store.fetchRunDetail(currentRun.value.run.run_id)
+  if (store.currentRun?.run?.run_id) {
+    store.fetchRunDetail(store.currentRun.run.run_id)
   }
 }
 
@@ -378,24 +318,6 @@ function confidenceClass(v) {
   if (n >= 0.7) return 'conf-high'
   if (n >= 0.4) return 'conf-mid'
   return 'conf-low'
-}
-
-function stepOutput(step) {
-  try {
-    const out = typeof step.output_json === 'string' ? JSON.parse(step.output_json) : step.output_json
-    return out?.output || step.output_json || ''
-  } catch {
-    return step.output_json || ''
-  }
-}
-
-function stepEvidence(step) {
-  try {
-    const ev = typeof step.evidence_json === 'string' ? JSON.parse(step.evidence_json) : step.evidence_json
-    return Array.isArray(ev) ? ev : []
-  } catch {
-    return []
-  }
 }
 </script>
 
@@ -488,96 +410,6 @@ function stepEvidence(step) {
   margin-top: 12px;
   display: flex;
   justify-content: flex-end;
-}
-
-.detail-meta {
-  margin-bottom: 16px;
-}
-
-.detail-steps-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--color-fg-default);
-  margin-bottom: 10px;
-}
-
-.steps {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.step {
-  border: 1px solid var(--color-border-default);
-  border-radius: 10px;
-  padding: 12px 14px;
-  background: var(--color-canvas-subtle);
-}
-
-.step-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.step-index {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--color-accent-fg);
-  color: #fff;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.step-agent {
-  font-weight: 600;
-  color: var(--color-fg-default);
-  font-size: 13px;
-}
-
-.step-confidence {
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--color-fg-muted);
-}
-
-.step-output {
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--color-fg-default);
-  background: var(--color-canvas-default);
-  border: 1px solid var(--color-border-default);
-  border-radius: 8px;
-  padding: 10px 12px;
-  margin: 0;
-  max-height: 320px;
-  overflow: auto;
-}
-
-.step-evidence {
-  margin-top: 8px;
-}
-
-.evidence-label {
-  font-size: 12px;
-  color: var(--color-fg-muted);
-  margin-bottom: 6px;
-}
-
-.evidence-tag {
-  margin: 0 6px 6px 0;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .conf-high {

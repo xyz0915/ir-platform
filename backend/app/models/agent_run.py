@@ -148,13 +148,24 @@ class AgentRunStep:
 
     @staticmethod
     def list_by_run(run_id: str) -> list[dict]:
-        """列出某 run 的所有步骤（按时间升序）。"""
+        """列出某 run 的所有步骤（按时间升序），自动解析 JSON 字段。"""
         with get_connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM agent_run_steps WHERE run_id = ? ORDER BY id ASC",
                 (run_id,),
             ).fetchall()
-        return [dict(r) for r in rows]
+        results = []
+        for r in rows:
+            d = dict(r)
+            # 自动解析 JSON 字段为对象
+            for k in ('output_json', 'evidence_json', 'input_json'):
+                if d.get(k) and isinstance(d[k], str):
+                    try:
+                        d[k] = json.loads(d[k])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            results.append(d)
+        return results
 
     @staticmethod
     def get_by_id(step_id: int) -> Optional[dict]:

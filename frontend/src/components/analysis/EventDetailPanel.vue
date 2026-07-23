@@ -21,6 +21,13 @@
       <button v-if="event.status === 'investigating'" class="btn btn-success btn-xs" @click="onStatusChange('resolved')">解决</button>
       <button v-if="event.status === 'resolved'" class="btn btn-warning btn-xs" @click="onStatusChange('investigating')">重开</button>
       <button v-if="event.status !== 'rejected' && event.status !== 'resolved'" class="btn btn-danger btn-xs" @click="onStatusChange('rejected')">误报</button>
+      <button class="btn btn-primary btn-xs" @click="onDeepInvestigation">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="margin-right:3px">
+          <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.3"/>
+          <path d="M8 5V11M5 8H11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+        </svg>
+        深度调查
+      </button>
     </div>
 
     <!-- 上一条/下一条导航 -->
@@ -491,6 +498,7 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAnalysisStore } from '@/stores/analysis'
 
 const props = defineProps({
@@ -501,6 +509,7 @@ const props = defineProps({
 const emit = defineEmits(['close', 'update-status', 'assign', 'view-related'])
 
 const store = useAnalysisStore()
+const router = useRouter()
 const dispComment = ref('')
 const activeCollapse = ref(['more'])
 
@@ -792,6 +801,13 @@ function onFilterByHost(hostId) {
   store.ruleFilters.page = 1
   store.fetchRuleEvents()
   emit('close')
+}
+
+// ── 深度调查 ──
+function onDeepInvestigation() {
+  const query = { eventId: props.event.id }
+  if (props.event.case_id) query.caseId = props.event.case_id
+  router.push({ path: '/agent-orchestration', query })
 }
 </script>
 

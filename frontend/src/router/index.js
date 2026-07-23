@@ -1,5 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import AgentRunDetailView from '@/views/AgentRunDetailView.vue'
+import AgentManagementView from '@/views/AgentManagementView.vue'
 
 const routes = [
   {
@@ -122,6 +124,18 @@ const routes = [
         path: 'agent-orchestration',
         name: 'AgentOrchestration',
         component: () => import('@/views/AgentRunView.vue')
+      },
+      {
+        path: 'agent-orchestration/:runId',
+        name: 'AgentRunDetail',
+        component: AgentRunDetailView,
+        meta: { title: '编排运行详情' }
+      },
+      {
+        path: 'agent-management',
+        name: 'AgentManagementV2',
+        component: AgentManagementView,
+        meta: { title: '智能体管理' }
       },
       {
         path: 'incident-clusters',

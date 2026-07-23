@@ -67,11 +67,9 @@ class ReporterAgent(BaseAgent):
                 f"{DEGRADED_MESSAGE_TEMPLATE}"
             )
 
-        # 沉淀案例（cases 持久化 + RAG 索引刷新）
-        try:
-            self._sink_case(run_id, report, ctx)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("ReporterAgent 案例沉淀失败（不影响报告）: %s", exc)
+        # 不再写入 cases 表（避免污染案件管理列表）
+        # 报告内容已存储在 agent_run_steps.output_json 中
+        # 如需历史报告回溯，查询 agent_runs + agent_run_steps 即可
 
         # 聚合证据
         evidence = self._collect_evidence(run_id, ctx)

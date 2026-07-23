@@ -150,9 +150,6 @@ async def approve_agent_run(
 ):
     """HITL 批准：仅管理员。决议后由 Responder 经 ActionService 执行 + 写处置记录 + 报告收尾。"""
     _require_admin(current_user)
-    run = AgentRun.get_by_run_id(run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail="run 不存在")
     approval = HitlApproval.get_by_id(body.approval_id)
     if not approval or approval.get("run_id") != run_id:
         raise HTTPException(status_code=404, detail="审批记录不存在或不匹配该 run")
@@ -188,9 +185,6 @@ async def reject_agent_run(
 ):
     """HITL 拒绝：仅管理员。拒绝后转人工研判，run 由 reporter 收尾（标注拒绝）。"""
     _require_admin(current_user)
-    run = AgentRun.get_by_run_id(run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail="run 不存在")
     approval = HitlApproval.get_by_id(body.approval_id)
     if not approval or approval.get("run_id") != run_id:
         raise HTTPException(status_code=404, detail="审批记录不存在或不匹配该 run")

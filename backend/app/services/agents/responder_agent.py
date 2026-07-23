@@ -38,15 +38,19 @@ class ResponderAgent(BaseAgent):
         host_id = ctx.get("host_id")
         host = data_provider.get_host(host_id) if host_id else None
         logs = data_provider.get_logs_by_host(host_id, limit=200) if host_id else []
+        sec_events = data_provider.get_security_events_by_host(host_id) if host_id else []
 
         # 数据驱动：推导建议动作 + 目标 + 回滚预案
-        action, target, rollback = self._derive_action(host, logs, investigation)
+        action, target, rollback = self._derive_action(host, logs, sec_events, investigation)
 
         recommendation = self._build_recommendation(action, target, rollback, host)
         llm_unavailable = False
         try:
             resp = await self._llm.call(
-                prompts.build_responder_prompt(investigation_result=investigation.get("summary", "")),
+                prompts.build_responder_prompt(
+                    investigation_result=investigation.get("summary", ""),
+                    security_events_summary=data_provider.build_security_events_summary(sec_events),
+                ),
                 user=ctx.get("user"),
             )
             if resp.get("degraded") or not resp.get("content"):
@@ -94,7 +98,7 @@ class ResponderAgent(BaseAgent):
     # ── 动作推导（数据驱动，不编造目标）──
     @staticmethod
     def _derive_action(
-        host: Optional[dict], logs: list[dict], investigation: dict
+        host: Optional[dict], logs: list[dict], sec_events: list[dict], investigation: dict
     ) -> tuple[str, dict, dict]:
         """基于真实数据推导建议动作 / 目标 / 回滚预案。
 
@@ -108,6 +112,12 @@ class ResponderAgent(BaseAgent):
             ip = log.get("source_ip")
             if ip and sev in ("high", "critical"):
                 suspicious_ips.append(ip)
+        # 也从 security_events 找网络外连
+        for ev in sec_events:
+            ev_type = ev.get("event_type", "")
+            if ev_type == "network_outbound":
+                mr = ev.get("matched_rules", "")
+                suspicious_ips.append(f"security_event:{ev.get('id', '')} | rules={mr[:40]}")
         if suspicious_ips:
             # P2: 频次排序（取最可疑的 IP）
             if len(suspicious_ips) > 1:

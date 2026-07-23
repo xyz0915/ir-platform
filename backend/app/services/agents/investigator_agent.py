@@ -85,6 +85,10 @@ class InvestigatorAgent(BaseAgent):
             logger.warning("Investigator RAG 检索失败（跳过）: %s", exc)
 
         data_summary = self._build_data_summary(host, timeline, root_cause, len(procs), len(logs), security_events_count)
+
+        # 补充 security_events（仅命中规则的）
+        sec_events = data_provider.get_security_events_by_host(host_id) if host_id else []
+
         llm_unavailable = False
         try:
             resp = await self._llm.call(
@@ -92,6 +96,7 @@ class InvestigatorAgent(BaseAgent):
                     triage_result=ctx.get("triage", {}).get("summary", ""),
                     evidence=data_summary,
                     rag_cases=rag_text,
+                    security_events_summary=data_provider.build_security_events_summary(sec_events),
                 ),
                 user=ctx.get("user"),
             )
@@ -242,3 +247,29 @@ class InvestigatorAgent(BaseAgent):
             result.evidence = masked.get("evidence", result.evidence)
         except Exception as exc:  # noqa: BLE001
             logger.debug("InvestigatorAgent masking skipped: %s", exc)
+
+    @staticmethod
+    def _build_security_events_summary(events: list[dict]) -> str:
+        """构建 security_events 的摘要文本，供 LLM 分析。
+
+        按 event_type 分组计数，统计严重度分布，提取关键事件。
+        """
+        if not events:
+            return ""
+        from collections import Counter
+        by_type: Counter[str] = Counter()
+        high_sev = sum(1 for e in events if e.get("severity") == "high")
+        medium_sev = sum(1 for e in events if e.get("severity") == "medium")
+        matched = sum(1 for e in events if e.get("matched_rules"))
+        parts = [f"共 {len(events)} 条命中规则的安全事件（High={high_sev}, Medium={medium_sev}）"]
+        for e in events:
+            by_type[e.get("event_type", "unknown")] += 1
+        parts.append("按类型分布：")
+        for t, c in by_type.most_common():
+            parts.append(f"  - {t}: {c}条")
+        key_events = [e for e in events if e.get("severity") == "high"]
+        if key_events:
+            parts.append(f"\n关键事件（High 严重度，{len(key_events)} 条）：")
+            for e in key_events[:5]:
+                parts.append(f"  [{e.get('event_type')}] rules={e.get('matched_rules','')}")
+        return "\n".join(parts)

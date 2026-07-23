@@ -1,115 +1,133 @@
 classDiagram
-    class BaseMapper {
-        +list~str~ event_types
-        +map(raw: dict) dict | None
-    }
-
-    class ProcessMapper {
-        +list~str~ event_types
-        +map(raw: dict) dict | None
-    }
-
-    class NetworkMapper {
-        +list~str~ event_types
-        +map(raw: dict) dict | None
-    }
-
-    class RegistryMapper {
-        +list~str~ event_types
-        +map(raw: dict) dict | None
-    }
-
-    class FileMapper {
-        +list~str~ event_types
-        +map(raw: dict) dict | None
-    }
-
-    class PersistenceMapper {
-        +list~str~ event_types
-        +map(raw: dict) dict | None
-    }
-
-    class WmiMapper {
-        +list~str~ event_types
-        +map(raw: dict) dict | None
-    }
-
-    class BehaviorMapper {
-        +list~str~ event_types
-        +map(raw: dict) dict | None
-    }
-
-    class IocMapper {
-        +list~str~ event_types
-        +map(raw: dict) dict | None
-    }
-
-    class AuthMapper {
-        +list~str~ event_types
-        +map(raw: dict) dict | None
-    }
-
-    class ModuleMapper {
-        +list~str~ event_types
-        +map(raw: dict) dict | None
-    }
-
-    class PipeMapper {
-        +list~str~ event_types
-        +map(raw: dict) dict | None
-    }
-
-    class ProcessesCollector {
+    class AgentDefinition {
         +str name
-        +list~str~ platform
-        +collect() list
-        +_collect_fallback() list
-        +_build_connection_map(psutil) dict
-        +_enrich(proc: dict) void
+        +str display_name
+        +str type
+        +str description
+        +list[str] data_sources
+        +list[str] depends_on
+        +str prompt_template
+        +dict config
+        +bool enabled
+        +bool hitl
+        +str created_at
+        +str updated_at
+        +to_dict() dict
     }
 
-    class NetworkCollector {
+    class AgentRegistry {
+        -dict _cache
+        -Database _db
+        +get_instance() AgentRegistry
+        +register(def: AgentDefinition) AgentDefinition
+        +unregister(name: str) None
+        +update(name: str, updates: dict) AgentDefinition
+        +get(name: str) AgentDefinition|None
+        +list(enabled_only: bool) list[AgentDefinition]
+        +get_dependency_graph(names: list[str]) dict[str, list[str]]
+        +validate_pipeline(names: list[str]) list[str]
+        +detect_cycle(graph: dict) list[str]|None
+    }
+
+    class CacheManager {
+        -OrderedDict _cache
+        -int _ttl
+        -int _max_entries
+        -int _hit_count
+        -int _miss_count
+        +get(agent_name: str, params: dict) AgentResult|None
+        +set(agent_name: str, params: dict, result: AgentResult) None
+        +invalidate(agent_name: str|None) int
+        +stats() dict
+    }
+
+    class PipelineEngine {
+        -dict _runs
+        -int _max_concurrent
+        +run(run_id: str, agent_names: list[str], event_id: str, ctx: EventContext, user: UserContext, use_cache: bool) PipelineRun
+        +_run_batch(agents: list[AgentWithParams], ctx: EventContext, user: UserContext, use_cache: bool) list[AgentResult]
+        +_run_single(agent: AgentWithParams, ctx: EventContext, user: UserContext, use_cache: bool) AgentResult
+        +_topological_sort(graph: dict) list[list[str]]
+        +cancel(run_id: str) bool
+        +resume(run_id: str, approved: bool, comment: str) None
+        +get_status(run_id: str) PipelineStatus|None
+        +get_run(run_id: str) PipelineRun|None
+    }
+
+    class HITLManager {
+        -dict _pending
+        +request_approval(run_id: str, agent_name: str, context: dict, user: UserContext) bool
+        +approve(run_id: str, user: UserContext) None
+        +reject(run_id: str, user: UserContext) None
+    }
+
+    class AgentResult {
+        +str agent_name
+        +str status
+        +dict data
+        +float elapsed
+        +bool cached
+        +str error
+    }
+
+    class PipelineRun {
+        +str run_id
+        +str event_id
+        +str status
+        +list[AgentRunStep] steps
+        +dict progress
+        +datetime started_at
+        +datetime completed_at
+        +float total_elapsed
+    }
+
+    class AgentRunModel {
+        +int id
+        +str run_id
+        +str event_id
+        +str agent_name
+        +str status
+        +int stage
+        +float elapsed
+        +int cached
+        +str input_hash
+        +str result
+        +str error
+        +str started_at
+        +str completed_at
+    }
+
+    class AgentDefinitionModel {
+        +int id
         +str name
-        +list~str~ platform
-        +collect() dict
-        +_collect_windows_connections() dict
-        +_build_network_connections(connections: list) list
-        +_get_connections() list
+        +str display_name
+        +str type
+        +str description
+        +str data_sources
+        +str depends_on
+        +str prompt_template
+        +str config
+        +int enabled
+        +str created_at
+        +str updated_at
+        +to_dict() dict
     }
 
-    class RegistryCollector {
+    class PipelinePresetModel {
+        +int id
         +str name
-        +list~str~ platform
-        +collect() dict
-        +_build_registry_keys(run_keys, services, shell_extensions) list
-        +_get_run_keys() list
-        +_get_shell_extensions() list
+        +str description
+        +str agents
+        +str created_at
     }
 
-    class StartupItemsCollector {
-        +str name
-        +list~str~ platform
-        +collect() list
-        +_collect_windows() list
-        +_get_registry_run_keys() list
-    }
-
-    class ServicesCollector {
-        +str name
-        +list~str~ platform
-        +collect() list
-        +_collect_windows() list
-        +_collect_linux() list
-    }
-
-    BaseMapper <|-- ProcessMapper : extends
-    BaseMapper <|-- NetworkMapper : extends
-    BaseMapper <|-- RegistryMapper : extends
-    BaseMapper <|-- FileMapper : extends
-    BaseMapper <|-- PersistenceMapper : extends
-    BaseMapper <|-- WmiMapper : extends
-    BaseMapper <|-- BehaviorMapper : extends
-    BaseMapper <|-- IocMapper : extends
-    BaseMapper <|-- AuthMapper : extends
-    BaseMapper <|-- ModuleMapper : extends
-    BaseMapper <|-- PipeMapper : extends
+    AgentRegistry --> AgentDefinition : manages
+    PipelineEngine --> AgentRegistry : reads definitions
+    PipelineEngine --> CacheManager : checks cache
+    PipelineEngine --> HITLManager : pauses for approval
+    PipelineEngine --> AgentResult : produces
+    PipelineEngine --> PipelineRun : manages
+    HITLManager --> PipelineEngine : resumes on approval
+    AgentDefinitionModel <.. AgentDefinition : maps to/from
+    AgentRunModel <.. AgentResult : persists
+    PipelinePresetModel <.. PipelineEngine : saves/loads

@@ -1,17 +1,74 @@
 sequenceDiagram
-    participant Agent as Agent Collector
-    participant JSON as JSON File
-    participant Mapper as Mapper (or 链)
-    participant DB as Security Events DB
+    participant Analyst as 安全分析员
+    participant UI as 前端<br>AgentManagementView
+    participant Store as Pinia Store<br>agentManagement.js
+    participant API as API 层<br>agent_management.py
+    participant Registry as AgentRegistry
+    participant Engine as PipelineEngine
+    participant Cache as CacheManager
+    participant HITL as HITLManager
+    participant Agent as Agent 执行器
+    participant DB as SQLite
 
-    Note over Agent: Phase 2: 改进采集
-    Agent->>Agent: processes.py: 采集 start_time + collected_at
-    Agent->>Agent: network.py: 采集 creation_time + collected_at
-    Agent->>Agent: registry.py: 采集 last_write_time + collected_at
-    Agent->>Agent: services.py: 采集 collected_at
-    Agent->>JSON: 写入 JSON 文件
+    Analyst->>UI: 1. 进入 AgentManagementView
+    UI->>Store: 2. dispatch(fetchAgents)
+    Store->>API: 3. GET /api/agent-management/agents
+    API->>Registry: 4. list(enabled_only=True)
+    Registry->>DB: 5. SELECT * FROM agent_definitions WHERE enabled=1
+    DB-->>Registry: 6. rows
+    Registry-->>API: 7. list[AgentDefinition]
+    API-->>Store: 8. {agents: [...]}
+    Store-->>UI: 9. 渲染 Available 列表 + Pipeline 区域
 
-    Note over JSON,Mapper: Phase 1: 修复回退链
-    Mapper->>JSON: 读取 raw dict
-    Mapper->>Mapper: timestamp = raw.get("timestamp")<br/>    or raw.get("start_time")<br/>    or raw.get("collected_at")<br/>    or raw.get("_fallback_ts")<br/>    or datetime.now().isoformat()
-    Mapper->>DB: 写入 security_events
+    Analyst->>UI: 10. 勾选/拖拽 Agent (triage, file, net, root_cause, reporter)
+    UI->>Store: 11. dispatch(addToPipeline) / dispatch(reorderPipeline)
+    Store-->>UI: 12. 实时更新 Pipeline 列表
+
+    Analyst->>UI: 13. 点击"开始执行"
+    UI->>Store: 14. dispatch(startPipeline, {event_id, use_cache})
+
+    alt 校验未通过
+        Store->>API: 15. POST /pipeline/validate
+        API->>Registry: 16. validate_pipeline(agent_names)
+        Registry-->>API: 17. warnings (缺少依赖)
+        API-->>Store: 18. {valid: false, warnings: [...]}
+        Store-->>UI: 19. 显示警告弹窗，阻止执行
+    else 校验通过
+        Store->>API: 20. POST /pipeline/run {event_id, agents, use_cache}
+        API->>Engine: 21. run(run_id, agent_names, ctx, user, use_cache)
+        Engine->>Registry: 22. get_dependency_graph(agent_names)
+        Registry-->>Engine: 23. DAG 邻接表
+        Engine->>Engine: 24. _topological_sort() → 分批
+        API-->>Store: 25. 202 {run_id, status: "running", pipeline: [...]}
+        Store-->>UI: 26. 跳转执行监控页
+
+        loop 每批次 batch
+            par 并行执行 batch 内 Agent
+                Engine->>Cache: 27. get(agent_name, params)
+                alt 缓存命中
+                    Cache-->>Engine: 28. AgentResult (cached=true)
+                    Engine-->>API: 29. SSE: stage_cached
+                else 未命中
+                    Engine->>Agent: 30. agent.run(ctx)
+                    Agent-->>Engine: 31. AgentResult
+                    Engine->>Cache: 32. set(agent_name, params, result)
+                    Engine-->>API: 33. SSE: stage_complete
+                end
+                Engine->>DB: 34. INSERT INTO agent_runs (...)
+            end
+        end
+
+        alt HITL 触发 (responder)
+            Engine->>HITL: 35. request_approval(run_id, "responder", context, user)
+            HITL-->>API: 36. SSE: hitl_waiting
+            Analyst->>UI: 37. 查看 HITL 弹窗
+            Analyst->>UI: 38. 审批通过/拒绝
+            UI->>API: 39. POST /pipeline/run/{run_id}/resume {approved}
+            API->>Engine: 40. resume(run_id, approved)
+            Engine-->>API: 41. SSE: stage_complete (resume)
+        end
+
+        Engine-->>API: 42. SSE: pipeline_complete
+        API-->>Store: 43. (SSE/轮询) 最终结果
+        Store-->>UI: 44. 展示完整分析报告
+    end

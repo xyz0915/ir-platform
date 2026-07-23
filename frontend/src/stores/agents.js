@@ -7,6 +7,7 @@
  */
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { getSSEUrl } from '@/api/agentOrchestration'
 import {
   createAgentRun,
   listAgentRuns,
@@ -24,6 +25,10 @@ export const useAgentOrchestrationStore = defineStore('agentOrchestration', () =
   const approvals = ref([]) // 待审批列表
   const loading = ref(false)
   const submitting = ref(false)
+  // SSE 相关 state
+  const sseConnected = ref(false)
+  const sseError = ref(null)
+  const detailSteps = ref([])
 
   // ===== 派生 =====
   const isLoading = computed(() => loading.value)
@@ -135,6 +140,9 @@ export const useAgentOrchestrationStore = defineStore('agentOrchestration', () =
     approvals,
     loading,
     submitting,
+    sseConnected,
+    sseError,
+    detailSteps,
     // getters
     isLoading,
     pendingCount,

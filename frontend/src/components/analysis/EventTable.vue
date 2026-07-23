@@ -39,6 +39,7 @@
       @row-click="onRowClick"
       @selection-change="onSelectionChange"
       @sort-change="onSortChange"
+      @scroll="onTableScroll"
     >
       <!-- 书签列 -->
       <el-table-column width="30" fixed>
@@ -298,22 +299,46 @@ const emit = defineEmits([
   'batch-link-case',
   'batch-export',
   'clear-selection',
+  'scroll-change',
 ])
 
+// ===== 表格滚动折叠头部 =====
+const SCROLL_THRESHOLD = 80
+let throttling = false
+
+function onTableScroll({ scrollTop }) {
+  if (throttling) return
+  throttling = true
+  requestAnimationFrame(() => { throttling = false })
+  emit('scroll-change', scrollTop > SCROLL_THRESHOLD)
+}
+
 // 动态表格高度: ResizeObserver 跟踪父容器实际高度
+// wrapper 内部包含 col-picker (28px) + el-table + table-footer (46px)
+// 减去 col-picker 和 table-footer 的高度，才是 el-table 真实可用高度
 const wrapperRef = ref(null)
 const wrapperHeight = ref(0)
 let resizeObserver = null
-const PAGINATION_HEIGHT = 48
+const HEADER_HEIGHT = 32    // col-picker + margin
+const FOOTER_HEIGHT = 48    // table-footer (含 padding)
 
 const tableHeight = computed(() => {
   if (wrapperHeight.value > 0) {
-    return Math.max(wrapperHeight.value - PAGINATION_HEIGHT, 200)
+    return Math.max(wrapperHeight.value - HEADER_HEIGHT - FOOTER_HEIGHT, 200)
   }
-  return 'calc(100vh - 510px)'
+  // 兜底：用视口高度减去一个合理估算值，ResizeObserver 会在 onMounted 中立即修正
+  return Math.max(Math.floor(window.innerHeight * 0.5), 400)
 })
 
 onMounted(() => {
+  // 立即获取父容器实际高度，避免 fallback
+  if (wrapperRef.value) {
+    const parent = wrapperRef.value.parentElement
+    if (parent) {
+      wrapperHeight.value = parent.clientHeight
+    }
+  }
+  // ResizeObserver 跟踪动态变化
   if (wrapperRef.value && typeof ResizeObserver !== 'undefined') {
     resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
@@ -591,7 +616,7 @@ function rowClassName({ row }) {
 .bm-icon.active { opacity: 1; color: #f59e0b; }
 
 /* 列选择器 */
-.col-picker { display: flex; justify-content: flex-end; margin-bottom: 4px; }
+.col-picker { display: flex; justify-content: flex-end; flex-shrink: 0; margin-bottom: 4px; }
 .col-picker-btn { padding: 3px 10px; font-size: 11px; border: 0.5px solid var(--color-border-default); border-radius: 4px; background: var(--color-canvas-default); cursor: pointer; color: var(--color-fg-subtle); display: inline-flex; align-items: center; gap: 4px; }
 .col-picker-btn:hover { background: var(--color-canvas-subtle); color: var(--color-fg-default); }
 .col-pick-item { display: flex; align-items: center; gap: 6px; font-size: 12px; }

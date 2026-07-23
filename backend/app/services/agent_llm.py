@@ -98,24 +98,48 @@ class AgentLLM:
             )
         except httpx.ConnectError:
             mapped = "网络连接异常"
+            logger.error("AgentLLM call failed: %s", mapped)
+            return self._degraded(
+                error=mapped,
+                user_id=user_id,
+                prompt=prompt,
+                latency_ms=int((time.time() - start_ts) * 1000),
+                profile=profile,
+            )
         except httpx.TimeoutException:
             mapped = "AI 服务调用超时"
+            logger.error("AgentLLM call failed: %s", mapped)
+            return self._degraded(
+                error=mapped,
+                user_id=user_id,
+                prompt=prompt,
+                latency_ms=int((time.time() - start_ts) * 1000),
+                profile=profile,
+            )
         except httpx.HTTPStatusError as exc:
             try:
                 mapped = map_http_error(exc)
             except Exception:
                 mapped = f"AI 服务返回错误: {exc.response.status_code}"
+            logger.error("AgentLLM call failed: %s", mapped)
+            return self._degraded(
+                error=mapped,
+                user_id=user_id,
+                prompt=prompt,
+                latency_ms=int((time.time() - start_ts) * 1000),
+                profile=profile,
+            )
         except Exception as exc:
             msg = str(exc) or type(exc).__name__
             mapped = f"AI 服务内部错误: {msg}"
-        logger.error("AgentLLM call failed: %s", mapped)
-        return self._degraded(
-            error=mapped,
-            user_id=user_id,
-            prompt=prompt,
-            latency_ms=int((time.time() - start_ts) * 1000),
-            profile=profile,
-        )
+            logger.error("AgentLLM call failed: %s", mapped)
+            return self._degraded(
+                error=mapped,
+                user_id=user_id,
+                prompt=prompt,
+                latency_ms=int((time.time() - start_ts) * 1000),
+                profile=profile,
+            )
 
         # 4. 解析响应
         choices = resp.get("choices", []) if isinstance(resp, dict) else []
@@ -151,6 +175,7 @@ class AgentLLM:
             "usage": usage,
             "degraded": False,
             "error": None,
+            "execution_duration_ms": latency_ms,
         }
 
     @staticmethod

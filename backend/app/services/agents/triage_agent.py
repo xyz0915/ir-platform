@@ -47,6 +47,10 @@ class TriageAgent(BaseAgent):
 
     def __init__(self) -> None:
         super().__init__()
+        # 本次 LLM 调用统计（在 run 期间累加，最终写入 result）
+        self._llm_calls_count: int = 0
+        self._llm_usage: dict = {}
+        self._llm_duration_ms: float = 0.0
 
     # ── 主入口 ──
     async def run(self, ctx: dict, task: dict) -> AgentResult:
@@ -79,6 +83,10 @@ class TriageAgent(BaseAgent):
         rules = data_provider.get_enabled_rules()
         rules_hit = data_provider.get_rules_hit_summary(events[0], rules)
 
+        # 补充 security_events 数据（比 normalized_logs 更丰富的安全事件）
+        sec_events = data_provider.get_security_events_by_host(host_id) if host_id else []
+        sec_events_summary = data_provider.build_security_events_summary(sec_events)
+
         # 数据驱动：优先级 + 置信度
         priority, confidence = self._data_driven(events, logs)
         evidence = data_provider.extract_event_refs(events) + data_provider.extract_log_refs(logs, 20)
@@ -93,6 +101,7 @@ class TriageAgent(BaseAgent):
                     event_summary=data_summary,
                     logs=self._log_preview(logs),
                     rules_hit=rules_hit,
+                    security_events_summary=sec_events_summary,
                 ),
                 user=ctx.get("user"),
             )
@@ -100,6 +109,10 @@ class TriageAgent(BaseAgent):
                 llm_unavailable = True
             else:
                 output = resp["content"]
+                # 累加 LLM 调用统计信息（token 用量、调用次数、耗时）
+                self._llm_calls_count += 1
+                self._llm_usage = resp.get("usage", {}) or {}
+                self._llm_duration_ms = resp.get("execution_duration_ms") or 0
         except Exception as exc:  # noqa: BLE001
             logger.warning("TriageAgent LLM 调用异常（降级）: %s", exc)
             llm_unavailable = True
@@ -127,6 +140,9 @@ class TriageAgent(BaseAgent):
             output=output,
             confidence=confidence,
             evidence=evidence,
+            usage=self._llm_usage,
+            llm_calls_count=self._llm_calls_count,
+            execution_duration_ms=self._llm_duration_ms,
         )
         # PII 脱敏（§8.6）
         self._apply_masking(result)
@@ -230,6 +246,39 @@ class TriageAgent(BaseAgent):
         if logs:
             lines.append(f"相关范式化日志条数：{len(logs)}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _build_security_events_summary(events: list[dict]) -> str:
+        """构建 security_events 的摘要文本，供 LLM 分析。
+
+        按 event_type 分组计数，并提取关键证据。
+        """
+        if not events:
+            return ""
+        from collections import Counter
+        by_type: Counter[str] = Counter()
+        # 同时也统计不同严重度的分布
+        high_sev = sum(1 for e in events if e.get('severity') == 'high')
+        medium_sev = sum(1 for e in events if e.get('severity') == 'medium')
+        matched = sum(1 for e in events if e.get('matched_rules'))
+
+        parts = [f"共 {len(events)} 条安全事件（High={high_sev}, Medium={medium_sev}, 命中规则={matched}）"]
+
+        for e in events:
+            by_type[e.get('event_type', 'unknown')] += 1
+
+        parts.append("按类型分布：")
+        for t, c in by_type.most_common():
+            parts.append(f"  - {t}: {c}条")
+
+        # 提取关键事件（命中规则或 high severity 的）
+        key_events = [e for e in events if e.get('matched_rules') or e.get('severity') == 'high']
+        if key_events:
+            parts.append(f"\n关键事件（{len(key_events)} 条）：")
+            for e in key_events[:5]:
+                parts.append(f"  [{e.get('severity','')}] {e.get('event_type')} | rules={e.get('matched_rules','')}")
+
+        return "\n".join(parts)
 
     @staticmethod
     def _log_preview(logs: list[dict], max_chars: int = 3000) -> str:

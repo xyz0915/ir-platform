@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>分析中心事件详情 - 三栏布局预览</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  background: #f5f5f7;
+  color: #1d1d1f;
+  padding: 20px;
+}
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  background: #fff;
+  border-radius: 12px;
+  border: 0.5px solid #e5e5e7;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+/* Top nav */
+.top-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  border-bottom: 0.5px solid #e5e5e7;
+  background: #f8f8fa;
+  font-size: 13px;
+}
+.top-nav .back { color: #378ADD; cursor: pointer; }
+.top-nav .sep { color: #e5e5e7; }
+.top-nav .case-name { font-weight: 500; color: #5F5E5A; }
+.top-nav .meta { color: #888780; font-size: 12px; display: flex; align-items: center; gap: 8px; }
+.top-nav .dot { width: 4px; height: 4px; border-radius: 50%; background: #d3d1c7; display: inline-block; }
+
+/* Decision bar */
+.decision-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px;
+  border-bottom: 0.5px solid #e5e5e7;
+  flex-wrap: wrap;
+}
+.badge-high {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #FCEBEB;
+  color: #A32D2D;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.risk-score { font-size: 13px; font-weight: 500; }
+.event-label { font-size: 12px; color: #888780; }
+.attack-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #FAEEDA;
+  color: #854F0B;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+.actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+.btn {
+  padding: 4px 12px;
+  border: 0.5px solid #b4b2a9;
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #444441;
+  background: #fff;
+}
+.btn-primary {
+  background: #E6F1FB;
+  color: #185FA5;
+  border-color: #378ADD;
+}
+
+/* Three column layout */
+.columns {
+  display: grid;
+  grid-template-columns: 280px 1fr 320px;
+  min-height: 600px;
+}
+
+/* LEFT */
+.left-col {
+  border-right: 0.5px solid #e5e5e7;
+  padding: 16px;
+}
+.section-title {
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 16px;
+}
+
+.timeline { position: relative; padding-left: 20px; }
+.timeline-line {
+  position: absolute; left: 6px; top: 4px; bottom: 0;
+  width: 1.5px; background: #e5e5e7;
+}
+.tl-item {
+  position: relative;
+  margin-bottom: 20px;
+}
+.tl-dot {
+  position: absolute; left: -16px; top: 4px;
+  width: 10px; height: 10px; border-radius: 50%;
+  border: 2px solid #fff;
+}
+.tl-time { font-size: 11px; color: #b4b2a9; margin-bottom: 2px; }
+.tl-title { font-size: 13px; font-weight: 500; margin-bottom: 2px; }
+.tl-desc { font-size: 12px; color: #888780; line-height: 1.5; }
+.tl-desc .danger { color: #A32D2D; }
+.tl-desc .warn { color: #854F0B; }
+
+.tl-summary {
+  margin-top: 16px;
+  padding: 12px;
+  background: #f8f8fa;
+  border-radius: 8px;
+}
+.tl-summary-title { font-size: 12px; font-weight: 500; margin-bottom: 8px; }
+.tl-summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px; }
+.tl-summary-grid .label { color: #b4b2a9; }
+
+/* CENTER */
+.center-col {
+  padding: 16px;
+  border-right: 0.5px solid #e5e5e7;
+  overflow-y: auto;
+}
+.event-card {
+  background: #f8f8fa;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.event-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.event-card-header h3 { font-size: 13px; font-weight: 500; }
+.event-card-header .type { font-size: 11px; color: #b4b2a9; }
+.event-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.event-field .f-label { font-size: 11px; color: #b4b2a9; margin-bottom: 2px; }
+.event-field .f-value { font-size: 12px; }
+
+.section-block { margin-bottom: 16px; }
+.section-block h3 { font-size: 13px; font-weight: 500; margin-bottom: 10px; }
+
+.rule-list { display: flex; flex-direction: column; gap: 8px; }
+.rule-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  border: 0.5px solid #e5e5e7;
+  border-radius: 8px;
+}
+.rule-sev {
+  background: #FCEBEB; color: #A32D2D;
+  padding: 2px 6px; border-radius: 4px;
+  font-size: 11px; white-space: nowrap;
+}
+.rule-body { flex: 1; }
+.rule-name { font-size: 12px; font-weight: 500; }
+.rule-desc { font-size: 11px; color: #b4b2a9; }
+.rule-id { font-size: 11px; color: #b4b2a9; }
+
+.proc-tree {
+  padding: 12px;
+  background: #f8f8fa;
+  border-radius: 8px;
+  font-family: "SF Mono", "JetBrains Mono", "Cascadia Code", monospace;
+  font-size: 11px;
+  line-height: 2;
+}
+.proc-tree .muted { color: #b4b2a9; }
+.proc-tree .hl { color: #1d1d1f; font-weight: 500; }
+.proc-tree .red { color: #A32D2D; }
+.proc-tree .warn { color: #854F0B; }
+
+.evidence-box {
+  border: 0.5px solid #e5e5e7;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.evidence-tabs {
+  display: flex;
+  border-bottom: 0.5px solid #e5e5e7;
+}
+.evidence-tabs .tab {
+  padding: 8px 14px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.evidence-tabs .tab-active {
+  background: #E6F1FB;
+  color: #185FA5;
+}
+.evidence-tabs .tab-inactive {
+  color: #888780;
+}
+.evidence-content {
+  padding: 12px;
+  font-family: "SF Mono", "JetBrains Mono", "Cascadia Code", monospace;
+  font-size: 11px;
+  line-height: 1.8;
+  background: #fafafa;
+}
+.evidence-content .key { color: #185FA5; }
+.evidence-content .val { color: #1d1d1f; }
+.evidence-content .muted { color: #b4b2a9; }
+.evidence-content .red { color: #A32D2D; }
+
+.related-events { display: grid; gap: 6px; }
+.rel-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px;
+  border: 0.5px solid #e5e5e7;
+  border-radius: 8px;
+  font-size: 12px;
+}
+.rel-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+.rel-type { font-weight: 500; }
+.rel-detail { color: #888780; }
+.rel-time { margin-left: auto; color: #b4b2a9; font-size: 11px; }
+
+/* RIGHT */
+.right-col { padding: 16px; overflow-y: auto; }
+
+.ai-card {
+  background: #E6F1FB;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.ai-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.ai-tags { display: flex; gap: 6px; margin-bottom: 10px; }
+.ai-tag-suspicious { background: #FAEEDA; color: #854F0B; padding: 3px 8px; border-radius: 4px; font-size: 11px; }
+.ai-tag-conf { background: #E6F1FB; color: #185FA5; padding: 3px 8px; border-radius: 4px; font-size: 11px; }
+.ai-text { font-size: 12px; line-height: 1.6; }
+.ai-mitre { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
+.ai-mitre-tag { background: #FCEBEB; color: #A32D2D; padding: 2px 6px; border-radius: 4px; font-size: 10px; }
+
+.ioc-list { display: flex; flex-direction: column; gap: 6px; }
+.ioc-item {
+  display: flex; justify-content: space-between;
+  padding: 8px 10px;
+  border: 0.5px solid #e5e5e7;
+  border-radius: 8px;
+  font-size: 11px;
+}
+.ioc-item .ioc-label { color: #b4b2a9; }
+.ioc-item .ioc-val { font-family: "SF Mono", "JetBrains Mono", "Cascadia Code", monospace; }
+
+.alert-list { display: flex; flex-direction: column; gap: 8px; }
+.alert-item {
+  display: flex; gap: 10px;
+  padding: 10px;
+  border-radius: 8px;
+}
+.alert-item.danger { background: #FCEBEB; }
+.alert-item.warning { background: #FAEEDA; }
+.alert-icon { font-size: 16px; line-height: 1; font-weight: bold; }
+.alert-item.danger .alert-icon { color: #A32D2D; }
+.alert-item.warning .alert-icon { color: #854F0B; }
+.alert-body { flex: 1; }
+.alert-title { font-size: 12px; font-weight: 500; }
+.alert-desc { font-size: 11px; color: #888780; }
+.alert-meta { font-size: 11px; color: #b4b2a9; margin-top: 4px; }
+
+.rec-list { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.rec-item {
+  display: flex; gap: 8px;
+  padding: 8px 10px;
+  background: #f8f8fa;
+  border-radius: 8px;
+}
+.rec-num { color: #A32D2D; font-weight: 500; }
+
+.host-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.stat-card {
+  padding: 10px;
+  background: #f8f8fa;
+  border-radius: 8px;
+  text-align: center;
+}
+.stat-num { font-size: 20px; font-weight: 500; }
+.stat-num.danger { color: #A32D2D; }
+.stat-num.warn { color: #854F0B; }
+.stat-label { font-size: 11px; color: #b4b2a9; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Top nav -->
+  <div class="top-nav">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span class="back">← 返回分析中心</span>
+      <span class="sep">|</span>
+      <span class="case-name">案件 CASE-20260721-0001</span>
+    </div>
+    <div class="meta">
+      <span>事件 ID: 61985eb8</span>
+      <span class="dot"></span>
+      <span>DESKTOP-NCR4EED</span>
+      <span class="dot"></span>
+      <span>192.168.1.108</span>
+    </div>
+  </div>
+
+  <!-- Decision bar -->
+  <div class="decision-bar">
+    <span class="badge-high">HIGH</span>
+    <span class="risk-score">风险评分 78</span>
+    <span class="event-label">孤立进程</span>
+    <span class="attack-badge">ATT&CK 执行</span>
+    <div class="actions">
+      <span class="btn">分诊</span>
+      <span class="btn">调查</span>
+      <span class="btn">误报</span>
+      <span class="btn btn-primary">深度调查</span>
+    </div>
+  </div>
+
+  <!-- Three columns -->
+  <div class="columns">
+
+    <!-- LEFT COLUMN -->
+    <div class="left-col">
+      <div class="section-title">攻击链时间线</div>
+      <div class="timeline">
+        <div class="timeline-line"></div>
+
+        <div class="tl-item">
+          <div class="tl-dot" style="background:#888780;"></div>
+          <div class="tl-time">08:13:50</div>
+          <div class="tl-title">初始访问</div>
+          <div class="tl-desc">no events</div>
+        </div>
+
+        <div class="tl-item">
+          <div class="tl-dot" style="background:#BA7517;"></div>
+          <div class="tl-time">08:13:50 - 08:48:55</div>
+          <div class="tl-title">执行 <span style="font-size:11px;color:#888780;">386 events</span></div>
+          <div class="tl-desc">
+            <div class="danger">进程启动（孤立进程）</div>
+            <div class="warn">WMI 订阅（SCM Event Log）</div>
+            <div style="color:#888780;">unsigned_process 命中</div>
+          </div>
+        </div>
+
+        <div class="tl-item">
+          <div class="tl-dot" style="background:#E24B4A;"></div>
+          <div class="tl-time">08:48:17 - 09:08:13</div>
+          <div class="tl-title">持久化 <span style="font-size:11px;color:#888780;">340 events</span></div>
+          <div class="tl-desc">
+            <div class="danger">SecurityHealth 启动项 HKLM\Run</div>
+            <div class="warn">test.exe 注册启动项</div>
+          </div>
+        </div>
+
+        <div class="tl-item">
+          <div class="tl-dot" style="background:#BA7517;"></div>
+          <div class="tl-time">09:08:13</div>
+          <div class="tl-title">权限提升 <span style="font-size:11px;color:#888780;">1278 events</span></div>
+          <div class="tl-desc">
+            <div class="warn">注册表修改 HKLM\Run\Test</div>
+          </div>
+        </div>
+
+        <div class="tl-item">
+          <div class="tl-dot" style="background:#639922;"></div>
+          <div class="tl-time">09:08:13</div>
+          <div class="tl-title">防御规避</div>
+          <div class="tl-desc">
+            <div style="color:#888780;">进程名伪装（LsaIso.exe）</div>
+            <div style="color:#888780;">unsigned_executable 命中</div>
+          </div>
+        </div>
+
+        <div class="tl-item">
+          <div class="tl-dot" style="background:#D85A30;"></div>
+          <div class="tl-time">09:08:13 - 20:48:23</div>
+          <div class="tl-title">命令与控制 <span style="font-size:11px;color:#888780;">63 events</span></div>
+          <div class="tl-desc">
+            <div class="warn">TCP 外连探测</div>
+            <div style="color:#888780;">端口 443/80 外联</div>
+          </div>
+        </div>
+
+        <div class="tl-item">
+          <div class="tl-dot" style="background:#378ADD;"></div>
+          <div class="tl-time">09:08:13</div>
+          <div class="tl-title">信息收集 <span style="font-size:11px;color:#888780;">68 events</span></div>
+          <div class="tl-desc">
+            <div style="color:#888780;">文件创建 C:\test\test.exe</div>
+            <div style="font-family:monospace;color:#b4b2a9;margin-top:2px;font-size:10px;">sha256: aaaa...aaaa</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tl-summary">
+        <div class="tl-summary-title">时间跨度统计</div>
+        <div class="tl-summary-grid">
+          <div><span class="label">首次事件</span><br/>07-19 08:13</div>
+          <div><span class="label">末次事件</span><br/>07-21 20:48</div>
+          <div><span class="label">涉及阶段</span><br/>7 / 14</div>
+          <div><span class="label">事件总量</span><br/>2,584</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CENTER COLUMN -->
+    <div class="center-col">
+      <div class="event-card">
+        <div class="event-card-header">
+          <h3>事件详情</h3>
+          <span class="type">process_start</span>
+        </div>
+        <div class="event-grid">
+          <div class="event-field">
+            <div class="f-label">时间</div>
+            <div class="f-value">2026-07-19 09:08:13 UTC</div>
+          </div>
+          <div class="event-field">
+            <div class="f-label">主机</div>
+            <div class="f-value">DESKTOP-NCR4EED</div>
+          </div>
+          <div class="event-field">
+            <div class="f-label">PID / PPID</div>
+            <div class="f-value" style="font-family:monospace;">1088 / 600</div>
+          </div>
+          <div class="event-field">
+            <div class="f-label">状态</div>
+            <div class="f-value" style="color:#854F0B;">待处置 pending</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-block">
+        <h3>命中规则 (2)</h3>
+        <div class="rule-list">
+          <div class="rule-item">
+            <span class="rule-sev">medium</span>
+            <div class="rule-body">
+              <div class="rule-name">unsigned_process</div>
+              <div class="rule-desc">未签名进程，置信度 0.7</div>
+            </div>
+            <span class="rule-id">rule #28</span>
+          </div>
+          <div class="rule-item">
+            <span class="rule-sev">medium</span>
+            <div class="rule-body">
+              <div class="rule-name">unsigned_executable</div>
+              <div class="rule-desc">可执行文件未签名，置信度 0.7</div>
+            </div>
+            <span class="rule-id">rule #114</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-block">
+        <h3>进程链</h3>
+        <div class="proc-tree">
+          <div class="muted">┗ System (PID 4)</div>
+          <div class="muted" style="margin-left:16px;">┗ smss.exe (PID 600)</div>
+          <div class="muted" style="margin-left:32px;">┗ csrss.exe (PID 608)</div>
+          <div class="muted" style="margin-left:32px;">┗ winlogon.exe (PID 624)</div>
+          <div class="hl" style="margin-left:48px;">● LsaIso.exe (PID 1088) <span class="red">[孤立进程]</span></div>
+          <div class="red" style="margin-left:64px;">└ ToDesk.exe (PID 8528) <span class="muted">orphan_process x15</span></div>
+          <div class="warn" style="margin-left:64px;">└ WUDFHost.exe (PID 1300) <span class="muted">process_respawn_loop x47</span></div>
+        </div>
+      </div>
+
+      <div class="section-block">
+        <h3>证据详情</h3>
+        <div class="evidence-box">
+          <div class="evidence-tabs">
+            <span class="tab tab-active">范式化视图</span>
+            <span class="tab tab-inactive">原始数据</span>
+          </div>
+          <div class="evidence-content">
+            <span class="key">process_name</span>: <span class="val">LsaIso.exe</span><br/>
+            <span class="key">pid</span>: 1088<br/>
+            <span class="key">ppid</span>: 600<br/>
+            <span class="key">command_line</span>: <span class="muted">(empty)</span><br/>
+            <span class="key">is_signed</span>: <span class="red">false ← 异常</span><br/>
+            <span class="key">parent_name</span>: <span class="muted">(session manager)</span><br/>
+            <span class="key">session</span>: 1<br/>
+            <span class="key">host</span>: DESKTOP-NCR4EED (192.168.1.108)
+          </div>
+        </div>
+      </div>
+
+      <div class="section-block">
+        <h3>关联事件 (4)</h3>
+        <div class="related-events">
+          <div class="rel-item">
+            <span class="rel-dot" style="background:#E24B4A;"></span>
+            <span class="rel-type">persistence_register</span>
+            <span class="rel-detail">SecurityHealth HKLM\Run</span>
+            <span class="rel-time">07-19 09:08</span>
+          </div>
+          <div class="rel-item">
+            <span class="rel-dot" style="background:#BA7517;"></span>
+            <span class="rel-type">registry_modify</span>
+            <span class="rel-detail">HKLM\Run\Test REG_SZ</span>
+            <span class="rel-time">07-19 09:08</span>
+          </div>
+          <div class="rel-item">
+            <span class="rel-dot" style="background:#D85A30;"></span>
+            <span class="rel-type">wmi_subscribe</span>
+            <span class="rel-detail">SCM Event Log Filter</span>
+            <span class="rel-time">07-21 20:48</span>
+          </div>
+          <div class="rel-item">
+            <span class="rel-dot" style="background:#378ADD;"></span>
+            <span class="rel-type">file_create</span>
+            <span class="rel-detail">C:\test\test.exe</span>
+            <span class="rel-time">07-19 09:08</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT COLUMN -->
+    <div class="right-col">
+
+      <div class="ai-card">
+        <div class="ai-header">◆ AI 研判</div>
+        <div class="ai-tags">
+          <span class="ai-tag-suspicious">可疑</span>
+          <span class="ai-tag-conf">置信度 85%</span>
+        </div>
+        <div class="ai-text">
+          孤立进程 LsaIso.exe 无有效父进程，进程名疑似仿冒系统组件（LSA 子进程应为 lsass.exe）。关联注册表修改 HKLM\Run\Test 持久化行为，结合 ToDesk.exe 远程控制软件异常生命周期，综合评估为可疑活动。
+        </div>
+        <div class="ai-mitre">
+          <span class="ai-mitre-tag">T1055 进程注入</span>
+          <span class="ai-mitre-tag">T1547 自启动项</span>
+          <span class="ai-mitre-tag">T1036 进程名伪装</span>
+        </div>
+      </div>
+
+      <div class="section-block">
+        <h3>威胁指标 (IOC)</h3>
+        <div class="ioc-list">
+          <div class="ioc-item">
+            <span class="ioc-label">文件哈希</span>
+            <span class="ioc-val">aaaa...aaaa</span>
+          </div>
+          <div class="ioc-item">
+            <span class="ioc-label">文件路径</span>
+            <span class="ioc-val" style="font-size:10px;">C:\test\test.exe</span>
+          </div>
+          <div class="ioc-item">
+            <span class="ioc-label">注册表</span>
+            <span class="ioc-val" style="font-size:10px;">HKLM\...\Run\Test</span>
+          </div>
+          <div class="ioc-item">
+            <span class="ioc-label">进程名</span>
+            <span class="ioc-val">LsaIso.exe</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-block">
+        <h3>关联告警 (3)</h3>
+        <div class="alert-list">
+          <div class="alert-item danger">
+            <div class="alert-icon">!</div>
+            <div class="alert-body">
+              <div class="alert-title">进程名伪装</div>
+              <div class="alert-desc">process_name_spoof · LsaIso.exe 仿冒系统进程</div>
+              <div class="alert-meta">PID 1088 · 2026-07-21 12:53 · alert #42</div>
+            </div>
+          </div>
+          <div class="alert-item warning">
+            <div class="alert-icon">!</div>
+            <div class="alert-body">
+              <div class="alert-title">孤立进程</div>
+              <div class="alert-desc">orphan_process · ToDesk.exe 无父进程</div>
+              <div class="alert-meta">PID 8528 · 重复 15 次 · alert #44</div>
+            </div>
+          </div>
+          <div class="alert-item warning">
+            <div class="alert-icon">!</div>
+            <div class="alert-body">
+              <div class="alert-title">进程重生循环</div>
+              <div class="alert-desc">process_respawn_loop · WUDFHost.exe 频繁重生</div>
+              <div class="alert-meta">PID 1300 · 重复 47 次 · alert #43</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-block">
+        <h3>处置建议</h3>
+        <div class="rec-list">
+          <div class="rec-item">
+            <span class="rec-num">1.</span>
+            <span>终止 LsaIso.exe (PID 1088) 和分析 ToDesk.exe (PID 8528) 的远程连接记录</span>
+          </div>
+          <div class="rec-item">
+            <span class="rec-num">2.</span>
+            <span>清理 HKLM\...\Run\Test 持久化注册表项，检查 SecurityHealth 启动项完整性</span>
+          </div>
+          <div class="rec-item">
+            <span class="rec-num">3.</span>
+            <span>对 C:\test\test.exe 进行哈希查重（VT 交叉查询），检查同簇主机是否被感染</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-block">
+        <h3>主机概况 DESKTOP-NCR4EED</h3>
+        <div class="host-stats">
+          <div class="stat-card">
+            <div class="stat-num">2,584</div>
+            <div class="stat-label">安全事件</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-num danger">823</div>
+            <div class="stat-label">高危事件</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-num">8</div>
+            <div class="stat-label">活跃告警</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-num warn">0</div>
+            <div class="stat-label">今已处置</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+<div style="max-width:1200px;margin:12px auto 0;font-size:12px;color:#888780;text-align:center;">
+  数据来源: ir_platform.db · 主机 DESKTOP-NCR4EED · 事件 process_start (LsaIso.exe) · 告警 process_name_spoof / orphan_process / process_respawn_loop
+</div>
+</body>
+</html>

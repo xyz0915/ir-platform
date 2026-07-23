@@ -18,6 +18,7 @@ from typing import Any, Optional
 from app.models.agent_run import AgentRun, AgentRunStep
 from app.models.hitl_approval import HitlApproval
 from app.services.agents.base_agent import BaseAgent, AgentResult
+from app.services.sse_manager import sse_manager
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,23 @@ class Orchestrator:
         input_json = {"ctx": _safe_json(ctx), "task": _safe_json(task)}
         audit_log_id: Optional[int] = None
 
+        # SSE 推送：步骤开始
+        asyncio.ensure_future(sse_manager.push(
+            run_id,
+            "step_update",
+            {
+                "type": "step_update",
+                "run_id": run_id,
+                "step_id": str(step_agent),
+                "agent": step_agent,
+                "stage": stage,
+                "status": "running",
+                "output": "",
+                "evidence": {"data_sources": [], "evidence": []},
+                "elapsed_seconds": 0,
+            },
+        ))
+
         try:
             result = await agent.run(ctx, task)
         except asyncio.CancelledError:
@@ -123,6 +141,22 @@ class Orchestrator:
                 evidence_json=[],
                 audit_log_id=audit_log_id,
             )
+            # SSE 推送：步骤失败
+            asyncio.ensure_future(sse_manager.push(
+                run_id,
+                "step_update",
+                {
+                    "type": "step_update",
+                    "run_id": run_id,
+                    "step_id": str(step_agent),
+                    "agent": step_agent,
+                    "stage": stage,
+                    "status": "failed",
+                    "output": str(exc)[:2000],
+                    "evidence": {"data_sources": [], "evidence": []},
+                    "elapsed_seconds": 0,
+                },
+            ))
             self._state_machine(run_id, failed=True)
             return AgentResult(stage=stage, output="", confidence=0.0, hitl=False)
 
@@ -138,6 +172,44 @@ class Orchestrator:
             evidence_json=result.evidence,
             audit_log_id=audit_log_id,
         )
+
+        # SSE 推送：步骤完成 — 构造证据数据
+        evidence_payload = {"data_sources": [], "evidence": []}
+        if result.evidence:
+            for ev in result.evidence:
+                if isinstance(ev, dict):
+                    source_id = ev.get("ref", ev.get("id", ""))
+                    if source_id:
+                        evidence_payload["data_sources"].append({
+                            "id": source_id,
+                            "type": ev.get("type", "action"),
+                            "label": ev.get("label", source_id),
+                            "properties": {k: v for k, v in ev.items() if k not in ("type", "ref", "id", "label")},
+                        })
+                    target_ref = ev.get("target_ref")
+                    if target_ref:
+                        evidence_payload["evidence"].append({
+                            "source_id": source_id,
+                            "target_id": target_ref,
+                            "relation": ev.get("relation", "关联"),
+                            "description": ev.get("description", ""),
+                        })
+        asyncio.ensure_future(sse_manager.push(
+            run_id,
+            "step_completed",
+            {
+                "type": "step_completed",
+                "run_id": run_id,
+                "step_id": str(step_agent),
+                "agent": step_agent,
+                "stage": stage,
+                "status": "completed",
+                "output": result.output[:2000] if result.output else "",
+                "evidence": evidence_payload,
+                "elapsed_seconds": result.execution_duration_ms / 1000.0 if result.execution_duration_ms else 0,
+                "summary": result.output[:200] if result.output else "",
+            },
+        ))
 
         # P1-4: ctx 持久化 — agent 执行成功后回写 ctx_json
         AgentRun.update(run_id, ctx_json=_safe_json(ctx))
@@ -314,6 +386,26 @@ class Orchestrator:
         event_id = run.get("event_id") if run else None
         operator = (user or {}).get("username") or "admin"
 
+        # 降级路径：auto_rule_* 等无 agent_runs 记录的 run_id，仅落库 status，跳过实际执行
+        if not run:
+            logger.info(
+                "Orchestrator.resume: run_id=%s 无 agent_runs 记录，走降级路径（仅标记状态）",
+                run_id,
+            )
+            status_text = approval.get("status", "unknown")
+            return {
+                "run_id": run_id,
+                "status": status_text,
+                "executed": False,
+                "result": {
+                    "stage": "response",
+                    "output": f"run has no agent_runs record; approval marked as {status_text}",
+                    "confidence": 1.0,
+                    "hitl": False,
+                    "evidence": [],
+                },
+            }
+
         # P1-4: 从 DB 读取持久化的 ctx_json 重建上下文
         ctx_json_str = run.get("ctx_json") if run else None
         ctx = json.loads(ctx_json_str) if ctx_json_str else {}
@@ -352,6 +444,48 @@ class Orchestrator:
 
         return await self._finish_with_reporter(run_id, ctx, user, hitl_decision, executed)
 
+    # ── 6. 自定义管道执行（PipelineEngine）──
+    async def run_custom_pipeline(
+        self,
+        run_id: str,
+        agent_names: list[str],
+        event_id: str,
+        user: dict,
+        use_cache: bool = True,
+    ) -> dict:
+        """按自定义 Agent 列表执行管道（替代固定 4 阶段）。
+
+        使用 PipelineEngine 替代硬编码 dispatch 调用。
+        支持 DAG 拓扑排序、分批并行执行、缓存查询、HITL 暂停。
+
+        Args:
+            run_id: 运行 ID。
+            agent_names: 有序 Agent 名称列表（用于 DAG 依赖解析）。
+            event_id: 关联安全事件 ID。
+            user: 用户信息。
+            use_cache: 是否启用缓存。
+
+        Returns:
+            {"run_id", "status", "stages", "total_elapsed", "results"}
+        """
+        from app.services.agents.pipeline_engine import pipeline_engine
+
+        ctx = {
+            "run_id": run_id,
+            "event_id": event_id,
+            "user": user or {},
+        }
+
+        result = await pipeline_engine.run(
+            run_id=run_id,
+            agent_names=agent_names,
+            event_id=event_id,
+            ctx=ctx,
+            user=user or {},
+            use_cache=use_cache,
+        )
+        return result
+
     async def _finish_with_reporter(
         self,
         run_id: str,
@@ -368,6 +502,16 @@ class Orchestrator:
         # 最终阶段 — is_final=True 使 _state_machine 标记 completed
         result = await self.dispatch(run_id, reporter, ctx, task=task, is_final=True)
         AgentRun.update(run_id, status=self.STATUS_COMPLETED, stage="report")
+        # SSE 推送：运行完成
+        asyncio.ensure_future(sse_manager.push(
+            run_id,
+            "run_completed",
+            {
+                "type": "run_completed",
+                "run_id": run_id,
+                "status": "completed",
+            },
+        ))
         return {
             "run_id": run_id,
             "status": self.STATUS_COMPLETED,
