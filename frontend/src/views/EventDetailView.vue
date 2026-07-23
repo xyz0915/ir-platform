@@ -157,11 +157,12 @@ const aiVerdict = computed(() => {
 // ── 证据双视图 ──
 const evidenceViews = computed(() => {
   if (!projection.value) return null
-  return projection.value?.evidence_views || null
+  // display API 返回 { event: {...}, projection: { evidence_views: {...} } }
+  return projection.value?.projection?.evidence_views || projection.value?.evidence_views || null
 })
 
 // 自适应主体
-const auxiliary = computed(() => projection.value?.auxiliary || [])
+const auxiliary = computed(() => projection.value?.projection?.auxiliary || projection.value?.auxiliary || [])
 
 const processSubject = computed(() => {
   const et = (eventData.value?.event_type || '')
@@ -187,7 +188,7 @@ const persistenceTarget = computed(() => {
 // ── 风险评分 ──
 const riskScore = computed(() => {
   if (!eventData.value) return 0
-  const required = projection.value?.required || []
+  const required = projection.value?.projection?.required || projection.value?.required || []
   const f = required.find(r => r.key === 'risk_score')
   return f?.value || 0
 })
