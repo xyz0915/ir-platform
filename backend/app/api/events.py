@@ -1198,7 +1198,7 @@ def get_event_host_stats(
     with get_connection() as conn:
         row = conn.execute("SELECT host_id FROM security_events WHERE id=?", (event_id,)).fetchone()
         if not row:
-            raise HTTPException(404, "Event not found")
+            raise HTTPException(404, detail="事件不存在")
         result = get_host_stats(row["host_id"])
         return {"code": 0, "data": result}
 

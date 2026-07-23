@@ -126,6 +126,9 @@ const projection = ref(null)
 const loading = ref(true)
 const error = ref('')
 
+// ── 错误弹出去重标记：防止 404 事件详情和展示两个端点重复弹通知 ──
+let hasShownEventNotFound = false
+
 // ── AI 研判解析 ──
 function parseEvidence(evi) {
   if (!evi) return {}
@@ -217,6 +220,7 @@ async function loadAllPhases() {
 
   loading.value = true
   error.value = ''
+  hasShownEventNotFound = false
 
   try {
     // 阶段一：核心数据（并发）
@@ -227,22 +231,24 @@ async function loadAllPhases() {
 
     if (detailRes.status === 'fulfilled') {
       eventData.value = detailRes.value.data
+      // 展示投影为可选增强：即使失败也不阻断页面渲染
+      if (displayRes.status === 'fulfilled') {
+        projection.value = displayRes.value.data
+      }
     } else {
-      error.value = detailRes.reason?.message || '事件详情加载失败'
+      // 事件不存在——detail 和 display 可能都返回 404，但 Notification 已在 axios
+      // 拦截器中统一处理（去重后只弹一次"事件不存在或已被删除"）。
+      // 这里仅设置页面内联错误文案，不再重复弹窗。
+      error.value = '事件不存在或已被删除'
       loading.value = false
       return
     }
 
-    if (displayRes.status === 'fulfilled') {
-      projection.value = displayRes.value.data
-    }
+    // 获取时间线（不阻塞细节增强）
+    store.fetchTimeline().catch(() => {})
 
-    // 获取时间线
-    await store.fetchTimeline()
-
-    // 阶段二：增强数据（并发，不阻塞渲染）
-    store.fetchEventDetailEnhanced(id)
-        .catch(() => { /* 单接口失败不影响整体 */ })
+    // 阶段二：增强数据（并发，不阻塞渲染，错误已在 axios 拦截器处理）
+    store.fetchEventDetailEnhanced(id).catch(() => {})
 
     // 阶段三：延后数据（P1）
     store.fetchProcessTree(id).catch(() => {})

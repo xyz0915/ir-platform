@@ -93,14 +93,14 @@ export function getEventImpact(eventId) {
   return request.get(`/analysis/events/${eventId}/impact`)
 }
 
-// 处置记录
+// 处置记录（注意：后端 disposition 路由前缀为 /api/events，非 /api/analysis/events）
 export function getDispositions(eventId) {
-  return request.get(`/analysis/events/${eventId}/dispositions`)
+  return request.get(`/events/${eventId}/dispositions`)
 }
 
 // 添加处置记录
 export function addDisposition(eventId, data) {
-  return request.post(`/analysis/events/${eventId}/dispositions`, data)
+  return request.post(`/events/${eventId}/dispositions`, data)
 }
 
 // v2.1 前端字段展示：必填/辅助分级 + 证据双视图
