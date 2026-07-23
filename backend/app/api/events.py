@@ -695,6 +695,10 @@ def timeline_data(
                 "event_type": ev.get("event_type"),
                 "severity": ev.get("severity"),
                 "host_id": ev.get("host_id"),
+                "attack_stage": ev.get("attack_stage", "unknown"),
+                "attack_chain_id": ev.get("attack_chain_id"),
+                "hostname": ev.get("hostname", ""),
+                "event_key": ev.get("event_key", ""),
             }
             for ev in items
         ],
@@ -749,22 +753,23 @@ def get_event_display(
     供分析中心前端列表/详情直接渲染。详见 analysis_center_optimization_design.md §10。
     """
     result = get_display(event_id)
-    if not result:
-        # fallback: 事件可能在数据库中但 display 投影未生成
+    # 如果投影为空（get_display 可能返回 {}），走 fallback
+    if not result or not result.get("evidence_views", {}).get("normalized"):
         with get_connection() as conn:
             row = _lookup_event(conn, event_id, join_hosts=False)
         if not row:
             raise HTTPException(status_code=404, detail="事件不存在")
-        # 返回基础字段作为降级投影
         d = _row_to_dict(row)
+        # 从主事件 evidence 字段构建证据视图
+        raw_ev = json.loads(d.get("evidence", "{}")) if isinstance(d.get("evidence"), str) else d.get("evidence", {})
         result = {
             "event": d,
             "projection": {
                 "required": {},
                 "auxiliary": {},
                 "evidence_views": {
-                    "normalized": json.loads(d.get("evidence", "{}")) if isinstance(d.get("evidence"), str) else d.get("evidence", {}),
-                    "raw": d.get("evidence", {}),
+                    "normalized": raw_ev,
+                    "raw": raw_ev,
                 },
             },
         }
