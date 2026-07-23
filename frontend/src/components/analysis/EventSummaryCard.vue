@@ -16,16 +16,16 @@
           <span class="esc-host-link" @click="onFilterByHost" v-if="event.host_id">
             {{ event.hostname || ('主机#' + event.host_id) }}
           </span>
-          <template v-else>DESKTOP-NCR4EED</template>
+          <template v-else>—</template>
         </span>
       </div>
       <div class="esc-field">
         <span class="esc-label">PID / PPID</span>
-        <span class="esc-value esc-mono">{{ event.evidence?.pid || '1088' }} / {{ event.evidence?.ppid || '600' }}</span>
+        <span class="esc-value esc-mono">{{ event.evidence?.pid || '—' }} / {{ event.evidence?.ppid || '—' }}</span>
       </div>
       <div class="esc-field">
         <span class="esc-label">状态</span>
-        <span class="esc-value" style="color:#854F0B;">{{ statusLabel(event.status) || '待处置 pending' }}</span>
+        <span class="esc-value" style="color:#854F0B;">{{ statusLabel(event.status) || '—' }}</span>
       </div>
     </div>
 

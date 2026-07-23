@@ -69,27 +69,9 @@
       </div>
     </div>
 
-    <!-- 空状态（无任何数据时显示 fallback） -->
+    <!-- 空状态 -->
     <div class="at-empty" v-if="!displayStages.length">
-      <div class="at-fallback-timeline">
-        <div class="at-fallback-item" v-for="(fb, i) in fallbackStages" :key="i">
-          <span class="at-fallback-dot" :style="{ background: fb.color }"></span>
-          <div class="at-fallback-body">
-            <span class="at-fallback-title">{{ fb.label }}</span>
-            <span class="at-fallback-meta">{{ fb.desc }}</span>
-          </div>
-          <span class="at-fallback-count">{{ fb.count }}</span>
-        </div>
-      </div>
-      <div class="at-summary" style="margin-top:16px;">
-        <div class="at-summary-title">时间跨度统计</div>
-        <div class="at-summary-grid">
-          <div class="at-summary-cell"><span class="asc-label">首次事件</span><span class="asc-value">07-19 08:13</span></div>
-          <div class="at-summary-cell"><span class="asc-label">末次事件</span><span class="asc-value">07-21 20:48</span></div>
-          <div class="at-summary-cell"><span class="asc-label">涉及阶段</span><span class="asc-value">7 / 14</span></div>
-          <div class="at-summary-cell"><span class="asc-label">事件总量</span><span class="asc-value">2,584</span></div>
-        </div>
-      </div>
+      <div class="at-empty-text">暂无时间线数据</div>
     </div>
   </div>
 </template>
@@ -150,16 +132,6 @@ const DOT_COLORS = {
   impact: '#A32D2D',
   unknown: '#888780',
 }
-
-const fallbackStages = [
-  { label: '初始访问', color: '#888780', desc: 'no events', count: 0 },
-  { label: '执行', color: '#BA7517', desc: '进程启动（孤立进程）', count: 386 },
-  { label: '持久化', color: '#E24B4A', desc: 'SecurityHealth 启动项 HKLM\\Run', count: 340 },
-  { label: '权限提升', color: '#BA7517', desc: '注册表修改 HKLM\\Run\\Test', count: 1278 },
-  { label: '防御规避', color: '#639922', desc: '进程名伪装（LsaIso.exe）', count: 1 },
-  { label: '命令与控制', color: '#D85A30', desc: 'TCP 外连探测', count: 63 },
-  { label: '信息收集', color: '#378ADD', desc: '文件创建 C:\\test\\test.exe', count: 68 },
-]
 
 // 从 props 按阶段聚合
 const stageGroups = computed(() => {
@@ -405,7 +377,12 @@ function onSelectEvent(eventId) {
 
 /* Fallback 空状态 */
 .at-empty {
-  padding: 8px 12px;
+  padding: 40px 12px;
+  text-align: center;
+}
+.at-empty-text {
+  font-size: 13px;
+  color: #b4b2a9;
 }
 .at-fallback-timeline {
   position: relative;

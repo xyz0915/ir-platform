@@ -14,6 +14,8 @@
         <span class="rel-detail">{{ getItemDetail(item) }}</span>
         <span class="rel-time">{{ getItemTime(item) }}</span>
       </button>
+      <!-- 空状态 -->
+      <div class="rel-empty" v-if="!displayList.length">暂无关联事件</div>
     </div>
   </div>
 </template>
@@ -27,15 +29,8 @@ const props = defineProps({
 
 const emit = defineEmits(['view-event'])
 
-const fallbackEvents = [
-  { id: 'persistence_001', event_type: 'persistence_register', detail: 'SecurityHealth HKLM\\Run', timestamp: '2026-07-19T09:08:00Z', severity: 'high' },
-  { id: 'registry_002', event_type: 'registry_modify', detail: 'HKLM\\Run\\Test REG_SZ', timestamp: '2026-07-19T09:08:00Z', severity: 'medium' },
-  { id: 'wmi_003', event_type: 'wmi_subscribe', detail: 'SCM Event Log Filter', timestamp: '2026-07-21T20:48:00Z', severity: 'medium' },
-  { id: 'file_004', event_type: 'file_create', detail: 'C:\\test\\test.exe', timestamp: '2026-07-19T09:08:00Z', severity: 'low' },
-]
-
 const displayList = computed(() => {
-  if (!props.relatedIds || !props.relatedIds.length) return fallbackEvents
+  if (!props.relatedIds || !props.relatedIds.length) return []
   if (typeof props.relatedIds[0] === 'string') {
     return props.relatedIds.map(id => ({
       id,
@@ -153,5 +148,11 @@ function onViewEvent(item) {
   font-size: 10px;
   white-space: nowrap;
   font-family: 'Courier New', monospace;
+}
+.rel-empty {
+  text-align: center;
+  padding: 20px 0;
+  font-size: 12px;
+  color: #b4b2a9;
 }
 </style>

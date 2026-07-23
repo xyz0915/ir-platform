@@ -3,19 +3,19 @@
     <div class="ho-title">主机概况 {{ hostname }}</div>
     <div class="ho-stat-grid">
       <div class="ho-stat-card">
-        <div class="ho-stat-num">{{ safeStat('total_24h', '2,584') }}</div>
+        <div class="ho-stat-num">{{ safeStat('total_24h', '—') }}</div>
         <div class="ho-stat-label">安全事件</div>
       </div>
       <div class="ho-stat-card">
-        <div class="ho-stat-num ho-stat-danger">{{ safeStat('matched_24h', '823') }}</div>
+        <div class="ho-stat-num ho-stat-danger">{{ safeStat('matched_24h', '—') }}</div>
         <div class="ho-stat-label">高危事件</div>
       </div>
       <div class="ho-stat-card">
-        <div class="ho-stat-num">{{ safeStat('active_alerts', '8') }}</div>
+        <div class="ho-stat-num">{{ safeStat('active_alerts', '—') }}</div>
         <div class="ho-stat-label">活跃告警</div>
       </div>
       <div class="ho-stat-card">
-        <div class="ho-stat-num ho-stat-warn">{{ safeStat('resolved_today', '0') }}</div>
+        <div class="ho-stat-num ho-stat-warn">{{ safeStat('resolved_today', '—') }}</div>
         <div class="ho-stat-label">今已处置</div>
       </div>
     </div>

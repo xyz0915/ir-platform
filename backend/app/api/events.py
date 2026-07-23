@@ -43,82 +43,99 @@ def error(msg: str, code: int = -1) -> dict:
 #  数据库查询辅助
 # ===================================================================
 
+def _resolve_event_id(conn, event_id: str) -> str | None:
+    """将用户传入的 event_id 解析为数据库中真实的 id.
+
+    四级降级策略：
+    Level 1 — 精确匹配 security_events.id
+    Level 2 — 按 event_key 匹配
+    Level 3 — 智能解析 URL slug 格式（6 种正则模式）
+    Level 4 — 模糊前缀匹配（LIKE 'cm:xxx:%' ORDER BY id DESC LIMIT 1）
+    """
+    # ── Level 1: 精确匹配 id ──
+    row = conn.execute(
+        "SELECT id FROM security_events WHERE id = ?", (event_id,)
+    ).fetchone()
+    if row:
+        return row["id"]
+
+    # ── Level 2: 按 event_key 匹配 ──
+    row = conn.execute(
+        "SELECT id FROM security_events WHERE event_key = ? LIMIT 1",
+        (event_id,),
+    ).fetchone()
+    if row:
+        return row["id"]
+
+    # ── Level 3: 智能解析 URL slug 格式 ──
+    import re as _re
+
+    # 按精确→宽泛顺序排列，确保最长/最确定模式优先匹配
+    patterns: list[tuple[str, str]] = [
+        # (1) 标准完整格式: cm:suspicious_startup_items:127
+        (r'^cm:([a-z_]+):(\d+)$', 'cm:{0}:{1}'),
+        # (2) 缺 cm 后冒号: cmsuspicious_startup_items:127 → cm:suspicious_startup_items:127
+        (r'^cm([a-z_]+?):(\d+)$', 'cm:{0}:{1}'),
+        # (3) 缺数字前冒号: cm:abnormal_processes494 → cm:abnormal_processes:494
+        (r'^cm:([a-z_]+?)(\d+)$', 'cm:{0}:{1}'),
+        # (4) 完全无冒号: cmsuspicious_startup_items127 → cm:suspicious_startup_items:127
+        (r'^cm([a-z_]+?)(\d+)$', 'cm:{0}:{1}'),
+        # (5) 缺 cm 前缀但有冒号: suspicious_startup_items:127 → cm:suspicious_startup_items:127
+        (r'^([a-z_]+?):(\d+)$', 'cm:{0}:{1}'),
+        # (6) 缺 cm 前缀且无冒号: suspicious_startup_items127 → cm:suspicious_startup_items:127
+        (r'^([a-z_]+?)(\d+)$', 'cm:{0}:{1}'),
+    ]
+
+    for regex, tmpl in patterns:
+        m = _re.match(regex, event_id)
+        if m:
+            candidate = tmpl.format(m.group(1), m.group(2))
+            row = conn.execute(
+                "SELECT id FROM security_events WHERE id = ?", (candidate,)
+            ).fetchone()
+            if row:
+                return row["id"]
+
+    # ── Level 4: 模糊前缀匹配 ──
+    for regex, tmpl in patterns:
+        m = _re.match(regex, event_id)
+        if m:
+            candidate = tmpl.format(m.group(1), m.group(2))
+            # 取前两段作为前缀: cm:suspicious_startup_items:127 → cm:suspicious_startup_items
+            prefix_part = ':'.join(candidate.split(':')[:2])
+            row = conn.execute(
+                "SELECT id FROM security_events WHERE id LIKE ? ORDER BY id DESC LIMIT 1",
+                (f"{prefix_part}:%",),
+            ).fetchone()
+            if row:
+                return row["id"]
+
+    return None
+
+
 def _lookup_event(conn, event_id: str, join_hosts: bool = True):
     """弹性查询事件：先精确匹配 id，再尝试 event_key，最后尝试模糊前缀匹配.
-    
+
     当 join_hosts=True 时返回完整 JOIN 查询（含主机/案件信息），
     否则仅返回 security_events 基础行。
     """
+    resolved_id = _resolve_event_id(conn, event_id)
+    if not resolved_id:
+        return None
+
     if join_hosts:
-        row = conn.execute("""
+        return conn.execute("""
             SELECT se.*, h.hostname, h.ip_address, h.case_id as case_id,
                    c.name as case_name, c.case_number
             FROM security_events se
             LEFT JOIN hosts h ON h.id = se.host_id
             LEFT JOIN cases c ON c.id = h.case_id
             WHERE se.id = ?
-        """, (event_id,)).fetchone()
+        """, (resolved_id,)).fetchone()
     else:
-        row = conn.execute("SELECT * FROM security_events WHERE id = ?", (event_id,)).fetchone()
-    if row:
-        return row
-    # 尝试按 event_key 匹配
-    if join_hosts:
-        row = conn.execute("""
-            SELECT se.*, h.hostname, h.ip_address, h.case_id as case_id,
-                   c.name as case_name, c.case_number
-            FROM security_events se
-            LEFT JOIN hosts h ON h.id = se.host_id
-            LEFT JOIN cases c ON c.id = h.case_id
-            WHERE se.event_key = ? LIMIT 1
-        """, (event_id,)).fetchone()
-    else:
-        row = conn.execute("SELECT * FROM security_events WHERE event_key = ? LIMIT 1", (event_id,)).fetchone()
-    if row:
-        return row
-    # 尝试模糊前缀匹配：cmsuspicious_startup_items130 → cm:suspicious_startup_items:130
-    import re as _re
-    m = _re.match(r'^(cm[a-z_]+?)(\d+)$', event_id)
-    if m:
-        prefix = m.group(1)        # 'cmsuspicious_startup_items'
-        number = m.group(2)        # '130'
-        candidates = [
-            f"{prefix[2:]}:{number}",           # suspicious_startup_items:130
-            f"cm:{prefix[2:]}:{number}",         # cm:suspicious_startup_items:130
-        ]
-        for c in candidates:
-            if join_hosts:
-                row = conn.execute("""
-                    SELECT se.*, h.hostname, h.ip_address, h.case_id as case_id,
-                           c.name as case_name, c.case_number
-                    FROM security_events se
-                    LEFT JOIN hosts h ON h.id = se.host_id
-                    LEFT JOIN cases c ON c.id = h.case_id
-                    WHERE se.id = ?
-                """, (c,)).fetchone()
-            else:
-                row = conn.execute("SELECT * FROM security_events WHERE id = ?", (c,)).fetchone()
-            if row:
-                return row
-            # 也试试模糊匹配前缀
-            prefix_part = ':'.join(c.split(':')[:2])
-            if join_hosts:
-                row = conn.execute("""
-                    SELECT se.*, h.hostname, h.ip_address, h.case_id as case_id,
-                           c.name as case_name, c.case_number
-                    FROM security_events se
-                    LEFT JOIN hosts h ON h.id = se.host_id
-                    LEFT JOIN cases c ON c.id = h.case_id
-                    WHERE se.id LIKE ? ORDER BY se.id DESC LIMIT 1
-                """, (f"{prefix_part}:%",)).fetchone()
-            else:
-                row = conn.execute(
-                    "SELECT * FROM security_events WHERE id LIKE ? ORDER BY id DESC LIMIT 1",
-                    (f"{prefix_part}:%",)
-                ).fetchone()
-            if row:
-                return row
-    return None
+        return conn.execute(
+            "SELECT * FROM security_events WHERE id = ?", (resolved_id,)
+        ).fetchone()
 
 
 def _row_to_dict(row) -> dict:

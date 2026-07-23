@@ -13,18 +13,13 @@
       <div class="avp-row" v-if="reason">
         <span class="avp-val">{{ reason }}</span>
       </div>
-      <div class="avp-row avp-fallback-reason" v-else>
-        <span class="avp-val">孤立进程 LsaIso.exe 无有效父进程，进程名疑似仿冒系统组件（LSA 子进程应为 lsass.exe）。关联注册表修改 HKLM\Run\Test 持久化行为，结合 ToDesk.exe 远程控制软件异常生命周期，综合评估为可疑活动。</span>
+      <div class="avp-row" v-else>
+        <span class="avp-val avp-empty-hint">AI 研判暂不可用</span>
       </div>
 
       <!-- MITRE 技术 -->
       <div class="avp-mitre" v-if="mitreTags.length > 0">
         <span class="avp-mitre-tag" v-for="tag in mitreTags" :key="tag">{{ tag }}</span>
-      </div>
-      <div class="avp-mitre" v-else>
-        <span class="avp-mitre-tag">T1055 进程注入</span>
-        <span class="avp-mitre-tag">T1547 自启动项</span>
-        <span class="avp-mitre-tag">T1036 进程名伪装</span>
       </div>
     </div>
   </div>
@@ -156,6 +151,10 @@ const mitreTags = computed(() => {
 }
 .avp-fallback-reason .avp-val {
   color: #444441;
+}
+.avp-empty-hint {
+  color: #b4b2a9;
+  font-style: italic;
 }
 
 .avp-mitre {

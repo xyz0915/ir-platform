@@ -29,24 +29,9 @@
       </div>
     </template>
 
-    <!-- 降级：显示 fallback 规则 -->
+    <!-- 空状态 -->
     <template v-else>
-      <div class="mrc-rule-item">
-        <span class="mrc-rule-sev sev-medium">medium</span>
-        <div class="mrc-rule-body">
-          <div class="mrc-rule-name">unsigned_process</div>
-          <div class="mrc-rule-desc">未签名进程，置信度 0.7</div>
-        </div>
-        <span class="mrc-rule-id">rule #28</span>
-      </div>
-      <div class="mrc-rule-item">
-        <span class="mrc-rule-sev sev-medium">medium</span>
-        <div class="mrc-rule-body">
-          <div class="mrc-rule-name">unsigned_executable</div>
-          <div class="mrc-rule-desc">可执行文件未签名，置信度 0.7</div>
-        </div>
-        <span class="mrc-rule-id">rule #114</span>
-      </div>
+      <div class="mrc-empty-hint">未命中规则</div>
     </template>
   </div>
 </template>
@@ -134,5 +119,11 @@ const visibleRules = computed(() => {
 }
 .mrc-more:hover {
   text-decoration: underline;
+}
+.mrc-empty-hint {
+  font-size: 12px;
+  color: #b4b2a9;
+  text-align: center;
+  padding: 20px 0;
 }
 </style>

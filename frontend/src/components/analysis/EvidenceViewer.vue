@@ -17,18 +17,9 @@
       </div>
     </div>
 
-    <!-- 范式化视图 - fallback -->
+    <!-- 范式化视图 - 无数据 -->
     <div class="ev-body" v-else-if="mode === 'normalized' && !evidenceViews">
-      <div class="ev-normalized-content">
-        <span class="ev-norm-key">process_name</span><span class="ev-norm-val">LsaIso.exe</span>
-        <span class="ev-norm-key">pid</span><span class="ev-norm-val">1088</span>
-        <span class="ev-norm-key">ppid</span><span class="ev-norm-val">600</span>
-        <span class="ev-norm-key">command_line</span><span class="ev-norm-val ev-norm-muted">(empty)</span>
-        <span class="ev-norm-key">is_signed</span><span class="ev-norm-val ev-norm-danger">false ← 异常</span>
-        <span class="ev-norm-key">parent_name</span><span class="ev-norm-val ev-norm-muted">(session manager)</span>
-        <span class="ev-norm-key">session</span><span class="ev-norm-val">1</span>
-        <span class="ev-norm-key">host</span><span class="ev-norm-val">DESKTOP-NCR4EED (192.168.1.108)</span>
-      </div>
+      <div class="ev-empty">暂无证据数据</div>
     </div>
 
     <!-- 原始数据视图 -->
@@ -94,17 +85,7 @@ const rawJsonContent = computed(() => {
   if (props.evidenceViews?.raw) {
     return formatJson(props.evidenceViews.raw)
   }
-  return JSON.stringify({
-    process_name: "LsaIso.exe",
-    pid: 1088,
-    ppid: 600,
-    command_line: null,
-    is_signed: false,
-    parent_name: "Session Manager",
-    session: 1,
-    host: "DESKTOP-NCR4EED",
-    ip_address: "192.168.1.108"
-  }, null, 2)
+  return '{}'
 })
 
 function toggleMode() {

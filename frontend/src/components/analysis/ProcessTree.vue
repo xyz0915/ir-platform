@@ -26,27 +26,9 @@
       </div>
     </div>
 
-    <!-- 进程树（降级 fallback 数据） -->
-    <div class="pt-tree" v-else>
-      <div class="pt-node pt-node-muted" style="padding-left:8px;"><span class="pt-icon">┗</span> System <span class="pt-pid">(PID 4)</span></div>
-      <div class="pt-node pt-node-muted" style="padding-left:24px;"><span class="pt-icon">┗</span> smss.exe <span class="pt-pid">(PID 600)</span></div>
-      <div class="pt-node pt-node-muted" style="padding-left:40px;"><span class="pt-icon">┗</span> csrss.exe <span class="pt-pid">(PID 608)</span></div>
-      <div class="pt-node pt-node-muted" style="padding-left:40px;"><span class="pt-icon">┗</span> winlogon.exe <span class="pt-pid">(PID 624)</span></div>
-      <div class="pt-node pt-current" style="padding-left:56px;">
-        <span class="pt-icon">●</span>
-        <strong>LsaIso.exe</strong> <span class="pt-pid">(PID 1088)</span>
-        <span class="pt-tag pt-tag-danger">孤立进程</span>
-      </div>
-      <div class="pt-node" style="padding-left:72px;">
-        <span class="pt-icon pt-icon-red">└</span>
-        <span class="pt-node-name pt-name-red">ToDesk.exe</span> <span class="pt-pid">(PID 8528)</span>
-        <span class="pt-node-meta">orphan_process x15</span>
-      </div>
-      <div class="pt-node" style="padding-left:72px;">
-        <span class="pt-icon pt-icon-warn">└</span>
-        <span class="pt-node-name pt-name-warn">WUDFHost.exe</span> <span class="pt-pid">(PID 1300)</span>
-        <span class="pt-node-meta">process_respawn_loop x47</span>
-      </div>
+    <!-- 进程树（降级：空状态） -->
+    <div class="pt-empty" v-else>
+      <span>暂无进程链数据</span>
     </div>
   </div>
 </template>
@@ -158,5 +140,13 @@ defineProps({
   text-overflow: ellipsis;
   max-width: 400px;
   font-family: sans-serif;
+}
+.pt-empty {
+  padding: 24px;
+  text-align: center;
+  font-size: 12px;
+  color: #b4b2a9;
+  background: #f8f8fa;
+  border-radius: 8px;
 }
 </style>

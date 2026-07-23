@@ -318,6 +318,14 @@ def get_event_display(event_id: str) -> Optional[dict]:
         事件不存在返回 None。
     """
     with get_connection() as conn:
+        # 先用 _lookup_event 解析各种 event_id 格式，获取真实 id
+        from app.api.events import _lookup_event
+        resolved = _lookup_event(conn, event_id, join_hosts=False)
+        if not resolved:
+            return None
+        real_id = resolved["id"]
+
+        # 用解析后的真实 id 做完整 JOIN 查询（含 raw_json_path）
         row = conn.execute(
             """
             SELECT se.*, h.hostname, h.ip_address, h.raw_json_path,
@@ -327,7 +335,7 @@ def get_event_display(event_id: str) -> Optional[dict]:
             LEFT JOIN cases c ON c.id = h.case_id
             WHERE se.id = ?
             """,
-            (event_id,),
+            (real_id,),
         ).fetchone()
         if not row:
             return None

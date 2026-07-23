@@ -177,3 +177,120 @@ class TestLookupEvent(IsolatedDBTestCase):
         self.assertEqual(row["ip_address"], "192.168.1.1")
         self.assertEqual(row["case_name"], "测试案件")
         self.assertEqual(row["case_number"], "CASE-001")
+
+    # ── 场景 7: 缺 cm 后冒号但带数字前冒号 ─────────────────────
+    #   URL: cmsuspicious_startup_items:127
+    #   数据库: cm:suspicious_startup_items:127
+
+    def test_missing_cm_colon_with_number_colon(self):
+        """cmsuspicious_startup_items:127 → cm:suspicious_startup_items:127。"""
+        with get_connection() as conn:
+            _insert_event(conn, "cm:suspicious_startup_items:127",
+                          "suspicious_startup_items:127")
+
+        row = self._lookup("cmsuspicious_startup_items:127")
+        self.assertIsNotNone(row)
+        self.assertEqual(row["id"], "cm:suspicious_startup_items:127")
+
+    # ── 场景 8: 有 cm 前缀有冒号，缺数字前冒号 ─────────────────
+    #   URL: cm:abnormal_processes494
+    #   数据库: cm:abnormal_processes:494
+
+    def test_missing_number_colon_with_cm(self):
+        """cm:abnormal_processes494 → cm:abnormal_processes:494。"""
+        with get_connection() as conn:
+            _insert_event(conn, "cm:abnormal_processes:494",
+                          "abnormal_processes:494")
+
+        row = self._lookup("cm:abnormal_processes494")
+        self.assertIsNotNone(row)
+        self.assertEqual(row["id"], "cm:abnormal_processes:494")
+
+    # ── 场景 9: 完全无冒号（带 cm）─────────────────────────────
+    #   URL: cmabnormal_processes494
+    #   数据库: cm:abnormal_processes:494
+
+    def test_no_colons_with_cm(self):
+        """cmabnormal_processes494 → cm:abnormal_processes:494。"""
+        with get_connection() as conn:
+            _insert_event(conn, "cm:abnormal_processes:494",
+                          "abnormal_processes:494")
+
+        row = self._lookup("cmabnormal_processes494")
+        self.assertIsNotNone(row)
+        self.assertEqual(row["id"], "cm:abnormal_processes:494")
+
+    # ── 场景 10: 缺 cm 前缀但带数字前冒号 ──────────────────────
+    #   URL: abnormal_processes:494
+    #   数据库: cm:abnormal_processes:494
+
+    def test_no_cm_prefix_with_colon(self):
+        """abnormal_processes:494 → cm:abnormal_processes:494。"""
+        with get_connection() as conn:
+            _insert_event(conn, "cm:abnormal_processes:494",
+                          "abnormal_processes:494")
+
+        row = self._lookup("abnormal_processes:494")
+        self.assertIsNotNone(row)
+        self.assertEqual(row["id"], "cm:abnormal_processes:494")
+
+    # ── 场景 11: 缺 cm 前缀且无冒号 ────────────────────────────
+    #   URL: abnormal_processes494
+    #   数据库: cm:abnormal_processes:494
+
+    def test_no_cm_prefix_no_colon(self):
+        """abnormal_processes494 → cm:abnormal_processes:494。"""
+        with get_connection() as conn:
+            _insert_event(conn, "cm:abnormal_processes:494",
+                          "abnormal_processes:494")
+
+        row = self._lookup("abnormal_processes494")
+        self.assertIsNotNone(row)
+        self.assertEqual(row["id"], "cm:abnormal_processes:494")
+
+    # ── 场景 12: 纯数字 event_key ──────────────────────────────
+    #   URL: 493
+    #   数据库: event_key = 493 的事件
+
+    def test_pure_numeric_event_key(self):
+        """纯数字 event_key 493 匹配成功。"""
+        with get_connection() as conn:
+            _insert_event(conn, "cm:test_event:999",
+                          "493")
+
+        row = self._lookup("493")
+        self.assertIsNotNone(row)
+        self.assertEqual(row["id"], "cm:test_event:999")
+        self.assertEqual(row["event_key"], "493")
+
+    # ── 场景 13: 模糊前缀匹配降级 ──────────────────────────────
+    #   数据库中没有精确匹配的 130，但有前缀 cm:suspicious_startup_items: 的其他记录
+
+    def test_fuzzy_prefix_fallback(self):
+        """精确 ID 不存在时，模糊前缀匹配应返回最近一条。"""
+        with get_connection() as conn:
+            _insert_event(conn, "cm:suspicious_startup_items:200", "suspicious_startup_items:200")
+            _insert_event(conn, "cm:suspicious_startup_items:201", "suspicious_startup_items:201")
+
+        # 查询一个不存在的编号，应通过模糊前缀匹配返回最近一条
+        row = self._lookup("cmsuspicious_startup_items999")
+        self.assertIsNotNone(row)
+        self.assertIn("cm:suspicious_startup_items:", row["id"])
+
+    # ── 场景 14: 通过 _resolve_event_id 直接验证（内部单元）────
+
+    def test_resolve_event_id_exact(self):
+        """_resolve_event_id 精确匹配返回正确 ID。"""
+        from app.api.events import _resolve_event_id
+        with get_connection() as conn:
+            _insert_event(conn, "cm:test:42", "test:42")
+            resolved = _resolve_event_id(conn, "cm:test:42")
+        self.assertEqual(resolved, "cm:test:42")
+
+    def test_resolve_event_id_slug(self):
+        """_resolve_event_id slug 格式 cmsuspicious_startup_items:127 正确解析。"""
+        from app.api.events import _resolve_event_id
+        with get_connection() as conn:
+            _insert_event(conn, "cm:suspicious_startup_items:127", "suspicious_startup_items:127")
+            resolved = _resolve_event_id(conn, "cmsuspicious_startup_items:127")
+        self.assertEqual(resolved, "cm:suspicious_startup_items:127")

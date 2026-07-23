@@ -77,12 +77,9 @@
       </div>
     </template>
 
-    <!-- 降级：显示 fallback IOC -->
+    <!-- 空状态 -->
     <template v-else>
-      <div class="ioc-item"><span class="ioc-label">文件哈希</span><span class="ioc-val ioc-val-hash">aaaa...aaaa</span><button class="ioc-action-btn" @click="copyText('aaaa...aaaa')" title="复制">📋</button><button class="ioc-action-btn ioc-vt-btn" @click="openVT('aaaa...aaaa')" title="VirusTotal">VT</button></div>
-      <div class="ioc-item"><span class="ioc-label">文件路径</span><span class="ioc-val ioc-val-path">C:\test\test.exe</span><button class="ioc-action-btn" @click="copyText('C:\\test\\test.exe')" title="复制">📋</button></div>
-      <div class="ioc-item"><span class="ioc-label">注册表</span><span class="ioc-val ioc-val-path">HKLM\...\Run\Test</span><button class="ioc-action-btn" @click="copyText('HKLM\\...\\Run\\Test')" title="复制">📋</button></div>
-      <div class="ioc-item"><span class="ioc-label">进程名</span><span class="ioc-val">LsaIso.exe</span><button class="ioc-action-btn" @click="copyText('LsaIso.exe')" title="复制">📋</button></div>
+      <div class="ioc-empty-hint">暂无威胁指标</div>
     </template>
   </div>
 </template>
@@ -195,5 +192,11 @@ function openVT(hash) {
 .ioc-more {
   font-size: 11px;
   color: #888780;
+}
+.ioc-empty-hint {
+  font-size: 12px;
+  color: #b4b2a9;
+  text-align: center;
+  padding: 20px 0;
 }
 </style>
