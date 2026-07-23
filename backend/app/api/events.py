@@ -76,12 +76,16 @@ def _lookup_event(conn, event_id: str, join_hosts: bool = True):
         row = conn.execute("SELECT * FROM security_events WHERE event_key = ? LIMIT 1", (event_id,)).fetchone()
     if row:
         return row
-    # 尝试模糊前缀匹配：cmabnormal_processes551 → cm:abnormal_processes:551
+    # 尝试模糊前缀匹配：cmsuspicious_startup_items130 → cm:suspicious_startup_items:130
     import re as _re
-    m = _re.match(r'^cm[a-z_]+(\d+)$', event_id)
+    m = _re.match(r'^(cm[a-z_]+?)(\d+)$', event_id)
     if m:
-        slug = event_id[:event_id.rstrip('0123456789')]
-        candidates = [f"cm:{slug[2:]}:{m.group(1)}"]
+        prefix = m.group(1)        # 'cmsuspicious_startup_items'
+        number = m.group(2)        # '130'
+        candidates = [
+            f"{prefix[2:]}:{number}",           # suspicious_startup_items:130
+            f"cm:{prefix[2:]}:{number}",         # cm:suspicious_startup_items:130
+        ]
         for c in candidates:
             if join_hosts:
                 row = conn.execute("""
@@ -686,7 +690,7 @@ def update_event_status(
         raise HTTPException(status_code=400, detail="无效的状态值")
 
     with get_connection() as conn:
-        row = conn.execute("SELECT * FROM security_events WHERE id = ?", (event_id,)).fetchone()
+        row = _lookup_event(conn, event_id, join_hosts=False)
         if not row:
             raise HTTPException(status_code=404, detail="事件不存在")
 
@@ -782,7 +786,7 @@ def assign_event(
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     with get_connection() as conn:
-        row = conn.execute("SELECT * FROM security_events WHERE id = ?", (event_id,)).fetchone()
+        row = _lookup_event(conn, event_id, join_hosts=False)
         if not row:
             raise HTTPException(status_code=404, detail="事件不存在")
         conn.execute(
@@ -906,7 +910,7 @@ def timeline_data(
 def get_related_events(event_id: str, current_user: dict = Depends(get_current_user)):
     """获取关联事件列表."""
     with get_connection() as conn:
-        row = conn.execute("SELECT related_events FROM security_events WHERE id = ?", (event_id,)).fetchone()
+        row = _lookup_event(conn, event_id, join_hosts=False)
     if not row:
         raise HTTPException(status_code=404, detail="事件不存在")
 
@@ -1101,12 +1105,10 @@ def get_process_tree(
 ):
     """获取事件所在主机的进程树."""
     with get_connection() as conn:
-        row = conn.execute("""
-            SELECT se.evidence, se.host_id, se.timestamp
-            FROM security_events se WHERE se.id = ?
-        """, (event_id,)).fetchone()
+        row = _lookup_event(conn, event_id, join_hosts=False)
     if not row:
         raise HTTPException(status_code=404, detail="事件不存在")
+    row = dict(row)
     evidence = json.loads(row["evidence"]) if isinstance(row["evidence"], str) else row.get("evidence", {})
     host_id = row["host_id"]
     current_pid = evidence.get("pid")
@@ -1213,8 +1215,7 @@ def get_network_graph(
 ):
     """获取事件网络连接关系图数据."""
     with get_connection() as conn:
-        row = conn.execute("""SELECT se.evidence, se.host_id, h.hostname, h.ip_address
-            FROM security_events se LEFT JOIN hosts h ON h.id = se.host_id WHERE se.id = ?""", (event_id,)).fetchone()
+        row = _lookup_event(conn, event_id, join_hosts=True)
     if not row:
         raise HTTPException(status_code=404, detail="事件不存在")
     rd = dict(row)
@@ -1280,7 +1281,7 @@ def get_event_host_stats(
     from app.services.event_enrichment import get_host_stats
 
     with get_connection() as conn:
-        row = conn.execute("SELECT host_id FROM security_events WHERE id=?", (event_id,)).fetchone()
+        row = _lookup_event(conn, event_id, join_hosts=False)
         if not row:
             raise HTTPException(404, detail="事件不存在")
         result = get_host_stats(row["host_id"])
