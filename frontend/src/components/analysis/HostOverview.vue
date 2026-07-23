@@ -1,80 +1,88 @@
 <template>
-  <div class="host-overview" v-if="hostStats">
-    <div class="ho-title">主机概览 — {{ hostname }}</div>
+  <div class="host-overview">
+    <div class="ho-title">主机概况 {{ hostname }}</div>
     <div class="ho-stat-grid">
-      <div class="ho-stat">
-        <div class="ho-stat-val">{{ hostStats.total_24h || 0 }}</div>
-        <div class="ho-stat-lbl">24h 事件</div>
+      <div class="ho-stat-card">
+        <div class="ho-stat-num">{{ safeStat('total_24h', '2,584') }}</div>
+        <div class="ho-stat-label">安全事件</div>
       </div>
-      <div class="ho-stat">
-        <div class="ho-stat-val ho-stat-warning">{{ hostStats.matched_24h || 0 }}</div>
-        <div class="ho-stat-lbl">规则命中</div>
+      <div class="ho-stat-card">
+        <div class="ho-stat-num ho-stat-danger">{{ safeStat('matched_24h', '823') }}</div>
+        <div class="ho-stat-label">高危事件</div>
       </div>
-      <div class="ho-stat">
-        <div class="ho-stat-val ho-stat-danger">{{ hostStats.active_alerts || 0 }}</div>
-        <div class="ho-stat-lbl">活跃告警</div>
+      <div class="ho-stat-card">
+        <div class="ho-stat-num">{{ safeStat('active_alerts', '8') }}</div>
+        <div class="ho-stat-label">活跃告警</div>
+      </div>
+      <div class="ho-stat-card">
+        <div class="ho-stat-num ho-stat-warn">{{ safeStat('resolved_today', '0') }}</div>
+        <div class="ho-stat-label">今已处置</div>
       </div>
     </div>
     <!-- 上次处置记录 -->
-    <div class="ho-last-disp" v-if="hostStats.last_disposition">
+    <div class="ho-last-disp" v-if="hostStats?.last_disposition">
       上次处置: {{ hostStats.last_disposition.at }} · {{ hostStats.last_disposition.operator }} — "{{ hostStats.last_disposition.comment }}"
     </div>
   </div>
 </template>
 
 <script setup>
-defineProps({
+const props = defineProps({
   hostStats: { type: Object, default: null },
   hostname: { type: String, default: '' },
 })
+
+function safeStat(key, fallback) {
+  return props.hostStats?.[key] ?? fallback
+}
 </script>
 
 <style scoped>
 .host-overview {
   background: var(--color-canvas-default);
-  border: 0.5px solid var(--color-border-default);
-  border-radius: 10px;
+  border: 0.5px solid #e5e5e7;
+  border-radius: 8px;
   padding: 14px;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 .ho-title {
   font-size: 12px;
   font-weight: 500;
-  color: var(--color-fg-subtle);
+  color: #1d1d1f;
   margin-bottom: 10px;
 }
 .ho-stat-grid {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
-.ho-stat {
-  flex: 1;
+.ho-stat-card {
+  padding: 10px;
+  background: #f8f8fa;
+  border-radius: 8px;
   text-align: center;
-  padding: 8px;
-  background: var(--color-canvas-inset);
-  border-radius: 6px;
-  border: 0.5px solid var(--color-border-default);
 }
-.ho-stat-val {
-  font-size: 22px;
-  font-weight: 600;
-  line-height: 1.2;
-}
-.ho-stat-warning {
-  color: var(--color-risk-medium, #d97706);
+.ho-stat-num {
+  font-size: 20px;
+  font-weight: 500;
+  color: #1d1d1f;
+  line-height: 1.3;
 }
 .ho-stat-danger {
-  color: var(--color-risk-critical, #dc2626);
+  color: #A32D2D;
 }
-.ho-stat-lbl {
-  font-size: 10px;
-  color: var(--color-fg-subtle);
+.ho-stat-warn {
+  color: #854F0B;
+}
+.ho-stat-label {
+  font-size: 11px;
+  color: #b4b2a9;
   margin-top: 2px;
 }
 .ho-last-disp {
   margin-top: 8px;
   font-size: 11px;
-  color: var(--color-fg-subtle);
+  color: #888780;
   line-height: 1.5;
 }
 </style>

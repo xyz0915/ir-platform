@@ -1,15 +1,23 @@
 <template>
-  <div class="related-alerts" v-if="alerts && alerts.length">
-    <div class="ra-title">关联告警</div>
+  <div class="related-alerts" v-if="displayAlerts.length">
+    <div class="ra-title">关联告警 ({{ displayAlerts.length }})</div>
     <div class="ra-list">
-      <div v-for="(alert, i) in alerts" :key="alert.id || i" class="ra-item">
-        <span class="ra-name">{{ alert.name || alert.rule_name || ('告警#' + (i + 1)) }}</span>
-        <span class="ra-time">{{ formatTime(alert.timestamp) }}</span>
-        <span class="ra-sev" :class="'ra-sev-' + (alert.severity || 'info')">{{ alert.severity }}</span>
+      <div
+        v-for="(alert, i) in displayAlerts"
+        :key="alert.id || i"
+        class="ra-item"
+        :class="alert.severity === 'high' || alert.severity === 'critical' ? 'ra-danger' : 'ra-warning'"
+      >
+        <div class="ra-icon">!</div>
+        <div class="ra-body">
+          <div class="ra-name">{{ alert.name || alert.rule_name || ('告警#' + (i + 1)) }}</div>
+          <div class="ra-desc">{{ alert.description || alert.detail || (alert.rule_name ? alert.rule_name + ' · ' + (alert.severity || 'info') : '') }}</div>
+          <div class="ra-meta">PID {{ alert.pid || '?' }} · {{ formatTime(alert.timestamp) }} · {{ alert.alert_id ? 'alert #' + alert.alert_id : '' }}</div>
+        </div>
       </div>
     </div>
   </div>
-  <!-- 数据不可用时降级隐藏 -->
+  <!-- 数据不可用时降级隐藏（由父组件控制 v-if） -->
 </template>
 
 <script setup>
@@ -17,60 +25,71 @@ const props = defineProps({
   alerts: { type: Array, default: () => [] },
 })
 
+const displayAlerts = props.alerts // use as-is from parent
+
 function formatTime(ts) {
   if (!ts) return ''
   const d = new Date(ts)
   const pad = (n) => String(n).padStart(2, '0')
-  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 </script>
 
 <style scoped>
 .related-alerts {
-  background: var(--color-canvas-default);
-  border: 0.5px solid var(--color-border-default);
-  border-radius: 10px;
-  padding: 14px;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 .ra-title {
   font-size: 12px;
   font-weight: 500;
-  color: var(--color-fg-subtle);
+  color: #1d1d1f;
   margin-bottom: 8px;
 }
 .ra-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
 }
 .ra-item {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 8px;
-  background: var(--color-canvas-inset);
-  border-radius: 4px;
-  font-size: 11px;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 8px;
+}
+.ra-danger {
+  background: #FCEBEB;
+}
+.ra-warning {
+  background: #FAEEDA;
+}
+.ra-icon {
+  font-size: 16px;
+  line-height: 1;
+  font-weight: bold;
+  flex-shrink: 0;
+}
+.ra-danger .ra-icon {
+  color: #A32D2D;
+}
+.ra-warning .ra-icon {
+  color: #854F0B;
+}
+.ra-body {
+  flex: 1;
 }
 .ra-name {
-  flex: 1;
-  color: var(--color-fg-default);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+  color: #1d1d1f;
 }
-.ra-time {
-  font-size: 10px;
-  color: var(--color-fg-subtle);
-  font-family: 'Courier New', monospace;
+.ra-desc {
+  font-size: 11px;
+  color: #888780;
+  margin-top: 2px;
 }
-.ra-sev {
-  font-size: 9px;
-  padding: 0 4px;
-  border-radius: 2px;
+.ra-meta {
+  font-size: 11px;
+  color: #b4b2a9;
+  margin-top: 4px;
 }
-.ra-sev-critical, .ra-sev-high { background: rgba(220,38,38,0.1); color: #dc2626; }
-.ra-sev-medium { background: rgba(217,119,6,0.1); color: #d97706; }
-.ra-sev-low { background: rgba(37,99,235,0.1); color: #2563eb; }
 </style>

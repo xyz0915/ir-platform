@@ -43,9 +43,8 @@
           <MatchedRulesList
             :rules="matchedRules"
           />
-          <!-- P1: 进程树 -->
+          <!-- 进程链 -->
           <ProcessTree
-            v-if="store.processTree && store.processTree.length"
             :tree="store.processTree"
             :current-pid="store.currentProcessPid"
             :loading="store.processTreeLoading"
@@ -57,9 +56,8 @@
             :network-subject="networkSubject"
             :persistence-target="persistenceTarget"
           />
-          <!-- P1: 关联事件 -->
+          <!-- 关联事件 -->
           <RelatedEventsList
-            v-if="store.relatedEvents && store.relatedEvents.length"
             :related-ids="store.relatedEvents"
             @view-event="handleViewRelatedEvent"
           />

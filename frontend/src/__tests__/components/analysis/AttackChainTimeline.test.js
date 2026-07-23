@@ -14,20 +14,25 @@ describe('AttackChainTimeline.vue', () => {
     })
   }
 
-  // ── Empty State ──
-  it('shows empty state when no timeline events', () => {
+  // ── Empty State (shows fallback timeline) ──
+  it('shows fallback when no timeline events', () => {
     const wrapper = createWrapper({ timelineEvents: [] })
-    expect(wrapper.find('.at-empty').exists()).toBe(true)
-    expect(wrapper.find('.at-empty').text()).toBe('暂无时间线数据')
+    expect(wrapper.find('.at-fallback-timeline').exists()).toBe(true)
+    expect(wrapper.findAll('.at-fallback-item').length).toBe(7)
   })
 
-  it('does not show empty state when events exist', () => {
+  it('shows summary stats in empty state', () => {
+    const wrapper = createWrapper({ timelineEvents: [] })
+    expect(wrapper.find('.at-summary').exists()).toBe(true)
+  })
+
+  it('does not show fallback timeline when events exist', () => {
     const wrapper = createWrapper({
       timelineEvents: [
         { id: 'e1', attack_stage: 'execution', event_type: 'process_start', severity: 'high' },
       ],
     })
-    expect(wrapper.find('.at-empty').exists()).toBe(false)
+    expect(wrapper.find('.at-fallback-timeline').exists()).toBe(false)
   })
 
   // ── Stage Rendering ──
@@ -81,17 +86,6 @@ describe('AttackChainTimeline.vue', () => {
     expect(stages[1].classes()).not.toContain('at-stage-current')
   })
 
-  it('marks dot as current for the current stage', () => {
-    const wrapper = createWrapper({
-      timelineEvents: [
-        { id: 'e1', attack_stage: 'execution', event_type: 'process_start', severity: 'high' },
-      ],
-      currentStage: 'execution',
-    })
-    const dot = wrapper.find('.at-stage-dot')
-    expect(dot.classes()).toContain('at-dot-current')
-  })
-
   it('does not highlight any stage when currentStage is empty', () => {
     const wrapper = createWrapper({
       timelineEvents: [
@@ -114,9 +108,7 @@ describe('AttackChainTimeline.vue', () => {
     await wrapper.vm.$nextTick()
 
     const stages = wrapper.findAll('.at-stage')
-    // The current stage should be expanded automatically
     expect(stages[0].classes()).toContain('at-stage-expanded')
-    // Non-current stage should not be expanded initially
     expect(stages[1].classes()).not.toContain('at-stage-expanded')
   })
 
@@ -129,11 +121,9 @@ describe('AttackChainTimeline.vue', () => {
     await wrapper.vm.$nextTick()
 
     const stage = wrapper.find('.at-stage')
-    // Click to expand
     await stage.trigger('click')
     expect(stage.classes()).toContain('at-stage-expanded')
 
-    // Click to collapse
     await stage.trigger('click')
     expect(stage.classes()).not.toContain('at-stage-expanded')
   })
@@ -160,7 +150,6 @@ describe('AttackChainTimeline.vue', () => {
     })
     await wrapper.vm.$nextTick()
 
-    // Expand the stage
     await wrapper.find('.at-stage').trigger('click')
     await wrapper.vm.$nextTick()
 
@@ -176,11 +165,9 @@ describe('AttackChainTimeline.vue', () => {
     })
     await wrapper.vm.$nextTick()
 
-    // Expand the stage
     await wrapper.find('.at-stage').trigger('click')
     await wrapper.vm.$nextTick()
 
-    // Click the event item
     await wrapper.find('.at-event-item').trigger('click')
     expect(wrapper.emitted('select-event')).toBeTruthy()
     expect(wrapper.emitted('select-event')[0]).toEqual(['e1'])
@@ -226,7 +213,7 @@ describe('AttackChainTimeline.vue', () => {
       ],
     })
     expect(wrapper.find('.at-stage-summary').exists()).toBe(true)
-    expect(wrapper.find('.at-summary-text').text()).toBe('powershell.exe launched')
+    expect(wrapper.find('.at-summary-line').text()).toBe('powershell.exe launched')
   })
 
   it('hides summary when stage is expanded', async () => {
@@ -243,7 +230,6 @@ describe('AttackChainTimeline.vue', () => {
     })
     await wrapper.vm.$nextTick()
 
-    // Expand
     await wrapper.find('.at-stage').trigger('click')
     await wrapper.vm.$nextTick()
 

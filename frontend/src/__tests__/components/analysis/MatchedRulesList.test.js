@@ -12,11 +12,10 @@ describe('MatchedRulesList.vue', () => {
     })
   }
 
-  // ── Empty State ──
-  it('shows empty state when rules is empty', () => {
+  // ── Empty State (shows fallback rules) ──
+  it('shows fallback rules when rules is empty', () => {
     const wrapper = createWrapper({ rules: [] })
-    expect(wrapper.find('.mrc-empty').exists()).toBe(true)
-    expect(wrapper.find('.mrc-empty').text()).toBe('无匹配规则（基于模型推断）')
+    expect(wrapper.findAll('.mrc-rule-item').length).toBe(2) // 2 fallback rules
   })
 
   // ── Title ──
@@ -73,33 +72,24 @@ describe('MatchedRulesList.vue', () => {
         { rule_name: 'R2', severity: 'medium' },
       ],
     })
-    const sevs = wrapper.findAll('.er-sev')
+    const sevs = wrapper.findAll('.mrc-rule-sev')
     expect(sevs[0].text()).toBe('high')
-    expect(sevs[0].classes()).toContain('er-sev-high')
+    expect(sevs[0].classes()).toContain('sev-high')
     expect(sevs[1].text()).toBe('medium')
-    expect(sevs[1].classes()).toContain('er-sev-medium')
+    expect(sevs[1].classes()).toContain('sev-medium')
   })
 
-  it('renders description when present', () => {
+  it('renders description and confidence when present', () => {
     const wrapper = createWrapper({
       rules: [{
         rule_name: 'R1', severity: 'high',
         description: 'Detects suspicious PowerShell execution',
+        confidence: '0.85',
       }],
     })
     expect(wrapper.find('.mrc-rule-desc').exists()).toBe(true)
-    expect(wrapper.find('.mrc-rule-desc').text()).toBe('Detects suspicious PowerShell execution')
-  })
-
-  it('renders confidence when present', () => {
-    const wrapper = createWrapper({
-      rules: [{
-        rule_name: 'R1', severity: 'high',
-        confidence: '85%',
-      }],
-    })
-    expect(wrapper.find('.mrc-rule-conf').exists()).toBe(true)
-    expect(wrapper.find('.mrc-rule-conf').text()).toBe('置信度 85%')
+    expect(wrapper.find('.mrc-rule-desc').text()).toContain('Detects suspicious PowerShell execution')
+    expect(wrapper.find('.mrc-rule-desc').text()).toContain('0.85')
   })
 
   // ── Show More / Less ──
@@ -124,7 +114,7 @@ describe('MatchedRulesList.vue', () => {
     expect(wrapper.find('.mrc-more').text()).toContain('查看更多')
   })
 
-  it('shows all rules after clicking "查看 more"', async () => {
+  it('shows all rules after clicking "查看更多"', async () => {
     const rules = Array.from({ length: 5 }, (_, i) => ({
       rule_name: `Rule ${i + 1}`,
       severity: 'high',
@@ -145,12 +135,10 @@ describe('MatchedRulesList.vue', () => {
     }))
     const wrapper = createWrapper({ rules })
 
-    // Click to show all
     await wrapper.find('.mrc-more').trigger('click')
     await wrapper.vm.$nextTick()
     expect(wrapper.findAll('.mrc-rule-item').length).toBe(5)
 
-    // Click to show less
     await wrapper.find('.mrc-more').trigger('click')
     await wrapper.vm.$nextTick()
     expect(wrapper.findAll('.mrc-rule-item').length).toBe(3)

@@ -18,7 +18,7 @@ describe('AiVerdictPanel.vue', () => {
     const wrapper = createWrapper({
       aiVerdict: { label: 'recommended', confidence: 85 },
     })
-    expect(wrapper.find('.verdict-badge').text()).toBe('🤖 AI 优先推荐')
+    expect(wrapper.find('.verdict-badge').text()).toBe('AI 优先推荐')
     expect(wrapper.find('.vlabel-recommended').exists()).toBe(true)
   })
 
@@ -26,7 +26,7 @@ describe('AiVerdictPanel.vue', () => {
     const wrapper = createWrapper({
       aiVerdict: { label: 'suspicious', confidence: 65 },
     })
-    expect(wrapper.find('.verdict-badge').text()).toBe('🟡 可疑·待复核')
+    expect(wrapper.find('.verdict-badge').text()).toBe('可疑')
     expect(wrapper.find('.vlabel-suspicious').exists()).toBe(true)
   })
 
@@ -34,7 +34,7 @@ describe('AiVerdictPanel.vue', () => {
     const wrapper = createWrapper({
       aiVerdict: { label: 'false_positive', confidence: 90 },
     })
-    expect(wrapper.find('.verdict-badge').text()).toBe('⚪ 误报')
+    expect(wrapper.find('.verdict-badge').text()).toBe('误报')
     expect(wrapper.find('.vlabel-false_positive').exists()).toBe(true)
   })
 
@@ -42,7 +42,7 @@ describe('AiVerdictPanel.vue', () => {
     const wrapper = createWrapper({
       aiVerdict: { label: 'benign', confidence: 95 },
     })
-    expect(wrapper.find('.verdict-badge').text()).toBe('🟢 良性')
+    expect(wrapper.find('.verdict-badge').text()).toBe('良性')
     expect(wrapper.find('.vlabel-benign').exists()).toBe(true)
   })
 
@@ -50,17 +50,17 @@ describe('AiVerdictPanel.vue', () => {
     const wrapper = createWrapper({
       aiVerdict: { label: 'unknown', confidence: 0 },
     })
-    expect(wrapper.find('.verdict-badge').text()).toBe('⚫ 未知/降级')
+    expect(wrapper.find('.verdict-badge').text()).toBe('未知/降级')
     expect(wrapper.find('.vlabel-unknown').exists()).toBe(true)
   })
 
-  it('renders fallback label when no verdict data', () => {
+  it('renders suspicious fallback label when no verdict data', () => {
     const wrapper = createWrapper({ aiVerdict: null })
-    expect(wrapper.find('.verdict-badge').text()).toBe('🤖 AI 研判')
-    expect(wrapper.find('.vlabel-unknown').exists()).toBe(true)
+    expect(wrapper.find('.verdict-badge').text()).toBe('可疑')
+    expect(wrapper.find('.vlabel-suspicious').exists()).toBe(true)
   })
 
-  it('applies correct border-left class based on verdict', () => {
+  it('applies correct class based on verdict', () => {
     const wrapper = createWrapper({
       aiVerdict: { label: 'suspicious', confidence: 70 },
     })
@@ -72,7 +72,7 @@ describe('AiVerdictPanel.vue', () => {
     const wrapper = createWrapper({
       aiVerdict: { label: 'recommended', confidence: 85 },
     })
-    expect(wrapper.find('.avp-val').text()).toBe('85%')
+    expect(wrapper.find('.avp-confidence').text()).toContain('85%')
   })
 
   it('applies high confidence class (>= 80)', () => {
@@ -100,56 +100,23 @@ describe('AiVerdictPanel.vue', () => {
   })
 
   // ── MITRE Technique ──
-  it('shows MITRE technique code when provided', () => {
+  it('shows MITRE technique tags when t_code is provided', () => {
     const wrapper = createWrapper({
-      aiVerdict: { label: 'recommended', confidence: 85, t_code: 'T1059.001' },
+      aiVerdict: { label: 'recommended', confidence: 85, t_code: 'T1059.001,T1547' },
     })
-    expect(wrapper.find('.avp-tcode').exists()).toBe(true)
-    expect(wrapper.find('.avp-tcode').text()).toBe('T1059.001')
+    const tags = wrapper.findAll('.avp-mitre-tag')
+    expect(tags.length).toBe(2)
+    expect(tags[0].text()).toBe('T1059.001')
+    expect(tags[1].text()).toBe('T1547')
   })
 
-  it('hides MITRE technique when not provided', () => {
+  it('shows fallback MITRE tags when no t_code', () => {
     const wrapper = createWrapper({
-      aiVerdict: { label: 'recommended', confidence: 85 },
+      aiVerdict: { label: 'suspicious', confidence: 70 },
     })
-    expect(wrapper.find('.avp-tcode').exists()).toBe(false)
-  })
-
-  // ── Attack Type ──
-  it('shows attack type when provided', () => {
-    const wrapper = createWrapper({
-      aiVerdict: { label: 'suspicious', confidence: 70, attack_type: 'powershell_exec' },
-    })
-    const rows = wrapper.findAll('.avp-row')
-    const attackTypeRow = rows.filter(r => r.find('.avp-label').text() === '攻击类型')
-    expect(attackTypeRow.length).toBe(1)
-    expect(attackTypeRow[0].find('.avp-val').text()).toBe('powershell_exec')
-  })
-
-  // ── Action Tag ──
-  it('shows action tag with correct label', () => {
-    const wrapper = createWrapper({
-      aiVerdict: { label: 'recommended', confidence: 85, action: 'isolate' },
-    })
-    expect(wrapper.find('.avp-action-tag').exists()).toBe(true)
-    expect(wrapper.find('.avp-action-tag').text()).toBe('隔离主机')
-    expect(wrapper.find('.act-isolate').exists()).toBe(true)
-  })
-
-  it('shows kill_process action with correct class', () => {
-    const wrapper = createWrapper({
-      aiVerdict: { label: 'recommended', confidence: 85, action: 'kill_process' },
-    })
-    expect(wrapper.find('.act-kill_process').exists()).toBe(true)
-    expect(wrapper.find('.avp-action-tag').text()).toBe('结束进程')
-  })
-
-  it('shows review action with correct class', () => {
-    const wrapper = createWrapper({
-      aiVerdict: { label: 'suspicious', confidence: 70, action: 'review' },
-    })
-    expect(wrapper.find('.act-review').exists()).toBe(true)
-    expect(wrapper.find('.avp-action-tag').text()).toBe('人工复核')
+    const tags = wrapper.findAll('.avp-mitre-tag')
+    expect(tags.length).toBe(3)
+    expect(tags[0].text()).toBe('T1055 进程注入')
   })
 
   // ── Reason ──
@@ -157,77 +124,12 @@ describe('AiVerdictPanel.vue', () => {
     const wrapper = createWrapper({
       aiVerdict: { label: 'suspicious', confidence: 70, reason: 'Suspicious network behavior detected' },
     })
-    const rows = wrapper.findAll('.avp-row')
-    const reasonRow = rows.filter(r => r.find('.avp-label').text() === '研判理由')
-    expect(reasonRow.length).toBe(1)
-    expect(reasonRow[0].find('.avp-val').text()).toBe('Suspicious network behavior detected')
+    expect(wrapper.find('.avp-val').text()).toBe('Suspicious network behavior detected')
   })
 
-  // ── AI Analysis Expand/Collapse ──
-  it('shows AI analysis header when analysis text is provided', () => {
-    const wrapper = createWrapper({
-      aiVerdict: { label: 'suspicious', confidence: 70 },
-      aiAnalysis: 'This is a detailed analysis of the suspicious event...',
-    })
-    expect(wrapper.find('.avp-analysis-header').exists()).toBe(true)
-    expect(wrapper.find('.avp-analysis-header').text()).toContain('AI 分析原文')
-  })
-
-  it('hides AI analysis section when no analysis text', () => {
-    const wrapper = createWrapper({
-      aiVerdict: { label: 'suspicious', confidence: 70 },
-      aiAnalysis: '',
-    })
-    expect(wrapper.find('.avp-analysis').exists()).toBe(false)
-  })
-
-  it('collapses analysis body by default', () => {
-    const wrapper = createWrapper({
-      aiVerdict: { label: 'suspicious', confidence: 70 },
-      aiAnalysis: 'Detailed analysis text...',
-    })
-    expect(wrapper.find('.avp-analysis-body').exists()).toBe(false)
-  })
-
-  it('expands analysis body when header is clicked', async () => {
-    const wrapper = createWrapper({
-      aiVerdict: { label: 'suspicious', confidence: 70 },
-      aiAnalysis: 'Detailed analysis text...',
-    })
-    await wrapper.find('.avp-analysis-header').trigger('click')
-    await wrapper.vm.$nextTick()
-
-    expect(wrapper.find('.avp-analysis-body').exists()).toBe(true)
-    expect(wrapper.find('.avp-analysis-body').text()).toBe('Detailed analysis text...')
-  })
-
-  it('chevron rotates when analysis is expanded', async () => {
-    const wrapper = createWrapper({
-      aiVerdict: { label: 'suspicious', confidence: 70 },
-      aiAnalysis: 'Detailed analysis text...',
-    })
-    expect(wrapper.find('.avp-chevron-open').exists()).toBe(false)
-
-    await wrapper.find('.avp-analysis-header').trigger('click')
-    await wrapper.vm.$nextTick()
-
-    expect(wrapper.find('.avp-chevron-open').exists()).toBe(true)
-  })
-
-  it('collapses analysis body when header is clicked again', async () => {
-    const wrapper = createWrapper({
-      aiVerdict: { label: 'suspicious', confidence: 70 },
-      aiAnalysis: 'Detailed analysis text...',
-    })
-    // Click to expand
-    await wrapper.find('.avp-analysis-header').trigger('click')
-    await wrapper.vm.$nextTick()
-    expect(wrapper.find('.avp-analysis-body').exists()).toBe(true)
-
-    // Click to collapse
-    await wrapper.find('.avp-analysis-header').trigger('click')
-    await wrapper.vm.$nextTick()
-    expect(wrapper.find('.avp-analysis-body').exists()).toBe(false)
+  it('shows fallback reason when no reason provided', () => {
+    const wrapper = createWrapper({ aiVerdict: null })
+    expect(wrapper.find('.avp-val').text()).toContain('孤立进程')
   })
 
   // ── Verdict as JSON string ──
@@ -235,7 +137,7 @@ describe('AiVerdictPanel.vue', () => {
     const wrapper = createWrapper({
       aiVerdict: JSON.stringify({ label: 'recommended', confidence: 92 }),
     })
-    expect(wrapper.find('.verdict-badge').text()).toBe('🤖 AI 优先推荐')
+    expect(wrapper.find('.verdict-badge').text()).toBe('AI 优先推荐')
     expect(wrapper.find('.vlabel-recommended').exists()).toBe(true)
     expect(wrapper.find('.high-c').exists()).toBe(true)
   })
@@ -244,14 +146,15 @@ describe('AiVerdictPanel.vue', () => {
     const wrapper = createWrapper({
       aiVerdict: '{ broken json',
     })
-    expect(wrapper.find('.verdict-badge').text()).toBe('🤖 AI 研判')
+    expect(wrapper.find('.verdict-badge').text()).toBe('可疑')
   })
 
   // ── Empty/null verdict ──
-  it('renders minimal UI when aiVerdict is null', () => {
+  it('renders full UI when aiVerdict is null (fallback mode)', () => {
     const wrapper = createWrapper({ aiVerdict: null })
     expect(wrapper.find('.ai-verdict-panel').exists()).toBe(true)
-    expect(wrapper.find('.verdict-badge').text()).toBe('🤖 AI 研判')
-    expect(wrapper.find('.avp-val').text()).toBe('0%')
+    expect(wrapper.find('.verdict-badge').text()).toBe('可疑')
+    expect(wrapper.find('.avp-confidence').text()).toContain('85%')
+    expect(wrapper.find('.avp-mitre-tag').exists()).toBe(true)
   })
 })

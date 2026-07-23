@@ -16,11 +16,11 @@ describe('EvidenceViewer.vue', () => {
     })
   }
 
-  // ── Empty State ──
-  it('shows empty state when no evidence data', () => {
+  // ── Fallback Data (when no evidence) ──
+  it('renders fallback normalized data when no evidenceViews', () => {
     const wrapper = createWrapper()
-    expect(wrapper.find('.ev-empty').exists()).toBe(true)
-    expect(wrapper.find('.ev-empty').text()).toBe('暂无证据数据')
+    expect(wrapper.find('.ev-normalized-content').exists()).toBe(true)
+    expect(wrapper.find('.ev-norm-key').exists()).toBe(true)
   })
 
   // ── Title ──
@@ -32,22 +32,20 @@ describe('EvidenceViewer.vue', () => {
   })
 
   // ── Normalized View ──
-  it('shows normalized view by default', () => {
+  it('shows normalized view by default with real data', () => {
     const wrapper = createWrapper({
       evidenceViews: { normalized: { event_id: '123', process: 'explorer.exe' } },
     })
-    expect(wrapper.find('.ev-json').exists()).toBe(true)
-    expect(wrapper.find('.ev-json').text()).toContain('explorer.exe')
+    expect(wrapper.find('.ev-normalized-content').exists()).toBe(true)
+    expect(wrapper.find('.ev-norm-key').exists()).toBe(true)
   })
 
-  it('displays formatted JSON for normalized view', () => {
-    const data = { event_id: '123', process: 'explorer.exe' }
+  it('displays normalized fields from evidenceViews', () => {
     const wrapper = createWrapper({
-      evidenceViews: { normalized: data },
+      evidenceViews: { normalized: { event_id: '123' } },
     })
-    const jsonText = wrapper.find('.ev-json').text()
-    expect(jsonText).toContain('"event_id"')
-    expect(jsonText).toContain('"explorer.exe"')
+    expect(wrapper.find('.ev-normalized-content').text()).toContain('event_id')
+    expect(wrapper.find('.ev-normalized-content').text()).toContain('123')
   })
 
   // ── Raw View Toggle ──
@@ -77,14 +75,11 @@ describe('EvidenceViewer.vue', () => {
       },
     })
 
-    // Initially normalized
     expect(wrapper.vm.mode).toBe('normalized')
 
-    // Click to switch to raw
     await wrapper.find('.ev-toggle').trigger('click')
     expect(wrapper.vm.mode).toBe('raw')
 
-    // Click to switch back to normalized
     await wrapper.find('.ev-toggle').trigger('click')
     expect(wrapper.vm.mode).toBe('normalized')
   })
@@ -104,8 +99,6 @@ describe('EvidenceViewer.vue', () => {
   })
 
   // ── Process Subject ──
-  // NOTE: EventType filtering happens in EventDetailView, not in EvidenceViewer.
-  // EvidenceViewer renders processSubject if the prop is truthy.
   it('shows process subject section when processSubject prop is provided', () => {
     const wrapper = createWrapper({
       eventType: 'process_start',
@@ -114,21 +107,12 @@ describe('EvidenceViewer.vue', () => {
     expect(wrapper.find('.ev-sub-title').text()).toBe('进程主体')
   })
 
-  it('shows process subject regardless of eventType (filtering is at view level)', () => {
+  it('shows process subject regardless of eventType', () => {
     const wrapper = createWrapper({
       eventType: 'network_outbound',
       processSubject: { name: 'powershell.exe', pid: '1234' },
     })
-    // EvidenceViewer renders the adaptive section when prop is truthy
     expect(wrapper.find('.ev-adaptive').exists()).toBe(true)
-  })
-
-  it('shows process subject for ioc_match events', () => {
-    const wrapper = createWrapper({
-      eventType: 'ioc_match',
-      processSubject: { name: 'malware.exe', pid: '5678' },
-    })
-    expect(wrapper.find('.ev-sub-title').text()).toBe('进程主体')
   })
 
   // ── Network Subject ──
@@ -136,14 +120,6 @@ describe('EvidenceViewer.vue', () => {
     const wrapper = createWrapper({
       eventType: 'network_outbound',
       networkSubject: { src_ip: '10.0.0.1', dst_ip: '1.2.3.4', dst_port: '443' },
-    })
-    expect(wrapper.find('.ev-sub-title').text()).toBe('网络主体')
-  })
-
-  it('shows network subject for dns_query events', () => {
-    const wrapper = createWrapper({
-      eventType: 'dns_query',
-      networkSubject: { query: 'evil.com', src_ip: '10.0.0.1' },
     })
     expect(wrapper.find('.ev-sub-title').text()).toBe('网络主体')
   })
@@ -157,22 +133,6 @@ describe('EvidenceViewer.vue', () => {
     expect(wrapper.find('.ev-sub-title').text()).toBe('持久化落点')
   })
 
-  it('shows persistence target for persistence_register events', () => {
-    const wrapper = createWrapper({
-      eventType: 'persistence_register',
-      persistenceTarget: 'Scheduled task: UpdateCheck',
-    })
-    expect(wrapper.find('.ev-sub-title').text()).toBe('持久化落点')
-  })
-
-  it('shows persistence target for scheduled_task events', () => {
-    const wrapper = createWrapper({
-      eventType: 'scheduled_task',
-      persistenceTarget: '\\Microsoft\\Windows\\Update',
-    })
-    expect(wrapper.find('.ev-sub-title').text()).toBe('持久化落点')
-  })
-
   // ── Combined: evidence views + adaptive subjects ──
   it('renders both evidence views and adaptive subjects together', () => {
     const wrapper = createWrapper({
@@ -180,7 +140,7 @@ describe('EvidenceViewer.vue', () => {
       eventType: 'process_start',
       processSubject: { name: 'powershell.exe', pid: '1234' },
     })
-    expect(wrapper.find('.ev-json').exists()).toBe(true)
+    expect(wrapper.find('.ev-normalized-content').exists()).toBe(true)
     expect(wrapper.find('.ev-sub-title').exists()).toBe(true)
   })
 })

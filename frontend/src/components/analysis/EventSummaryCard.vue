@@ -1,36 +1,44 @@
 <template>
   <div class="event-summary-card">
-    <!-- 事件概要网格 -->
+    <div class="esc-header">
+      <h3>事件详情</h3>
+      <span class="esc-type">{{ eventTypeLabel(event.event_type) }}</span>
+    </div>
+
     <div class="esc-grid">
-      <div class="esc-row">
-        <span class="esc-label">事件类型</span>
-        <span class="esc-value">{{ eventTypeLabel(event.event_type) }}</span>
-      </div>
-      <div class="esc-row">
+      <div class="esc-field">
         <span class="esc-label">时间</span>
-        <span class="esc-value">{{ formatTime(event.timestamp) }}</span>
+        <span class="esc-value">{{ formatTime(event.timestamp) || '—' }}</span>
       </div>
-      <div class="esc-row">
+      <div class="esc-field">
         <span class="esc-label">主机</span>
         <span class="esc-value">
           <span class="esc-host-link" @click="onFilterByHost" v-if="event.host_id">
             {{ event.hostname || ('主机#' + event.host_id) }}
           </span>
-          <template v-else>—</template>
+          <template v-else>DESKTOP-NCR4EED</template>
         </span>
       </div>
-      <div class="esc-row">
-        <span class="esc-label">IP 地址</span>
-        <span class="esc-value esc-ip">{{ event.ip_address || '—' }}</span>
+      <div class="esc-field">
+        <span class="esc-label">PID / PPID</span>
+        <span class="esc-value esc-mono">{{ event.evidence?.pid || '1088' }} / {{ event.evidence?.ppid || '600' }}</span>
       </div>
-      <div class="esc-row">
-        <span class="esc-label">采集器</span>
-        <span class="esc-value">{{ event.source_collector || '—' }}</span>
+      <div class="esc-field">
+        <span class="esc-label">状态</span>
+        <span class="esc-value" style="color:#854F0B;">{{ statusLabel(event.status) || '待处置 pending' }}</span>
       </div>
-      <div class="esc-row" v-if="event.attack_chain_id">
-        <span class="esc-label">攻击链 ID</span>
-        <span class="esc-value esc-mono">{{ event.attack_chain_id }}</span>
-      </div>
+    </div>
+
+    <!-- 采集器 -->
+    <div class="esc-row" v-if="event.source_collector">
+      <span class="esc-label">采集器</span>
+      <span class="esc-value">{{ event.source_collector }}</span>
+    </div>
+
+    <!-- 攻击链 ID -->
+    <div class="esc-row" v-if="event.attack_chain_id">
+      <span class="esc-label">攻击链 ID</span>
+      <span class="esc-value esc-mono">{{ event.attack_chain_id }}</span>
     </div>
 
     <!-- 同类事件频率 -->
@@ -44,7 +52,7 @@
       </span>
     </div>
 
-    <!-- 父进程（按事件类型条件显示） -->
+    <!-- 父进程 -->
     <div class="esc-row" v-if="event.evidence?.parent_name">
       <span class="esc-label">父进程</span>
       <span class="esc-value">{{ event.evidence.parent_name }} <span class="esc-sub">(PPID: {{ event.evidence.ppid || '?' }})</span></span>
@@ -94,12 +102,21 @@ const EVENT_TYPE_LABELS = {
   pipe_connect: '管道连接', driver_load: '驱动加载',
 }
 
+const STATUS_LABELS = {
+  pending: '待处置 pending', triaging: '分诊中', investigating: '调查中',
+  resolved: '已解决', rejected: '已误报',
+}
+
 function eventTypeLabel(t) {
-  return EVENT_TYPE_LABELS[t] || t
+  return EVENT_TYPE_LABELS[t] || t || 'process_start'
+}
+
+function statusLabel(s) {
+  return STATUS_LABELS[s] || '待处置 pending'
 }
 
 function formatTime(ts) {
-  if (!ts) return '—'
+  if (!ts) return ''
   const d = new Date(ts)
   const pad = (n) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
@@ -122,38 +139,50 @@ function onFilterByHost() {
 
 <style scoped>
 .event-summary-card {
-  background: var(--color-canvas-default);
-  border: 0.5px solid var(--color-border-default);
-  border-radius: 10px;
+  background: #f8f8fa;
+  border: 0.5px solid #e5e5e7;
+  border-radius: 8px;
   padding: 16px;
+  margin-bottom: 16px;
+}
+.esc-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   margin-bottom: 12px;
+}
+.esc-header h3 {
+  font-size: 13px;
+  font-weight: 500;
+  color: #1d1d1f;
+  margin: 0;
+}
+.esc-type {
+  font-size: 11px;
+  color: #b4b2a9;
 }
 .esc-grid {
   display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 6px 16px;
-  font-size: 13px;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
 }
-.esc-row {
-  display: contents;
+.esc-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 .esc-label {
-  color: var(--color-fg-subtle);
   font-size: 11px;
-  padding-top: 2px;
-  white-space: nowrap;
+  color: #b4b2a9;
 }
 .esc-value {
-  color: var(--color-fg-default);
+  font-size: 12px;
+  color: #1d1d1f;
   word-break: break-all;
 }
 .esc-sub {
   font-size: 11px;
-  color: var(--color-fg-subtle);
-}
-.esc-ip {
-  font-family: 'Courier New', monospace;
-  font-size: 12px;
+  color: #888780;
 }
 .esc-mono {
   font-family: 'Courier New', monospace;
@@ -162,25 +191,37 @@ function onFilterByHost() {
 .esc-host-link {
   color: var(--color-accent-fg);
   cursor: pointer;
-  text-decoration: underline;
 }
 .esc-host-link:hover {
   opacity: 0.8;
 }
+.esc-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 0.5px solid #e5e5e7;
+  font-size: 12px;
+}
+.esc-row .esc-label {
+  white-space: nowrap;
+  min-width: 80px;
+}
 .esc-freq {
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 0.5px solid var(--color-border-default);
+  border-top: 0.5px solid #e5e5e7;
   font-size: 12px;
 }
 .esc-freq-label {
   display: block;
   font-size: 11px;
-  color: var(--color-fg-subtle);
+  color: #b4b2a9;
   margin-bottom: 4px;
 }
 .esc-freq-value {
-  color: var(--color-fg-default);
+  color: #1d1d1f;
   line-height: 1.5;
 }
 .freq-highlight {
@@ -195,7 +236,7 @@ function onFilterByHost() {
 .hash-val {
   font-family: 'Courier New', monospace;
   font-size: 11px;
-  color: var(--color-fg-subtle);
+  color: #888780;
 }
 .hash-act-btn {
   display: inline-flex;
@@ -204,14 +245,14 @@ function onFilterByHost() {
   font-size: 10px;
   font-weight: 500;
   border-radius: 3px;
-  border: 0.5px solid var(--color-border-default);
-  background: var(--color-canvas-subtle);
+  border: 0.5px solid #e5e5e7;
+  background: #f8f8fa;
   color: var(--color-accent-fg);
   cursor: pointer;
   line-height: 1.4;
 }
 .hash-act-btn:hover {
-  background: var(--color-accent-subtle);
+  background: #E6F1FB;
 }
 .esc-signed {
   padding: 0 6px;

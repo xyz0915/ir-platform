@@ -43,7 +43,7 @@
         <button class="tcl-toggle-btn tcl-toggle-right" @click="closeRight" v-if="showRightOverlay">
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M5 2L9 6L5 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         </button>
-        <span class="tcl-right-title">AI 研判</span>
+        <span class="tcl-right-title" v-if="showRightOverlay">辅助面板</span>
       </div>
       <div class="tcl-right-content">
         <slot name="right" />

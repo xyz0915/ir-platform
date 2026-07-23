@@ -18,17 +18,19 @@ describe('DecisionBar.vue', () => {
     const wrapper = createWrapper({ event: { severity: 'critical' } })
     const badge = wrapper.find('.severity-badge')
     expect(badge.classes()).toContain('badge-critical')
-    expect(badge.text()).toBe('critical')
+    expect(badge.text()).toBe('CRITICAL')
   })
 
   it('renders severity badge with correct class for high', () => {
     const wrapper = createWrapper({ event: { severity: 'high' } })
     expect(wrapper.find('.badge-high').exists()).toBe(true)
+    expect(wrapper.find('.severity-badge').text()).toBe('HIGH')
   })
 
   it('renders severity badge with correct class for medium', () => {
     const wrapper = createWrapper({ event: { severity: 'medium' } })
     expect(wrapper.find('.badge-medium').exists()).toBe(true)
+    expect(wrapper.find('.severity-badge').text()).toBe('MEDIUM')
   })
 
   it('renders severity badge with correct class for low', () => {
@@ -44,8 +46,7 @@ describe('DecisionBar.vue', () => {
   it('renders severity badge with info class for unknown severity', () => {
     const wrapper = createWrapper({ event: {} })
     expect(wrapper.find('.badge-info').exists()).toBe(true)
-    // severity is undefined so the badge text is empty; the CSS class gets 'info' as default
-    expect(wrapper.find('.severity-badge').text()).toBe('')
+    expect(wrapper.find('.severity-badge').text()).toBe('INFO')
   })
 
   // ── Risk Score Color ──
@@ -91,14 +92,16 @@ describe('DecisionBar.vue', () => {
   })
 
   // ── ATT&CK Stage ──
-  it('shows attack stage label when present', () => {
+  it('shows attack stage tag when present', () => {
     const wrapper = createWrapper({ event: { attack_stage: 'initial_access' } })
-    expect(wrapper.find('.db-stage-tag').text()).toBe('初始访问')
+    const tag = wrapper.find('.db-attack-tag')
+    expect(tag.text()).toContain('初始访问')
   })
 
   it('shows raw attack stage when not in label map', () => {
     const wrapper = createWrapper({ event: { attack_stage: 'custom_stage' } })
-    expect(wrapper.find('.db-stage-tag').text()).toBe('custom_stage')
+    const tag = wrapper.find('.db-attack-tag')
+    expect(tag.text()).toContain('custom_stage')
   })
 
   // ── Status Label ──
@@ -136,52 +139,52 @@ describe('DecisionBar.vue', () => {
   // ── Status Flow Buttons ──
   it('shows "分诊" button when status is pending', () => {
     const wrapper = createWrapper({ event: { status: 'pending' } })
-    const btn = wrapper.find('.db-right-group .btn-primary')
-    expect(btn.exists()).toBe(true)
-    expect(btn.text()).toContain('分诊')
+    const btns = wrapper.findAll('.db-right-group .btn')
+    const triageBtn = btns.filter(b => b.text().includes('分诊'))
+    expect(triageBtn.length).toBe(1)
   })
 
   it('shows "调查" button when status is triaging', () => {
     const wrapper = createWrapper({ event: { status: 'triaging' } })
-    const btn = wrapper.find('.db-right-group .btn-warning')
-    expect(btn.exists()).toBe(true)
-    expect(btn.text()).toContain('调查')
+    const btns = wrapper.findAll('.db-right-group .btn')
+    const invBtn = btns.filter(b => b.text().trim() === '调查')
+    expect(invBtn.length).toBe(1)
   })
 
   it('shows "解决" button when status is investigating', () => {
     const wrapper = createWrapper({ event: { status: 'investigating' } })
-    const btn = wrapper.find('.db-right-group .btn-success')
-    expect(btn.exists()).toBe(true)
-    expect(btn.text()).toContain('解决')
+    const btns = wrapper.findAll('.db-right-group .btn')
+    const resolveBtn = btns.filter(b => b.text().includes('解决'))
+    expect(resolveBtn.length).toBe(1)
   })
 
   it('shows "重开" button when status is resolved', () => {
     const wrapper = createWrapper({ event: { status: 'resolved' } })
-    const btn = wrapper.find('.db-right-group .btn-warning')
-    expect(btn.exists()).toBe(true)
-    expect(btn.text()).toContain('重开')
+    const btns = wrapper.findAll('.db-right-group .btn')
+    const reopenBtn = btns.filter(b => b.text().includes('重开'))
+    expect(reopenBtn.length).toBe(1)
   })
 
   it('shows "误报" button for non-rejected, non-resolved statuses', () => {
     const statuses = ['pending', 'triaging', 'investigating']
     for (const status of statuses) {
       const wrapper = createWrapper({ event: { status } })
-      const btn = wrapper.findAll('.db-right-group .btn-danger')
-      const rejectBtn = btn.filter(b => b.text().includes('误报'))
+      const btns = wrapper.findAll('.db-right-group .btn')
+      const rejectBtn = btns.filter(b => b.text().includes('误报'))
       expect(rejectBtn.length).toBe(1)
     }
   })
 
   it('hides "误报" button when status is rejected', () => {
     const wrapper = createWrapper({ event: { status: 'rejected' } })
-    const btns = wrapper.findAll('.db-right-group .btn-danger')
+    const btns = wrapper.findAll('.db-right-group .btn')
     const rejectBtn = btns.filter(b => b.text().includes('误报'))
     expect(rejectBtn.length).toBe(0)
   })
 
   it('hides "误报" button when status is resolved', () => {
     const wrapper = createWrapper({ event: { status: 'resolved' } })
-    const btns = wrapper.findAll('.db-right-group .btn-danger')
+    const btns = wrapper.findAll('.db-right-group .btn')
     const rejectBtn = btns.filter(b => b.text().includes('误报'))
     expect(rejectBtn.length).toBe(0)
   })
@@ -189,33 +192,41 @@ describe('DecisionBar.vue', () => {
   // ── Status Change Emit ──
   it('emits update-status with correct status on button click', async () => {
     const wrapper = createWrapper({ event: { status: 'pending' } })
-    await wrapper.find('.db-right-group .btn-primary').trigger('click')
+    const btns = wrapper.findAll('.db-right-group .btn')
+    const triageBtn = btns.filter(b => b.text().includes('分诊'))
+    await triageBtn[0].trigger('click')
     expect(wrapper.emitted('update-status')).toBeTruthy()
     expect(wrapper.emitted('update-status')[0]).toEqual(['triaging'])
   })
 
   it('emits update-status with triaging when pending->triaging', async () => {
     const wrapper = createWrapper({ event: { status: 'pending' } })
-    await wrapper.find('.db-right-group .btn-primary').trigger('click')
+    const btns = wrapper.findAll('.db-right-group .btn')
+    const triageBtn = btns.filter(b => b.text().includes('分诊'))
+    await triageBtn[0].trigger('click')
     expect(wrapper.emitted('update-status')[0]).toEqual(['triaging'])
   })
 
   it('emits update-status with investigating when triaging->investigating', async () => {
     const wrapper = createWrapper({ event: { status: 'triaging' } })
-    await wrapper.find('.db-right-group .btn-warning').trigger('click')
+    const btns = wrapper.findAll('.db-right-group .btn')
+    const invBtn = btns.filter(b => b.text().includes('调查'))
+    await invBtn[0].trigger('click')
     expect(wrapper.emitted('update-status')[0]).toEqual(['investigating'])
   })
 
   it('emits update-status with resolved when investigating->resolved', async () => {
     const wrapper = createWrapper({ event: { status: 'investigating' } })
-    await wrapper.find('.db-right-group .btn-success').trigger('click')
+    const btns = wrapper.findAll('.db-right-group .btn')
+    const resolveBtn = btns.filter(b => b.text().includes('解决'))
+    await resolveBtn[0].trigger('click')
     expect(wrapper.emitted('update-status')[0]).toEqual(['resolved'])
   })
 
   it('emits update-status with rejected when clicking "误报"', async () => {
     const wrapper = createWrapper({ event: { status: 'investigating' } })
-    const dangerBtn = wrapper.findAll('.db-right-group .btn-danger')
-    const rejectBtn = dangerBtn.filter(b => b.text().includes('误报'))
+    const btns = wrapper.findAll('.db-right-group .btn')
+    const rejectBtn = btns.filter(b => b.text().includes('误报'))
     await rejectBtn[0].trigger('click')
     expect(wrapper.emitted('update-status')[0]).toEqual(['rejected'])
   })
@@ -223,15 +234,15 @@ describe('DecisionBar.vue', () => {
   // ── Deep Investigation Button ──
   it('shows deep investigation button', () => {
     const wrapper = createWrapper({ event: { status: 'pending' } })
-    const buttons = wrapper.findAll('.db-right-group .btn')
-    const deepBtn = buttons.filter(b => b.text().includes('深度调查'))
+    const btns = wrapper.findAll('.db-right-group .btn')
+    const deepBtn = btns.filter(b => b.text().includes('深度调查'))
     expect(deepBtn.length).toBe(1)
   })
 
   it('emits deep-investigation when deep investigation button is clicked', async () => {
     const wrapper = createWrapper({ event: { status: 'pending' } })
-    const buttons = wrapper.findAll('.db-right-group .btn')
-    const deepBtn = buttons.filter(b => b.text().includes('深度调查'))
+    const btns = wrapper.findAll('.db-right-group .btn')
+    const deepBtn = btns.filter(b => b.text().includes('深度调查'))
     await deepBtn[0].trigger('click')
     expect(wrapper.emitted('deep-investigation')).toBeTruthy()
   })
