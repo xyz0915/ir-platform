@@ -1,74 +1,50 @@
 sequenceDiagram
-    participant Analyst as 安全分析员
-    participant UI as 前端<br>AgentManagementView
-    participant Store as Pinia Store<br>agentManagement.js
-    participant API as API 层<br>agent_management.py
-    participant Registry as AgentRegistry
-    participant Engine as PipelineEngine
-    participant Cache as CacheManager
-    participant HITL as HITLManager
-    participant Agent as Agent 执行器
-    participant DB as SQLite
+    participant User as 用户
+    participant Router as Vue Router
+    participant EDV as EventDetailView.vue
+    participant Store as useAnalysisStore
+    participant API as 后端 API
 
-    Analyst->>UI: 1. 进入 AgentManagementView
-    UI->>Store: 2. dispatch(fetchAgents)
-    Store->>API: 3. GET /api/agent-management/agents
-    API->>Registry: 4. list(enabled_only=True)
-    Registry->>DB: 5. SELECT * FROM agent_definitions WHERE enabled=1
-    DB-->>Registry: 6. rows
-    Registry-->>API: 7. list[AgentDefinition]
-    API-->>Store: 8. {agents: [...]}
-    Store-->>UI: 9. 渲染 Available 列表 + Pipeline 区域
+    User->>Router: 导航到 /analysis-center/event/:id
+    Router->>EDV: 挂载组件
+    EDV->>EDV: onMounted 触发
 
-    Analyst->>UI: 10. 勾选/拖拽 Agent (triage, file, net, root_cause, reporter)
-    UI->>Store: 11. dispatch(addToPipeline) / dispatch(reorderPipeline)
-    Store-->>UI: 12. 实时更新 Pipeline 列表
+    Note over EDV,API: 阶段一：并行加载核心数据（P0）
+    EDV->>Store: fetchEventDetail(id)
+    Store->>API: GET /analysis/events/{id}
+    API-->>Store: { code:0, data: eventDetail }
+    Store-->>EDV: eventData = response.data
 
-    Analyst->>UI: 13. 点击"开始执行"
-    UI->>Store: 14. dispatch(startPipeline, {event_id, use_cache})
+    EDV->>Store: fetchEventDisplay(id)
+    Store->>API: GET /analysis/events/{id}/display
+    API-->>Store: { code:0, data: projection }
+    Store-->>EDV: display = response.data
 
-    alt 校验未通过
-        Store->>API: 15. POST /pipeline/validate
-        API->>Registry: 16. validate_pipeline(agent_names)
-        Registry-->>API: 17. warnings (缺少依赖)
-        API-->>Store: 18. {valid: false, warnings: [...]}
-        Store-->>UI: 19. 显示警告弹窗，阻止执行
-    else 校验通过
-        Store->>API: 20. POST /pipeline/run {event_id, agents, use_cache}
-        API->>Engine: 21. run(run_id, agent_names, ctx, user, use_cache)
-        Engine->>Registry: 22. get_dependency_graph(agent_names)
-        Registry-->>Engine: 23. DAG 邻接表
-        Engine->>Engine: 24. _topological_sort() → 分批
-        API-->>Store: 25. 202 {run_id, status: "running", pipeline: [...]}
-        Store-->>UI: 26. 跳转执行监控页
+    EDV->>Store: fetchTimeline()
+    Store->>API: GET /analysis/events/timeline
+    API-->>Store: { code:0, data: { chains, events } }
+    Store-->>EDV: timelineEvents + timelineData
 
-        loop 每批次 batch
-            par 并行执行 batch 内 Agent
-                Engine->>Cache: 27. get(agent_name, params)
-                alt 缓存命中
-                    Cache-->>Engine: 28. AgentResult (cached=true)
-                    Engine-->>API: 29. SSE: stage_cached
-                else 未命中
-                    Engine->>Agent: 30. agent.run(ctx)
-                    Agent-->>Engine: 31. AgentResult
-                    Engine->>Cache: 32. set(agent_name, params, result)
-                    Engine-->>API: 33. SSE: stage_complete
-                end
-                Engine->>DB: 34. INSERT INTO agent_runs (...)
-            end
-        end
+    Note over EDV,Store: 核心数据就绪 → 首次渲染
 
-        alt HITL 触发 (responder)
-            Engine->>HITL: 35. request_approval(run_id, "responder", context, user)
-            HITL-->>API: 36. SSE: hitl_waiting
-            Analyst->>UI: 37. 查看 HITL 弹窗
-            Analyst->>UI: 38. 审批通过/拒绝
-            UI->>API: 39. POST /pipeline/run/{run_id}/resume {approved}
-            API->>Engine: 40. resume(run_id, approved)
-            Engine-->>API: 41. SSE: stage_complete (resume)
-        end
+    Note over EDV,API: 阶段二：并行加载增强数据（P0+P1）
+    EDV->>Store: fetchEventDetailEnhanced(id)
+    Store->>API: 并发请求
+    Store->>API: GET /analysis/events/{id}/context
+    Store->>API: GET /analysis/events/{id}/host-stats
+    Store->>API: GET /analysis/events/{id}/impact
+    Store->>API: GET /analysis/events/{id}/dispositions
+    API-->>Store: eventContext, hostStats, impactScope, dispositions
+    Store-->>EDV: 增强数据就绪 → 子组件更新
 
-        Engine-->>API: 42. SSE: pipeline_complete
-        API-->>Store: 43. (SSE/轮询) 最终结果
-        Store-->>UI: 44. 展示完整分析报告
-    end
+    Note over EDV,API: 阶段三：按需加载延后数据（P1，不影响首屏）
+    EDV->>Store: fetchProcessTree(id)
+    Store->>API: GET /analysis/events/{id}/process-tree
+    API-->>Store: { code:0, data: { tree, current_pid } }
+
+    EDV->>Store: fetchRelatedEvents(id)
+    Store->>API: GET /analysis/events/{id}/related
+    API-->>Store: { code:0, data: items }
+
+    Note over EDV: 所有数据就绪 → 完成渲染
+    EDV-->>User: 展示三栏布局完整页面

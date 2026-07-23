@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import {
   getEvents,
   getEventStats,
@@ -18,6 +18,7 @@ import {
   getEventImpact,
   getDispositions,
   addDisposition,
+  getProcessTree,
   triggerAiNoiseReduce,
   triggerEventVerdict,
 } from '@/api/events'
@@ -60,6 +61,68 @@ export const useAnalysisStore = defineStore('analysis', () => {
 
   // v2.1 展示投影数据（必填/辅助分级 + 证据双视图）
   const eventDisplay = ref(null)
+
+  // ── 新增：P1 延后数据状态 ──
+  const relatedEvents = ref([])
+  const processTree = ref([])
+  const processTreeLoading = ref(false)
+  const currentProcessPid = ref(null)
+
+  // ── 新增 getter：按 attack_stage 聚合时间线 ──
+  const timelineByStage = computed(() => {
+    const stages = [
+      'initial_access', 'execution', 'persistence', 'privilege_escalation',
+      'defense_evasion', 'credential_access', 'discovery', 'lateral_movement',
+      'collection', 'command_and_control', 'exfiltration', 'impact',
+    ]
+    const stageLabels = {
+      initial_access: '初始访问', execution: '执行', persistence: '持久化',
+      privilege_escalation: '提权', defense_evasion: '防御规避',
+      credential_access: '凭据访问', discovery: '发现',
+      lateral_movement: '横向移动', collection: '收集',
+      command_and_control: 'C2', exfiltration: '外泄',
+      impact: '影响', unknown: '未知',
+    }
+    const grouped = {}
+    // 初始化所有阶段
+    stages.forEach(s => {
+      grouped[s] = { stage: s, stageLabel: stageLabels[s] || s, events: [], count: 0, isCurrent: false }
+    })
+    grouped['unknown'] = { stage: 'unknown', stageLabel: '未知', events: [], count: 0, isCurrent: false }
+
+    // 聚合事件
+    const currentStage = selectedEvent.value?.attack_stage || ''
+    ;(timelineEvents.value || []).forEach(evt => {
+      const stage = evt.attack_stage || 'unknown'
+      if (!grouped[stage]) {
+        grouped[stage] = { stage, stageLabel: stageLabels[stage] || stage, events: [], count: 0, isCurrent: false }
+      }
+      grouped[stage].events.push(evt)
+      grouped[stage].count += 1
+    })
+
+    // 标记当前阶段
+    if (grouped[currentStage]) {
+      grouped[currentStage].isCurrent = true
+    }
+
+    // 按阶段顺序返回
+    const result = []
+    stages.forEach(s => {
+      if (grouped[s] && grouped[s].count > 0) result.push(grouped[s])
+    })
+    // 添加未知阶段（如有事件）
+    if (grouped['unknown'] && grouped['unknown'].count > 0) result.push(grouped['unknown'])
+
+    return result
+  })
+
+  const currentStageEvents = computed(() => {
+    const currentStage = selectedEvent.value?.attack_stage || ''
+    const stageGroups = timelineByStage.value
+    const found = stageGroups.find(g => g.stage === currentStage)
+    return found?.events || []
+  })
 
   // ── 新增：规则匹配降噪状态 ──
   const items = ref([])
@@ -438,6 +501,38 @@ export const useAnalysisStore = defineStore('analysis', () => {
   }
   function isBookmarked(id) { return bookmarkedIds.value.has(id) }
 
+  // ── 新增：获取进程树 ──
+  async function fetchProcessTree(eventId) {
+    if (!eventId) return
+    processTreeLoading.value = true
+    try {
+      const res = await getProcessTree(eventId)
+      if (res.code === 0) {
+        processTree.value = res.data.tree || []
+        currentProcessPid.value = res.data.current_pid || null
+      } else {
+        processTree.value = []
+        currentProcessPid.value = null
+      }
+    } catch (e) {
+      processTree.value = []
+      currentProcessPid.value = null
+    } finally {
+      processTreeLoading.value = false
+    }
+  }
+
+  // ── 新增：获取关联事件 ──
+  async function fetchRelatedEvents(eventId) {
+    if (!eventId) return
+    try {
+      const res = await getRelatedEvents(eventId)
+      relatedEvents.value = res.data?.items || res.data || []
+    } catch (e) {
+      relatedEvents.value = []
+    }
+  }
+
   return {
     // state — 原有
     events,
@@ -466,6 +561,14 @@ export const useAnalysisStore = defineStore('analysis', () => {
     contextLoading,
     // state — v2.1 展示投影
     eventDisplay,
+    // state — 新增 P1 延后数据
+    relatedEvents,
+    processTree,
+    processTreeLoading,
+    currentProcessPid,
+    // getters — 新增
+    timelineByStage,
+    currentStageEvents,
     // actions — 原有
     fetchEvents,
     fetchTimeline,
@@ -499,5 +602,8 @@ export const useAnalysisStore = defineStore('analysis', () => {
     bookmarkedIds,
     toggleBookmark,
     isBookmarked,
+    // actions — 新增 P1
+    fetchProcessTree,
+    fetchRelatedEvents,
   }
 })

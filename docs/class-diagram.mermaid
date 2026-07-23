@@ -1,133 +1,120 @@
 classDiagram
-    class AgentDefinition {
-        +str name
-        +str display_name
-        +str type
-        +str description
-        +list[str] data_sources
-        +list[str] depends_on
-        +str prompt_template
-        +dict config
-        +bool enabled
-        +bool hitl
-        +str created_at
-        +str updated_at
-        +to_dict() dict
+    class ThreeColumnLayout {
+        <<container>>
+        +slots: left, center, right
+        +responsiveBreakpoint: number = 1200
     }
 
-    class AgentRegistry {
-        -dict _cache
-        -Database _db
-        +get_instance() AgentRegistry
-        +register(def: AgentDefinition) AgentDefinition
-        +unregister(name: str) None
-        +update(name: str, updates: dict) AgentDefinition
-        +get(name: str) AgentDefinition|None
-        +list(enabled_only: bool) list[AgentDefinition]
-        +get_dependency_graph(names: list[str]) dict[str, list[str]]
-        +validate_pipeline(names: list[str]) list[str]
-        +detect_cycle(graph: dict) list[str]|None
+    class TopNavigation {
+        <<props>>
+        +event: Object
+        +caseInfo: Object
+        <<emits>>
+        +back()
+        +viewCase(caseId)
     }
 
-    class CacheManager {
-        -OrderedDict _cache
-        -int _ttl
-        -int _max_entries
-        -int _hit_count
-        -int _miss_count
-        +get(agent_name: str, params: dict) AgentResult|None
-        +set(agent_name: str, params: dict, result: AgentResult) None
-        +invalidate(agent_name: str|None) int
-        +stats() dict
+    class DecisionBar {
+        <<props>>
+        +event: Object
+        +riskScore: number
+        <<emits>>
+        +updateStatus(status: string)
+        +deepInvestigation()
     }
 
-    class PipelineEngine {
-        -dict _runs
-        -int _max_concurrent
-        +run(run_id: str, agent_names: list[str], event_id: str, ctx: EventContext, user: UserContext, use_cache: bool) PipelineRun
-        +_run_batch(agents: list[AgentWithParams], ctx: EventContext, user: UserContext, use_cache: bool) list[AgentResult]
-        +_run_single(agent: AgentWithParams, ctx: EventContext, user: UserContext, use_cache: bool) AgentResult
-        +_topological_sort(graph: dict) list[list[str]]
-        +cancel(run_id: str) bool
-        +resume(run_id: str, approved: bool, comment: str) None
-        +get_status(run_id: str) PipelineStatus|None
-        +get_run(run_id: str) PipelineRun|None
+    class AttackChainTimeline {
+        <<props>>
+        +timelineEvents: Array
+        +currentEventId: string
+        +currentStage: string
+        <<emits>>
+        +selectEvent(eventId: string)
+        +toggleStage(stage: string)
     }
 
-    class HITLManager {
-        -dict _pending
-        +request_approval(run_id: str, agent_name: str, context: dict, user: UserContext) bool
-        +approve(run_id: str, user: UserContext) None
-        +reject(run_id: str, user: UserContext) None
+    class EventSummaryCard {
+        <<props>>
+        +event: Object
+        +frequency: Object
+        <<emits>>
+        +filterByHost(hostId: number)
     }
 
-    class AgentResult {
-        +str agent_name
-        +str status
-        +dict data
-        +float elapsed
-        +bool cached
-        +str error
+    class MatchedRulesList {
+        <<props>>
+        +rules: Array
     }
 
-    class PipelineRun {
-        +str run_id
-        +str event_id
-        +str status
-        +list[AgentRunStep] steps
-        +dict progress
-        +datetime started_at
-        +datetime completed_at
-        +float total_elapsed
+    class EvidenceViewer {
+        <<props>>
+        +evidenceViews: Object
+        +eventType: string
+        +processSubject: Object
+        +networkSubject: Object
+        +persistenceTarget: string
     }
 
-    class AgentRunModel {
-        +int id
-        +str run_id
-        +str event_id
-        +str agent_name
-        +str status
-        +int stage
-        +float elapsed
-        +int cached
-        +str input_hash
-        +str result
-        +str error
-        +str started_at
-        +str completed_at
+    class ProcessTree {
+        <<props>>
+        +tree: Array
+        +currentPid: number
+        +loading: boolean
     }
 
-    class AgentDefinitionModel {
-        +int id
-        +str name
-        +str display_name
-        +str type
-        +str description
-        +str data_sources
-        +str depends_on
-        +str prompt_template
-        +str config
-        +int enabled
-        +str created_at
-        +str updated_at
-        +to_dict() dict
+    class RelatedEventsList {
+        <<props>>
+        +relatedIds: Array
+        <<emits>>
+        +viewEvent(eventId: string)
     }
 
-    class PipelinePresetModel {
-        +int id
-        +str name
-        +str description
-        +str agents
-        +str created_at
+    class AiVerdictPanel {
+        <<props>>
+        +aiVerdict: Object
+        +aiAnalysis: string
     }
 
-    AgentRegistry --> AgentDefinition : manages
-    PipelineEngine --> AgentRegistry : reads definitions
-    PipelineEngine --> CacheManager : checks cache
-    PipelineEngine --> HITLManager : pauses for approval
-    PipelineEngine --> AgentResult : produces
-    PipelineEngine --> PipelineRun : manages
-    HITLManager --> PipelineEngine : resumes on approval
-    AgentDefinitionModel <.. AgentDefinition : maps to/from
-    AgentRunModel <.. AgentResult : persists
-    PipelinePresetModel <.. PipelineEngine : saves/loads
+    class IocIndicators {
+        <<props>>
+        +iocs: Object
+    }
+
+    class RelatedAlerts {
+        <<props>>
+        +alerts: Array
+    }
+
+    class RemediationSuggestions {
+        <<props>>
+        +severity: string
+    }
+
+    class HostOverview {
+        <<props>>
+        +hostStats: Object
+        +hostname: string
+    }
+
+    class DispositionPanel {
+        <<props>>
+        +dispositions: Array
+        +eventId: string
+        <<emits>>
+        +addDisposition(comment: string)
+    }
+
+    TopNavigation --* ThreeColumnLayout : slot=top
+    DecisionBar --* ThreeColumnLayout : slot=decision
+    AttackChainTimeline --* ThreeColumnLayout : slot=left
+    EventSummaryCard --* ThreeColumnLayout : slot=center-top
+    MatchedRulesList --* ThreeColumnLayout : slot=center-mid
+    ProcessTree --* ThreeColumnLayout : slot=center-mid2
+    EvidenceViewer --* ThreeColumnLayout : slot=center-bottom
+    RelatedEventsList --* ThreeColumnLayout : slot=center-bottom2
+    AiVerdictPanel --* ThreeColumnLayout : slot=right-top
+    IocIndicators --* ThreeColumnLayout : slot=right-mid
+    RelatedAlerts --* ThreeColumnLayout : slot=right-mid2
+    RemediationSuggestions --* ThreeColumnLayout : slot=right-mid3
+    HostOverview --* ThreeColumnLayout : slot=right-mid4
+    DispositionPanel --* ThreeColumnLayout : slot=right-bottom

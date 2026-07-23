@@ -115,6 +115,11 @@ export function triggerAiNoiseReduce(caseId, hostId = null) {
   return request.post('/ai/noise-reduce', null, { params, timeout: 200000 })
 }
 
+// 进程树
+export function getProcessTree(eventId) {
+  return request.get(`/analysis/events/${eventId}/process-tree`)
+}
+
 // AI 研判打标（对选中事件批量研判，写回 ai_verdict；挂载于 /api/security-events）
 export function triggerEventVerdict(eventIds, opts = {}) {
   const data = { event_ids: eventIds }
