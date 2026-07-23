@@ -43,6 +43,80 @@ def error(msg: str, code: int = -1) -> dict:
 #  数据库查询辅助
 # ===================================================================
 
+def _lookup_event(conn, event_id: str, join_hosts: bool = True):
+    """弹性查询事件：先精确匹配 id，再尝试 event_key，最后尝试模糊前缀匹配.
+    
+    当 join_hosts=True 时返回完整 JOIN 查询（含主机/案件信息），
+    否则仅返回 security_events 基础行。
+    """
+    if join_hosts:
+        row = conn.execute("""
+            SELECT se.*, h.hostname, h.ip_address, h.case_id as case_id,
+                   c.name as case_name, c.case_number
+            FROM security_events se
+            LEFT JOIN hosts h ON h.id = se.host_id
+            LEFT JOIN cases c ON c.id = h.case_id
+            WHERE se.id = ?
+        """, (event_id,)).fetchone()
+    else:
+        row = conn.execute("SELECT * FROM security_events WHERE id = ?", (event_id,)).fetchone()
+    if row:
+        return row
+    # 尝试按 event_key 匹配
+    if join_hosts:
+        row = conn.execute("""
+            SELECT se.*, h.hostname, h.ip_address, h.case_id as case_id,
+                   c.name as case_name, c.case_number
+            FROM security_events se
+            LEFT JOIN hosts h ON h.id = se.host_id
+            LEFT JOIN cases c ON c.id = h.case_id
+            WHERE se.event_key = ? LIMIT 1
+        """, (event_id,)).fetchone()
+    else:
+        row = conn.execute("SELECT * FROM security_events WHERE event_key = ? LIMIT 1", (event_id,)).fetchone()
+    if row:
+        return row
+    # 尝试模糊前缀匹配：cmabnormal_processes551 → cm:abnormal_processes:551
+    import re as _re
+    m = _re.match(r'^cm[a-z_]+(\d+)$', event_id)
+    if m:
+        slug = event_id[:event_id.rstrip('0123456789')]
+        candidates = [f"cm:{slug[2:]}:{m.group(1)}"]
+        for c in candidates:
+            if join_hosts:
+                row = conn.execute("""
+                    SELECT se.*, h.hostname, h.ip_address, h.case_id as case_id,
+                           c.name as case_name, c.case_number
+                    FROM security_events se
+                    LEFT JOIN hosts h ON h.id = se.host_id
+                    LEFT JOIN cases c ON c.id = h.case_id
+                    WHERE se.id = ?
+                """, (c,)).fetchone()
+            else:
+                row = conn.execute("SELECT * FROM security_events WHERE id = ?", (c,)).fetchone()
+            if row:
+                return row
+            # 也试试模糊匹配前缀
+            prefix_part = ':'.join(c.split(':')[:2])
+            if join_hosts:
+                row = conn.execute("""
+                    SELECT se.*, h.hostname, h.ip_address, h.case_id as case_id,
+                           c.name as case_name, c.case_number
+                    FROM security_events se
+                    LEFT JOIN hosts h ON h.id = se.host_id
+                    LEFT JOIN cases c ON c.id = h.case_id
+                    WHERE se.id LIKE ? ORDER BY se.id DESC LIMIT 1
+                """, (f"{prefix_part}:%",)).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM security_events WHERE id LIKE ? ORDER BY id DESC LIMIT 1",
+                    (f"{prefix_part}:%",)
+                ).fetchone()
+            if row:
+                return row
+    return None
+
+
 def _row_to_dict(row) -> dict:
     """将 sqlite3.Row 转换为字典（包含 JSON 反序列化）. """
     d = dict(row)
@@ -528,14 +602,7 @@ def event_stats(
 def get_event(event_id: str, current_user: dict = Depends(get_current_user)):
     """事件详情."""
     with get_connection() as conn:
-        row = conn.execute("""
-            SELECT se.*, h.hostname, h.ip_address, h.case_id as case_id,
-                   c.name as case_name, c.case_number
-            FROM security_events se
-            LEFT JOIN hosts h ON h.id = se.host_id
-            LEFT JOIN cases c ON c.id = h.case_id
-            WHERE se.id = ?
-        """, (event_id,)).fetchone()
+        row = _lookup_event(conn, event_id)
     if not row:
         raise HTTPException(status_code=404, detail="事件不存在")
     event_dict = _row_to_dict(row)
@@ -580,7 +647,24 @@ def get_event_display(
     """
     result = get_display(event_id)
     if not result:
-        raise HTTPException(status_code=404, detail="事件不存在")
+        # fallback: 事件可能在数据库中但 display 投影未生成
+        with get_connection() as conn:
+            row = _lookup_event(conn, event_id, join_hosts=False)
+        if not row:
+            raise HTTPException(status_code=404, detail="事件不存在")
+        # 返回基础字段作为降级投影
+        d = _row_to_dict(row)
+        result = {
+            "event": d,
+            "projection": {
+                "required": {},
+                "auxiliary": {},
+                "evidence_views": {
+                    "normalized": json.loads(d.get("evidence", "{}")) if isinstance(d.get("evidence"), str) else d.get("evidence", {}),
+                    "raw": d.get("evidence", {}),
+                },
+            },
+        }
     return success(result)
 
 
