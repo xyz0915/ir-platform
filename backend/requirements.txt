@@ -13,7 +13,7 @@ bcrypt==4.0.1
 
 # 模板与报告
 jinja2==3.1.4
-weasyprint==62.1
+weasyprint==69.0
 
 # Agent 采集
 psutil==5.9.8
