@@ -39,12 +39,12 @@ jobs:
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
       - run: cd frontend && npm ci
-      # CI=true 让 vitest 自动切单线程（避免 2GB runner OOM），并启用 --reporter=verbose
+      # 单 worker + basic reporter 控制内存消耗（GitHub 2GB runner）
       - name: Run unit tests
         env:
-          CI: 'true'
-        run: cd frontend && npm run test
-        timeout-minutes: 10
+          CI: "true"
+        run: cd frontend && npx vitest run --maxWorkers=1 --reporter=basic
+        timeout-minutes: 15
 
   build:
     needs: test
