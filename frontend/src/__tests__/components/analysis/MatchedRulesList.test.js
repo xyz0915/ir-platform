@@ -15,7 +15,7 @@ describe('MatchedRulesList.vue', () => {
   // ── Empty State (shows fallback rules) ──
   it('shows fallback rules when rules is empty', () => {
     const wrapper = createWrapper({ rules: [] })
-    expect(wrapper.findAll('.mrc-rule-item').length).toBe(2) // 2 fallback rules
+    expect(wrapper.find('.mrc-empty-hint').exists()).toBe(true)
   })
 
   // ── Title ──

@@ -26,6 +26,7 @@ export default defineConfig({
     }
   },
   test: {
+    env: { TZ: "Asia/Shanghai" },
     environment: 'happy-dom',
     globals: true,
     // e2e 目录为 Playwright 浏览器级测试，不纳入 vitest 单测

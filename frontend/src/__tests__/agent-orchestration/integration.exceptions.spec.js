@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 
-// M3 / M7 经 facade
+// M3 / M6 / M7 经 facade（完整命名空间，对齐 07 §6 task 后的 agentApi 结构）
 const agentApi = vi.hoisted(() => ({
   pipeline: {
     getSample: vi.fn(() => Promise.resolve({
@@ -39,6 +39,11 @@ const agentApi = vi.hoisted(() => ({
       },
       message: 'ok',
     })),
+  },
+  // M6 HITL 命名空间（用于 store.approve/reject 经 facade 转发）
+  hitl: {
+    approve: vi.fn(() => Promise.reject(new Error('approval not found'))),
+    reject: vi.fn(() => Promise.reject(new Error('approval not found'))),
   },
 }))
 vi.mock('@/api/agent', () => ({ default: agentApi }))

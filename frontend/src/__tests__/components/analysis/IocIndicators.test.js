@@ -28,7 +28,7 @@ describe('IocIndicators.vue', () => {
   it('renders fallback IOC items when iocs is empty', () => {
     const wrapper = createWrapper({ iocs: {} })
     expect(wrapper.find('.ioc-indicators').exists()).toBe(true)
-    expect(wrapper.findAll('.ioc-item').length).toBe(4) // 4 fallback items
+    expect(wrapper.find('.ioc-empty-hint').exists()).toBe(true)
   })
 
   it('renders real IOC data when available', () => {

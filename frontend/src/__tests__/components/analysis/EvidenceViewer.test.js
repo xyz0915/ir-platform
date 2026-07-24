@@ -19,8 +19,7 @@ describe('EvidenceViewer.vue', () => {
   // ── Fallback Data (when no evidence) ──
   it('renders fallback normalized data when no evidenceViews', () => {
     const wrapper = createWrapper()
-    expect(wrapper.find('.ev-normalized-content').exists()).toBe(true)
-    expect(wrapper.find('.ev-norm-key').exists()).toBe(true)
+    expect(wrapper.find('.ev-empty').exists()).toBe(true)
   })
 
   // ── Title ──

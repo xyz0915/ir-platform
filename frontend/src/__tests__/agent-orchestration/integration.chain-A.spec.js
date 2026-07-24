@@ -13,7 +13,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
-// M3 / M8 走 facade
+// M3 / M6 / M8 走 facade（完整命名空间，对齐 07 §6 任务列表 T1-T7 后的 agentApi 结构）
 const agentApi = vi.hoisted(() => ({
   pipeline: {
     getSample: vi.fn(() => Promise.resolve({
@@ -47,6 +47,31 @@ const agentApi = vi.hoisted(() => ({
       },
       message: 'ok',
     })),
+  },
+  // M2 顶层方法（facade 转发到 @/api/agentManagement）
+  createAgent: vi.fn(() => Promise.resolve({ code: 0, data: { agent_id: 'a1' }, message: 'ok' })),
+  deleteAgent: vi.fn(() => Promise.resolve({ code: 0, data: null, message: 'ok' })),
+  updateAgent: vi.fn(() => Promise.resolve({ code: 0, data: {}, message: 'ok' })),
+  listAgents: vi.fn(() => Promise.resolve({ code: 0, data: [], message: 'ok' })),
+  // M6 HITL 命名空间
+  hitl: {
+    listPendingApprovals: vi.fn(() => Promise.resolve({
+      code: 0,
+      data: {
+        items: [{
+          approval_id: 1, run_id: 'run-A1', agent_name: '处置响应 Agent',
+          action: 'host:isolate:X', impact_scope: '主机 WIN-X', status: 'pending',
+          guardrail_result: {
+            policy_id: 'gp-host', whitelist_hit: true,
+            requires_confirm: true, requires_rollback_plan: true, passed: true,
+          },
+        }],
+        total: 1,
+      },
+      message: 'ok',
+    })),
+    approve: vi.fn(() => Promise.resolve({ code: 0, data: {}, message: 'ok' })),
+    reject: vi.fn(() => Promise.resolve({ code: 0, data: {}, message: 'ok' })),
   },
 }))
 vi.mock('@/api/agent', () => ({ default: agentApi }))
@@ -106,7 +131,7 @@ describe('集成链路 A：M2 → M3 → M6 → M8 跨模块协同', () => {
     // ① M2 创建自定义 Agent
     const agent = await m2.registerAgent({ agent_id: 'a1', display_name: 'A1', kind: 'custom', status: 'active' })
     expect(agent.agent_id).toBe('a1')
-    expect(agentManagement.createAgent).toHaveBeenCalled()
+    expect(agentApi.createAgent).toHaveBeenCalled()
 
     // ② M3 加载种子 DAG 并执行，得到 run_id
     await m3.seedFromSample()
@@ -125,7 +150,7 @@ describe('集成链路 A：M2 → M3 → M6 → M8 跨模块协同', () => {
     // ④ 批准
     const ok = await m6.approve(task.run_id, task.approval_id)
     expect(ok).toBeDefined()
-    expect(agentOrchestration.approveAgentRun).toHaveBeenCalledWith('run-A1', { approval_id: 1 })
+    expect(agentApi.hitl.approve).toHaveBeenCalledWith('run-A1', { approval_id: 1 })
 
     // ⑤ M8 可观测：出现 trace 与日志
     await m8.fetchRun('run-A1')

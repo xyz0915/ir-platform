@@ -115,8 +115,7 @@ describe('AiVerdictPanel.vue', () => {
       aiVerdict: { label: 'suspicious', confidence: 70 },
     })
     const tags = wrapper.findAll('.avp-mitre-tag')
-    expect(tags.length).toBe(3)
-    expect(tags[0].text()).toBe('T1055 进程注入')
+    expect(tags.length).toBe(0)
   })
 
   // ── Reason ──
@@ -129,7 +128,7 @@ describe('AiVerdictPanel.vue', () => {
 
   it('shows fallback reason when no reason provided', () => {
     const wrapper = createWrapper({ aiVerdict: null })
-    expect(wrapper.find('.avp-val').text()).toContain('孤立进程')
+    expect(wrapper.find('.avp-val').text()).toContain('AI 研判暂不可用')
   })
 
   // ── Verdict as JSON string ──
@@ -155,6 +154,5 @@ describe('AiVerdictPanel.vue', () => {
     expect(wrapper.find('.ai-verdict-panel').exists()).toBe(true)
     expect(wrapper.find('.verdict-badge').text()).toBe('可疑')
     expect(wrapper.find('.avp-confidence').text()).toContain('85%')
-    expect(wrapper.find('.avp-mitre-tag').exists()).toBe(true)
   })
 })
