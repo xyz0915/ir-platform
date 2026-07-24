@@ -39,10 +39,12 @@ jobs:
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
       - run: cd frontend && npm ci
-      # 限制并发 worker 数量，避免 GitHub Actions 2GB runner OOM
-      - name: Run unit tests (limited workers)
-        run: cd frontend && npx vitest run --maxConcurrency=2 --pool=threads --poolOptions.threads.maxThreads=2
-        timeout-minutes: 8
+      # CI=true 让 vitest 自动切单线程（避免 2GB runner OOM），并启用 --reporter=verbose
+      - name: Run unit tests
+        env:
+          CI: 'true'
+        run: cd frontend && npm run test
+        timeout-minutes: 10
 
   build:
     needs: test
