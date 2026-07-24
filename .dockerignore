@@ -1,0 +1,14 @@
+.git
+.gitignore
+*.md
+_ps.txt
+_psps.txt
+agent-orchestration-preview/
+preposal-preview*/
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache
+agent/

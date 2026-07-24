@@ -1,0 +1,9 @@
+venv/
+__pycache__/
+*.pyc
+.git
+.gitignore
+data/ir_platform.db
+*.md
+test_*.py
+qa_*.py
