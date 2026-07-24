@@ -1,7 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import AgentRunDetailView from '@/views/AgentRunDetailView.vue'
-import AgentManagementView from '@/views/AgentManagementView.vue'
+import AgentRunView from '@/views/AgentRunView.vue'
 
 const routes = [
   {
@@ -121,23 +120,6 @@ const routes = [
         component: () => import('@/views/LogSearchView.vue')
       },
       {
-        path: 'agent-orchestration',
-        name: 'AgentOrchestration',
-        component: () => import('@/views/AgentRunView.vue')
-      },
-      {
-        path: 'agent-orchestration/:runId',
-        name: 'AgentRunDetail',
-        component: AgentRunDetailView,
-        meta: { title: '编排运行详情' }
-      },
-      {
-        path: 'agent-management',
-        name: 'AgentManagementV2',
-        component: AgentManagementView,
-        meta: { title: '智能体管理' }
-      },
-      {
         path: 'incident-clusters',
         name: 'IncidentClusters',
         component: () => import('@/views/IncidentClusterView.vue')
@@ -152,7 +134,90 @@ const routes = [
         name: 'KbFeedback',
         component: () => import('@/views/KbFeedbackView.vue')
       },
-      // 系统设置路由
+      {
+        path: 'agent-management',
+        name: 'AgentManagementV2',
+        // 兼容别名：重定向到智能体编排管理下的智能体模块（M2）
+        redirect: '/agent-orchestration/agents',
+        meta: { title: '智能体管理' }
+      },
+
+      // ───────────────────────────────────────────────────────────
+      // 智能体编排管理（9 模块父路由，承载子导航布局）
+      // 现有 AgentRunView / AgentRunDetailView 重映射为 runs / runs/:runId
+      // ───────────────────────────────────────────────────────────
+      {
+        path: 'agent-orchestration',
+        component: () => import('@/views/agent-orchestration/AgentOrchestrationLayout.vue'),
+        redirect: '/agent-orchestration/dashboard',
+        children: [
+          {
+            path: '',
+            redirect: { name: 'AoDashboard' },
+          },
+          {
+            path: 'dashboard',
+            name: 'AoDashboard',
+            component: () => import('@/views/agent-orchestration/DashboardView.vue'),
+            meta: { title: '编排总览' }
+          },
+          {
+            path: 'agents',
+            name: 'AoAgents',
+            component: () => import('@/views/agent-orchestration/AgentsView.vue'),
+            meta: { title: '智能体管理' }
+          },
+          {
+            path: 'pipeline',
+            name: 'AoPipeline',
+            component: () => import('@/views/agent-orchestration/PipelineCanvasView.vue'),
+            meta: { title: '流水线 DAG' }
+          },
+          {
+            path: 'tools',
+            name: 'AoTools',
+            component: () => import('@/views/agent-orchestration/ToolMcpView.vue'),
+            meta: { title: '工具与 MCP' }
+          },
+          {
+            path: 'memory',
+            name: 'AoMemory',
+            component: () => import('@/views/agent-orchestration/MemoryRagView.vue'),
+            meta: { title: '记忆与 RAG' }
+          },
+          {
+            path: 'hitl',
+            name: 'AoHitl',
+            component: () => import('@/views/agent-orchestration/HitlConsoleView.vue'),
+            meta: { title: '人工审核台' }
+          },
+          {
+            path: 'guardrail',
+            name: 'AoGuardrail',
+            component: () => import('@/views/agent-orchestration/GuardrailView.vue'),
+            meta: { title: '护栏与安全' }
+          },
+          {
+            path: 'runs',
+            name: 'AoRuns',
+            component: AgentRunView,
+            meta: { title: '编排运行记录' }
+          },
+          {
+            path: 'runs/:runId',
+            name: 'AoRunDetail',
+            component: () => import('@/views/AgentRunDetailView.vue'),
+            meta: { title: '运行详情' }
+          },
+          {
+            path: 'settings',
+            name: 'AoSettings',
+            component: () => import('@/views/agent-orchestration/SettingsView.vue'),
+            meta: { title: '编排设置' }
+          },
+        ]
+      },
+
       {
         path: 'settings',
         component: () => import('@/views/settings/SettingsLayout.vue'),

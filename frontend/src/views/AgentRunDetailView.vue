@@ -5,6 +5,7 @@
       <div class="dt-tabs">
         <button :class="{ active: activeTab === 'process' }" @click="activeTab = 'process'">调查过程</button>
         <button :class="{ active: activeTab === 'conclusion' }" @click="activeTab = 'conclusion'">调查结论</button>
+        <button :class="{ active: activeTab === 'observability' }" @click="activeTab = 'observability'">可观测性</button>
       </div>
       <div class="dt-right">
         <span class="dt-run-id">{{ runId }}</span>
@@ -46,7 +47,7 @@
     </div>
 
     <!-- 内容区：调查结论 -->
-    <div class="detail-body" v-else>
+    <div class="detail-body" v-if="activeTab === 'conclusion'">
       <div class="conclusion-panel">
         <div class="cp-section">
           <h3>执行摘要</h3>
@@ -58,6 +59,37 @@
           <h4>{{ step.agent }} — {{ step.stage }}</h4>
           <pre class="cp-output">{{ step.output }}</pre>
         </div>
+      </div>
+    </div>
+
+    <!-- 内容区：可观测性（M8 增强 Tab，trace 树 / 结构化日志 / 续跑点） -->
+    <div class="detail-body" v-else-if="activeTab === 'observability'">
+      <div class="observability-panel">
+        <div v-if="obs.loading" class="obs-loading">可观测性数据加载中...</div>
+        <template v-else-if="obs.run">
+          <!-- 续跑点 -->
+          <div class="obs-section" v-if="obs.run.resume_point">
+            <h3>续跑点 (Resume Point)</h3>
+            <el-alert type="warning" :closable="false" show-icon class="obs-resume">
+              <template #title>{{ obs.run.resume_point }}</template>
+            </el-alert>
+          </div>
+          <!-- Trace 树 -->
+          <div class="obs-section">
+            <h3>调用链路 Trace <span class="obs-count">{{ obs.run.trace?.length || 0 }} 个 span</span></h3>
+            <div class="obs-card">
+              <TraceTree :trace="obs.run.trace || []" />
+            </div>
+          </div>
+          <!-- 结构化日志 -->
+          <div class="obs-section">
+            <h3>结构化日志 <span class="obs-count">{{ obs.run.logs?.length || 0 }} 条</span></h3>
+            <div class="obs-card obs-logs">
+              <LogTimeline :logs="obs.run.logs || []" />
+            </div>
+          </div>
+        </template>
+        <el-empty v-else description="暂无可观测性数据" :image-size="60" />
       </div>
     </div>
 
@@ -79,13 +111,18 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAgentOrchestrationStore } from '@/stores/agents'
+import { useObservabilityStore } from '@/stores/observability'
 import { useSSE } from '@/composables/useSSE'
+import agentApi from '@/api/agent'
 import StepCard from '@/components/agents/StepCard.vue'
 import GraphPanel from '@/components/agents/GraphPanel.vue'
+import TraceTree from '@/components/agents/TraceTree.vue'
+import LogTimeline from '@/components/agents/LogTimeline.vue'
 
 const route = useRoute()
 const router = useRouter()
 const store = useAgentOrchestrationStore()
+const obs = useObservabilityStore()
 
 const runId = route.params.runId
 const activeTab = ref('process')
@@ -164,12 +201,25 @@ const completedSteps = computed(() =>
   sse.steps.value.filter(s => s.status === 'completed')
 )
 
+// 切换到「可观测性」Tab 时加载 trace/log/resume_point
+watch(activeTab, (tab) => {
+  if (tab === 'observability') {
+    obs.fetchRun(runId)
+  }
+})
+
+// 运行完成时（SSE run_completed），若正在查看可观测 Tab 则增量刷新
+watch(() => sse.runCompleted.value, (done) => {
+  if (done && activeTab.value === 'observability') {
+    obs.fetchRun(runId)
+  }
+})
+
 onMounted(async () => {
   // 先加载历史步骤
   let runIsTerminal = false
   try {
-    const { getAgentRun } = await import('@/api/agentOrchestration')
-    const res = await getAgentRun(runId)
+    const res = await agentApi.runs.getAgentRun(runId)
 
     // 立即判断 run 终态 — 不依赖 setTimeout 时序
     if (res.data?.run) {
@@ -433,6 +483,44 @@ function goBack() {
   flex: 1;
   overflow-y: auto;
   padding: 16px;
+}
+.observability-panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+.obs-loading, .obs-empty {
+  text-align: center;
+  padding: 40px;
+  color: var(--color-fg-subtle);
+  font-size: 13px;
+}
+.obs-section { margin-bottom: 18px; }
+.obs-section h3 {
+  font-size: 14px;
+  font-weight: 500;
+  margin: 0 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.obs-count {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--color-fg-subtle);
+}
+.obs-card {
+  background: var(--color-canvas-default);
+  border: 0.5px solid var(--color-border-default);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.obs-logs {
+  max-height: 360px;
+  overflow-y: auto;
+}
+.obs-resume {
+  background: var(--color-warning-subtle, rgba(245,158,11,0.08));
 }
 .cp-section {
   margin-bottom: 16px;

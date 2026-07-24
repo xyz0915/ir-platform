@@ -346,6 +346,14 @@ const TYPE_META = {
   action:  { gradient: 'url(#grad-action)',  icon: 'A', label: '动作' },
   file:    { gradient: 'url(#grad-file)',    icon: 'F', label: '文件' },
   process: { gradient: 'url(#grad-process)', icon: 'P', label: '进程' },
+  // M3 DAG 流水线节点类型（复用既有渐变，保证画布内核通用）
+  trigger:    { gradient: 'url(#grad-default)', icon: 'T', label: '触发' },
+  investigate: { gradient: 'url(#grad-url)',     icon: 'I', label: '调查' },
+  forensic:   { gradient: 'url(#grad-process)',  icon: 'F', label: '取证' },
+  remediate:  { gradient: 'url(#grad-host)',     icon: 'R', label: '处置' },
+  guardrail:  { gradient: 'url(#grad-action)',   icon: 'G', label: '护栏' },
+  hitl:       { gradient: 'url(#grad-file)',     icon: 'H', label: '审核' },
+  end:        { gradient: 'url(#grad-default)',   icon: 'E', label: '结束' },
 }
 
 function nodeColor(type) {

@@ -1,163 +1,240 @@
 <template>
   <div class="agent-library">
+    <!-- 头部：统计 + 新建 -->
     <div class="al-header">
-      <h3>Agent Library ({{ store.agents.length }} total, {{ store.availableAgents.length }} active)</h3>
-      <el-button size="small" type="primary" @click="showRegisterDialog = true">
-        + Register Agent
+      <div class="al-stats">
+        <span>共 <b>{{ store.agents.length }}</b> 个</span>
+        <span class="al-sep">·</span>
+        <span>启用 <b>{{ store.availableAgents.length }}</b></span>
+        <span class="al-sep">·</span>
+        <span>自定义 <b>{{ customCount }}</b></span>
+      </div>
+      <el-button size="small" type="primary" @click="showForm = true">
+        <el-icon><Plus /></el-icon> 新建智能体
       </el-button>
     </div>
 
-    <el-table :data="store.agents" style="width: 100%" stripe size="small" max-height="calc(100vh - 200px)">
-      <el-table-column prop="name" label="Name" width="150" />
-      <el-table-column prop="display_name" label="Display Name" min-width="150" />
-      <el-table-column prop="type" label="Type" width="90">
-        <template #default="{ row }">
-          <el-tag :type="row.type === 'built-in' ? 'primary' : 'success'" size="small">
-            {{ row.type }}
+    <!-- 卡片网格 -->
+    <div v-loading="store.loading" class="al-grid">
+      <div
+        v-for="agent in store.agents"
+        :key="agent.name"
+        class="al-card"
+        :class="{ disabled: !agent.enabled }"
+        @click="openDetail(agent)"
+      >
+        <div class="al-card-head">
+          <span class="al-dot" :style="{ background: agentColor(agent.name) }" />
+          <span class="al-card-name">{{ agent.display_name }}</span>
+          <el-tag size="small" :type="agent.kind === 'builtin' ? 'primary' : 'success'" effect="plain">
+            {{ agent.kind === 'builtin' ? '内置' : '自定义' }}
           </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column prop="data_sources" label="Data Sources" min-width="180">
-        <template #default="{ row }">
-          <span v-if="row.data_sources && row.data_sources.length" class="al-ds">
-            {{ row.data_sources.join(', ') }}
-          </span>
-          <span v-else class="al-none">&mdash;</span>
-        </template>
-      </el-table-column>
-      <el-table-column prop="enabled" label="Status" width="80">
-        <template #default="{ row }">
-          <el-switch
-            v-if="row.type !== 'built-in'"
-            :model-value="row.enabled"
-            size="small"
-            @change="toggleEnabled(row)"
-          />
-          <span v-else class="al-always">always</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="Actions" width="120">
-        <template #default="{ row }">
-          <el-button v-if="row.type !== 'built-in'" size="small" text @click="onEdit(row)">edit</el-button>
-          <el-button v-if="row.type !== 'built-in'" size="small" text type="danger" @click="onDelete(row)">delete</el-button>
-          <span v-else class="al-immutable">&mdash;</span>
-        </template>
-      </el-table-column>
-    </el-table>
+        </div>
+        <div class="al-card-desc">{{ agent.description || '暂无描述' }}</div>
+        <div class="al-card-meta">
+          <span class="al-chip">{{ (agent.data_sources || []).length }} 数据源</span>
+          <span class="al-chip">{{ (agent.tools || []).length }} 工具</span>
+          <span class="al-chip">{{ (agent.depends_on || []).length }} 依赖</span>
+        </div>
+      </div>
 
-    <!-- Register / Edit Dialog -->
-    <el-dialog :model-value="showRegisterDialog" @close="showRegisterDialog = false"
-               :title="editingAgent ? 'Edit Agent' : 'Register New Agent'" width="500px">
-      <el-form :model="agentForm" label-width="120px" size="small">
-        <el-form-item label="Name" required>
-          <el-input v-model="agentForm.name" :disabled="!!editingAgent" />
-        </el-form-item>
-        <el-form-item label="Display Name" required>
-          <el-input v-model="agentForm.display_name" />
-        </el-form-item>
-        <el-form-item label="Description">
-          <el-input v-model="agentForm.description" type="textarea" :rows="2" />
-        </el-form-item>
-        <el-form-item label="Data Sources">
-          <el-input v-model="agentForm.data_sources_text" placeholder="逗号分隔的表.字段" />
-        </el-form-item>
-        <el-form-item label="Depends On">
-          <el-select v-model="agentForm.depends_on" multiple placeholder="前置 Agent" style="width: 100%">
-            <el-option v-for="a in store.agents" :key="a.name" :label="a.display_name" :value="a.name" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="Prompt Template">
-          <el-input v-model="agentForm.prompt_template" type="textarea" :rows="3" placeholder="可选 LLM prompt 模板" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button size="small" @click="showRegisterDialog = false">Cancel</el-button>
-        <el-button size="small" type="primary" :loading="saving" @click="onSave">Save</el-button>
+      <el-empty v-if="!store.loading && store.agents.length === 0" description="暂无智能体" />
+    </div>
+
+    <!-- 详情抽屉 -->
+    <el-drawer v-model="drawer" :title="selected?.display_name" size="420px" @close="selected = null">
+      <template v-if="selected">
+        <div class="al-d-sheet">
+          <div class="al-d-row">
+            <span class="al-d-k">标识</span><span class="al-d-v mono">{{ selected.name }}</span>
+          </div>
+          <div class="al-d-row">
+            <span class="al-d-k">类型</span>
+            <span class="al-d-v">
+              <el-tag size="small" :type="selected.kind === 'builtin' ? 'primary' : 'success'" effect="plain">
+                {{ selected.kind === 'builtin' ? '内置' : '自定义' }}
+              </el-tag>
+            </span>
+          </div>
+          <div class="al-d-row">
+            <span class="al-d-k">状态</span>
+            <span class="al-d-v">
+              <el-switch
+                v-if="selected.kind !== 'builtin'"
+                :model-value="selected.enabled"
+                @change="toggleEnabled(selected)"
+              />
+              <el-tag v-else size="small" type="info" effect="plain">常驻</el-tag>
+            </span>
+          </div>
+          <div class="al-d-block">
+            <div class="al-d-k">描述</div>
+            <div class="al-d-v">{{ selected.description || '—' }}</div>
+          </div>
+          <div class="al-d-block">
+            <div class="al-d-k">数据来源</div>
+            <div class="al-d-v">
+              <el-tag v-for="ds in (selected.data_sources || [])" :key="ds" size="small" class="al-tag">{{ ds }}</el-tag>
+              <span v-if="!(selected.data_sources || []).length">—</span>
+            </div>
+          </div>
+          <div class="al-d-block">
+            <div class="al-d-k">依赖 Agent</div>
+            <div class="al-d-v">
+              <el-tag v-for="d in (selected.depends_on || [])" :key="d" size="small" class="al-tag">{{ nameOf(d) }}</el-tag>
+              <span v-if="!(selected.depends_on || []).length">—</span>
+            </div>
+          </div>
+          <div class="al-d-block">
+            <div class="al-d-k">关联工具</div>
+            <div class="al-d-v">
+              <el-tag v-for="t in (selected.tools || [])" :key="t" size="small" class="al-tag" effect="plain">{{ toolName(t) }}</el-tag>
+              <span v-if="!(selected.tools || []).length">—</span>
+            </div>
+          </div>
+          <div class="al-d-block">
+            <div class="al-d-k">模型 Profile</div>
+            <div class="al-d-v">{{ profileName(selected.model_profile) || '—' }}</div>
+          </div>
+        </div>
+
+        <div class="al-d-actions" v-if="selected.kind !== 'builtin'">
+          <el-button size="small" @click="editAgent(selected)">编辑</el-button>
+          <el-button size="small" type="danger" plain @click="removeAgent(selected)">删除</el-button>
+        </div>
       </template>
-    </el-dialog>
+    </el-drawer>
+
+    <!-- 新建 / 编辑表单 -->
+    <AgentForm v-model:visible="showForm" :editing-agent="editingAgent" @saved="onSaved" />
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Plus } from '@element-plus/icons-vue'
 import { useAgentManagementStore } from '@/stores/agentManagement'
+import agentApi from '@/api/agent'
+import AgentForm from './AgentForm.vue'
 
 const store = useAgentManagementStore()
-const showRegisterDialog = ref(false)
+const showForm = ref(false)
 const editingAgent = ref(null)
-const saving = ref(false)
+const drawer = ref(false)
+const selected = ref(null)
 
-const agentForm = ref({
-  name: '', display_name: '', description: '',
-  data_sources_text: '', depends_on: [],
-  prompt_template: '',
+const customCount = computed(() => store.agents.filter((a) => a.kind === 'custom').length)
+
+const toolMap = ref({})
+const profileMap = ref({})
+
+onMounted(async () => {
+  try {
+    const [t, p] = await Promise.all([
+      agentApi.tools.listTools(),
+      agentApi.settings.listModelProfiles(),
+    ])
+    ;(t.data || []).forEach((x) => { toolMap.value[x.tool_id] = x.name })
+    ;(p.data || []).forEach((x) => { profileMap.value[x.profile_id] = `${x.name} / ${x.provider}` })
+  } catch (e) {
+    console.error('[AgentLibrary] 加载工具/模型失败', e)
+  }
 })
 
-function resetForm() {
-  agentForm.value = { name: '', display_name: '', description: '', data_sources_text: '', depends_on: [], prompt_template: '' }
+function agentColor(name) {
+  const colors = {
+    triage: '#378ADD', file_analysis: '#639922', process_analysis: '#9B59B6',
+    network_analysis: '#D85A30', registry_analysis: '#F39C12',
+    threat_intel: '#E74C3C', timeline: '#185FA5',
+    root_cause: '#1D9E75', remediate: '#888780', reporter: '#378ADD',
+  }
+  return colors[name] || '#888'
 }
 
-function onEdit(agent) {
-  editingAgent.value = agent
-  agentForm.value = {
-    name: agent.name,
-    display_name: agent.display_name,
-    description: agent.description || '',
-    data_sources_text: (agent.data_sources || []).join(', '),
-    depends_on: agent.depends_on || [],
-    prompt_template: agent.prompt_template || '',
-  }
-  showRegisterDialog.value = true
+function nameOf(name) {
+  const a = store.agents.find((x) => x.name === name)
+  return a ? a.display_name : name
+}
+function toolName(id) {
+  return toolMap.value[id] || id
+}
+function profileName(id) {
+  return profileMap.value[id] || id
 }
 
-async function onDelete(agent) {
-  try {
-    await ElMessageBox.confirm(`Delete agent "${agent.display_name}"?`, 'Confirm', { type: 'warning' })
-    await store.deleteAgent(agent.name)
-    ElMessage.success('Agent deleted')
-  } catch { /* cancelled */ }
-}
-
-async function onSave() {
-  const data = {
-    name: agentForm.value.name,
-    display_name: agentForm.value.display_name,
-    description: agentForm.value.description,
-    data_sources: agentForm.value.data_sources_text.split(',').map(s => s.trim()).filter(Boolean),
-    depends_on: agentForm.value.depends_on,
-    prompt_template: agentForm.value.prompt_template,
-  }
-  saving.value = true
-  try {
-    if (editingAgent.value) {
-      await store.updateAgent(editingAgent.value.name, data)
-      ElMessage.success('Agent updated')
-    } else {
-      await store.registerAgent(data)
-      ElMessage.success('Agent registered')
-    }
-    showRegisterDialog.value = false
-    resetForm()
-    editingAgent.value = null
-  } catch (e) {
-    ElMessage.error('Failed: ' + (e.response?.data?.detail || e.message || 'unknown error'))
-  } finally {
-    saving.value = false
-  }
+function openDetail(agent) {
+  selected.value = agent
+  drawer.value = true
 }
 
 async function toggleEnabled(agent) {
-  await store.updateAgent(agent.name, { enabled: !agent.enabled })
+  await store.updateAgentAction(agent.name, { enabled: !agent.enabled })
+}
+
+function editAgent(agent) {
+  editingAgent.value = agent
+  showForm.value = true
+}
+
+async function removeAgent(agent) {
+  try {
+    await ElMessageBox.confirm(`删除智能体「${agent.display_name}」？`, '确认', { type: 'warning' })
+    await store.deleteAgentAction(agent.name)
+    ElMessage.success('已删除')
+    drawer.value = false
+  } catch { /* cancelled */ }
+}
+
+function onSaved() {
+  editingAgent.value = null
+  drawer.value = false
 }
 </script>
 
 <style scoped>
 .agent-library { display: flex; flex-direction: column; height: 100%; }
 .al-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.al-header h3 { margin: 0; font-size: 14px; font-weight: 500; }
-.al-ds { font-size: 12px; }
-.al-none { font-size: 12px; color: var(--color-fg-subtle); }
-.al-always { font-size: 12px; color: var(--color-fg-subtle); }
-.al-immutable { font-size: 12px; color: var(--color-fg-subtle); }
+.al-stats { font-size: 13px; color: var(--color-fg-muted); }
+.al-stats b { color: var(--color-fg-default); }
+.al-sep { margin: 0 6px; color: var(--color-border-default); }
+.al-grid {
+  flex: 1;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+  align-content: start;
+  padding: 2px;
+}
+.al-card {
+  border: 1px solid var(--color-border-default);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--color-canvas-default);
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.al-card:hover { border-color: var(--color-accent-fg); box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
+.al-card.disabled { opacity: 0.6; }
+.al-card-head { display: flex; align-items: center; gap: 8px; }
+.al-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.al-card-name { font-weight: 600; color: var(--color-fg-default); font-size: 14px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.al-card-desc { font-size: 12px; color: var(--color-fg-muted); line-height: 1.5; min-height: 36px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.al-card-meta { display: flex; gap: 6px; flex-wrap: wrap; }
+.al-chip { font-size: 11px; padding: 2px 8px; background: var(--color-canvas-subtle); border-radius: 4px; color: var(--color-fg-muted); }
+
+.al-d-sheet { display: flex; flex-direction: column; gap: 12px; }
+.al-d-row { display: flex; gap: 12px; align-items: center; }
+.al-d-k { width: 80px; flex-shrink: 0; font-size: 12px; color: var(--color-fg-subtle); }
+.al-d-v { font-size: 13px; color: var(--color-fg-default); word-break: break-all; }
+.al-d-block { display: flex; flex-direction: column; gap: 6px; }
+.al-d-block .al-d-k { width: auto; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.al-tag { margin: 0 4px 4px 0; }
+.al-d-actions { margin-top: 20px; display: flex; gap: 8px; }
 </style>

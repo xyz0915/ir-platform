@@ -9,6 +9,7 @@
     "build": "npx rimraf dist && vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "e2e": "playwright test",
     "test:watch": "vitest"
   },
   "dependencies": {
@@ -27,6 +28,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.5",
+    "@vitest/coverage-v8": "^4.1.10",
     "@vue/test-utils": "^2.4.11",
     "happy-dom": "^20.10.6",
     "jsdom": "^29.1.1",

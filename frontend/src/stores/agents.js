@@ -7,15 +7,7 @@
  */
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { getSSEUrl } from '@/api/agentOrchestration'
-import {
-  createAgentRun,
-  listAgentRuns,
-  getAgentRun,
-  approveAgentRun,
-  rejectAgentRun,
-  listPendingApprovals,
-} from '@/api/agentOrchestration'
+import agentApi from '@/api/agent'
 
 export const useAgentOrchestrationStore = defineStore('agentOrchestration', () => {
   // ===== 状态 =====
@@ -42,7 +34,7 @@ export const useAgentOrchestrationStore = defineStore('agentOrchestration', () =
   async function fetchRuns(params = {}) {
     loading.value = true
     try {
-      const res = await listAgentRuns(params)
+      const res = await agentApi.runs.listAgentRuns(params)
       const data = res.data || {}
       runs.value = data.items || []
       total.value = data.total || 0
@@ -58,7 +50,7 @@ export const useAgentOrchestrationStore = defineStore('agentOrchestration', () =
   async function fetchRunDetail(runId) {
     loading.value = true
     try {
-      const res = await getAgentRun(runId)
+      const res = await agentApi.runs.getAgentRun(runId)
       currentRun.value = res.data || null
     } finally {
       loading.value = false
@@ -73,7 +65,7 @@ export const useAgentOrchestrationStore = defineStore('agentOrchestration', () =
   async function startRun(payload = {}) {
     submitting.value = true
     try {
-      const res = await createAgentRun(payload)
+      const res = await agentApi.runs.createAgentRun(payload)
       return res.data
     } finally {
       submitting.value = false
@@ -86,7 +78,7 @@ export const useAgentOrchestrationStore = defineStore('agentOrchestration', () =
   async function fetchApprovals() {
     loading.value = true
     try {
-      const res = await listPendingApprovals('pending')
+      const res = await agentApi.hitl.listPendingApprovals('pending')
       // 后端返回 {items, total}，HitlApprovalPanel 需要数组
       approvals.value = (res.data && res.data.items) || []
     } finally {
@@ -103,7 +95,7 @@ export const useAgentOrchestrationStore = defineStore('agentOrchestration', () =
   async function approve(runId, approvalId) {
     submitting.value = true
     try {
-      const res = await approveAgentRun(runId, { approval_id: approvalId })
+      const res = await agentApi.hitl.approve(runId, { approval_id: approvalId })
       return res.data
     } finally {
       submitting.value = false
@@ -120,7 +112,7 @@ export const useAgentOrchestrationStore = defineStore('agentOrchestration', () =
   async function reject(runId, approvalId, reason) {
     submitting.value = true
     try {
-      const res = await rejectAgentRun(runId, { approval_id: approvalId, reason })
+      const res = await agentApi.hitl.reject(runId, { approval_id: approvalId, reason })
       return res.data
     } finally {
       submitting.value = false

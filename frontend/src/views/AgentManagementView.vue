@@ -4,13 +4,13 @@
     <div class="am-header">
       <div class="am-tabs">
         <button :class="['am-tab', { active: activeTab === 'builder' }]" @click="activeTab = 'builder'">
-          <el-icon><Connection /></el-icon> Pipeline Builder
+          <el-icon><Connection /></el-icon> 流水线编排
         </button>
         <button :class="['am-tab', { active: activeTab === 'library' }]" @click="activeTab = 'library'">
-          <el-icon><Setting /></el-icon> Agent Library
+          <el-icon><Setting /></el-icon> 智能体库
         </button>
         <button :class="['am-tab', { active: activeTab === 'history' }]" @click="activeTab = 'history'">
-          <el-icon><Clock /></el-icon> Execution History
+          <el-icon><Clock /></el-icon> 执行历史
         </button>
       </div>
     </div>

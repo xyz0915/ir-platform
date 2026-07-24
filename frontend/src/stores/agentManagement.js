@@ -7,23 +7,7 @@
  */
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import {
-  listAgents,
-  createAgent,
-  updateAgent,
-  deleteAgent,
-  validatePipeline,
-  runPipeline,
-  getRunStatus,
-  cancelRun,
-  resumeRun,
-  listPresets,
-  createPreset,
-  deletePreset,
-  getDependencyGraph,
-  getCacheStats,
-  invalidateCache,
-} from '@/api/agentManagement'
+import agentApi from '@/api/agent'
 
 export const useAgentManagementStore = defineStore('agentManagement', () => {
   // ==========================================================================
@@ -77,7 +61,7 @@ export const useAgentManagementStore = defineStore('agentManagement', () => {
     loading.value = true
     try {
       // Library 需要显示所有 Agent（包括禁用的），所以传 false
-      const res = await listAgents(false)
+      const res = await agentApi.listAgents(false)
       agents.value = res.data || []
     } catch (e) {
       console.error('[agentManagement] fetchAgents failed:', e)
@@ -94,7 +78,7 @@ export const useAgentManagementStore = defineStore('agentManagement', () => {
    */
   async function registerAgent(data) {
     try {
-      const res = await createAgent(data)
+      const res = await agentApi.createAgent(data)
       await fetchAgents()
       return res.data || null
     } catch (e) {
@@ -111,7 +95,7 @@ export const useAgentManagementStore = defineStore('agentManagement', () => {
    */
   async function updateAgentAction(name, data) {
     try {
-      const res = await updateAgent(name, data)
+      const res = await agentApi.updateAgent(name, data)
       await fetchAgents()
       return res.data || null
     } catch (e) {
@@ -126,7 +110,7 @@ export const useAgentManagementStore = defineStore('agentManagement', () => {
    */
   async function deleteAgentAction(name) {
     try {
-      await deleteAgent(name)
+      await agentApi.deleteAgent(name)
       await fetchAgents()
     } catch (e) {
       console.error('[agentManagement] deleteAgent failed:', e)
@@ -190,7 +174,7 @@ export const useAgentManagementStore = defineStore('agentManagement', () => {
       return
     }
     try {
-      const res = await validatePipeline(names)
+      const res = await agentApi.pipeline.validate(names)
       const data = res.data || {}
       validationMessages.value = data.warnings || []
       isPipelineValid.value = data.valid !== false
@@ -216,7 +200,7 @@ export const useAgentManagementStore = defineStore('agentManagement', () => {
     if (names.length === 0) throw new Error('管道为空')
     runLoading.value = true
     try {
-      const res = await runPipeline(eventId, names, useCache)
+      const res = await agentApi.pipeline.run(eventId, names, useCache)
       currentRun.value = res.data || null
       return currentRun.value
     } catch (e) {
@@ -234,7 +218,7 @@ export const useAgentManagementStore = defineStore('agentManagement', () => {
    */
   async function fetchRunStatus(runId) {
     try {
-      const res = await getRunStatus(runId)
+      const res = await agentApi.pipeline.getRunStatus(runId)
       currentRun.value = res.data || null
       return currentRun.value
     } catch (e) {
@@ -249,7 +233,7 @@ export const useAgentManagementStore = defineStore('agentManagement', () => {
    */
   async function cancelRunAction(runId) {
     try {
-      await cancelRun(runId)
+      await agentApi.pipeline.cancel(runId)
       if (currentRun.value) currentRun.value.status = 'cancelled'
     } catch (e) {
       console.error('[agentManagement] cancelRun failed:', e)
@@ -265,7 +249,7 @@ export const useAgentManagementStore = defineStore('agentManagement', () => {
   async function fetchPresets() {
     presetsLoading.value = true
     try {
-      const res = await listPresets()
+      const res = await agentApi.pipeline.getPresets()
       presets.value = res.data || []
     } catch (e) {
       console.error('[agentManagement] fetchPresets failed:', e)
@@ -285,7 +269,7 @@ export const useAgentManagementStore = defineStore('agentManagement', () => {
     const names = pipeline.value.map(a => a.name)
     if (!name || names.length === 0) throw new Error('名称和 Agent 列表不能为空')
     try {
-      const res = await createPreset(name, description, names)
+      const res = await agentApi.pipeline.createPreset(name, description, names)
       await fetchPresets()
       return res.data || null
     } catch (e) {
@@ -300,7 +284,7 @@ export const useAgentManagementStore = defineStore('agentManagement', () => {
    */
   async function deletePresetAction(presetId) {
     try {
-      await deletePreset(presetId)
+      await agentApi.pipeline.deletePreset(presetId)
       await fetchPresets()
     } catch (e) {
       console.error('[agentManagement] deletePreset failed:', e)

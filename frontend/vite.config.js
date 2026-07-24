@@ -6,6 +6,19 @@ export default defineConfig({
   plugins: [vue()],
   build: {
     emptyOutDir: false,
+    rollupOptions: {
+      output: {
+        // 工程卫生：按包归类拆 vendor chunk，避免单包过大、提升缓存命中
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('element-plus') || id.includes('@element-plus')) return 'element-vendor'
+            if (id.includes('echarts') || id.includes('zrender') || id.includes('vue-echarts')) return 'echarts-vendor'
+            if (id.includes('vue') || id.includes('pinia') || id.includes('vue-router') || id.includes('@vue')) return 'vue-vendor'
+            return 'vendor'
+          }
+        },
+      },
+    },
   },
   resolve: {
     alias: {
@@ -15,6 +28,8 @@ export default defineConfig({
   test: {
     environment: 'happy-dom',
     globals: true,
+    // e2e 目录为 Playwright 浏览器级测试，不纳入 vitest 单测
+    exclude: ['**/node_modules/**', '**/dist/**', 'e2e/**', 'tests-e2e/**'],
   },
   server: {
     port: 5173,

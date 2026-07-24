@@ -1,0 +1,16 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+dist-*/
+dist-qa/
+
+# 本地/缓存
+*.local
+.DS_Store
+npm_install.log
+
+# e2e 产物（Playwright 报告）
+playwright-report/
+test-results/

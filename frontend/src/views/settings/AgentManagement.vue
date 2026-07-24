@@ -58,7 +58,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { getAgents, getAgentStats } from '@/api/agents'
+import agentApi from '@/api/agent'
 
 const loading = ref(false)
 const agentList = ref([])
@@ -81,7 +81,7 @@ function relativeTime(val) {
 async function fetchAgents() {
   loading.value = true
   try {
-    const res = await getAgents({ page: currentPage.value, page_size: pageSize.value })
+    const res = await agentApi.agents.list({ page: currentPage.value, page_size: pageSize.value })
     agentList.value = res.data.items || []
     total.value = res.data.total || 0
   } catch (e) {
@@ -93,7 +93,7 @@ async function fetchAgents() {
 
 async function fetchStats() {
   try {
-    const res = await getAgentStats()
+    const res = await agentApi.stats.getAgentStats()
     stats.value = res.data || { total: 0, online: 0, offline: 0 }
   } catch (e) {
     console.error('获取 Agent 统计失败', e)
