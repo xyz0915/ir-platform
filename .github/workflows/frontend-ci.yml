@@ -43,7 +43,7 @@ jobs:
       - name: Run unit tests
         env:
           CI: "true"
-        run: cd frontend && npx vitest run --maxWorkers=1 --reporter=basic
+        run: cd frontend && npx vitest run --maxWorkers=1
         timeout-minutes: 15
 
   build:
