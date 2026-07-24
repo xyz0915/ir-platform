@@ -1,0 +1,90 @@
+classDiagram
+    class AgentConfig {
+        +ID agent_id
+        +string display_name
+        +string kind
+        +string[] data_sources
+        +string[] depends_on
+        +ID[] tools
+        +ID model_profile
+    }
+    class AgentRun {
+        +ID run_id
+        +ID agent_id
+        +RunStatus status
+        +AgentRunStep[] steps
+        +GuardrailHit[] guardrail_hits
+        +ID[] hitl_tasks
+    }
+    class AgentRunStep {
+        +ID step_id
+        +NodeType kind
+        +RunStatus status
+        +ID hitl_ref
+    }
+    class PipelineDef {
+        +ID pipeline_id
+        +PipelineNode[] nodes
+        +PipelineEdge[] edges
+        +boolean requires_guardrail
+        +boolean requires_hitl
+    }
+    class PipelineNode {
+        +ID node_id
+        +NodeType type
+        +string label
+    }
+    class ToolDef {
+        +ID tool_id
+        +string idempotency_key
+        +string schema
+        +ID mcp_server_id
+    }
+    class McpServer {
+        +ID server_id
+        +string transport
+        +string status
+    }
+    class HitlTask {
+        +ID approval_id
+        +ID run_id
+        +HitlDecision status
+        +GuardrailResult guardrail_result
+    }
+    class GuardrailPolicy {
+        +ID policy_id
+        +string action_pattern
+        +Severity risk_level
+    }
+    class GuardrailHit {
+        +ID policy_id
+        +ID run_id
+        +boolean passed
+    }
+    class ObservabilityRun {
+        +ID run_id
+        +TraceSpan[] trace
+        +LogEntry[] logs
+        +ID resume_point
+    }
+    class KnowledgeBase {
+        +ID kb_id
+        +string embedding_model
+    }
+    class ModelProfile {
+        +ID profile_id
+        +string provider
+    }
+
+    AgentConfig "1" --> "*" ToolDef : tools
+    AgentConfig "1" --> "1" ModelProfile : model_profile
+    AgentRun "1" *-- "*" AgentRunStep : steps
+    AgentRun "1" --> "*" HitlTask : hitl_tasks
+    AgentRun "1" --> "*" GuardrailHit : guardrail_hits
+    AgentRunStep "1" --> "0..1" HitlTask : hitl_ref
+    PipelineDef "1" *-- "*" PipelineNode : nodes
+    ToolDef "0..*" --> "1" McpServer : mcp_server_id
+    HitlTask "1" --> "1" GuardrailResult : guardrail_result
+    GuardrailHit "1" --> "1" GuardrailPolicy : policy_id
+    ObservabilityRun "1" --> "1" AgentRun : run_id
+    AgentConfig "0..*" --> "0..*" AgentConfig : depends_on

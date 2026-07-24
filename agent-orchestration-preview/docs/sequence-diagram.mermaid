@@ -1,0 +1,67 @@
+%% 流程① 创建自定义 Agent 并配置工具 → 保存
+sequenceDiagram
+    actor U as 用户(管理员)
+    participant L as AgentListPage
+    participant F as AgentForm
+    participant S as useAgentStore
+    participant M as mocks/agents
+    U->>L: 点击「新建自定义 Agent」
+    L->>F: 打开表单(抽屉)
+    U->>F: 填 display_name/数据源/依赖
+    F->>M: 拉取 ToolRegistry 列表
+    M-->>F: 返回 ToolDef[](schema预览)
+    U->>F: 勾选工具 + 选 model_profile
+    U->>F: 点「保存」
+    F->>S: addAgent(payload)
+    S->>M: 写入新 AgentConfig(mock落库)
+    M-->>S: 返回新 agent_id
+    S-->>L: 列表状态更新
+    L-->>U: 新卡片出现于列表(toast提示)
+
+%% 流程② DAG 画布拖拽节点连线编排 → 校验 → 运行
+sequenceDiagram
+    actor U as 用户(编排员)
+    participant P as PipelineCanvasPage
+    participant NP as NodePalette
+    participant S as usePipelineStore
+    participant M as mocks/pipelines
+    participant R as mocks/dashboard(AgentRun)
+    U->>NP: 拖入「调查/取证/处置」节点
+    NP->>S: addNode(type)
+    U->>P: 连线定义流转(edges)
+    P->>S: connectNodes(src,tgt)
+    U->>P: 点「校验」
+    P->>S: validate()
+    S->>S: 检查闭环 + 是否含 guardrail/hitl 节点
+    S-->>P: 返回校验结果(通过/缺失护栏)
+    U->>P: 点「运行」
+    P->>S: run()
+    S->>S: 按 step 顺序高亮 nodes
+    S->>R: 生成 mock AgentRun(status=running)
+    R-->>P: 顶部 SSE 流式进度(模拟 setInterval)
+    S-->>U: 节点逐步高亮 + 运行态灯转橙/绿
+
+%% 流程③ HITL 审核台收到待审 → 查看上下文 → 护栏校验 → 批准/拒绝
+sequenceDiagram
+    actor U as 分析师
+    participant T as TopBar
+    participant Q as HitlQueuePage
+    participant C as HitlContextPanel
+    participant H as useHitlStore
+    participant G as mocks/guardrails
+    participant R as mocks/agents(AgentRun)
+    R-->>H: 新 HitlTask 入队(运行等待)
+    H-->>T: pendingCount +1(角标)
+    U->>Q: 进入人工审核台
+    Q->>H: listPending()
+    H-->>Q: 返回 HitlTask[]
+    U->>Q: 展开某任务
+    Q->>C: 打开上下文面板
+    C->>G: 取 guardrail_result
+    G-->>C: 返回白名单命中/高危确认 required
+    U->>C: 点「批准」
+    C->>H: decide(approval_id,'approved')
+    H->>R: resume AgentRun(status→running)
+    H-->>T: pendingCount -1
+    H-->>U: 运行继续 + 写回审计
+    Note over U,C: 或点「拒绝」→ H.decide('rejected') → R 终止 + 写回原因

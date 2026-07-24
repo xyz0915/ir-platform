@@ -1,0 +1,16 @@
+node_modules
+dist
+dist-*
+*.local
+.DS_Store
+
+# 安装期 workaround 产物（非应用代码）
+proxy.cjs
+prepop.cjs
+prepop.js
+icons.tgz
+
+# 安装/测试期临时产物
+npm_install.log
+qa-home.html
+*.log
