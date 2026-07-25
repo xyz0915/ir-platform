@@ -170,8 +170,8 @@ const routes = [
           {
             path: 'pipeline',
             name: 'AoPipeline',
-            component: () => import('@/views/agent-orchestration/PipelineCanvasView.vue'),
-            meta: { title: '流水线 DAG' }
+            component: () => import('@/views/agent-orchestration/PipelineRedesignView.vue'),
+            meta: { title: '流水线编排' }
           },
           {
             path: 'tools',

@@ -12,8 +12,12 @@ import { describe, it, expect, vi } from 'vitest'
 
 vi.mock('../mock-config', () => ({
   USE_MOCK: {
-    guardrail: true, tools: true, memory: true, settings: true,
-    dashboardTrend: true, observability: true, pipeline: false,
+    guardrail: true, tools: true, memory: true,
+    // 拆键：settings→settings+settingsDeployment（07 §5.5）
+    settings: true, settingsDeployment: true,
+    // 拆键：dashboardTrend→dashboardTrend+dashboardGuardrailBlocks
+    dashboardTrend: true, dashboardGuardrailBlocks: true,
+    observability: true, pipeline: false,
     hitl: false, agents: false, runs: false,
   },
 }))

@@ -17,7 +17,22 @@
         <el-input v-model="form.description" type="textarea" :rows="2" />
       </el-form-item>
       <el-form-item label="数据来源">
-        <el-input v-model="form.data_sources_text" placeholder="逗号分隔，如 邮件网关, 身份目录" />
+        <el-select
+          v-model="form.data_sources"
+          multiple
+          filterable
+          allow-create
+          default-first-option
+          placeholder="可输入后回车新增标签，如 邮件网关"
+          style="width: 100%"
+        >
+          <el-option
+            v-for="ds in dataSourcePresets"
+            :key="ds"
+            :label="ds"
+            :value="ds"
+          />
+        </el-select>
       </el-form-item>
       <el-form-item label="依赖 Agent">
         <el-select v-model="form.depends_on" multiple placeholder="前置 Agent" style="width: 100%">
@@ -61,11 +76,14 @@ const form = ref({
   name: '',
   display_name: '',
   description: '',
-  data_sources_text: '',
+  data_sources: [],
   depends_on: [],
   tools: [],
   model_profile: '',
 })
+
+/** 数据来源常用预设（用户仍可通过 el-select 的 allow-create 自由新增）。 */
+const dataSourcePresets = ['邮件网关', '身份目录', 'EDR 终端', '防火墙', 'Web 代理', 'DNS 日志']
 
 const agentOptions = computed(() => store.agents)
 const toolOptions = ref([])
@@ -81,13 +99,13 @@ watch(
           name: a.name,
           display_name: a.display_name || '',
           description: a.description || '',
-          data_sources_text: (a.data_sources || []).join(', '),
+          data_sources: Array.isArray(a.data_sources) ? a.data_sources : [],
           depends_on: a.depends_on || [],
           tools: a.tools || [],
           model_profile: a.model_profile || '',
         }
       } else {
-        form.value = { name: '', display_name: '', description: '', data_sources_text: '', depends_on: [], tools: [], model_profile: '' }
+        form.value = { name: '', display_name: '', description: '', data_sources: [], depends_on: [], tools: [], model_profile: '' }
       }
     }
   }
@@ -116,7 +134,7 @@ async function onSave() {
     display_name: form.value.display_name.trim(),
     description: form.value.description,
     kind: 'custom',
-    data_sources: form.value.data_sources_text.split(',').map((s) => s.trim()).filter(Boolean),
+    data_sources: Array.isArray(form.value.data_sources) ? form.value.data_sources : [],
     depends_on: form.value.depends_on,
     tools: form.value.tools,
     model_profile: form.value.model_profile,

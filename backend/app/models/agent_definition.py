@@ -41,7 +41,7 @@ def _auto_json_fields(row_dict: dict, fields: list[str]) -> dict:
 class AgentDefinitionModel:
     """Agent 定义表 CRUD — agent_definitions."""
 
-    JSON_FIELDS = ["data_sources", "depends_on", "config"]
+    JSON_FIELDS = ["data_sources", "depends_on", "config", "tools"]
 
     @staticmethod
     def create(data: dict) -> dict:
@@ -51,8 +51,9 @@ class AgentDefinitionModel:
                 """
                 INSERT INTO agent_definitions
                     (name, display_name, type, description, data_sources,
-                     depends_on, prompt_template, config, enabled, hitl)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     depends_on, prompt_template, config, enabled, hitl,
+                     tools, model_profile)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     data["name"],
@@ -65,6 +66,8 @@ class AgentDefinitionModel:
                     _j(data.get("config", {})),
                     1 if data.get("enabled", True) else 0,
                     1 if data.get("hitl", False) else 0,
+                    _j(data.get("tools", [])),
+                    data.get("model_profile", ""),
                 ),
             )
             rid = cursor.lastrowid
@@ -108,12 +111,13 @@ class AgentDefinitionModel:
         allowed = {
             "display_name", "type", "description", "data_sources",
             "depends_on", "prompt_template", "config", "enabled", "hitl",
+            "tools", "model_profile",
         }
         data = {}
         for k in allowed:
             if k in updates:
                 raw = updates[k]
-                if k in ("data_sources", "depends_on"):
+                if k in ("data_sources", "depends_on", "tools"):
                     data[k] = _j(raw)
                 elif k == "config":
                     data[k] = _j(raw)
@@ -245,6 +249,19 @@ class PipelinePresetModel:
             d["agents"] = _d(d.get("agents"), [])
             results.append(d)
         return results
+
+    @staticmethod
+    def get_by_name(name: str) -> Optional[dict]:
+        """按 name 查询 Pipeline 预设，自动解析 agents JSON. 返回 None 表示不存在."""
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM pipeline_presets WHERE name = ?", (name,)
+            ).fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        result["agents"] = _d(result.get("agents"), [])
+        return result
 
     @staticmethod
     def delete(pid: int) -> bool:

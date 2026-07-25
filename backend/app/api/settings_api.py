@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from app.config import settings
 from app.database import get_connection
 from app.services.auth_service import get_current_user
 from app.services.audit_service import create_audit_log
@@ -78,3 +79,34 @@ def update_setting(
         target_id=key,
     )
     return {"code": 0, "data": {"key": key, "value": new_value}, "message": "success"}
+
+
+@router.get("/deployment")
+def get_deployment(current_user: dict = Depends(get_current_user)):
+    """获取部署配置（F14 / M9）。返回 DeploymentConfig（对齐 01-api-spec.md §9.1）。
+
+    - stateless_enabled ← app.config.settings.STATELESS_MODE 标志
+    - redis_connected    ← 运行时 redis ping（缺失/未配置默认 false）
+    - sse_protocol / hitl_protocol ← 常量（Orchestrator 统一协议）
+    """
+    redis_connected = False
+    try:
+        import redis  # 可选依赖（MVP 未引入，缺失则保持 false）
+
+        redis_url = getattr(settings, "REDIS_URL", None)
+        if redis_url:
+            client = redis.Redis.from_url(redis_url, socket_connect_timeout=1)
+            redis_connected = bool(client.ping())
+    except Exception:
+        redis_connected = False
+
+    return {
+        "code": 0,
+        "data": {
+            "stateless_enabled": bool(getattr(settings, "STATELESS_MODE", False)),
+            "redis_connected": redis_connected,
+            "sse_protocol": "step_* (Orchestrator 统一)",
+            "hitl_protocol": "hitl_approval + resume",
+        },
+        "message": "success",
+    }

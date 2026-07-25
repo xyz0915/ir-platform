@@ -195,6 +195,7 @@ from app.api import agent_sse  # noqa: E402  # SSE 流端点
 from app.api import threat_intel  # noqa: E402
 from app.api import baseline  # noqa: E402  # v1.3.0 差分基线
 from app.api import knowledge_draft  # noqa: E402  # AI 自动知识入库
+from app.api import knowledge_bases  # noqa: E402  # L2 知识库聚合端点
 from app.api import knowledge  # noqa: E402  # P2-H 知识库自进化闭环
 from app.api import process_events  # noqa: E402  # T-P2-3 进程事件流入口（PoC）
 from app.api import rule_suppression  # noqa: E402  # #18 规则抑制
@@ -218,6 +219,9 @@ from app.api import users  # noqa: E402  # 用户管理
 from app.api import audit_logs  # noqa: E402  # 审计日志
 from app.api import settings_api  # noqa: E402  # 系统参数
 from app.api import rules_coverage  # noqa: E402  # T-P1-3 规则覆盖率看板
+from app.api import agent_dashboard  # noqa: E402  # F1 智能体维度聚合看板
+from app.api import agent_guardrails  # noqa: E402  # F8 护栏门禁
+from app.api import mcp  # noqa: E402  # F7 MCP 工具服务端
 
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(case_hosts.router, prefix="/api", tags=["案件"])  # 必须在 cases.router 之前注册
@@ -235,6 +239,7 @@ app.include_router(whitelist.router, prefix="/api", tags=["白名单"])
 app.include_router(iocs.router, prefix="/api/iocs", tags=["IOC"])
 app.include_router(threat_intel.router, prefix="/api/threat-intel", tags=["威胁情报外联"])
 app.include_router(knowledge_draft.router, prefix="/api/knowledge", tags=["知识入库"])
+app.include_router(knowledge_bases.router, prefix="/api/knowledge", tags=["知识库"])
 app.include_router(knowledge.router, prefix="/api/kb", tags=["知识自进化"])  # P2-H 自进化闭环
 app.include_router(process_events.router, prefix="/api", tags=["进程事件"])  # T-P2-3 进程事件流入口
 app.include_router(rule_suppression.router, prefix="/api", tags=["规则抑制"])  # #18 规则抑制
@@ -258,6 +263,9 @@ app.include_router(users.router, prefix="/api", tags=["用户管理"])  # 用户
 app.include_router(audit_logs.router, prefix="/api/audit-logs", tags=["审计日志"])  # 审计日志
 app.include_router(settings_api.router, prefix="/api/settings", tags=["系统参数"])  # 系统参数
 app.include_router(rules_coverage.router, tags=["规则覆盖率"])  # T-P1-3 规则覆盖率看板
+app.include_router(agent_dashboard.router, prefix="/api/agents", tags=["智能体看板"])  # F1 聚合看板
+app.include_router(agent_guardrails.router, prefix="/api/agent-guardrails", tags=["护栏"])  # F8 护栏门禁
+app.include_router(mcp.router, prefix="/api/mcp", tags=["MCP工具"])  # F7 MCP 工具服务端
 
 
 @app.get("/api/health")

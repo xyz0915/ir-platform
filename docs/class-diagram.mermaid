@@ -1,75 +1,72 @@
 classDiagram
-    class EventItem {
+    class PipelineNode {
         +string id
-        +string event_type
-        +string attack_stage
-        +string severity
-        +string timestamp
-        +string process_name
-        +number pid
-        +number ppid
-        +string hostname
-        +string remote_address
-        +number remote_port
-        +string local_address
-        +number local_port
-        +string file_name
-        +string file_path
-        +string registry_key
-        +string summary
-        +object evidence
+        +string type
+        +string label
+        +Position position
+        +string badgeText
+        +string statText
+        +object config
+        +array dependencies
+        +array tools
+        +string prompt
+        +array variables
+        +boolean hasInConnector
+        +boolean hasOutConnector
+        +int track
+        +int stepIndex
+        +boolean selected
+        +select()
+        +move(x, y)
     }
 
-    class AttackChainTimeline {
-        <<Vue Component>>
-        +Props: timelineEvents~EventItem[]
-        +Props: currentEventId~string
-        +Props: currentStage~string
-        +Props: loading~boolean (P1)
-        +Props: error~string (P1)
-        +Emits: select-event(eventId)
-        +Emits: toggle-stage(stage)
-        +Emits: retry() (P1)
-        -expandedStages: Ref~Record~string,boolean~~
-        -showAllStages: Ref~Record~string,boolean~~
-        -eventRefs: Record~string,HTMLElement~
-        +MAX_VISIBLE_EVENTS: 50
-        +computed: stageGroups()
-        +computed: displayStages()
-        +computed: stagesWithEvents()
-        +computed: totalEventCount()
-        +computed: firstEventTime()
-        +computed: lastEventTime()
-        +method: toggleStage(stage)
-        +method: onSelectEvent(eventId)
-        +method: extractEventFields(evt)
-        +method: formatTimestamp(isoString)
-        +method: getStageMaxSeverity(events) (P1)
+    class Connection {
+        +string sourceId
+        +string targetId
+        +string pathD
+        +boolean isCrossTrack
+        +string dashStyle
     }
 
-    class EventDetailView {
-        <<Vue Component>>
-        +eventId: computed~string~
-        +eventData: Ref~object~
-        +loading: Ref~boolean~
-        +error: Ref~string~
-        +method: loadAllPhases()
-        +method: handleSelectEvent(id)
-        +method: handleToggleStage(stage)
-        -uses: AttackChainTimeline
+    class PipelineEditorStore {
+        +array~PipelineNode~ pipelineNodes
+        +array~Connection~ connections
+        +string selectedNodeId
+        +boolean configDirty
+        +number zoomLevel
+        +boolean connectMode
+        +string connectSource
+        +array validationMessages
+        +boolean isValid
+        +addNode(type, position)
+        +removeNode(nodeId)
+        +moveNode(nodeId, position)
+        +selectNode(nodeId)
+        +startConnect(sourceId)
+        +completeConnect(targetId)
+        +cancelConnect()
+        +updateNodeConfig(nodeId, patch)
+        +validatePipeline()
+        +runPipeline(eventId)
+        +clearCanvas()
     }
 
-    class AnalysisStore {
-        <<Pinia Store>>
-        +timelineEvents: Ref~EventItem[]~
-        +timelineData: Ref~object[]~
-        +timelineLoading: Ref~boolean~ (P1)
-        +timelineError: Ref~string~ (P1)
-        +getter: timelineByStage()
-        +getter: currentStageEvents()
-        +method: fetchTimeline()
+    class AgentManagementStore {
+        +array agents
+        +array pipeline
+        +array presets
+        +object currentRun
+        +string selectedNode
+        +fetchAgents()
+        +addToPipeline(agent)
+        +removeFromPipeline(name)
+        +updateNodeConfig(name, config)
+        +startPipeline(eventId)
+        +savePreset(name, desc)
+        +loadPresetToPipeline(preset)
     }
 
-    EventDetailView --> AttackChainTimeline : ❮uses❯
-    EventDetailView --> AnalysisStore : ❮uses❯
-    AttackChainTimeline ..> EventItem : ❮renders❯
+    PipelineEditorStore --> PipelineNode : manages
+    PipelineEditorStore --> Connection : manages
+    PipelineEditorStore --> AgentManagementStore : bridges via selectedNodeId
+    AgentManagementStore --> PipelineEditorStore : reads pipelineNodes for run/validate

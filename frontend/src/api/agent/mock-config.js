@@ -7,14 +7,24 @@
  * 设计依据：01-arch-design.md §4.2 / 01-tasks.md T1。
  */
 export const USE_MOCK = {
-  guardrail: true, // M7 护栏（F8 后端未建）→ 全 Mock
-  tools: true, // M4 工具/MCP（F1 后端未建）
-  memory: true, // M5 记忆/RAG（F3 后端未建）
-  settings: true, // M9 设置（F10/F14 后端未建）
-  dashboardTrend: true, // M1 趋势/护栏拦截数无聚合端点
-  observability: true, // M8 trace/log/resume_point 待 F7
+  // ── C 档保持（F8/F7 后端已建但仍走 Mock，待后续翻 false） ──
+  guardrail: true, // M7 护栏（F8 后端已建，仍走 Mock）
+  tools: false, // M4 工具/MCP（F7 后端已建，Fix A 切换真实 GET /api/mcp/tools）
+
+  // ── B 档已启用（拆键后各自门控，07 §5.5） ──
+  memory: false, // M5 记忆/RAG（F3 映射已就绪 → 真实）
+  observability: false, // M8 trace/log/resume_point 已就绪 → 真实
+  settings: false, // M9 仅管 listModelProfiles（F10 重定向已就绪 → 真实）
+  settingsDeployment: true, // M9 管 getDeploymentConfig（F14 就绪后→false）
+  dashboardTrend: false, // M1 仅管 getTrend（指 /api/dashboard/stats 已就绪 → 真实）
+  dashboardGuardrailBlocks: true, // M1 管 getGuardrailBlocks（F8 就绪后→false）
+
+  // ── 既有真实模块 ──
   pipeline: false, // M3 接口层真实（执行空壳走 M1 收敛）
   hitl: false, // M6 真实
   agents: false, // M2 真实
   runs: false, // M1/M8 运行真实
+
+  // ── Phase 3 节点级调试（默认 Mock，置 false 接真实后端） ──
+  nodeDebug: true, // 单节点 run / 分支模拟 / 历史查询
 }

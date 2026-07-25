@@ -2,6 +2,7 @@
 
 import json
 import logging
+import uuid
 from typing import Any, Optional
 
 from app.database import get_connection
@@ -174,4 +175,142 @@ class AgentRunStep:
             row = conn.execute(
                 "SELECT * FROM agent_run_steps WHERE id = ?", (step_id,)
             ).fetchone()
-            return dict(row) if row else None
+        return dict(row) if row else None
+
+
+class NodeRunRepository:
+    """单节点调试历史持久化（复用 agent_runs / agent_run_steps，debug-<uuid> 前缀）。
+
+    设计依据：02-design.md §4.1（零新建表、零 schema 变更）。
+    - 每次单节点执行写入一条 ``agent_runs``（run_id 形如 ``debug-<12位hex>``）
+      与一条 ``agent_run_steps``（``input_json`` 补全 ``{mode, input_params, context_vars, resolved_host_id}``）。
+    - 查询按 ``run_id LIKE 'debug-%'`` + ``status='debug'`` 识别，按 ``created_at`` 倒序；
+      ``mode`` 过滤在 Python 层完成（避免 ALTER 加列）。
+    """
+
+    @staticmethod
+    def persist_debug_run(
+        node_name: str,
+        node_type: str,
+        status: str,
+        output_text: str,
+        structured: dict,
+        mode: str,
+        input_params: dict,
+        context_vars: dict,
+        elapsed_ms: float,
+        confidence: float,
+        evidence: list,
+        error: Optional[str] = None,
+    ) -> str:
+        """写入一条单节点调试运行，返回合成 run_id。"""
+        run_id = f"debug-{uuid.uuid4().hex[:12]}"
+        resolved_host_id = (context_vars or {}).get("host_id")
+        event_id = (context_vars or {}).get("event_id")
+
+        input_json = {
+            "mode": mode,
+            "input_params": input_params or {},
+            "context_vars": context_vars or {},
+            "resolved_host_id": resolved_host_id,
+        }
+        output_json = {
+            "output_text": output_text,
+            "structured": structured or {},
+            "confidence": confidence,
+            "evidence": evidence or [],
+            "error": error,
+            "elapsed_ms": elapsed_ms,
+        }
+
+        AgentRun.create(
+            run_id=run_id,
+            event_id=event_id,
+            title=f"Debug · {node_name}",
+            stage=node_name,
+            status="debug",
+            confidence=confidence,
+            ctx_json=json.dumps(
+                {
+                    "node_type": node_type,
+                    "input_params": input_params,
+                    "context_vars": context_vars,
+                },
+                default=str, ensure_ascii=False,
+            ),
+        )
+        AgentRunStep.add(
+            run_id=run_id,
+            stage=node_name,
+            agent=node_name,
+            status=status,
+            input_json=input_json,
+            output_json=output_json,
+            confidence=confidence,
+            evidence_json=evidence or [],
+        )
+        return run_id
+
+    @staticmethod
+    def list_debug_runs_by_node(
+        node_name: Optional[str] = None,
+        mode: Optional[str] = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        """列出单节点调试历史（JOIN agent_run_steps，按 created_at 倒序）。
+
+        过滤：
+            - node_name：匹配 ``agent_runs.stage``；
+            - mode：匹配 step 的 ``input_json.mode``（Python 层过滤，避免 ALTER）。
+        """
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM agent_runs WHERE run_id LIKE 'debug-%' "
+                "AND status = 'debug' ORDER BY created_at DESC"
+            ).fetchall()
+
+        items: list[dict] = []
+        for r in rows:
+            d = dict(r)
+            run_id = d.get("run_id")
+            steps = AgentRunStep.list_by_run(run_id)
+            step0 = steps[0] if steps else {}
+            input_json = step0.get("input_json") if isinstance(step0.get("input_json"), dict) else {}
+            output_json = step0.get("output_json") if isinstance(step0.get("output_json"), dict) else {}
+            step_mode = input_json.get("mode")
+
+            # node_name 过滤
+            if node_name and d.get("stage") != node_name:
+                continue
+            # mode 过滤（Python 层）
+            if mode and step_mode != mode:
+                continue
+
+            # node_type 存于 ctx_json
+            node_type = None
+            ctx_json = d.get("ctx_json")
+            if ctx_json:
+                try:
+                    node_type = json.loads(ctx_json).get("node_type")
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            items.append({
+                "run_id": run_id,
+                "node_name": d.get("stage"),
+                "node_type": node_type,
+                "mode": step_mode,
+                "status": step0.get("status"),
+                "elapsed_ms": output_json.get("elapsed_ms"),
+                "confidence": step0.get("confidence"),
+                "timestamp": d.get("created_at"),
+                "input": input_json,
+                "output": {
+                    "output_text": output_json.get("output_text"),
+                    "structured": output_json.get("structured"),
+                    "confidence": output_json.get("confidence"),
+                    "evidence": output_json.get("evidence"),
+                },
+                "error": output_json.get("error"),
+            })
+        return items[:limit]

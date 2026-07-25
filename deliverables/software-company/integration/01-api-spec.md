@@ -13,7 +13,7 @@
 |---|---|---|---|
 | M1 Dashboard | `DashboardStats` | `GET /agents/runs` + `GET /agents/stats`（真实）+ `dashboardMock.getTrend/getGuardrailBlocks`（🔶） | 部分真实 |
 | M2 智能体管理 | `AgentConfig` | `GET/POST/PUT/DELETE /agent-management/agents` ✅ | 真实 |
-| M3 流水线 DAG | `PipelineDef` / `PipelineNode` / `PipelineEdge` | `POST /agent-management/pipeline/validate`、`POST .../run`、`GET .../run/:id`、`POST .../resume` ⚠️ + `pipelineMock` 种子 🔶 | 接口真实/执行空壳 |
+| M3 流水线 DAG | `PipelineDef` / `PipelineNode` / `PipelineEdge` | `POST /agent-management/pipeline/validate`、`POST .../run`、`GET .../run/:id`、`POST .../resume` ✅ | 真实 |
 | M4 工具/MCP | `ToolDef` / `McpServer` | `toolsMock.listTools/listMcpServers` 🔶 | Mock |
 | M5 记忆/RAG | `KnowledgeBase` | `memoryMock.listKnowledgeBases` 🔶 | Mock |
 | M6 人工审核台 | `HitlTask` / `GuardrailResult` | `GET /agents/approvals`、`POST /agents/runs/:id/approve`、`POST .../reject` ✅ | 真实 |
@@ -114,7 +114,7 @@ interface PipelineDef {
 }
 ```
 
-### 3.2 接口契约（⚠️ 接口层真实，执行空壳；全部经 `agentApi.pipeline`）
+### 3.2 接口契约（✅ 真实；全部经 `agentApi.pipeline`）
 | 方法 路径 | 说明 | 返回 |
 |---|---|---|
 | `POST /agent-management/pipeline/validate` `{agents:string[]}` | 图级后端校验 | `{valid:boolean, warnings:string[]}` |

@@ -75,6 +75,12 @@ class Settings:
     # 输入预算 tokens
     AI_INPUT_BUDGET: int = 80000
 
+    # ── 部署形态（F14 / M9 DeploymentConfig）──────────────
+    # 无状态模式开关：True 表示后端无本地会话态（如 Serverless / 容器化水平扩展）。
+    STATELESS_MODE: bool = False
+    # Redis 连接串（可选；未配置时 DeploymentConfig.redis_connected=false）。
+    REDIS_URL: str = ""
+
     # ── IOC 外联威胁情报（Enrichment / Outbound）──────────────
     # 总开关：是否启用"威胁情报平台回灌到规则引擎"功能（默认开）。
     ENABLE_THREAT_INTEL_ENRICHMENT: bool = True

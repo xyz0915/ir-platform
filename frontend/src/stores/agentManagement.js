@@ -36,6 +36,12 @@ export const useAgentManagementStore = defineStore('agentManagement', () => {
   /** 是否正在加载预置模板。 */
   const presetsLoading = ref(false)
 
+  /**
+   * 当前在画布上选中的节点（与 pipelineEditor store 桥接）。
+   * 保存节点 ID 或节点名，用于跨 store 同步。
+   */
+  const selectedNode = ref(null)
+
   // ==========================================================================
   // Getters
   // ==========================================================================
@@ -317,6 +323,31 @@ export const useAgentManagementStore = defineStore('agentManagement', () => {
   }
 
   // ==========================================================================
+  // Actions — Store 桥接
+  // ==========================================================================
+
+  /**
+   * 更新画布上指定节点的配置信息。
+   * 桥接到 pipelineEditor store 的 updateNodeConfig。
+   * @param {string} nodeName — 节点名称
+   * @param {object} config — 配置补丁
+   */
+  function updateNodeConfig(nodeName, config) {
+    // 更新 pipeline 中指定 agent 的运行时配置
+    const agent = pipeline.value.find(a => a.name === nodeName)
+    if (agent) Object.assign(agent, config)
+  }
+
+  /**
+   * 选中画布上的某个节点用于配置编辑。
+   * 同步到 pipelineEditor store 的 selectNode。
+   * @param {object} node — 节点对象
+   */
+  function selectNodeForConfig(node) {
+    selectedNode.value = node ? { id: node.id, name: node.name, type: node.type } : null
+  }
+
+  // ==========================================================================
   // Expose
   // ==========================================================================
 
@@ -331,6 +362,7 @@ export const useAgentManagementStore = defineStore('agentManagement', () => {
     runLoading,
     presets,
     presetsLoading,
+    selectedNode,
     // getters
     availableAgents,
     pipelineSummary,
@@ -354,5 +386,7 @@ export const useAgentManagementStore = defineStore('agentManagement', () => {
     deletePresetAction,
     clearPipeline,
     loadPresetToPipeline,
+    updateNodeConfig,
+    selectNodeForConfig,
   }
 })

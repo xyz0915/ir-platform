@@ -29,6 +29,10 @@ import {
   listPresets,
   createPreset,
   deletePreset,
+  updatePreset,
+  runNode,
+  simulateBranch,
+  getNodeRuns,
 } from '@/api/agentManagement'
 import {
   createAgentRun,
@@ -80,8 +84,16 @@ const agentApi = {
     getPresets: () => listPresets(),
     createPreset: (name, description, agents) => createPreset(name, description, agents),
     deletePreset: (presetId) => deletePreset(presetId),
+    updatePreset: (id, data) => updatePreset(id, data),
     // 种子 DAG：当前走 Mock（后端 presets 就绪后切真实）
     getSample: () => pipelineMock.getSample(),
+    // Phase 3 · 单节点调试 / 分支模拟（USE_MOCK.nodeDebug 门控）
+    runNode: (payload) =>
+      (USE_MOCK.nodeDebug ? pipelineMock.runNode(payload) : runNode(payload)),
+    simulateBranch: (payload) =>
+      (USE_MOCK.nodeDebug ? pipelineMock.simulateBranch(payload) : simulateBranch(payload)),
+    getNodeRuns: (params = {}) =>
+      (USE_MOCK.nodeDebug ? pipelineMock.getNodeRuns(params) : getNodeRuns(params)),
   },
 
   // ── M8 运行（真实） ──
@@ -130,19 +142,21 @@ const agentApi = {
       (USE_MOCK.memory ? memoryMock.listKnowledgeBases() : memoryReal.listKnowledgeBases()),
   },
 
-  // ── M9 设置（USE_MOCK 门控） ──
+  // ── M9 设置（拆分键门控：listModelProfiles 走 settings，getDeploymentConfig 走 settingsDeployment） ──
   settings: {
     listModelProfiles: () =>
       (USE_MOCK.settings ? settingsMock.listModelProfiles() : settingsReal.listModelProfiles()),
     getDeploymentConfig: () =>
-      (USE_MOCK.settings ? settingsMock.getDeploymentConfig() : settingsReal.getDeploymentConfig()),
+      (USE_MOCK.settingsDeployment ? settingsMock.getDeploymentConfig() : settingsReal.getDeploymentConfig()),
   },
 
-  // ── M1 Dashboard（真实 runs/stats + Mock trend/guardrailBlocks；趋势受门控） ──
+  // ── M1 Dashboard（拆分键门控：getTrend 走 dashboardTrend，getGuardrailBlocks 走 dashboardGuardrailBlocks） ──
   dashboard: {
     getTrend: () => (USE_MOCK.dashboardTrend ? dashboardMock.getTrend() : dashboardReal.getTrend()),
     getGuardrailBlocks: () =>
-      (USE_MOCK.dashboardTrend ? dashboardMock.getGuardrailBlocks() : dashboardReal.getGuardrailBlocks()),
+      (USE_MOCK.dashboardGuardrailBlocks
+        ? dashboardMock.getGuardrailBlocks()
+        : dashboardReal.getGuardrailBlocks()),
   },
 
   // ── M8 可观测性（USE_MOCK 门控：false → 真实 trace/log） ──

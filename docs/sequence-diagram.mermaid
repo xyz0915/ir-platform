@@ -1,48 +1,32 @@
 sequenceDiagram
-    participant User as 用户
-    participant Timeline as AttackChainTimeline
-    participant Parent as EventDetailView
-    participant Store as analysis Store
-    participant API as 后端API
+    participant User
+    participant NodeLibrary
+    participant CanvasArea
+    participant PipelineNode
+    participant PipelineEditorStore
+    participant ConfigPanel
 
-    Note over Timeline: ---- 初始化阶段 ----
-    Parent->>Store: onMounted → loadAllPhases()
-    Store->>API: fetchTimeline()
-    API-->>Store: { events: [...] }
-    Store-->>Parent: timelineEvents 更新
-    Parent->>Timeline: props: timelineEvents, currentEventId, currentStage
+    User->>NodeLibrary: 点击/拖拽节点类型
+    NodeLibrary->>PipelineEditorStore: addNode(type, position)
+    PipelineEditorStore-->>CanvasArea: pipelineNodes 更新
+    CanvasArea->>PipelineNode: 渲染新节点
 
-    Note over Timeline: ---- 渲染阶段 ----
-    Timeline->>Timeline: computed stageGroups 按阶段聚合
-    Timeline->>Timeline: 默认展开当前阶段 (currentStage)
-    Timeline->>Timeline: 渲染阶段头部 + 事件条目（截断至50条）
+    User->>PipelineNode: 点击节点
+    PipelineNode->>PipelineEditorStore: selectNode(nodeId)
+    PipelineEditorStore->>ConfigPanel: selectedNode computed 变化
+    ConfigPanel->>ConfigPanel: 渲染 5 个 section
 
-    Note over Timeline: ---- 用户交互: 折叠/展开 ----
-    User->>Timeline: 点击阶段头部
-    Timeline->>Timeline: toggleStage(stageKey)
-    Timeline-->>Parent: emit('toggle-stage', stageKey)
+    User->>ConfigPanel: 编辑提示词
+    ConfigPanel->>PipelineEditorStore: updateNodeConfig(nodeId, { prompt })
+    PipelineEditorStore->>PipelineEditorStore: configDirty = true
 
-    Note over Timeline: ---- 用户交互: 选中事件 ----
-    User->>Timeline: 点击事件条目
-    Timeline-->>Parent: emit('select-event', eventId)
-    Parent->>Parent: router.push(/event/${id})
+    Note over User,PipelineEditorStore: --- 连线操作 ---
 
-    Note over Timeline: ---- 高亮+滚动 ----
-    Parent-->>Timeline: currentEventId 变化
-    Timeline->>Timeline: watch → 自动展开所在阶段
-    Timeline->>Timeline: scrollIntoView → 高亮事件
+    User->>PipelineNode: 点击 cn-out 连接器
+    PipelineNode->>PipelineEditorStore: startConnect(sourceId)
+    PipelineEditorStore->>PipelineEditorStore: connectMode=true, connectSource=sourceId
 
-    Note over Timeline: ---- 用户交互: 显示全部 ----
-    User->>Timeline: 点击 "显示全部 N 条"
-    Timeline->>Timeline: showAllStages[stageKey] = true
-    Timeline->>Timeline: 移除 slice 限制，渲染全部事件
-
-    Note over Timeline: ---- P1: 错误态 ----
-    alt 加载失败
-        Store-->>Parent: timelineError = '...'
-        Parent->>Timeline: props: error='网络超时'
-        Timeline->>Timeline: 显示错误提示 + 重试按钮
-        User->>Timeline: 点击"重试"
-        Timeline-->>Parent: emit('retry')
-        Parent->>Store: fetchTimeline()
-    end
+    User->>PipelineNode: 点击另一节点的 cn-in
+    PipelineNode->>PipelineEditorStore: completeConnect(targetId)
+    PipelineEditorStore->>PipelineEditorStore: connections.push({sourceId, targetId})
+    PipelineEditorStore->>PipelineEditorStore: connectMode=false

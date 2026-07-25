@@ -86,6 +86,28 @@ export function deletePreset(presetId) {
   return request.delete(`/agent-management/pipeline/presets/${presetId}`)
 }
 
+/** 更新预置模板（如修改状态为 published）。 */
+export function updatePreset(presetId, data) {
+  return request.put(`/agent-management/pipeline/presets/${presetId}`, data)
+}
+
+// ── Phase 3 · 单节点调试 / 分支模拟 ──
+
+/** 单节点独立执行（真实 / 模拟）。 */
+export function runNode(payload) {
+  return request.post('/agent-management/pipeline/node/run', payload, { timeout: 180000 })
+}
+
+/** 分支模拟：纯图计算返回 active/pruned 下游。 */
+export function simulateBranch(payload) {
+  return request.post('/agent-management/pipeline/node/simulate-branch', payload)
+}
+
+/** 查询单节点调试历史。 */
+export function getNodeRuns(params = {}) {
+  return request.get('/agent-management/pipeline/node/runs', { params })
+}
+
 // ── 缓存管理 ──
 
 /** 查看缓存统计。 */

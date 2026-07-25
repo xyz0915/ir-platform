@@ -33,6 +33,8 @@ class AgentDefinition:
     config: dict[str, Any] = field(default_factory=dict)
     enabled: bool = True
     hitl: bool = False
+    tools: list[str] = field(default_factory=list)
+    model_profile: str = ""
     created_at: str = ""
     updated_at: str = ""
 
@@ -49,6 +51,8 @@ class AgentDefinition:
             "config": dict(self.config),
             "enabled": self.enabled,
             "hitl": self.hitl,
+            "tools": list(self.tools),
+            "model_profile": self.model_profile,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -74,6 +78,8 @@ class AgentDefinition:
             config=dict(data.get("config", {})),
             enabled=bool(data.get("enabled", True)),
             hitl=bool(data.get("hitl", False)),
+            tools=list(data.get("tools", [])),
+            model_profile=data.get("model_profile", ""),
             created_at=data.get("created_at", ""),
             updated_at=data.get("updated_at", ""),
         )

@@ -1001,6 +1001,8 @@ DDL_STATEMENTS = [
         config          TEXT DEFAULT '{}',
         enabled         INTEGER NOT NULL DEFAULT 1,
         hitl            INTEGER NOT NULL DEFAULT 0,
+        tools           TEXT DEFAULT '[]',
+        model_profile   TEXT DEFAULT '',
         created_at      TEXT DEFAULT (datetime('now')),
         updated_at      TEXT DEFAULT (datetime('now'))
     )
@@ -1013,6 +1015,68 @@ DDL_STATEMENTS = [
         description TEXT DEFAULT '',
         agents      TEXT NOT NULL DEFAULT '[]',
         created_at  TEXT DEFAULT (datetime('now'))
+    )
+    """,
+    # ── F8 护栏门禁（§3）──
+    """
+    CREATE TABLE IF NOT EXISTS guardrail_policies (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        policy_id       TEXT    NOT NULL UNIQUE,
+        name            TEXT    NOT NULL,
+        action_pattern  TEXT    NOT NULL,
+        whitelist       TEXT    DEFAULT '[]',
+        risk_level      TEXT    NOT NULL DEFAULT 'medium',
+        require_confirm BOOLEAN DEFAULT 0,
+        rollback_plan   TEXT    DEFAULT '',
+        enabled         BOOLEAN DEFAULT 1,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS guardrail_hits (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        policy_id   TEXT,
+        run_id      TEXT,
+        action      TEXT    NOT NULL,
+        passed      BOOLEAN DEFAULT 0,
+        timestamp   TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    # ── F7 MCP 工具服务端（§2）──
+    """
+    CREATE TABLE IF NOT EXISTS mcp_servers (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        server_id       TEXT    NOT NULL UNIQUE,
+        name            TEXT    NOT NULL,
+        transport       TEXT    NOT NULL DEFAULT 'stdio',
+        status          TEXT    NOT NULL DEFAULT 'offline',
+        command         TEXT,
+        args_json       TEXT    DEFAULT '[]',
+        url             TEXT,
+        env_json        TEXT    DEFAULT '{}',
+        tools_count     INTEGER DEFAULT 0,
+        last_heartbeat  TEXT,
+        schema_json     TEXT    DEFAULT '{}',
+        created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS mcp_tools (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        tool_id         TEXT    NOT NULL UNIQUE,
+        server_id       TEXT    NOT NULL REFERENCES mcp_servers(server_id) ON DELETE CASCADE,
+        name            TEXT    NOT NULL,
+        description     TEXT    DEFAULT '',
+        schema_json     TEXT    DEFAULT '{}',
+        idempotency_key TEXT    DEFAULT '',
+        timeout_ms      INTEGER DEFAULT 30000,
+        retries         INTEGER DEFAULT 0,
+        category        TEXT    DEFAULT 'general',
+        status          TEXT    NOT NULL DEFAULT 'available',
+        created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
     )
     """,
 ]
@@ -1464,6 +1528,23 @@ def _alter_cases_priority(conn: sqlite3.Connection) -> None:
     if 'priority' not in existing_columns:
         conn.execute("ALTER TABLE cases ADD COLUMN priority TEXT DEFAULT 'medium'")
         logger.info("Migrated: cases.priority")
+
+
+def _alter_agent_definitions_add_tools_model_profile(conn: sqlite3.Connection) -> None:
+    """为存量 agent_definitions 表追加 tools / model_profile 列（Fix A）.
+
+    新库由 DDL_STATEMENTS 的 CREATE TABLE 直接建好；此处仅补齐升级前的旧库。
+    使用 PRAGMA table_info 守卫，列缺失才 ALTER ADD COLUMN，可重复执行。
+    SQLite 的 ALTER TABLE 不支持 IF NOT EXISTS，必须显式探测。
+    """
+    cursor = conn.execute("PRAGMA table_info(agent_definitions)")
+    existing: set[str] = {row["name"] for row in cursor.fetchall()}
+    if "tools" not in existing:
+        conn.execute("ALTER TABLE agent_definitions ADD COLUMN tools TEXT DEFAULT '[]'")
+        logger.info("Migrated: agent_definitions.tools")
+    if "model_profile" not in existing:
+        conn.execute("ALTER TABLE agent_definitions ADD COLUMN model_profile TEXT DEFAULT ''")
+        logger.info("Migrated: agent_definitions.model_profile")
 
 
 def _create_agent_baselines_table(conn: sqlite3.Connection) -> None:
@@ -2108,6 +2189,33 @@ def _migrate_rules_governance(conn: sqlite3.Connection) -> None:
     logger.info("rule_history table ready")
 
 
+def _init_guardrail_mcp(conn: sqlite3.Connection) -> None:
+    """F7/F8 表建立后的辅助索引（DDL 已通过 DDL_STATEMENTS 幂等创建）。
+
+    与既有 _ensure_index 模式一致：安全创建索引，失败仅记录日志，可重复执行。
+    """
+    try:
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_guardrail_hits_policy "
+            "ON guardrail_hits(policy_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_guardrail_hits_ts "
+            "ON guardrail_hits(timestamp)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_guardrail_policies_enabled "
+            "ON guardrail_policies(enabled)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_mcp_tools_server "
+            "ON mcp_tools(server_id)"
+        )
+        logger.info("F7/F8 guardrail & mcp tables/indexes ready")
+    except Exception as exc:
+        logger.debug("F7/F8 index init skipped: %s", exc)
+
+
 def init_db() -> None:
     """初始化数据库：创建目录、执行建表语句、迁移旧数据、ALTER表、创建默认用户、导入默认规则、导入默认白名单."""
     # 确保数据目录存在
@@ -2180,6 +2288,8 @@ def init_db() -> None:
         _alter_security_events_add_index(conn)
         # cases 表扩展（优先级）
         _alter_cases_priority(conn)
+        # Fix A: agent_definitions 增加 tools / model_profile 列（兼容存量库）
+        _alter_agent_definitions_add_tools_model_profile(conn)
         # AI 自动知识入库（knowledge_drafts 已通过 DDL 幂等创建）
         _init_knowledge_drafts(conn)
         # 系统设置一期：users 表迁移 + 预置系统参数
@@ -2203,6 +2313,8 @@ def init_db() -> None:
         _ensure_index("alerts", "idx_alerts_last_seen", "last_seen_at")
         _ensure_index("agents", "idx_agents_host", "host_id")
         _ensure_index("agents", "idx_agents_agent_id", "agent_id")
+        # F7/F8 护栏与 MCP 表索引（DDL 已建表，此处补索引）
+        _init_guardrail_mcp(conn)
         logger.info("Database initialized successfully at %s", settings.DB_PATH)
     except Exception:
         conn.rollback()

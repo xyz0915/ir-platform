@@ -1,5 +1,6 @@
 """智能体管理 Phase 2 — REST API 端点。"""
 
+import datetime
 import logging
 from typing import Optional
 
@@ -7,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from app.models.agent_definition import AgentDefinitionModel, PipelinePresetModel
+from app.models.agent_run import NodeRunRepository
 from app.services.agents.agent_definition import AgentDefinition
 from app.services.agents.agent_registry import AgentRegistry
 from app.services.agents.cache_manager import cache_manager
@@ -49,7 +51,17 @@ def create_agent(
     data: dict,
     current_user: Optional[dict] = Depends(get_current_user),
 ):
-    """注册新 Agent。"""
+    """注册新 Agent。
+
+    请求体为自由字典（非 Pydantic 模型），可包含以下字段：
+      - 既有: name, display_name, type, description, data_sources(list[str]),
+              depends_on(list[str]), prompt_template, config(dict),
+              enabled(bool), hitl(bool)
+      - 🔴 Fix A 新增: tools(list[str], 关联工具 tool_id 列表),
+                        model_profile(str, 关联模型档案 profile_id)
+    响应 data = AgentDefinition.to_dict()，会回显 tools / model_profile
+    （旧库记录回读分别为 [] 与 ''）。
+    """
     registry = AgentRegistry()
     try:
         agent_def = AgentDefinition.from_dict(data)
@@ -65,7 +77,11 @@ def update_agent(
     data: dict,
     current_user: Optional[dict] = Depends(get_current_user),
 ):
-    """更新 Agent 配置。"""
+    """更新 Agent 配置。
+
+    请求体为自由字典，字段同 create_agent（含 Fix A 新增的 tools / model_profile）。
+    响应 data = AgentDefinition.to_dict()，回显全部字段（含 tools / model_profile）。
+    """
     registry = AgentRegistry()
     try:
         result = registry.update(name, data)
@@ -170,6 +186,166 @@ async def run_pipeline(
     })
 
 
+# ══════════════════════════════════════════
+# 2.1 单节点调试 / 分支模拟（Phase 3 / KC-1 / BRANCH-01）
+# ══════════════════════════════════════════
+
+def compute_branch_paths(node_name, branches, chosen_branch, connections):
+    """BFS 计算所选分支的下游 active / pruned 节点与边（纯图计算，不查 DB）。
+
+    Args:
+        node_name: 分支节点名称。
+        branches: [{label, target}] 分支列表。
+        chosen_branch: 所选手分支 label（None → 取 branches[0]）。
+        connections: 画布全部连线 [{sourceId, targetId}]。
+
+    Returns:
+        { node_name, chosen_branch, chosen_target,
+          active_nodes, pruned_nodes, pruned_edges, downstream_active_count }
+    """
+    adj: dict = {}
+    for c in (connections or []):
+        s = c.get("sourceId") or c.get("source")
+        t = c.get("targetId") or c.get("target")
+        if s and t:
+            adj.setdefault(s, []).append(t)
+
+    def _bfs(start):
+        seen = set()
+        if not start:
+            return seen
+        q = [start]
+        while q:
+            cur = q.pop(0)
+            if cur in seen:
+                continue
+            seen.add(cur)
+            for nxt in adj.get(cur, []):
+                if nxt not in seen:
+                    q.append(nxt)
+        return seen
+
+    chosen_target = None
+    options = []
+    for b in (branches or []):
+        label = b.get("label")
+        target = b.get("target")
+        options.append({"label": label, "target": target})
+        if label == chosen_branch:
+            chosen_target = target
+
+    active = _bfs(chosen_target)
+
+    pruned_targets = [
+        b.get("target") for b in (branches or [])
+        if b.get("label") != chosen_branch and b.get("target")
+    ]
+    pruned_nodes = set()
+    for pt in pruned_targets:
+        pruned_nodes |= _bfs(pt)
+    pruned_nodes -= active
+
+    pruned_edges = [
+        {
+            "sourceId": (c.get("sourceId") or c.get("source")),
+            "targetId": (c.get("targetId") or c.get("target")),
+        }
+        for c in (connections or [])
+        if (c.get("sourceId") or c.get("source")) in pruned_nodes
+    ]
+
+    return {
+        "node_name": node_name,
+        "chosen_branch": chosen_branch,
+        "chosen_target": chosen_target,
+        "active_nodes": sorted(active),
+        "pruned_nodes": sorted(pruned_nodes),
+        "pruned_edges": pruned_edges,
+        "downstream_active_count": len(active),
+    }
+
+
+@router.post("/api/agent-management/pipeline/node/run")
+async def run_node_endpoint(
+    data: dict,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    """单节点独立执行（真实 / 模拟）。
+
+    请求见 02-design.md §3.1；失败结构化返回（status=failed + error），
+    **不抛 500**（execute_node 内部已捕获，这里仅兜底网络/序列化异常）。
+    """
+    node_type = data.get("node_type")
+    if not node_type:
+        _err(400, "node_type is required")
+    node_name = data.get("node_name") or node_type
+    input_params = data.get("input_params") or {}
+    context_vars = data.get("context_vars") or {}
+    mode = data.get("mode") or "real"
+    if mode not in ("real", "simulate"):
+        mode = "real"
+    try:
+        result = await pipeline_engine.execute_node(
+            node_type=node_type,
+            node_name=node_name,
+            input_params=input_params,
+            context_vars=context_vars,
+            mode=mode,
+            user=current_user or {},
+        )
+    except Exception as exc:
+        logger.exception("run_node_endpoint failed: %s", exc)
+        return _ok(data={
+            "status": "failed",
+            "node_type": node_type,
+            "node_name": node_name,
+            "mode": mode,
+            "error": str(exc),
+            "output_text": "",
+            "confidence": 0.0,
+            "evidence": [],
+            "run_id": None,
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+        })
+    return _ok(data=result)
+
+
+@router.post("/api/agent-management/pipeline/node/simulate-branch")
+def simulate_branch_endpoint(
+    data: dict,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    """分支模拟：纯图计算返回 active/pruned 下游，不执行节点。"""
+    node_name = data.get("node_name")
+    branches = data.get("branches") or []
+    chosen_branch = data.get("chosen_branch") or (
+        branches[0].get("label") if branches else None
+    )
+    connections = data.get("connections") or []
+    try:
+        result = compute_branch_paths(node_name, branches, chosen_branch, connections)
+    except Exception as exc:
+        logger.exception("simulate_branch_endpoint failed: %s", exc)
+        _err(400, str(exc))
+    return _ok(data=result)
+
+
+@router.get("/api/agent-management/pipeline/node/runs")
+def get_node_runs_endpoint(
+    node_name: Optional[str] = Query(None),
+    mode: Optional[str] = Query(None),
+    limit: int = Query(20),
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    """查询单节点调试历史（debug-<uuid> 前缀识别）。"""
+    try:
+        items = NodeRunRepository.list_debug_runs_by_node(node_name, mode, limit)
+    except Exception as exc:
+        logger.exception("get_node_runs_endpoint failed: %s", exc)
+        _err(500, str(exc))
+    return _ok(data={"items": items, "total": len(items)})
+
+
 @router.get("/api/agent-management/pipeline/run/{run_id}")
 def get_run_status(
     run_id: str,
@@ -253,11 +429,22 @@ def create_preset(
     agents = data.get("agents", [])
     if not name or not agents:
         _err(400, "name and agents are required")
-    preset = PipelinePresetModel.create({
-        "name": name,
-        "description": description,
-        "agents": agents,
-    })
+    # 唯一性预检：name 在 DB 层有 UNIQUE 约束，直接尝试 INSERT 会触发
+    # sqlite3.IntegrityError 上浮为 500。这里提前查一次并返回友好 409。
+    if PipelinePresetModel.get_by_name(name):
+        _err(409, f"预设名称 '{name}' 已存在，请换一个名字")
+    try:
+        preset = PipelinePresetModel.create({
+            "name": name,
+            "description": description,
+            "agents": agents,
+        })
+    except Exception as exc:
+        # 兜底：极小概率下的竞态（预检通过但并发写入仍冲突），仍给出 409 而非 500
+        msg = str(exc)
+        if "UNIQUE constraint failed" in msg:
+            _err(409, f"预设名称 '{name}' 已存在")
+        raise
     return _ok(data=preset)
 
 
