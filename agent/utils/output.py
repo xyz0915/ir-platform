@@ -9,7 +9,17 @@ from collectors.resource_budget import MAX_REPORT_BYTES
 
 logger = logging.getLogger(__name__)
 
-# Agent 输出 JSON 的固定顶层 key（21个）
+
+def _build_timeline(raw_results: dict) -> list:
+    """从所有采集器结果构建时间线（延迟导入避免循环依赖）."""
+    try:
+        from collectors.timeline import TimelineCollector
+        return TimelineCollector().build_from_results(raw_results)
+    except Exception as exc:
+        logger.warning("Timeline construction failed: %s", exc)
+        return []
+
+# Agent 输出 JSON 的固定顶层 key（22个）
 OUTPUT_KEYS = [
     "metadata",
     "system_info",
@@ -28,6 +38,7 @@ OUTPUT_KEYS = [
     "persistence",
     "ioc",
     "timeline",
+    "process_events",
     "network_connections",
     "file_hashes",
     "wmi_subscriptions",
@@ -48,12 +59,15 @@ def build_output(metadata: dict, raw_results: dict, collection_health: Optional[
     """
     output = {"metadata": metadata}
 
+    # 在所有采集器结果就绪后，构建时间线（覆盖 timeline 采集器的空 collect 结果）
+    raw_results["timeline"] = _build_timeline(raw_results)
+
     # 注入采集健康状态（任务③）
     if collection_health is not None:
         output["collection_health"] = collection_health
 
-    # 映射采集器结果到输出 key（原有 16 个采集器 key + 4 个新增顶层 key）
-    original_keys = OUTPUT_KEYS[1:17]  # system_info ~ timeline (16 keys)
+    # 映射采集器结果到输出 key（原有 16 个采集器 key + process_events + 4 个新增顶层 key）
+    original_keys = OUTPUT_KEYS[1:18]  # system_info ~ process_events (17 keys)
     for key in original_keys:
         result = raw_results.get(key)
         if result is None:
@@ -91,8 +105,8 @@ def build_output(metadata: dict, raw_results: dict, collection_health: Optional[
             output[new_key] = []
 
     # 融合扩充（A §三.1）：聚合 webshells / memory_shells / linux_baseline 顶层键。
-    # 仅聚合顶层键（与既有采集器同风格）；process_events 走独立 /process-events
-    # 事件管线，不并入 /import 输出。
+    # process_events 已通过 OUTPUT_KEYS 纳入一次性 JSON 输出；daemon 管线的
+    # 增量推送走独立 /process-events REST 端点，两者不冲突。
     for fusion_key in ["webshells", "memory_shells", "linux_baseline"]:
         result = raw_results.get(fusion_key)
         if result is not None and not (isinstance(result, dict) and "error" in result):
@@ -100,9 +114,122 @@ def build_output(metadata: dict, raw_results: dict, collection_health: Optional[
         elif fusion_key not in output:
             output[fusion_key] = []
 
+    # 跨采集器去重：按 dedup_key 合并同源条目（先到先保留）
+    _deduplicate(output)
+
     # 资源预算闭环：超 MAX_REPORT_BYTES 时按优先级丢弃最重载荷
     _enforce_report_budget(output)
     return output
+
+
+def _deduplicate(output: dict) -> None:
+    """跨采集器去重：按 ``dedup_key`` 合并同源条目（先到先保留）.
+
+    处理顺序与 ``OUTPUT_KEYS`` 遍历顺序一致（services → startup_items → registry → persistence），
+    同 ``dedup_key`` 的第一个条目保留，后续重复条目丢弃。字段最全的采集器（services / startup_items）
+    在遍历中先出现，因此自动保留。
+
+    同时做**字段名归一化**：不同采集器对同一数据的字段命名不同（如 ``value`` / ``command``），
+    归一化后两个字段名在保留条目中同时存在，保证下游按任意名字均可读取。
+    """
+    # ── Phase 1: 收集第一个出现的 dedup_key ──
+    first_seen: dict[str, tuple[str, Optional[str], int]] = {}
+    # (output_key, sub_key_or_None, index_in_list)
+
+    # 遍历顺序 = OUTPUT_KEYS 采集器顺序（先到先保留）
+    overlap_regions = [
+        ("services", None),
+        ("startup_items", None),
+        ("registry", "run_keys"),
+        ("registry", "services"),
+        ("registry", "scheduled_tasks"),
+        ("persistence", "run_keys"),
+        ("persistence", "services"),
+        ("persistence", "scheduled_tasks"),
+    ]
+
+    for output_key, sub_key in overlap_regions:
+        parent = output.get(output_key)
+        if sub_key:
+            if not isinstance(parent, dict):
+                continue
+            entries = parent.get(sub_key, [])
+        else:
+            entries = parent
+        if not isinstance(entries, list):
+            continue
+        for i, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                continue
+            dk = entry.get("dedup_key")
+            if dk and dk not in first_seen:
+                first_seen[dk] = (output_key, sub_key, i)
+
+    if not first_seen:
+        return  # 无 dedup_key → 无需去重
+
+    # ── Phase 2: 删除重复条目 + 字段名归一化 ──
+    # 字段名别名映射：target_field → [source_field, ...]
+    # 尽量多的别名链，确保任意源字段都能填补所有目标字段
+    FIELD_ALIASES: dict[str, list[str]] = {
+        "command": ["value", "binary_path", "image_path"],
+        "value": ["command", "binary_path", "image_path"],
+        "binary_path": ["image_path", "command", "value"],
+        "image_path": ["binary_path", "command", "value"],
+    }
+
+    for output_key, sub_key in overlap_regions:
+        parent = output.get(output_key)
+        if sub_key:
+            if not isinstance(parent, dict):
+                continue
+            entries = parent.get(sub_key, [])
+        else:
+            entries = parent
+        if not isinstance(entries, list):
+            continue
+
+        new_entries: list[dict] = []
+        for i, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                new_entries.append(entry)
+                continue
+            dk = entry.get("dedup_key")
+            if dk and dk in first_seen:
+                first_info = first_seen[dk]
+                is_first = (
+                    first_info[0] == output_key
+                    and first_info[1] == sub_key
+                    and first_info[2] == i
+                )
+                if not is_first:
+                    logger.debug(
+                        "dedup: %s from %s/%s removed (dup of %s/%s)",
+                        dk, output_key, sub_key or "-",
+                        first_info[0], first_info[1] or "-",
+                    )
+                    continue  # 丢弃重复条目
+
+            # 字段名归一化：为保留的条目补充别名字段
+            for target, sources in FIELD_ALIASES.items():
+                if target in entry:
+                    continue  # 已有，无需补充
+                for src in sources:
+                    if src in entry:
+                        entry[target] = entry[src]
+                        break
+
+            new_entries.append(entry)
+
+        if sub_key:
+            parent[sub_key] = new_entries
+        else:
+            output[output_key] = new_entries
+
+    logger.info(
+        "dedup: kept %d unique entries (dedup_key count)",
+        len(first_seen),
+    )
 
 
 def _enforce_report_budget(output: dict) -> None:

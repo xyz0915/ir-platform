@@ -177,6 +177,47 @@ class AgentRunStep:
             ).fetchone()
         return dict(row) if row else None
 
+    @staticmethod
+    def update(step_id: int, **kwargs: Any) -> Optional[dict]:
+        """更新已有步骤（custom 模式 resume 刷新 reporter 步骤时使用，避免重复新建）.
+
+        Args:
+            step_id: 步骤主键 id。
+            **kwargs: 可更新的字段（stage/agent/status/input_json/output_json/
+                confidence/evidence_json/audit_log_id）。
+
+        Returns:
+            更新后的步骤行，或 None（记录不存在）。
+        """
+        allowed = {
+            "stage", "agent", "status", "input_json",
+            "output_json", "confidence", "evidence_json", "audit_log_id",
+        }
+
+        def _j(v: Any) -> str:
+            if v is None:
+                return "[]" if isinstance(v, list) else "{}"
+            if isinstance(v, (dict, list)):
+                return json.dumps(v, ensure_ascii=False, default=str)
+            return str(v)
+
+        data: dict[str, Any] = {}
+        for k in allowed:
+            if k in kwargs:
+                v = kwargs[k]
+                data[k] = _j(v) if k in ("input_json", "output_json", "evidence_json") else v
+        if not data:
+            return AgentRunStep.get_by_id(step_id)
+        clauses = [f"{k} = ?" for k in data]
+        values = list(data.values())
+        values.append(step_id)
+        with get_connection() as conn:
+            conn.execute(
+                f"UPDATE agent_run_steps SET {', '.join(clauses)} WHERE id = ?",
+                values,
+            )
+        return AgentRunStep.get_by_id(step_id)
+
 
 class NodeRunRepository:
     """单节点调试历史持久化（复用 agent_runs / agent_run_steps，debug-<uuid> 前缀）。

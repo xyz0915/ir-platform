@@ -17,7 +17,23 @@
         :case-info="caseInfo"
         @back="goBack"
         @view-case="goToCase"
-      />
+      >
+        <template #actions>
+          <button
+            class="edv-copy-raw-id"
+            :class="{ 'is-disabled': !isRawEventId }"
+            type="button"
+            :title="isRawEventId ? '复制 32 位原始事件ID（用于分诊/触发器调试）' : '当前事件非安全事件源，无原始 event_id'"
+            @click="copyRawEventId"
+          >
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+              <rect x="3.5" y="3.5" width="7" height="7" rx="1.3" stroke="currentColor" stroke-width="1.3" />
+              <path d="M5.5 3.5V2.5a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-1" stroke="currentColor" stroke-width="1.3" />
+            </svg>
+            复制原始事件ID
+          </button>
+        </template>
+      </TopNavigation>
       <DecisionBar
         :event="eventData"
         :risk-score="riskScore"
@@ -99,6 +115,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { useAnalysisStore } from '@/stores/analysis'
 import { getEventDetail, getEventDisplay as fetchDisplayApi } from '@/api/events'
 
@@ -124,6 +141,12 @@ const router = useRouter()
 const store = useAnalysisStore()
 
 const eventId = computed(() => route.params.id)
+
+// 判断当前路由 id 是否为 32 位 hex 原始安全事件 ID。
+// 复合 id（如 cm:suspicious_startup_items:160）来自非 security_events 源，
+// 其详情数据中不存在可用于分诊/触发器调试的 32-hex event_id。
+const isRawEventId = computed(() => /^[0-9a-f]{32}$/.test(String(eventId.value || '')))
+
 const eventData = ref(null)
 const projection = ref(null)
 const loading = ref(true)
@@ -290,6 +313,50 @@ function goToCase(caseId) {
   router.push({ path: '/analysis-center', query: { case_id: caseId } })
 }
 
+// ── 复制原始事件 ID（32 位 hex） ──
+// 仅当 eventId 为 32 位 hex 时才复制；复合 id 提示无原始 event_id，绝不复制。
+async function copyRawEventId() {
+  const id = String(eventId.value || '')
+  if (!/^[0-9a-f]{32}$/.test(id)) {
+    ElMessage.warning('当前事件非安全事件源，无原始 event_id')
+    return
+  }
+
+  const ok = await copyText(id)
+  if (ok) {
+    ElMessage.success('已复制原始事件ID：' + id)
+  } else {
+    ElMessage.error('复制失败，请手动复制：' + id)
+  }
+}
+
+// 复制文本：优先 Clipboard API，失败则回退到临时 textarea + execCommand
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch {
+    // 继续走回退方案
+  }
+  try {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.top = '-9999px'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.focus()
+    ta.select()
+    const success = document.execCommand('copy')
+    document.body.removeChild(ta)
+    return success
+  } catch {
+    return false
+  }
+}
+
 async function handleUpdateStatus(status) {
   try {
     await store.updateStatus(eventId.value, status)
@@ -304,7 +371,7 @@ async function handleUpdateStatus(status) {
 function handleDeepInvestigation() {
   const query = { eventId: eventId.value }
   if (caseInfo.value?.case_id) query.caseId = caseInfo.value.case_id
-  router.push({ path: '/agent-orchestration', query })
+  router.push({ path: '/agent-orchestration/runs', query })
 }
 
 function handleSelectEvent(selectedId) {
@@ -340,6 +407,11 @@ async function handleAddDisposition(comment) {
 </script>
 
 <style scoped>
+/* ── 响应式布局 ── */
+@media (max-width: 1100px) {
+  .event-detail-view { height: unset; min-height: calc(100vh - 52px); }
+  .edv-body { flex-direction: column; align-items: stretch; overflow-y: auto; }
+}
 .event-detail-view {
   height: calc(100vh - 52px);
   display: flex;
@@ -358,5 +430,30 @@ async function handleAddDisposition(comment) {
   color: var(--color-fg-subtle);
   text-align: center;
   padding: 40px;
+}
+.edv-copy-raw-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  margin-left: 8px;
+  font-size: 12px;
+  border: 0.5px solid var(--color-border-default);
+  border-radius: 6px;
+  background: var(--color-canvas-default);
+  color: var(--color-fg-default);
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: inherit;
+}
+.edv-copy-raw-id:hover {
+  background: var(--color-canvas-inset);
+}
+.edv-copy-raw-id.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.edv-copy-raw-id.is-disabled:hover {
+  background: var(--color-canvas-default);
 }
 </style>

@@ -7,6 +7,13 @@
  * 后端统一返回 ``{code, data, message}`` 信封。
  */
 import request from './index'
+import {
+  listDefaultRules,
+  createDefaultRule,
+  updateDefaultRule,
+  deleteDefaultRule,
+  resolveDefaultPipeline,
+} from './defaultPipeline'
 
 /**
  * 启动一次多智能体闭环（triage → investigation → responder[HITL] → reporter）。
@@ -68,4 +75,31 @@ export function listPendingApprovals(status = 'pending') {
  */
 export function getSSEUrl(runId) {
   return `/api/agents/runs/${runId}/stream`
+}
+
+// ── 默认闭环流程（config-default-pipeline）──
+
+/** 列出全部默认规则。 */
+export function listDefaultRulesApi(params = {}) {
+  return listDefaultRules(params)
+}
+
+/** 新建默认规则。 */
+export function createDefaultRuleApi(payload) {
+  return createDefaultRule(payload)
+}
+
+/** 编辑默认规则。 */
+export function updateDefaultRuleApi(ruleId, payload) {
+  return updateDefaultRule(ruleId, payload)
+}
+
+/** 删除默认规则。 */
+export function deleteDefaultRuleApi(ruleId) {
+  return deleteDefaultRule(ruleId)
+}
+
+/** resolve 预览：返回将使用的默认流程与命中规则。 */
+export function resolveDefaultPipelineApi(params = {}) {
+  return resolveDefaultPipeline(params)
 }

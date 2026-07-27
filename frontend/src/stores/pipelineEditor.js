@@ -528,7 +528,13 @@ export const usePipelineEditorStore = defineStore('pipelineEditor', () => {
 
   /**
    * 加载预设到画布。
-   * @param {object} preset — 预设数据 { nodes, ... }
+   * 兼容两种后端格式：
+   * - { nodes: [...] } — 完整节点对象（前端标准）
+   * - { agents: [...] } — 后端当前存储的字符串数组（Agent/Runner 名称）
+   *
+   * 对于 agents 格式，会自动按顺序排列节点并串联连线。
+   *
+   * @param {object} preset — 预设数据
    */
   function loadPreset(preset) {
     clearCanvas()
@@ -538,9 +544,41 @@ export const usePipelineEditorStore = defineStore('pipelineEditor', () => {
         // 复制额外属性
         Object.assign(node, nodeData, { id: node.id, stepIndex: node.stepIndex })
       })
+    } else if (preset.agents && Array.isArray(preset.agents)) {
+      // 兼容后端以 agents 字符串数组存储的预设
+      const validTypes = Object.values(NodeType)
+      const aliasMap = {
+        triage: NodeType.TRIGGER,
+        process: NodeType.PROCESS_ANALYSIS,
+        reporter: NodeType.OUTPUT,
+        responder: NodeType.ACTION,
+        investigator: NodeType.LLM,
+      }
+      const nodes = []
+      preset.agents.forEach((agent, idx) => {
+        let type = agent
+        if (!validTypes.includes(type)) {
+          type = aliasMap[agent] || NodeType.LLM
+        }
+        const x = 100 + idx * 260
+        const y = idx % 2 === 0 ? 280 : 360
+        const node = addNode(type, { x, y }, agent)
+        nodes.push(node)
+      })
+      // 自动串联成流水线
+      nodes.forEach((node, idx) => {
+        if (idx > 0) {
+          const prev = nodes[idx - 1]
+          connections.value.push({
+            sourceId: prev.id,
+            targetId: node.id,
+            isCrossTrack: prev.track !== node.track,
+          })
+        }
+      })
     }
-    if (preset.pipelineName) {
-      pipelineName.value = preset.pipelineName
+    if (preset.pipelineName || preset.name) {
+      pipelineName.value = preset.pipelineName || preset.name
     }
     configDirty.value = false
   }

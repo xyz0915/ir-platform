@@ -79,6 +79,7 @@ class StartupItemsCollector(BaseCollector):
                                 "type": "registry",
                                 "last_write_time": last_write_str,
                                 "collected_at": get_timestamp(),
+                                "dedup_key": f"run:{location}:{key_path}:{name}",
                             })
                             index += 1
                         except OSError:
@@ -148,6 +149,7 @@ class StartupItemsCollector(BaseCollector):
                         "user": "",
                         "type": "scheduled_task",
                         "collected_at": get_timestamp(),
+                        "dedup_key": f"task:{value}",
                     }
                 elif key in ("Task To Run", "要运行的任务"):
                     if current:

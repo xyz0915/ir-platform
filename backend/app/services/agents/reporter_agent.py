@@ -52,6 +52,7 @@ class ReporterAgent(BaseAgent):
                     hitl_decision=hitl_text,
                 ),
                 user=ctx.get("user"),
+                trace_id=ctx.get("trace_id"),
             )
             if resp.get("degraded") or not resp.get("content"):
                 llm_unavailable = True

@@ -80,15 +80,19 @@ class ProcessesCollector(BaseCollector):
                 cmdline = info.get("cmdline")
                 command_line = " ".join(cmdline) if cmdline else ""
 
+                ppid = info.get("ppid", 0)
+                parent_name = self._get_parent_name(ppid)
+
                 process_data = {
                     "pid": pid,
-                    "ppid": info.get("ppid", 0),
+                    "ppid": ppid,
                     "name": info.get("name", ""),
                     "path": info.get("exe", "") or "",
                     "command_line": command_line,
                     "user": info.get("username", "") or "",
                     "start_time": start_time,
                     "threads": info.get("num_threads", 0) or 0,
+                    "parent_name": parent_name,
                     "connections": conn_map.get(pid, []),
                     "collected_at": get_timestamp(),
                 }
@@ -161,6 +165,7 @@ class ProcessesCollector(BaseCollector):
                             "user": "",
                             "start_time": start_time,
                             "threads": 0,
+                            "parent_name": "",
                             "connections": [],
                             "collected_at": get_timestamp(),
                         }
@@ -193,6 +198,7 @@ class ProcessesCollector(BaseCollector):
                     "user": "",
                     "start_time": "",
                     "threads": 0,
+                    "parent_name": "",
                     "connections": [],
                     "collected_at": get_timestamp(),
                 }
@@ -222,6 +228,30 @@ class ProcessesCollector(BaseCollector):
         except (psutil.AccessDenied, psutil.NoSuchProcess):
             pass
         return conn_map
+
+    # ── 父进程名称查找 ─────────────────────────────────────────
+    @staticmethod
+    def _get_parent_name(ppid: int) -> str:
+        """通过 ppid 查找父进程名称.
+
+        Args:
+            ppid: 父进程 PID.
+
+        Returns:
+            父进程名称；父进程已退出返回 ``"[exited]"``，其他异常返回 ``""``。
+        """
+        if ppid <= 0:
+            return ""
+        try:
+            import psutil
+            parent = psutil.Process(ppid)
+            return parent.name()
+        except (psutil.NoSuchProcess, psutil.ZombieProcess):
+            return "[exited]"
+        except psutil.AccessDenied:
+            return ""
+        except Exception:
+            return ""
 
     # ── 富化字段（session / state / memory_sections）─────────────
     def _enrich(self, proc: dict) -> None:

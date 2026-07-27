@@ -333,7 +333,7 @@ class RootCauseAgent(BaseAgent):
         llm_explanation: Optional[str] = None
         try:
             prompt = self._build_llm_prompt(root_node, causal_chain)
-            resp = await self._llm.call(prompt, user=user)
+            resp = await self._llm.call(prompt, user=user, trace_id=ctx.get("trace_id"))
             if not resp.get("degraded") and resp.get("content"):
                 llm_explanation = resp["content"]
         except Exception as exc:  # noqa: BLE001

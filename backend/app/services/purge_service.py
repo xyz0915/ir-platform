@@ -66,6 +66,14 @@ def _iter_ops(host_ids: list, cid: int):
     # 2. AI 非外键 host 表
     for t in ("ai_audit_log", "ai_tasks", "agent_baselines", "ai_evidence_refills"):
         yield (t, f"FROM {t} WHERE host_id IN ({ph})", host_ids)
+    # 2b. 智能体编排运行表（按 case_id 删除，子表先于主表）
+    yield ("agent_run_steps",
+           f"FROM agent_run_steps WHERE run_id IN "
+           f"(SELECT run_id FROM agent_runs WHERE case_id=?)", (cid,))
+    yield ("hitl_approvals",
+           f"FROM hitl_approvals WHERE run_id IN "
+           f"(SELECT run_id FROM agent_runs WHERE case_id=?)", (cid,))
+    yield ("agent_runs", f"FROM agent_runs WHERE case_id=?", (cid,))
     # 3. host 外键级联表（显式删，主要为计数 + 兼容 FK 关闭场景）
     for t in (
         "import_records", "host_profiles", "analysis_results", "abnormal_processes",

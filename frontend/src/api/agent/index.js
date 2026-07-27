@@ -43,6 +43,13 @@ import {
   listPendingApprovals,
 } from '@/api/agentOrchestration'
 import { getAgents, getAgentStats } from '@/api/agents'
+import {
+  listDefaultRules,
+  createDefaultRule,
+  updateDefaultRule,
+  deleteDefaultRule,
+  resolveDefaultPipeline,
+} from '@/api/defaultPipeline'
 
 // ── Mock 适配器 ──
 import * as guardrailMock from './mock/guardrail'
@@ -118,6 +125,15 @@ const agentApi = {
     listPendingApprovals: (status = 'pending') => listPendingApprovals(status),
     approve: (runId, payload) => approveAgentRun(runId, payload),
     reject: (runId, payload) => rejectAgentRun(runId, payload),
+  },
+
+  // ── 可配置默认闭环流程（config-default-pipeline） ──
+  defaultPipelines: {
+    list: (params = {}) => listDefaultRules(params),
+    create: (payload) => createDefaultRule(payload),
+    update: (id, payload) => updateDefaultRule(id, payload),
+    delete: (id) => deleteDefaultRule(id),
+    resolve: (params = {}) => resolveDefaultPipeline(params),
   },
 
   // ── M7 护栏与安全（USE_MOCK 门控：false → 真实适配器） ──

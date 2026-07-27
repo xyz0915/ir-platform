@@ -68,7 +68,12 @@ class Orchestrator:
             user_id=user.get("id") if user else None,
             ctx_json=ctx_json,
         )
-        logger.info("Orchestrator.start_run: run_id=%s, event_id=%s", run_id, event_id)
+        logger.info(
+            "Orchestrator.start_run: run_id=%s, event_id=%s", run_id, event_id
+        )
+        logger.info(
+            json.dumps({"event": "run_started", "run_id": run_id, "event_id": event_id or "", "priority": priority, "stage": stage})
+        )
         return run
 
     # ── 2. 派发并执行单个 Agent ──
@@ -121,7 +126,41 @@ class Orchestrator:
         ))
 
         try:
-            result = await agent.run(ctx, task)
+            # P0-1.2: Agent.run() 设 120s 超时，避免单 Agent 永久阻塞整条 pipeline
+            result = await asyncio.wait_for(agent.run(ctx, task), timeout=120.0)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Orchestrator dispatch timeout: run_id=%s, agent=%s (120s)", run_id, step_agent
+            )
+            AgentRun.update(run_id, status=self.STATUS_FAILED)
+            AgentRunStep.add(
+                run_id=run_id,
+                stage=stage,
+                agent=step_agent,
+                status="failed",
+                input_json=input_json,
+                output_json={"error": "Agent execution timed out after 120s"},
+                confidence=0.0,
+                evidence_json=[],
+                audit_log_id=audit_log_id,
+            )
+            asyncio.ensure_future(sse_manager.push(
+                run_id,
+                "step_update",
+                {
+                    "type": "step_update",
+                    "run_id": run_id,
+                    "step_id": str(step_agent),
+                    "agent": step_agent,
+                    "stage": stage,
+                    "status": "failed",
+                    "output": "Agent execution timed out after 120s",
+                    "evidence": {"data_sources": [], "evidence": []},
+                    "elapsed_seconds": 0,
+                },
+            ))
+            self._state_machine(run_id, failed=True)
+            return AgentResult(stage=stage, output="", confidence=0.0, hitl=False)
         except asyncio.CancelledError:
             logger.warning(
                 "Orchestrator dispatch cancelled: run_id=%s, agent=%s", run_id, step_agent
@@ -235,6 +274,9 @@ class Orchestrator:
             return result
 
         self._state_machine(run_id, result=result, is_final=is_final)
+        logger.info(
+            json.dumps({"event": "agent_completed", "run_id": run_id, "agent": step_agent, "stage": stage, "status": "success", "confidence": result.confidence})
+        )
         return result
 
     # ── 3. HITL 阻塞网关 ──
@@ -338,6 +380,11 @@ class Orchestrator:
         ctx = ctx or {}
         ctx["run_id"] = run_id
         ctx["user"] = user or {}
+        # P1-5.2: 生成 Trace ID 贯穿整个编排链路
+        ctx["trace_id"] = uuid.uuid4().hex[:16]
+        logger.info(
+            json.dumps({"event": "pipeline_started", "run_id": run_id, "trace_id": ctx["trace_id"]})
+        )
 
         # 1) 分诊 — 非最终阶段
         await self.dispatch(
@@ -369,7 +416,13 @@ class Orchestrator:
         decided_by: Optional[int] = None,
         user: Optional[dict] = None,
     ) -> dict:
-        """HITL 决议后收尾：执行处置动作 + 写处置记录 + 生成报告。
+        """HITL 决议后收尾：执行处置动作 + 写处置记录 + 生成报告.
+
+        模式感知（§1.4.2）：
+        - mode=='custom'（默认/自定义 pipeline）：执行 responder 实际动作 + 仅就已有
+          reporter 步骤用 hitl_decision 重跑一次 ReporterAgent（更新输出，不新建重复步骤），
+          最后置 completed。
+        - mode=='hardcoded'（或 ctx 缺失）：行为完全不变，走 ``_finish_with_reporter``。
 
         Args:
             run_id: 运行 ID。
@@ -442,7 +495,68 @@ class Orchestrator:
                 "reason": approval.get("reason"),
             }
 
+        # 模式感知收尾（§1.4.2）
+        mode = ctx.get("mode", "hardcoded")
+        if mode == "custom":
+            return await self._resume_custom(run_id, ctx, user, hitl_decision, executed)
         return await self._finish_with_reporter(run_id, ctx, user, hitl_decision, executed)
+
+    async def _resume_custom(
+        self,
+        run_id: str,
+        ctx: dict,
+        user: Optional[dict],
+        hitl_decision: Optional[dict],
+        executed: Optional[dict] = None,
+    ) -> dict:
+        """custom 模式 resume：仅就已有 reporter 步骤用 hitl_decision 重跑 ReporterAgent 并刷新输出。
+
+        不新建重复 reporter 步骤（§1.4.2 / §8.3）。最后置 run=completed + 推送 run_completed。
+        """
+        from app.services.agents.reporter_agent import ReporterAgent
+        from app.models.agent_run import AgentRunStep
+
+        reporter = ReporterAgent()
+        task = {"run_id": run_id, "hitl_decision": hitl_decision or {}}
+
+        # 找到已有 reporter 步骤（agent == 'reporter' 或 stage == 'report'）
+        steps = AgentRunStep.list_by_run(run_id)
+        reporter_step = next(
+            (s for s in steps if s.get("agent") == "reporter" or s.get("stage") == "reporter"),
+            None,
+        )
+        if reporter_step:
+            result = await reporter.run(ctx, task)
+            AgentRunStep.update(
+                reporter_step["id"],
+                status="success",
+                output_json=result.to_dict(),
+                confidence=result.confidence,
+                evidence_json=result.evidence,
+            )
+        else:
+            # 兜底：理论不会走到（ensure_reporter 已保证尾部 reporter），无 reporter 步骤则新增
+            logger.warning(
+                "Orchestrator._resume_custom: run_id=%s 无 reporter 步骤，兜底新增",
+                run_id,
+            )
+            await self.dispatch(run_id, reporter, ctx, task=task, is_final=True)
+
+        AgentRun.update(run_id, status=self.STATUS_COMPLETED, stage="report")
+        asyncio.ensure_future(sse_manager.push(
+            run_id,
+            "run_completed",
+            {"type": "run_completed", "run_id": run_id, "status": "completed"},
+        ))
+        return {
+            "run_id": run_id,
+            "status": self.STATUS_COMPLETED,
+            "executed": executed or {},
+            "result": {
+                "stage": "report",
+                "hitl_decision": hitl_decision,
+            },
+        }
 
     # ── 6. 自定义管道执行（PipelineEngine）──
     async def run_custom_pipeline(
@@ -452,11 +566,16 @@ class Orchestrator:
         event_id: str,
         user: dict,
         use_cache: bool = True,
+        ensure_reporter: bool = True,
     ) -> dict:
         """按自定义 Agent 列表执行管道（替代固定 4 阶段）。
 
         使用 PipelineEngine 替代硬编码 dispatch 调用。
         支持 DAG 拓扑排序、分批并行执行、缓存查询、HITL 暂停。
+
+        默认 ``ensure_reporter=True``：引擎在 agent_names 尾部补 ``"reporter"``，
+        保证任何自定义/默认 pipeline 都必定产出真实报告步骤并以 completed 结束
+        （对齐硬编码路径 ``_finish_with_reporter`` 语义，§1.4.1）。
 
         Args:
             run_id: 运行 ID。
@@ -464,6 +583,7 @@ class Orchestrator:
             event_id: 关联安全事件 ID。
             user: 用户信息。
             use_cache: 是否启用缓存。
+            ensure_reporter: 是否由引擎在尾部统一追加 reporter 收尾。
 
         Returns:
             {"run_id", "status", "stages", "total_elapsed", "results"}
@@ -474,6 +594,9 @@ class Orchestrator:
             "run_id": run_id,
             "event_id": event_id,
             "user": user or {},
+            # 标记模式，供 resume 做模式感知（custom 仅刷新 reporter / hardcoded 走 _finish_with_reporter）
+            "mode": "custom",
+            "agent_names": list(agent_names or []),
         }
 
         result = await pipeline_engine.run(
@@ -483,7 +606,16 @@ class Orchestrator:
             ctx=ctx,
             user=user or {},
             use_cache=use_cache,
+            ensure_reporter=ensure_reporter,
         )
+
+        # 与硬编码路径对齐：完成时推送 run_completed SSE（引擎本身仅推 pipeline_complete）
+        if result.get("status") == self.STATUS_COMPLETED:
+            asyncio.ensure_future(sse_manager.push(
+                run_id,
+                "run_completed",
+                {"type": "run_completed", "run_id": run_id, "status": "completed"},
+            ))
         return result
 
     async def _finish_with_reporter(

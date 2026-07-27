@@ -14,11 +14,14 @@ Kahn 算法分层拓扑排序后逐批并行执行，每步通过 on_sse 回调�
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
+
+import httpx
 
 from app.models.agent_run import AgentRun, AgentRunStep, NodeRunRepository
 from app.services.agents.agent_definition import AgentDefinition
@@ -62,12 +65,19 @@ class PipelineRun:
 class PipelineEngine:
     """管道执行引擎：DAG 解析 + 分批并行 + SSE 推送 + HITL 暂停。"""
 
+    _CLEANUP_TTL: float = 3600  # 完成/失败后 1h 清理（P0-5.3）
+    _GLOBAL_MAX_RUNS: int = 5   # 正在运行的管道数上限，超过则排队（P0-2.1）
+
     def __init__(self, max_concurrent: int = 5) -> None:
         self._registry = AgentRegistry()
         self._cache = cache_manager
         self._runs: dict[str, PipelineRun] = {}
         self._hitl_events: dict[str, asyncio.Event] = {}  # run_id → approval Event
         self._max_concurrent = max_concurrent
+        # P0-2.1: 全局管道并发控制
+        self._global_semaphore: asyncio.Semaphore = asyncio.Semaphore(self._GLOBAL_MAX_RUNS)
+        # P1-1.4: 启动时恢复 DB 中 waiting_hitl 的审批事件
+        self._restore_hitl_events()
 
     # ── 拓扑排序 ──
 
@@ -116,6 +126,7 @@ class PipelineEngine:
         ctx: dict,
         user: dict,
         use_cache: bool = True,
+        ensure_reporter: bool = True,
         on_sse: Optional[Callable] = None,
     ) -> dict:
         """执行管道：DAG 解析 → 分批并行 → HITL → 完成。
@@ -127,95 +138,113 @@ class PipelineEngine:
             ctx: 上下文（含 event_id, host_id, user 等）。
             user: 用户信息。
             use_cache: 是否使用缓存。
+            ensure_reporter: 是否由引擎在 agent_names 尾部统一追加 ``"reporter"``
+                收尾（§1.4.1 / Q6）。默认 True，保证自定义/默认 pipeline 必跑真实 reporter。
             on_sse: SSE 回调函数，每次状态变更时调用。
 
         Returns:
             {"run_id", "status", "stages", "total_elapsed", "results"}
         """
-        run = PipelineRun(run_id, agent_names, event_id, ctx)
-        self._runs[run_id] = run
-        # 持久化到 agent_runs 表（供详情页查询）
+        # P0-5.1: 结构化日志 — pipeline 开始
+        logger.info(
+            json.dumps({"event": "pipeline_started", "run_id": run_id, "agents": agent_names, "ensure_reporter": ensure_reporter})
+        )
+        # P0-2.1: 全局并发控制 — 超出 max_runs 时等待
+        await self._global_semaphore.acquire()
         try:
-            AgentRun.create(
-                run_id=run_id,
-                event_id=event_id,
-                case_id=ctx.get("case_id"),
-                title=ctx.get("title") or f"Custom pipeline {run_id}",
-                stage=agent_names[0] if agent_names else "custom",
-                status="running",
-                priority=ctx.get("priority", "P2"),
-                user_id=(user or {}).get("id"),
-                ctx_json=json.dumps(ctx, default=str) if ctx else None,
-            )
-        except Exception as exc:
-            logger.warning("PipelineEngine.run: agent_runs 持久化失败 (run_id=%s): %s", run_id, exc)
-        run.status = "running"
-        # 1. 获取依赖图
-        graph = self._registry.get_dependency_graph(agent_names)
-        # 2. 拓扑排序 → 分批
-        batches = self._topological_sort(graph)
-        run.total_batches = len(batches)
+            # ensure_reporter：尾部补 reporter（若末尾非 reporter），保证真实报告步骤产出
+            effective_names = list(agent_names or [])
+            if ensure_reporter and "reporter" not in effective_names:
+                effective_names.append("reporter")
 
-        # 3. 逐批执行
-        for batch_idx, batch in enumerate(batches):
-            if run.cancelled:
-                run.status = "cancelled"
-                break
+            run = PipelineRun(run_id, effective_names, event_id, ctx)
+            self._runs[run_id] = run
+            # 持久化到 agent_runs 表（供详情页查询）
+            try:
+                AgentRun.create(
+                    run_id=run_id,
+                    event_id=event_id,
+                    case_id=ctx.get("case_id"),
+                    title=ctx.get("title") or f"Custom pipeline {run_id}",
+                    stage=agent_names[0] if agent_names else "custom",
+                    status="running",
+                    priority=ctx.get("priority", "P2"),
+                    user_id=(user or {}).get("id"),
+                    ctx_json=json.dumps(ctx, default=str) if ctx else None,
+                )
+            except Exception as exc:
+                logger.warning("PipelineEngine.run: agent_runs 持久化失败 (run_id=%s): %s", run_id, exc)
+            run.status = "running"
+            # 1. 获取依赖图
+            graph = self._registry.get_dependency_graph(effective_names)
+            # 2. 拓扑排序 → 分批
+            batches = self._topological_sort(graph)
+            run.total_batches = len(batches)
 
-            run.current_batch = batch_idx
-            self._push_sse(run_id, "batch_start", {"batch": batch_idx, "agents": batch}, on_sse)
-            # 并行执行 batch 内所有 Agent
-            tasks = []
-            for agent_name in batch:
-                if agent_name not in agent_names:
-                    continue
-                tasks.append(self._run_single(agent_name, run, user, use_cache, on_sse))
-            await asyncio.gather(*tasks)
+            # 3. 逐批执行
+            for batch_idx, batch in enumerate(batches):
+                if run.cancelled:
+                    run.status = "cancelled"
+                    break
 
-            self._push_sse(run_id, "batch_complete", {"batch": batch_idx}, on_sse)
-        # 4. 完成
-        run.completed_time = time.time()
-        if not run.cancelled:
-            run.status = "completed"
-        total_elapsed = round(run.completed_time - run.start_time, 1)
-        # 持久化：最终状态
-        try:
-            final_status = "completed" if not run.cancelled else "cancelled"
-            AgentRun.update(
-                run.run_id,
-                status=final_status,
-                stage="report" if final_status == "completed" else run.agent_names[-1] if run.agent_names else "custom",
-                result_json=json.dumps({
-                    "stages": run.stages,
-                    "total_elapsed": total_elapsed,
-                    "agent_names": run.agent_names,
-                }, default=str, ensure_ascii=False),
-            )
-        except Exception as exc:
-            logger.warning("PipelineEngine: 最终状态持久化失败: %s", exc)
-        # 收集所有 stage 的最终输出
-        results = {}
-        for stage in run.stages:
-            results[stage["name"]] = {
-                "status": stage["status"],
-                "output": stage.get("output"),
-                "error": stage.get("error"),
-                "cached": stage.get("cached", False),
-                "elapsed": stage.get("elapsed", 0),
+                run.current_batch = batch_idx
+                self._push_sse(run_id, "batch_start", {"batch": batch_idx, "agents": batch}, on_sse)
+                # 并行执行 batch 内所有 Agent
+                tasks = []
+                for agent_name in batch:
+                    if agent_name not in effective_names:
+                        continue
+                    tasks.append(self._run_single(agent_name, run, user, use_cache, on_sse))
+                await asyncio.gather(*tasks)
+
+                self._push_sse(run_id, "batch_complete", {"batch": batch_idx}, on_sse)
+            # 4. 完成
+            run.completed_time = time.time()
+            if not run.cancelled:
+                run.status = "completed"
+            total_elapsed = round(run.completed_time - run.start_time, 1)
+            # 持久化：最终状态
+            try:
+                final_status = "completed" if not run.cancelled else "cancelled"
+                AgentRun.update(
+                    run.run_id,
+                    status=final_status,
+                    stage="report" if final_status == "completed" else run.agent_names[-1] if run.agent_names else "custom",
+                    result_json=json.dumps({
+                        "stages": run.stages,
+                        "total_elapsed": total_elapsed,
+                        "agent_names": run.agent_names,
+                    }, default=str, ensure_ascii=False),
+                )
+            except Exception as exc:
+                logger.warning("PipelineEngine: 最终状态持久化失败: %s", exc)
+            # 收集所有 stage 的最终输出
+            results = {}
+            for stage in run.stages:
+                results[stage["name"]] = {
+                    "status": stage["status"],
+                    "output": stage.get("output"),
+                    "error": stage.get("error"),
+                    "cached": stage.get("cached", False),
+                    "elapsed": stage.get("elapsed", 0),
+                }
+
+            self._push_sse(run_id, "pipeline_complete", {
+                "run_id": run_id,
+                "status": run.status,
+                "total_elapsed": total_elapsed,
+            }, on_sse)
+            return {
+                "run_id": run_id,
+                "status": run.status,
+                "stages": run.stages,
+                "total_elapsed": total_elapsed,
+                "results": results,
             }
-
-        self._push_sse(run_id, "pipeline_complete", {
-            "run_id": run_id,
-            "status": run.status,
-            "total_elapsed": total_elapsed,
-        }, on_sse)
-        return {
-            "run_id": run_id,
-            "status": run.status,
-            "stages": run.stages,
-            "total_elapsed": total_elapsed,
-            "results": results,
-        }
+        finally:
+            self._global_semaphore.release()
+            # P0-5.3: 定期清理过期 run 记录
+            self._cleanup_expired_runs()
 
     # ── 单 Agent 执行 ──
 
@@ -262,9 +291,33 @@ class PipelineEngine:
             except Exception as exc:
                 logger.warning("PipelineEngine: step 持久化失败 (cached): %s", exc)
             return {"name": agent_name, "status": "completed", "cached": True, "output": cached_result}
-        # 实际执行
-        try:
-            result = await self._execute_agent(agent_def, run)
+        # 实际执行 + P0-1.1: 可重试错误自动重试（指数退避，最多 2 次）
+        RETRYABLE_ERRORS = (asyncio.TimeoutError, httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError)
+        max_retries = 2
+        last_exc = None
+        result = None
+        for attempt in range(max_retries + 1):
+            try:
+                result = await self._execute_agent(agent_def, run)
+                last_exc = None
+                break
+            except RETRYABLE_ERRORS as exc:
+                last_exc = exc
+                if attempt < max_retries:
+                    wait = 1.0 * (2 ** attempt)
+                    logger.warning(
+                        "PipelineEngine: Agent '%s' attempt %d/%d failed (%s), retrying in %.1fs",
+                        agent_name, attempt + 1, max_retries + 1, type(exc).__name__, wait
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                # 最终尝试失败 → 进入错误处理
+            except Exception as exc:
+                # 非重试异常直接进入错误处理
+                last_exc = exc
+                break
+
+        if last_exc is None:
             elapsed = round(time.time() - start, 1)
 
             # 检查 HITL
@@ -304,9 +357,9 @@ class PipelineEngine:
             if use_cache:
                 self._cache.set(agent_name, cache_params, result)
             return {"name": agent_name, "status": "completed", "output": result}
-        except Exception as exc:
+        else:
             elapsed = round(time.time() - start, 1)
-            error_msg = str(exc)
+            error_msg = str(last_exc)
             logger.exception("PipelineEngine: Agent '%s' failed: %s", agent_name, error_msg)
             self._add_stage(run, agent_name, "failed", elapsed=elapsed, error=error_msg)
             self._push_sse(run.run_id, "stage_error", {"name": agent_name, "error": error_msg}, on_sse)
@@ -360,6 +413,7 @@ class PipelineEngine:
         structured: dict = {}
         confidence = 0.0
         evidence: list = []
+        result: dict = {}
 
         ctx = {
             "host_id": resolved_host_id,
@@ -387,6 +441,12 @@ class PipelineEngine:
                 "PipelineEngine.execute_node failed (node=%s, mode=%s): %s",
                 node_name, mode, exc,
             )
+
+        # 允许执行体在不抛异常的情况下显式声明失败（如缺失 event_id），
+        # 便于单节点调试给出友好的失败提示而非 500。
+        if status != "failed" and result.get("status") == "failed":
+            status = "failed"
+            error = result.get("error") or error or "节点执行失败"
 
         elapsed_ms = round((time.time() - start_ts) * 1000, 1)
         input_received = {
@@ -479,6 +539,7 @@ class PipelineEngine:
             "threat_intel": self._run_threat_intel,
             "branch": self._run_branch,
             "llm": self._run_llm,
+            "trigger": self._run_triage,
         }.get(node_type)
 
     def _run_simulated(self, node_type: str, node_name: str, input_params: dict, context_vars: dict) -> dict:
@@ -858,6 +919,89 @@ class PipelineEngine:
             },
         }
 
+    async def _run_triage(self, ctx: dict, input_params: dict, mode: str) -> dict:
+        """触发器节点（分诊）— 读取安全事件数据源，调用 TriageAgent 做分诊。
+
+        事件 ID 解析优先级：``input_params.event_id`` > ``ctx.event_id`` >
+        ``ctx.event_ids`` 首个。无 event_id 时返回失败结果（不抛异常），
+        提示用户补充 event_id 或 host_id。
+        """
+        # 1) 解析 event_id
+        event_id = input_params.get("event_id") or ctx.get("event_id")
+        if not event_id:
+            event_ids = ctx.get("event_ids") or []
+            if isinstance(event_ids, list) and event_ids:
+                event_id = event_ids[0]
+
+        # 2) 缺失 event_id → 友好失败（不抛异常，交由 execute_node 包装）
+        if not event_id:
+            return {
+                "stage": "triage",
+                "status": "failed",
+                "error": "missing_event_id",
+                "output": "请提供 event_id 或 host_id 以便执行分诊。",
+                "confidence": 0.0,
+                "evidence": [],
+                "structured": {
+                    "stage": "triage",
+                    "priority": None,
+                    "summary": "缺少 event_id 或 host_id，无法执行分诊。",
+                    "event_id": None,
+                    "evidence_count": 0,
+                },
+            }
+
+        # 3) 构造分诊上下文并调用 TriageAgent（不修改 TriageAgent 本身）
+        triage_ctx = {
+            "event_id": event_id,
+            "user": ctx.get("user"),
+            "host_id": ctx.get("host_id"),
+        }
+        from app.services.agents.triage_agent import TriageAgent
+        result = await TriageAgent().run(triage_ctx, {})
+
+        # 4) 从 TriageAgent 输出解析优先级，组装同构结果
+        priority = self._parse_triage_priority(result.output) or "P2"
+        return {
+            "stage": "triage",
+            "output": result.output,
+            "confidence": result.confidence,
+            "evidence": result.evidence,
+            "structured": {
+                "stage": "triage",
+                "priority": priority,
+                "confidence": result.confidence,
+                "evidence_count": len(result.evidence),
+                "event_id": event_id,
+                "summary": self._summarize_triage(result.output),
+            },
+        }
+
+    @staticmethod
+    def _parse_triage_priority(output: str) -> Optional[str]:
+        """从 TriageAgent 输出解析优先级（P0/P1/P2/P3）。
+
+        Args:
+            output: TriageAgent 的 output 文本（含 "建议优先级：Pn"）。
+
+        Returns:
+            匹配到的优先级字符串，未匹配返回 ``None``。
+        """
+        if not output:
+            return None
+        match = re.search(r"优先级[：:]\s*(P\d)", output)
+        return match.group(1) if match else None
+
+    @staticmethod
+    def _summarize_triage(output: str, max_len: int = 160) -> str:
+        """取分诊输出的首行作为简短摘要（去除降级标记噪声）。"""
+        if not output:
+            return "分诊已完成"
+        first_line = output.strip().split("\n", 1)[0].strip()
+        if not first_line:
+            return "分诊已完成"
+        return first_line[:max_len]
+
     async def _run_unknown(self, agent_def: AgentDefinition, ctx: dict) -> dict:
         """未知 custom Agent — 数据驱动摘要兜底。"""
         data_sources = agent_def.data_sources or []
@@ -891,7 +1035,8 @@ class PipelineEngine:
         if name == "triage":
             from app.services.agents.triage_agent import TriageAgent
             agent = TriageAgent()
-            result = await agent.run(run.ctx, {})
+            # P0-1.2: Agent.run() 设 120s 超时
+            result = await asyncio.wait_for(agent.run(run.ctx, {}), timeout=120.0)
             return {
                 "stage": "triage",
                 "output": result.output,
@@ -903,7 +1048,8 @@ class PipelineEngine:
         elif name == "responder":
             from app.services.agents.responder_agent import ResponderAgent
             agent = ResponderAgent()
-            result = await agent.run(run.ctx, {})
+            # P0-1.2: Agent.run() 设 120s 超时
+            result = await asyncio.wait_for(agent.run(run.ctx, {}), timeout=120.0)
             return {
                 "stage": "response",
                 "output": result.output,
@@ -915,7 +1061,8 @@ class PipelineEngine:
         elif name == "reporter":
             from app.services.agents.reporter_agent import ReporterAgent
             agent = ReporterAgent()
-            result = await agent.run(run.ctx, {})
+            # P0-1.2: Agent.run() 设 120s 超时
+            result = await asyncio.wait_for(agent.run(run.ctx, {}), timeout=120.0)
             return {
                 "stage": "report",
                 "output": result.output,
@@ -1027,6 +1174,8 @@ class PipelineEngine:
     async def resume(self, run_id: str, approved: bool, user: dict) -> bool:
         """恢复 HITL 暂停的管道。
 
+        P1-1.4: 进程重启后自动从 DB 恢复 waiting_hitl 事件。
+
         Args:
             run_id: 运行 ID。
             approved: 是否批准审批。
@@ -1036,7 +1185,24 @@ class PipelineEngine:
             bool: 是否成功恢复。
         """
         hitl_event = self._hitl_events.get(run_id)
-        if hitl_event:
+        # P1-1.4: 进程重启后 _hitl_events 为空 → 从 DB 重建
+        if hitl_event is None:
+            from app.models.agent_run import AgentRun
+            run_record = AgentRun.get_by_run_id(run_id)
+            if run_record and run_record.get("status") == "waiting_hitl":
+                hitl_event = asyncio.Event()
+                self._hitl_events[run_id] = hitl_event
+                logger.info(
+                    "Restored HITL event from DB for run_id=%s (process restart recovery)",
+                    run_id,
+                )
+            else:
+                logger.warning(
+                    "HITL resume failed: run_id=%s not found or not waiting_hitl",
+                    run_id,
+                )
+                return False
+        # 标记审批结果
             # 标记审批结果
             hitl_event.result = approved  # type: ignore[attr-defined]
             hitl_event.set()
@@ -1083,6 +1249,56 @@ class PipelineEngine:
         """清理运行资源。"""
         self._runs.pop(run_id, None)
         self._hitl_events.pop(run_id, None)
+
+    # ── P1-1.4: 恢复 DB 中 waiting_hitl 的审批事件（进程重启后）──
+    def _restore_hitl_events(self) -> int:
+        """从 agent_runs 表扫描 status=waiting_hitl 的记录，重建 asyncio.Event。
+
+        Returns:
+            恢复的事件数。
+        """
+        from app.models.agent_run import AgentRun
+        data = AgentRun.list_all(status="waiting_hitl")
+        recovered = 0
+        for run in (data.get("items") or []):
+            run_id = run.get("run_id")
+            if run_id and run_id not in self._hitl_events:
+                self._hitl_events[run_id] = asyncio.Event()
+                recovered += 1
+        if recovered:
+            logger.info(
+                "PipelineEngine: 恢复 %d 个 waiting_hitl 审批事件（进程重启恢复）",
+                recovered,
+            )
+        return recovered
+
+    # ── P0-5.3: 定期清理过期的 _runs 记录，防止内存 OOM ──
+    def _cleanup_expired_runs(self, ttl: Optional[float] = None) -> int:
+        """清理已完成/失败/取消超过 TTL 的运行记录，释放内存。
+
+        Args:
+            ttl: 过期秒数（默认 _CLEANUP_TTL = 3600s）。
+
+        Returns:
+            清理的记录数。
+        """
+        ttl = ttl or self._CLEANUP_TTL
+        now = time.time()
+        expired_ids = []
+        for run_id, run in list(self._runs.items()):
+            if run.status in ("completed", "failed", "cancelled"):
+                completed = run.completed_time or (run.start_time + ttl)
+                if (now - completed) > ttl:
+                    expired_ids.append(run_id)
+        for run_id in expired_ids:
+            self._runs.pop(run_id, None)
+            self._hitl_events.pop(run_id, None)
+        if expired_ids:
+            logger.info(
+                "PipelineEngine: 清理 %d 条过期运行记录 (TTL=%.0fs)",
+                len(expired_ids), ttl,
+            )
+        return len(expired_ids)
 
 
 # 模块级单例

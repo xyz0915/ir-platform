@@ -1079,6 +1079,26 @@ DDL_STATEMENTS = [
         updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
     )
     """,
+    # ── 默认闭环规则表（config-default-pipeline：pipeline + 场景条件解耦） ──
+    """
+    CREATE TABLE IF NOT EXISTS pipeline_default_rules (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        preset_id       INTEGER NOT NULL REFERENCES pipeline_presets(id) ON DELETE CASCADE,
+        name            TEXT,
+        scene_condition TEXT NOT NULL DEFAULT '{}',
+        is_global       INTEGER NOT NULL DEFAULT 0,
+        priority_order  INTEGER NOT NULL DEFAULT 0,
+        created_by      TEXT,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_pdr_preset  ON pipeline_default_rules(preset_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_pdr_global ON pipeline_default_rules(is_global)
+    """,
 ]
 
 

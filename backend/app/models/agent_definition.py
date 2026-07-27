@@ -271,3 +271,37 @@ class PipelinePresetModel:
                 "DELETE FROM pipeline_presets WHERE id = ?", (pid,)
             )
             return cursor.rowcount > 0
+
+    @staticmethod
+    def update(pid: int, updates: dict) -> Optional[dict]:
+        """局部更新 Pipeline 预设（如 name / description / agents）.
+
+        Args:
+            pid: 预设主键 id。
+            updates: 要更新的字段字典（允许 name / description / agents）。
+
+        Returns:
+            更新后的完整记录，或 None（记录不存在）。
+        """
+        allowed = {"name", "description", "agents"}
+        data: dict[str, Any] = {}
+        for k in allowed:
+            if k not in updates:
+                continue
+            v = updates[k]
+            if k == "agents":
+                data[k] = json.dumps(v, ensure_ascii=False) if isinstance(v, list) else str(v)
+            else:
+                data[k] = v
+        if not data:
+            return PipelinePresetModel.get(pid)
+        clauses = [f"{k} = ?" for k in data]
+        values = list(data.values())
+        values.append(pid)
+        with get_connection() as conn:
+            conn.execute(
+                f"UPDATE pipeline_presets SET {', '.join(clauses)}, "
+                f"updated_at = datetime('now') WHERE id = ?",
+                values,
+            )
+        return PipelinePresetModel.get(pid)

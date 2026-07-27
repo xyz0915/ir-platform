@@ -139,6 +139,7 @@ class RegistryCollector(BaseCollector):
                                 "hive": "HKLM" if hive == winreg.HKEY_LOCAL_MACHINE else "HKCU",
                                 "value_type": _reg_type_name(value_type),
                                 "last_write_time": last_write_str,
+                                "dedup_key": f"run:{'HKLM' if hive == winreg.HKEY_LOCAL_MACHINE else 'HKCU'}:{key_path}:{name}",
                             })
                             index += 1
                         except OSError:
@@ -176,6 +177,7 @@ class RegistryCollector(BaseCollector):
                                     "name": subkey_name,
                                     "image_path": image_path,
                                     "start_type": start_type,
+                                    "dedup_key": f"service:{subkey_name}",
                                 })
                         except (FileNotFoundError, PermissionError):
                             continue
@@ -207,6 +209,7 @@ class RegistryCollector(BaseCollector):
                                 items.append({
                                     "guid": subkey_name,
                                     "path": path,
+                                    "dedup_key": f"task_reg:{subkey_name}",
                                 })
                         except (FileNotFoundError, PermissionError):
                             continue

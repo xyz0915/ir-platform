@@ -283,6 +283,62 @@ describe('pipelineEditor — 校验操作', () => {
   })
 })
 
+describe('pipelineEditor — 加载预设', () => {
+  let store
+
+  beforeEach(() => {
+    store = createStore()
+  })
+
+  it('loadPreset(nodes) 应加载完整节点对象并保留属性', () => {
+    store.loadPreset({
+      pipelineName: '标准预设',
+      nodes: [
+        { type: 'trigger', position: { x: 100, y: 200 }, name: '告警触发' },
+        { type: 'llm', position: { x: 400, y: 200 }, name: '初步调查' },
+      ],
+    })
+    expect(store.nodeCount).toBe(2)
+    expect(store.pipelineName).toBe('标准预设')
+    expect(store.pipelineNodes[0].type).toBe('trigger')
+    expect(store.pipelineNodes[0].name).toBe('告警触发')
+    expect(store.pipelineNodes[1].type).toBe('llm')
+  })
+
+  it('loadPreset(agents) 应兼容后端字符串数组并自动串联', () => {
+    store.loadPreset({
+      name: '202',
+      agents: ['triage', 'file_analysis', 'network_analysis', 'timeline', 'root_cause'],
+    })
+    expect(store.nodeCount).toBe(5)
+    expect(store.connectionCount).toBe(4)
+    expect(store.pipelineName).toBe('202')
+    const types = store.pipelineNodes.map(n => n.type)
+    expect(types).toEqual(['trigger', 'file_analysis', 'network_analysis', 'timeline', 'root_cause'])
+  })
+
+  it('loadPreset(agents) 应映射已知别名到 NodeType', () => {
+    store.loadPreset({
+      agents: ['process', 'reporter', 'responder', 'investigator'],
+    })
+    const types = store.pipelineNodes.map(n => n.type)
+    expect(types).toEqual(['process_analysis', 'output', 'action', 'llm'])
+  })
+
+  it('loadPreset(agents) 对未知 Agent 应回退到 llm', () => {
+    store.loadPreset({
+      agents: ['unknown_agent'],
+    })
+    expect(store.nodeCount).toBe(1)
+    expect(store.pipelineNodes[0].type).toBe('llm')
+  })
+
+  it('loadPreset 加载后应重置 configDirty', () => {
+    store.loadPreset({ agents: ['triage'] })
+    expect(store.configDirty).toBe(false)
+  })
+})
+
 describe('pipelineEditor — 清空与加载', () => {
   let store
 

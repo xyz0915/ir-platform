@@ -19,6 +19,7 @@
       <span class="tn-event-ip">{{ event.ip_address || '' }}</span>
       <span class="tn-event-collector">{{ event.source_collector || '' }}</span>
     </span>
+    <slot name="actions" />
   </div>
 </template>
 

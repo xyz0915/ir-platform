@@ -15,13 +15,18 @@
           />
         </div>
         <div class="dbg-row">
-          <label>event_id</label>
+          <label :class="{ 'dbg-req': isTrigger }">
+            event_id<span v-if="isTrigger" class="dbg-asterisk">*</span>
+          </label>
           <el-input
             v-model="ctxForm.event_id"
             size="small"
-            placeholder="可选，缺失时按 host_id 反查"
+            :placeholder="isTrigger ? '必填：触发器（分诊）需要 event_id' : '可选，缺失时按 host_id 反查'"
             @input="onCtxChange"
           />
+        </div>
+        <div v-if="isTrigger" class="dbg-trigger-hint">
+          ⚠ 触发器（分诊）需要 event_id：请填写上方 event_id，否则分诊将无法执行并返回失败提示。
         </div>
         <div v-if="extraVars.length" class="dbg-extra">
           <el-tag v-for="v in extraVars" :key="v.key" size="small" type="info">
@@ -72,6 +77,7 @@ import { flattenVariables } from '@/constants/pipelineTypes'
 
 const store = usePipelineEditorStore()
 const node = computed(() => store.selectedNode)
+const isTrigger = computed(() => node.value?.type === 'trigger')
 const paramsMode = ref('form')
 
 const ctxForm = reactive({ host_id: '', event_id: '' })
@@ -176,6 +182,18 @@ function onJsonBlur() {
 }
 .dbg-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .dbg-row label { width: 64px; font-size: 11px; color: var(--color-fg-muted); }
+.dbg-req { color: var(--color-danger-fg) !important; font-weight: 600; }
+.dbg-asterisk { margin-left: 2px; color: var(--color-danger-fg); }
+.dbg-trigger-hint {
+  font-size: 10px;
+  color: var(--color-danger-fg);
+  background: var(--color-danger-muted, rgba(248, 81, 73, 0.1));
+  border: 0.5px solid var(--color-danger-fg);
+  border-radius: var(--r-btn);
+  padding: 4px 6px;
+  margin: -2px 0 6px;
+  line-height: 1.4;
+}
 .dbg-extra { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .dbg-mode { margin-left: auto; }
 .dbg-kv { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }

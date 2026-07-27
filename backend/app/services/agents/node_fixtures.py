@@ -9,7 +9,7 @@
 """
 
 # ──────────────────────────────────────────────────────────────────────
-# 7 个应急响应节点 + branch + llm 的合成数据
+# 7 个应急响应节点 + branch + llm + trigger(分诊) 的合成数据
 # ──────────────────────────────────────────────────────────────────────
 
 SIMULATE_FILE_ANALYSIS = {
@@ -228,6 +228,49 @@ SIMULATE_LLM = {
     "evidence": [],
 }
 
+SIMULATE_TRIAGE = {
+    "output_text": (
+        "# 触发器分诊报告（模拟）\n\n"
+        "事件数量：1\n"
+        "代表事件 ID：SE-1\n"
+        "事件类型：malware\n"
+        "最高严重度：critical\n"
+        "建议优先级：**P0**\n"
+        "主机 ID：host-triage-1\n"
+        "时间戳：2026-07-18T10:00:00\n"
+        "AI 初判：suspicious（beacon 行为）\n"
+        "命中规则参考：Suspicious Beacon\n\n"
+        "## 证据摘要\n"
+        "  🔴 security_events.id=SE-1 — malware / critical（beacon）\n"
+        "  🔴 normalized_logs — powershell.exe 外联 8.8.8.8\n\n"
+        "> 置信度 0.75：基于 critical 严重度 + AI 初判 suspicious + 命中检测规则，"
+        "判定为高危分诊事件，建议优先处置。"
+    ),
+    "structured": {
+        "stage": "triage",
+        "priority": "P0",
+        "confidence": 0.75,
+        "evidence_count": 2,
+        "event_id": "SE-1",
+        "summary": "检测到 critical 级 malware 事件（beacon 行为），AI 初判 suspicious，建议优先级 P0。",
+    },
+    "confidence": 0.75,
+    "evidence": [
+        {
+            "type": "security_events",
+            "ref": "security_events.id=SE-1",
+            "event_type": "malware",
+            "severity": "critical",
+        },
+        {
+            "type": "normalized_logs",
+            "ref": "normalized_logs.host_id=host-triage-1",
+            "process_name": "powershell.exe",
+            "remote_addr": "8.8.8.8",
+        },
+    ],
+}
+
 # 未知类型兜底
 SIMULATE_DEFAULT = {
     "output_text": "# 节点模拟输出\n（模拟）该节点类型暂无专门的 fixture，返回通用合成结果。",
@@ -246,6 +289,7 @@ _FIXTURE_MAP = {
     "threat_intel": SIMULATE_THREAT_INTEL,
     "branch": SIMULATE_BRANCH,
     "llm": SIMULATE_LLM,
+    "trigger": SIMULATE_TRIAGE,
 }
 
 

@@ -99,6 +99,7 @@ class InvestigatorAgent(BaseAgent):
                     security_events_summary=data_provider.build_security_events_summary(sec_events),
                 ),
                 user=ctx.get("user"),
+                trace_id=ctx.get("trace_id"),
             )
             if resp.get("degraded") or not resp.get("content"):
                 llm_unavailable = True

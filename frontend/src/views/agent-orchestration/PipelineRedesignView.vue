@@ -27,6 +27,7 @@
         </button>
         <button class="btn" @click="onLoadPreset">加载预设</button>
         <button class="btn" @click="onSaveAs">另存为</button>
+        <button class="btn" @click="onSetDefault">设为默认</button>
         <button class="btn btn-primary" @click="onPublish">发布</button>
       </div>
     </div>
@@ -45,11 +46,70 @@
 
     <!-- Phase 3 · 节点级可视化调试面板（右 Drawer 覆盖式，盖住 ConfigPanel 区） -->
     <DebugPanel />
+
+    <!-- 设为默认流程：场景条件弹窗 -->
+    <el-dialog
+      v-model="setDefaultDialogVisible"
+      title="设为默认流程"
+      width="520px"
+      :close-on-click-modal="false"
+    >
+      <el-form :model="setDefaultForm" label-width="110px">
+        <el-form-item label="Pipeline">
+          <span class="preset-name">{{ store.pipelineName || '未命名流程' }}</span>
+        </el-form-item>
+        <el-form-item label="规则名称">
+          <el-input
+            v-model="setDefaultForm.name"
+            placeholder="可选，缺省取 Pipeline 名称"
+            clearable
+          />
+        </el-form-item>
+        <el-form-item label="事件分类">
+          <el-select
+            v-model="setDefaultForm.category"
+            clearable
+            placeholder="可选（不约束 = 任意分类）"
+            style="width: 100%"
+          >
+            <el-option v-for="c in categoryOptions" :key="c" :label="c" :value="c" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="优先级">
+          <el-select
+            v-model="setDefaultForm.priority"
+            clearable
+            placeholder="可选（不约束 = 任意优先级）"
+            style="width: 100%"
+          >
+            <el-option v-for="p in priorityOptions" :key="p" :label="p" :value="p" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="设为全局默认">
+          <el-switch v-model="setDefaultForm.isGlobal" />
+          <span class="form-hint">无条件兜底（全表唯一）；关闭则按上面条件匹配</span>
+        </el-form-item>
+        <el-form-item label="排序">
+          <el-input-number v-model="setDefaultForm.priorityOrder" :min="0" :max="999" />
+          <span class="form-hint">场景规则确定性排序（小者优先）</span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="setDefaultDialogVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="setDefaultSubmitting"
+          @click="onConfirmSetDefault"
+        >
+          保存为默认规则
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { h } from 'vue'
+import { h, ref } from 'vue'
 import { onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { usePipelineEditorStore } from '@/stores/pipelineEditor'
@@ -60,6 +120,92 @@ import ConfigPanel from '@/components/agents/pipeline/ConfigPanel.vue'
 import DebugPanel from '@/components/agents/pipeline/DebugPanel.vue'
 
 const store = usePipelineEditorStore()
+
+// ===== config-default-pipeline: 设为默认流程 =====
+
+const setDefaultDialogVisible = ref(false)
+const setDefaultSubmitting = ref(false)
+const categoryOptions = [
+  'ransomware', 'port_scan', 'phishing', 'malware',
+  'intrusion', 'data_leak', 'ddos', 'brute_force', 'web_attack', 'insider',
+]
+const priorityOptions = ['P0', 'P1', 'P2', 'P3']
+const setDefaultForm = ref({
+  name: '',
+  category: null,
+  priority: null,
+  isGlobal: false,
+  priorityOrder: 0,
+})
+
+function onSetDefault() {
+  setDefaultForm.value = {
+    name: '',
+    category: null,
+    priority: null,
+    isGlobal: false,
+    priorityOrder: 0,
+  }
+  setDefaultDialogVisible.value = true
+}
+
+async function onConfirmSetDefault() {
+  const snapshot = store.getPipelineSnapshot()
+  const agentNames = snapshot.nodes.map((n) => n.name)
+  if (!agentNames.length) {
+    ElMessage.warning('画布为空，请先设计流程')
+    return
+  }
+  setDefaultSubmitting.value = true
+  try {
+    // 1) 确保 preset 存在：优先复用 agents 相同的预设，否则新建
+    const presetsRes = await agentApi.pipeline.getPresets()
+    const presets = presetsRes.data || presetsRes || []
+    const agentsKey = JSON.stringify(agentNames)
+    let preset = presets.find(
+      (p) => JSON.stringify(p.agents || []) === agentsKey,
+    )
+    if (!preset) {
+      const baseName = store.pipelineName || '未命名流程'
+      try {
+        const created = await agentApi.pipeline.createPreset(baseName, '', snapshot.nodes)
+        preset = created.data || created
+      } catch (e) {
+        // 名称冲突（409）：改用带时间戳名称重试
+        if (e?.response?.status === 409 || e?.code === 409) {
+          const created = await agentApi.pipeline.createPreset(
+            `${baseName}-${Date.now()}`, '', snapshot.nodes,
+          )
+          preset = created.data || created
+        } else {
+          throw e
+        }
+      }
+    }
+    if (!preset || preset.id == null) {
+      ElMessage.error('保存 pipeline 预设失败')
+      return
+    }
+    // 2) 创建默认规则（先确保 preset 存在 → POST /agents/default-pipelines）
+    const payload = {
+      preset_id: preset.id,
+      name: setDefaultForm.value.name || store.pipelineName || undefined,
+      scene_condition: {
+        category: setDefaultForm.value.category || null,
+        priority: setDefaultForm.value.priority || null,
+      },
+      is_global: setDefaultForm.value.isGlobal,
+      priority_order: setDefaultForm.value.priorityOrder || 0,
+    }
+    await agentApi.defaultPipelines.create(payload)
+    ElMessage.success('已设为默认规则')
+    setDefaultDialogVisible.value = false
+  } catch (e) {
+    // 全局默认已存在(409) 等由后端返回，axios 拦截器已提示
+  } finally {
+    setDefaultSubmitting.value = false
+  }
+}
 
 function onNodeDragStart(option) {
   // 拖拽开始时的处理（可选）
@@ -108,8 +254,9 @@ async function onLoadPreset() {
       return
     }
 
-    // 使用 ElMessageBox 展示预设列表供选择
+    // 使用 ElMessageBox 展示预设列表供选择，选中后高亮并显示对勾
     let selectedPreset = null
+    let selectedEl = null
     await ElMessageBox({
       title: '加载预设',
       message: h('div', { class: 'preset-list' },
@@ -119,24 +266,43 @@ async function onLoadPreset() {
             padding: '8px 12px',
             cursor: 'pointer',
             borderBottom: '0.5px solid var(--color-border-default)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
           },
           onClick: (e) => {
             selectedPreset = p
-            // 视觉反馈
+            selectedEl = e.currentTarget
+            // 视觉反馈：高亮 + 左侧强调色 + 对勾
             document.querySelectorAll('.preset-item').forEach(el => {
               el.style.background = ''
+              el.style.borderLeft = ''
+              el.style.fontWeight = ''
+              const check = el.querySelector('.preset-check')
+              if (check) check.style.display = 'none'
             })
             e.currentTarget.style.background = 'var(--color-accent-subtle)'
+            e.currentTarget.style.borderLeft = '3px solid var(--color-accent)'
+            e.currentTarget.style.fontWeight = '500'
+            const check = e.currentTarget.querySelector('.preset-check')
+            if (check) check.style.display = 'inline'
           },
         }, [
-          h('div', { style: 'font-weight:500' }, p.name || p.preset_name),
-          h('div', { style: 'font-size:11px;color:var(--color-fg-light)' }, p.description || ''),
+          h('div', null, [
+            h('div', { style: 'font-weight:500' }, p.name || p.preset_name),
+            h('div', { style: 'font-size:11px;color:var(--color-fg-light)' }, p.description || ''),
+          ]),
+          h('div', { class: 'preset-check', style: 'display:none;color:var(--color-accent);font-weight:bold;font-size:16px;padding-left:8px;' }, '✓'),
         ]))
       ),
       showCancelButton: true,
       confirmButtonText: '加载',
       beforeClose: (action, instance, done) => {
-        if (action === 'confirm' && selectedPreset) {
+        if (action === 'confirm') {
+          if (!selectedPreset) {
+            ElMessage.warning('请先选择一个预设，再点击加载')
+            return
+          }
           store.loadPreset(selectedPreset)
           ElMessage.success('预设已加载')
         }
@@ -321,5 +487,17 @@ onUnmounted(() => {
   grid-template-columns: 232px 1fr 306px;
   flex: 1;
   min-height: 0;
+}
+
+/* ===== 设为默认流程弹窗 ===== */
+.preset-name {
+  font-weight: 500;
+  color: var(--color-fg-default);
+}
+.form-hint {
+  display: inline-block;
+  margin-left: 10px;
+  font-size: 11px;
+  color: var(--color-fg-muted);
 }
 </style>

@@ -1,5 +1,37 @@
 <template>
   <div class="agent-run-view">
+    <el-tabs v-model="activeTab" class="run-tabs">
+      <!-- ===== 运行 ===== -->
+      <el-tab-pane label="运行" name="run">
+        <!-- 顶部 banner：将使用的默认流程 + 命中规则（P1-1） -->
+        <el-card v-if="banner" class="banner-card" shadow="never" :class="`banner-${banner.type}`">
+          <div class="banner-row">
+            <el-icon class="banner-icon"><InfoFilled /></el-icon>
+            <div class="banner-text">
+              <div class="banner-title">{{ banner.title }}</div>
+              <div class="banner-sub">{{ banner.sub }}</div>
+            </div>
+            <div class="banner-actions">
+              <el-select
+                v-model="defaultStore.manualPresetId"
+                placeholder="手动选择其它 pipeline"
+                clearable
+                size="small"
+                style="width: 220px"
+              >
+                <el-option
+                  v-for="p in presets"
+                  :key="p.id"
+                  :label="p.name"
+                  :value="p.id"
+                />
+              </el-select>
+              <el-link type="primary" @click="activeTab = 'default'">查看默认规则管理</el-link>
+            </div>
+          </div>
+        </el-card>
+        <div v-else-if="eventId" class="banner-placeholder">正在解析默认流程…</div>
+
     <!-- ===== 顶部操作区 ===== -->
     <el-card class="toolbar-card" shadow="never">
       <div class="toolbar">
@@ -138,6 +170,13 @@
         />
       </div>
     </el-card>
+      </el-tab-pane>
+
+      <!-- ===== 默认流程 ===== -->
+      <el-tab-pane label="默认流程" name="default">
+        <DefaultPipelineManagePanel />
+      </el-tab-pane>
+    </el-tabs>
   </div>
 </template>
 
@@ -145,13 +184,43 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Cpu, VideoPlay, Refresh, Stamp, List, Connection } from '@element-plus/icons-vue'
+import { Cpu, VideoPlay, Refresh, Stamp, List, Connection, InfoFilled } from '@element-plus/icons-vue'
 import { useAgentOrchestrationStore } from '@/stores/agents'
+import { useDefaultPipelineStore } from '@/stores/defaultPipeline'
 import HitlApprovalPanel from '@/components/agents/HitlApprovalPanel.vue'
+import DefaultPipelineManagePanel from '@/components/agents/DefaultPipelineManagePanel.vue'
+import agentApi from '@/api/agent'
 
 const route = useRoute()
 const router = useRouter()
 const store = useAgentOrchestrationStore()
+const defaultStore = useDefaultPipelineStore()
+
+// 预置模板列表：供手动覆盖选择（P1-3）
+const presets = ref([])
+// 当前页签：运行 / 默认流程（P1-1，同一页内切换，无子路由）
+const activeTab = ref('run')
+
+// ===== 顶部 banner：将使用的默认流程（来自 resolve 预览，P1-1） =====
+const banner = computed(() => {
+  const p = defaultStore.resolvePreview
+  if (!p) return null
+  const matchLabel = {
+    scene: '场景规则匹配',
+    global: '全局默认',
+    hardcoded: '内置默认（未配置规则）',
+  }[p.match_type] || p.match_type || '未知'
+  return {
+    type: p.match_type === 'hardcoded' ? 'warning' : 'success',
+    title: p.preset_name
+      ? `将使用的默认流程：${p.preset_name}`
+      : '将使用内置默认流程（分诊→调查→处置→报告）',
+    sub:
+      `匹配方式：${matchLabel}` +
+      (p.rule_id ? `（规则 #${p.rule_id}）` : '') +
+      (p.preset_name ? ` · 智能体：${(p.agent_names || []).join(' → ')}` : ''),
+  }
+})
 
 // ===== 新建表单 =====
 const eventId = ref('')
@@ -173,6 +242,12 @@ onMounted(() => {
   if (route.query.caseId) {
     caseId.value = String(route.query.caseId)
   }
+  // 预置模板列表：供手动覆盖选择（P1-3）
+  loadPresets()
+  // 携带 eventId 进入时，解析默认流程以展示 banner（P1-1）
+  if (eventId.value) {
+    defaultStore.resolve(eventId.value)
+  }
   refreshAll()
   // 若通过 HITL 面板跳转带 runId，自动跳转详情页
   const q = route.query.runId
@@ -190,6 +265,16 @@ watch(
   }
 )
 
+// 事件 ID 变化时，重新解析默认流程预览（清空则重置 banner 与手动覆盖，P1-1/P1-3）
+watch(eventId, (val) => {
+  if (val && val.trim()) {
+    defaultStore.resolve(val.trim())
+  } else {
+    defaultStore.resolvePreview = null
+    defaultStore.setManualPreset(null)
+  }
+})
+
 // ===== 动作 =====
 async function refreshRuns() {
   await store.fetchRuns({
@@ -204,6 +289,17 @@ async function refreshAll() {
   await refreshRuns()
 }
 
+/** 拉取预置模板列表，供运行页「手动覆盖选择」使用（P1-3）。 */
+async function loadPresets() {
+  try {
+    const res = await agentApi.pipeline.getPresets()
+    const data = res?.data ?? res
+    presets.value = Array.isArray(data) ? data : data?.presets ?? []
+  } catch (e) {
+    presets.value = []
+  }
+}
+
 async function onStartRun() {
   const payload = {}
   if (eventId.value.trim()) payload.event_id = eventId.value.trim()
@@ -215,6 +311,10 @@ async function onStartRun() {
   if (caseId.value.trim()) {
     const n = Number(caseId.value.trim())
     if (!Number.isNaN(n)) payload.case_id = n
+  }
+  // P1-3：手动覆盖的 pipeline（清空 manualPresetId 则回退默认匹配）
+  if (defaultStore.manualPresetId) {
+    payload.preset_id = defaultStore.manualPresetId
   }
   if (!payload.event_id && !payload.event_ids?.length) {
     ElMessage.warning('请至少填写事件 ID 或批量事件 ID')
@@ -241,7 +341,7 @@ function onOpenAgentMgmt() {
 }
 
 function onRowClick(row) {
-  router.push(`/agent-orchestration/${row.run_id}`)
+  router.push(`/agent-orchestration/runs/${row.run_id}`)
 }
 
 function onPageChange(p) {
@@ -423,5 +523,68 @@ function confidenceClass(v) {
 
 .conf-low {
   color: var(--color-fg-muted);
+}
+
+/* ===== 默认流程 banner（P1-1） ===== */
+.run-tabs {
+  width: 100%;
+}
+
+.banner-card {
+  border-radius: 12px;
+}
+
+.banner-card.banner-success {
+  background: var(--color-success-subtle, #ecfdf5);
+  border-color: var(--color-success-emphasis, #6ee7b7);
+}
+
+.banner-card.banner-warning {
+  background: var(--color-attention-subtle, #fffbeb);
+  border-color: var(--color-attention-emphasis, #fcd34d);
+}
+
+.banner-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.banner-icon {
+  font-size: 20px;
+  color: var(--color-accent-fg, #2563eb);
+}
+
+.banner-text {
+  flex: 1;
+  min-width: 220px;
+}
+
+.banner-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-fg-default);
+}
+
+.banner-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--color-fg-muted);
+  line-height: 1.5;
+}
+
+.banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.banner-placeholder {
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--color-canvas-subtle, #f6f8fa);
+  color: var(--color-fg-muted);
+  font-size: 13px;
 }
 </style>

@@ -316,9 +316,13 @@
     </div>
 
     <!-- 主机概览 -->
-    <div class="detail-section" v-if="store.hostStats">
-      <div class="section-title">主机概览 — {{ event.hostname }}</div>
-      <div class="host-stat-grid">
+    <div class="detail-section collapsible-section" v-if="store.hostStats">
+      <div class="section-title collapsible-title" @click="toggleSection('host')">
+        主机概览 — {{ event.hostname }}
+        <span class="collapse-arrow">{{ collapsedSections.has('host') ? '▶' : '▼' }}</span>
+      </div>
+      <div v-show="!collapsedSections.has('host')">
+        <div class="host-stat-grid">
         <div class="host-stat"><div class="host-stat-val">{{ store.hostStats.total_24h }}</div><div class="host-stat-lbl">24h 事件</div></div>
         <div class="host-stat"><div class="host-stat-val" style="color:var(--color-risk-high)">{{ store.hostStats.matched_24h }}</div><div class="host-stat-lbl">规则命中</div></div>
         <div class="host-stat"><div class="host-stat-val" style="color:var(--color-risk-critical)">{{ store.hostStats.active_alerts }}</div><div class="host-stat-lbl">活跃告警</div></div>
@@ -327,11 +331,16 @@
         上次处置: {{ store.hostStats.last_disposition.at }} · {{ store.hostStats.last_disposition.operator }} — "{{ store.hostStats.last_disposition.comment }}"
       </div>
     </div>
+    </div>
 
     <!-- 时间线上下文 -->
-    <div class="detail-section" v-if="store.eventContext.length">
-      <div class="section-title">时间线上下文 · 前后 5 分钟</div>
-      <div v-for="evt in store.eventContext" :key="evt.id" class="tl-item" :class="{ 'tl-current': evt.id === event.id }">
+    <div class="detail-section collapsible-section" v-if="store.eventContext.length">
+      <div class="section-title collapsible-title" @click="toggleSection('timeline')">
+        时间线上下文 · 前后 5 分钟
+        <span class="collapse-arrow">{{ collapsedSections.has('timeline') ? '▶' : '▼' }}</span>
+      </div>
+      <div v-show="!collapsedSections.has('timeline')">
+        <div v-for="evt in store.eventContext" :key="evt.id" class="tl-item" :class="{ 'tl-current': evt.id === event.id }">
         <div class="tl-time">{{ formatTime(evt.timestamp) }}</div>
         <div class="tl-line">
           <div class="tl-dot" :class="dotColorClass(evt.severity)"></div>
@@ -342,6 +351,7 @@
           <span class="tl-summary">{{ evt.summary || '' }}</span>
         </div>
       </div>
+    </div>
     </div>
 
     <!-- 影响范围 -->
@@ -795,6 +805,19 @@ watch(() => props.event?.id, async (newId) => {
 
 const remoteNodes = computed(() => (netGraph.value?.nodes || []).filter(n => n.type === 'remote'))
 
+// ── 自适应布局状态 ──
+const collapsedSections = ref(new Set())  // 折叠状态的 section key
+const isNarrowView = ref(window.innerWidth < 1100)
+function toggleSection(key) {
+  const next = new Set(collapsedSections.value)
+  if (next.has(key)) next.delete(key); else next.add(key)
+  collapsedSections.value = next
+}
+function onResize() { isNarrowView.value = window.innerWidth < 1100 }
+if (typeof window !== 'undefined') {
+  window.addEventListener('resize', onResize)
+}
+
 // ── 上下文切换 ──
 const siblingEvents = computed(() => store.items || [])
 const currentIdx = computed(() => siblingEvents.value.findIndex(e => e.id === props.event?.id))
@@ -813,11 +836,27 @@ function onFilterByHost(hostId) {
 function onDeepInvestigation() {
   const query = { eventId: props.event.id }
   if (props.event.case_id) query.caseId = props.event.case_id
-  router.push({ path: '/agent-orchestration', query })
+  router.push({ path: '/agent-orchestration/runs', query })
 }
 </script>
 
 <style scoped>
+/* ── 可折叠区段 ── */
+.collapsible-section { transition: all .15s; }
+.collapsible-title { cursor: pointer; user-select: none; }
+.collapsible-title:hover { color: var(--color-accent-fg, #2563eb); }
+.collapse-arrow { font-size: 10px; margin-left: 6px; color: var(--color-fg-muted, #86909c); display: inline-block; }
+.collapsible-title:hover .collapse-arrow { color: var(--color-accent-fg, #2563eb); }
+
+/* ── 响应式布局（窄屏优化） ── */
+@media (max-width: 1100px) {
+  .detail-section .host-stat-grid { grid-template-columns: 1fr 1fr 1fr; }
+  .detail-section .impact-grid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 800px) {
+  .decision-bar { flex-wrap: wrap; gap: 4px; }
+  .db-left { overflow-x: auto; }
+}
 .event-detail-panel {
   height: 100%;
   display: flex;

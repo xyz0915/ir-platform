@@ -17,6 +17,9 @@ class AgentRunCreate(BaseModel):
     case_id: Optional[int] = Field(None, description="关联案件 ID")
     priority: Optional[str] = Field(None, description="覆盖默认 P2 优先级")
     title: Optional[str] = Field(None, description="覆盖自动生成的标题")
+    preset_id: Optional[int] = Field(
+        None, description="手动指定 pipeline（覆盖默认匹配，P1-3）"
+    )
 
 
 class AgentApprovalRequest(BaseModel):

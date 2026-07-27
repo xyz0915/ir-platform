@@ -18,6 +18,18 @@ agent/build/
 agent/dist/
 agent/*.spec
 
+# Temp / build artifacts
+_ps.txt
+_psps.txt
+agent/0727.json
+pipeline-redesign-preview.html
+proposal-preview/
+proposal-preview-fixed/
+backend/ir_platform.db
+backend/app/data/purge_snapshots/
+frontend/cov-out/
+frontend/coverage_archive_*/
+
 # Database & data (runtime data, not source)
 backend/data/ir_platform.db
 backend/data/test_ir_platform.db

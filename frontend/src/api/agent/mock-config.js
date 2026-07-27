@@ -25,6 +25,6 @@ export const USE_MOCK = {
   agents: false, // M2 真实
   runs: false, // M1/M8 运行真实
 
-  // ── Phase 3 节点级调试（默认 Mock，置 false 接真实后端） ──
-  nodeDebug: true, // 单节点 run / 分支模拟 / 历史查询
+  // ── Phase 3 节点级调试（后端已就绪，置 false 接真实后端） ──
+  nodeDebug: false, // 单节点 run / 分支模拟 / 历史查询均路由真实后端（@/api/agentManagement.runNode → POST /api/agent-management/pipeline/node/run）
 }

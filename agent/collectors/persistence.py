@@ -71,10 +71,14 @@ class PersistenceCollector(BaseCollector):
                         while True:
                             try:
                                 name, value, _ = winreg.EnumValue(key, index)
+                                loc_parts = f"{hive_name}\\{key_path}".split("\\", 1)
+                                dedup_hive = loc_parts[0]
+                                dedup_path = loc_parts[1] if len(loc_parts) > 1 else ""
                                 items.append({
                                     "name": name,
                                     "command": value,
                                     "location": f"{hive_name}\\{key_path}",
+                                    "dedup_key": f"run:{dedup_hive}:{dedup_path}:{name}",
                                 })
                                 index += 1
                             except OSError:
@@ -100,7 +104,8 @@ class PersistenceCollector(BaseCollector):
                     if key in ("TaskName", "任务名"):
                         if current:
                             items.append(current)
-                        current = {"name": value, "command": "", "location": "Task Scheduler"}
+                        current = {"name": value, "command": "", "location": "Task Scheduler",
+                                    "dedup_key": f"task:{value}"}
                     elif key in ("Task To Run", "要运行的任务"):
                         if current:
                             current["command"] = value
@@ -137,6 +142,7 @@ class PersistenceCollector(BaseCollector):
                                         "command": image_path,
                                         "location": f"HKLM\\{services_key}\\{svc_name}",
                                         "start_type": start_type,
+                                        "dedup_key": f"service:{svc_name}",
                                     })
                         except (FileNotFoundError, PermissionError):
                             continue

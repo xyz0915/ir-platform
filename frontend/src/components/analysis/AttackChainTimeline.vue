@@ -82,7 +82,7 @@
                   }"
                 >
                   {{ formatTimestamp(evt.timestamp) }}
-                  {{ EVENT_TYPE_ICONS[evt.event_type] || '❓' }}
+                  {{ EVENT_TYPE_ICONS[evt.event_type] || '?' }}
                   {{ extractEventFields(evt).primary }}
                 </span>
               </template>
@@ -102,7 +102,7 @@
                 @click.stop="onSelectEvent(evt.id)"
               >
                 <span class="ae-timestamp">{{ formatTimestamp(evt.timestamp) }}</span>
-                <span class="ae-icon">{{ EVENT_TYPE_ICONS[evt.event_type] || '❓' }}</span>
+                <span class="ae-icon">{{ EVENT_TYPE_ICONS[evt.event_type] || '?' }}</span>
                 <span class="ae-type-label">{{ eventTypeLabel(evt.event_type) }}</span>
                 <span class="ae-content">
                   <span class="ae-primary">{{ extractEventFields(evt).primary }}</span>
@@ -653,32 +653,35 @@ function onRetry() {
 }
 
 .at-count-highlight {
-  background: #2563eb;
-  color: #fff;
+  background: #eef0f3;
+  color: #4a5260;
+  font-weight: 500;
 }
 
-/* P1: 阶段最高严重度标记 */
+/* P1: 阶段最高严重度标记 — 去 AI 警示感，改中性 */
 .at-stage-severity-badge {
   font-size: 9px;
   padding: 1px 5px;
   border-radius: 3px;
-  font-weight: 600;
+  font-weight: 500;
   white-space: nowrap;
+  background: #f5f5f5;
+  color: #6b7280;
 }
 
 .ssb-critical {
-  background: rgba(255, 0, 0, 0.12);
-  color: #FF0000;
+  background: #f5f5f5;
+  color: #6b7280;
 }
 
 .ssb-high {
-  background: rgba(245, 108, 108, 0.15);
-  color: #F56C6C;
+  background: #f5f5f5;
+  color: #6b7280;
 }
 
 .ssb-medium {
-  background: rgba(230, 162, 60, 0.15);
-  color: #E6A23C;
+  background: #f5f5f5;
+  color: #6b7280;
 }
 
 .at-chevron {
@@ -736,11 +739,11 @@ function onRetry() {
 }
 
 .at-summary-danger {
-  color: #A32D2D;
+  color: #4a5260;
 }
 
 .at-summary-warn {
-  color: #854F0B;
+  color: #6b7280;
 }
 
 /* ── 事件列表 ── */
@@ -826,41 +829,24 @@ function onRetry() {
   white-space: nowrap;
 }
 
-/* 严重度标签列 */
+/* 严重度标签列 — 去 AI 红橙警示，改中性灰 */
 .ae-severity {
   font-size: 9px;
   padding: 0 5px;
   border-radius: 3px;
-  font-weight: 600;
+  font-weight: 500;
   flex-shrink: 0;
   line-height: 16px;
   white-space: nowrap;
+  background: #f5f5f5;
+  color: #6b7280;
 }
 
-.ae-severity.sev-critical {
-  background: rgba(255, 0, 0, 0.1);
-  color: #FF0000;
-}
-
-.ae-severity.sev-high {
-  background: rgba(245, 108, 108, 0.1);
-  color: #F56C6C;
-}
-
-.ae-severity.sev-medium {
-  background: rgba(230, 162, 60, 0.1);
-  color: #E6A23C;
-}
-
-.ae-severity.sev-low {
-  background: rgba(144, 147, 153, 0.1);
-  color: #909399;
-}
-
-.ae-severity.sev-info {
-  background: rgba(192, 196, 204, 0.1);
-  color: #C0C4CC;
-}
+.ae-severity.sev-critical { color: #4a5260; }
+.ae-severity.sev-high { color: #4a5260; }
+.ae-severity.sev-medium { color: #6b7280; }
+.ae-severity.sev-low { color: #9ca3af; }
+.ae-severity.sev-info { color: #c0c4cc; }
 
 /* ── "显示全部 N 条" 按钮 ── */
 .at-show-all {

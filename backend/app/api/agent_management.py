@@ -394,8 +394,10 @@ async def stream_run_status(
     run = pipeline_engine.get_run(run_id)
     if not run:
         _err(404, f"Run '{run_id}' not found")
+    # P1-3.2: SSE 重连时回放历史事件（已完成 stages 的状态）
+    history = run.sse_events if run.sse_events else None
     return StreamingResponse(
-        sse_manager.subscribe(run_id),
+        sse_manager.subscribe(run_id, history=history),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

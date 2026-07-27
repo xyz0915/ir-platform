@@ -40,7 +40,8 @@ class ServicesCollector(BaseCollector):
                 if current:
                     services.append(current)
                 current = {"name": line.split(":", 1)[-1].strip() if ":" in line else "",
-                            "collected_at": get_timestamp()}
+                            "collected_at": get_timestamp(),
+                            "dedup_key": f"service:{line.split(':', 1)[-1].strip() if ':' in line else ''}"}
             elif line.startswith("DISPLAY_NAME") or line.startswith("显示名称"):
                 current["display_name"] = line.split(":", 1)[-1].strip() if ":" in line else ""
             elif line.startswith("STATE") or line.startswith("状态"):
