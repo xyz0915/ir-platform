@@ -426,6 +426,62 @@ class PipeMapper(BaseMapper):
         }
 
 
+class LogMapper(BaseMapper):
+    """安全日志事件映射器: log_event.
+
+    映射 Windows EventLog / Linux syslog 日志条目到统一 SecurityEvent 格式。
+    根据 Windows Event ID（4624/4625/4688/5156 等）设定 severity 和 attack_stage。
+    """
+
+    event_types = ["log_event"]
+    _EXTRACTED_KEYS = {
+        "event_type", "log_name", "event_id", "type", "time",
+        "source", "computer", "description", "raw", "timestamp",
+        "source_collector", "severity", "host_id",
+    }
+
+    # Windows Event ID → severity/attack_stage 分类映射
+    _EVENT_ID_MAP: dict[str, dict] = {
+        "4624": {"severity": "info",   "attack_stage": "initial_access",      "label": "登录成功"},
+        "4625": {"severity": "medium", "attack_stage": "credential_access",    "label": "登录失败"},
+        "4634": {"severity": "info",   "attack_stage": None,                  "label": "注销"},
+        "4648": {"severity": "medium", "attack_stage": "credential_access",    "label": "显式凭据登录"},
+        "4672": {"severity": "high",   "attack_stage": "privilege_escalation", "label": "特殊特权分配"},
+        "4688": {"severity": "info",   "attack_stage": "execution",            "label": "进程创建"},
+        "5156": {"severity": "info",   "attack_stage": "command_and_control",  "label": "连接允许"},
+    }
+
+    def map(self, raw: dict) -> dict | None:
+        """将单条日志条目映射为 SecurityEvent 字段字典。"""
+        event_id = str(raw.get("event_id", ""))
+        classification = self._EVENT_ID_MAP.get(event_id, {})
+        log_name = raw.get("log_name", "unknown")
+
+        # 推断来源采集器：有 raw 字段的是 Linux syslog
+        source_collector = raw.get("source_collector",
+                                    "linux_journal" if raw.get("raw") else "windows_eventlog")
+        return {
+            "event_type": "log_event",
+            "event_key": f"{log_name}/{event_id}" if event_id else f"{log_name}/unknown",
+            "timestamp": (raw.get("timestamp") or raw.get("time")
+                          or raw.get("_fallback_ts")
+                          or datetime.now(timezone.utc).isoformat()),
+            "source_collector": source_collector,
+            "severity": classification.get("severity", raw.get("severity", "info")),
+            "host_id": raw.get("host_id", 0),
+            "evidence": {
+                "log_name": log_name,
+                "event_id": event_id or None,
+                "type": raw.get("type"),
+                "source": raw.get("source"),
+                "computer": raw.get("computer"),
+                "description": raw.get("description"),
+                "raw": raw.get("raw"),
+                "_raw_extra": _compute_raw_extra(raw, self._EXTRACTED_KEYS),
+            },
+        }
+
+
 # ── 映射器注册表 ──
 
 _MAPPERS: list[BaseMapper] = [
@@ -440,6 +496,7 @@ _MAPPERS: list[BaseMapper] = [
     AuthMapper(),
     ModuleMapper(),
     PipeMapper(),
+    LogMapper(),
 ]
 
 _TYPE_MAPPER_INDEX: dict[str, BaseMapper] = {}

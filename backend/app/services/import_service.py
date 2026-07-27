@@ -265,6 +265,18 @@ class ImportService:
                     if isinstance(ps, dict) and ps.get("name"):
                         persist_map[ps["name"]] = ps.get("command")
 
+            # ── 展平 logs dict → list ──
+            logs_data = data.get("logs", {})
+            if isinstance(logs_data, dict):
+                flat_logs: list[dict] = []
+                for log_name, entries in logs_data.items():
+                    if isinstance(entries, list):
+                        for entry in entries:
+                            if isinstance(entry, dict):
+                                entry.setdefault("log_name", log_name)
+                                flat_logs.append(entry)
+                data["logs"] = flat_logs
+
             for key, event_type in EVENT_TYPE_MAP.items():
                 items = data.get(key, [])
                 if not items:

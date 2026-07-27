@@ -30,6 +30,7 @@ EVENT_TYPES = [
     "service_operation",
     "pipe_connect",
     "driver_load",
+    "log_event",
 ]
 
 EVENT_TYPE_LABELS = {
@@ -53,6 +54,7 @@ EVENT_TYPE_LABELS = {
     "service_operation": "服务操作",
     "pipe_connect": "管道连接",
     "driver_load": "驱动加载",
+    "log_event": "安全日志",
 }
 
 # ── 严重等级 ──
@@ -159,6 +161,7 @@ ATTACK_STAGE_MAP: dict[str, str | None] = {
     "behavior_alert": "execution",
     "ioc_match": "initial_access",
     "user_logout": None,
+    "log_event": None,    # ← 由 Event ID 决定阶段
 }
 
 
