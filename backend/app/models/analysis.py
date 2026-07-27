@@ -111,8 +111,8 @@ class AbnormalProcess:
                     INSERT INTO abnormal_processes
                     (host_id, pid, process_name, process_path, command_line,
                      parent_pid, parent_name, reason, rule_name, severity, details,
-                     risk_score, matched_rules, attack_path)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     risk_score, matched_rules, attack_path, source_timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         host_id,
@@ -129,6 +129,7 @@ class AbnormalProcess:
                         item.get("risk_score", 0),
                         matched_rules_str,
                         item.get("attack_path"),
+                        item.get("source_timestamp"),
                     ),
                 )
                 count += 1
@@ -179,8 +180,9 @@ class SuspiciousConnection:
                     """
                     INSERT INTO suspicious_connections
                     (host_id, protocol, local_address, local_port, remote_address,
-                     remote_port, state, process_name, pid, reason, rule_name, severity)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     remote_port, state, process_name, pid, reason, rule_name, severity,
+                     source_timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         host_id,
@@ -195,6 +197,7 @@ class SuspiciousConnection:
                         item.get("reason"),
                         item.get("rule_name"),
                         item.get("severity", "medium"),
+                        item.get("source_timestamp"),
                     ),
                 )
                 count += 1
@@ -270,8 +273,9 @@ class SuspiciousStartupItem:
                 conn.execute(
                     """
                     INSERT INTO suspicious_startup_items
-                    (host_id, name, command, location, type, user, reason, rule_name, severity)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (host_id, name, command, location, type, user, reason, rule_name, severity,
+                     source_timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         host_id,
@@ -283,6 +287,7 @@ class SuspiciousStartupItem:
                         item.get("reason"),
                         item.get("rule_name"),
                         item.get("severity", "medium"),
+                        item.get("source_timestamp"),
                     ),
                 )
                 count += 1
@@ -319,8 +324,9 @@ class PersistenceItem:
                 conn.execute(
                     """
                     INSERT INTO persistence_items
-                    (host_id, type, name, command, location, user, is_suspicious, reason, details)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (host_id, type, name, command, location, user, is_suspicious, reason, details,
+                     source_timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         host_id,
@@ -332,6 +338,7 @@ class PersistenceItem:
                         1 if item.get("is_suspicious") else 0,
                         item.get("reason"),
                         json.dumps(item.get("details", {}), ensure_ascii=False) if item.get("details") else None,
+                        item.get("source_timestamp"),
                     ),
                 )
                 count += 1
@@ -576,8 +583,9 @@ class IocHit:
                 conn.execute(
                     """
                     INSERT INTO ioc_hits
-                    (host_id, ioc_type, ioc_value, matched_in, context, severity)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    (host_id, ioc_type, ioc_value, matched_in, context, severity,
+                     source_timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         host_id,
@@ -586,6 +594,7 @@ class IocHit:
                         item.get("matched_in"),
                         item.get("context"),
                         item.get("severity", "medium"),
+                        item.get("source_timestamp"),
                     ),
                 )
                 count += 1
@@ -615,8 +624,9 @@ class IocHit:
                 conn.execute(
                     """
                     INSERT INTO ioc_hits
-                    (host_id, ioc_type, ioc_value, matched_in, context, severity)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    (host_id, ioc_type, ioc_value, matched_in, context, severity,
+                     source_timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         host_id,
@@ -625,6 +635,7 @@ class IocHit:
                         item.get("matched_in"),
                         item.get("context"),
                         item.get("severity", "medium"),
+                        item.get("source_timestamp"),
                     ),
                 )
                 count += 1
@@ -679,8 +690,9 @@ class NetworkConnection:
                     """
                     INSERT INTO network_connections
                     (host_id, protocol, local_addr, local_port, remote_addr,
-                     remote_port, state, pid, process_name, collected_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     remote_port, state, pid, process_name, collected_at,
+                     source_timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         host_id,
@@ -693,6 +705,7 @@ class NetworkConnection:
                         item.get("pid"),
                         item.get("process_name"),
                         item.get("collected_at"),
+                        item.get("source_timestamp"),
                     ),
                 )
                 count += 1
@@ -746,8 +759,9 @@ class FileHash:
                     """
                     INSERT INTO file_hashes
                     (host_id, file_path, file_name, sha256, is_signed, signer,
-                     file_size, product_name, product_version, collected_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     file_size, product_name, product_version, collected_at,
+                     source_timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         host_id,
@@ -760,6 +774,7 @@ class FileHash:
                         item.get("product_name"),
                         item.get("product_version"),
                         item.get("collected_at"),
+                        item.get("source_timestamp"),
                     ),
                 )
                 count += 1
@@ -810,8 +825,9 @@ class WmiSubscription:
                     """
                     INSERT INTO wmi_subscriptions
                     (host_id, name, event_filter, event_consumer,
-                     binding_type, risk_level, collected_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                     binding_type, risk_level, collected_at,
+                     source_timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         host_id,
@@ -821,6 +837,7 @@ class WmiSubscription:
                         item.get("binding_type"),
                         item.get("risk_level"),
                         item.get("collected_at"),
+                        item.get("source_timestamp"),
                     ),
                 )
                 count += 1
@@ -879,8 +896,9 @@ class RegistryKey:
                     """
                     INSERT INTO registry_keys
                     (host_id, key_path, value_name, value_type, value_data,
-                     last_write_time, collected_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                     last_write_time, collected_at,
+                     source_timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         host_id,
@@ -890,6 +908,7 @@ class RegistryKey:
                         item.get("value_data"),
                         item.get("last_write_time"),
                         item.get("collected_at"),
+                        item.get("source_timestamp"),
                     ),
                 )
                 count += 1
@@ -958,8 +977,9 @@ class WebShell:
                     INSERT INTO webshells
                     (host_id, path, name, sha256, severity, risk_score,
                      matched_rules, suspicious_funcs, obfuscation_score,
-                     behinder_godzilla_signal, details)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     behinder_godzilla_signal, details,
+                     source_timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         host_id,
@@ -973,6 +993,7 @@ class WebShell:
                         item.get("obfuscation_score"),
                         1 if item.get("behinder_godzilla_signal") else 0,
                         details,
+                        item.get("source_timestamp"),
                     ),
                 )
                 count += 1
@@ -1054,8 +1075,9 @@ class MemoryShell:
                     """
                     INSERT INTO memory_shells
                     (host_id, pid, process_name, type, evidence, severity,
-                     risk_score, matched_rules, details)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     risk_score, matched_rules, details,
+                     source_timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         host_id,
@@ -1067,6 +1089,7 @@ class MemoryShell:
                         int(item.get("risk_score", 0) or 0),
                         matched_rules,
                         details,
+                        item.get("source_timestamp"),
                     ),
                 )
                 count += 1

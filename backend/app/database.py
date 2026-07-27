@@ -112,7 +112,8 @@ DDL_STATEMENTS = [
         details         TEXT,
         risk_score      INTEGER DEFAULT 0,
         matched_rules   TEXT,
-        attack_path     TEXT
+        attack_path     TEXT,
+        source_timestamp TEXT    -- 原始事件时间戳 ISO 8601
     )
     """,
     # suspicious_connections — 可疑外连表
@@ -130,7 +131,8 @@ DDL_STATEMENTS = [
         pid             INTEGER,
         reason          TEXT,
         rule_name       TEXT,
-        severity        TEXT
+        severity        TEXT,
+        source_timestamp TEXT    -- 原始事件时间戳 ISO 8601
     )
     """,
     # suspicious_startup_items — 可疑启动项表
@@ -145,7 +147,8 @@ DDL_STATEMENTS = [
         user            TEXT,
         reason          TEXT,
         rule_name       TEXT,
-        severity        TEXT
+        severity        TEXT,
+        source_timestamp TEXT    -- 原始事件时间戳 ISO 8601
     )
     """,
     # persistence_items — 持久化痕迹表
@@ -160,7 +163,8 @@ DDL_STATEMENTS = [
         user            TEXT,
         is_suspicious   INTEGER DEFAULT 0,
         reason          TEXT,
-        details         TEXT
+        details         TEXT,
+        source_timestamp TEXT    -- 原始事件时间戳 ISO 8601
     )
     """,
     # timeline_events — 时间线事件表
@@ -185,7 +189,8 @@ DDL_STATEMENTS = [
         ioc_value       TEXT,
         matched_in      TEXT,
         context         TEXT,
-        severity        TEXT
+        severity        TEXT,
+        source_timestamp TEXT    -- 原始事件时间戳 ISO 8601
     )
     """,
     # rules — 分析规则表
@@ -389,7 +394,8 @@ DDL_STATEMENTS = [
         state           TEXT,
         pid             INTEGER,
         process_name    TEXT,
-        collected_at    TEXT
+        collected_at    TEXT,
+        source_timestamp TEXT    -- 原始事件时间戳 ISO 8601
     )
     """,
     # file_hashes — 文件哈希表（数据采集增强 P1-3）
@@ -405,7 +411,8 @@ DDL_STATEMENTS = [
         file_size       INTEGER,
         product_name    TEXT,
         product_version TEXT,
-        collected_at    TEXT
+        collected_at    TEXT,
+        source_timestamp TEXT    -- 原始事件时间戳 ISO 8601
     )
     """,
     # wmi_subscriptions — WMI 订阅表（数据采集增强 P1-5）
@@ -418,7 +425,8 @@ DDL_STATEMENTS = [
         event_consumer  TEXT,
         binding_type    TEXT,
         risk_level      TEXT,
-        collected_at    TEXT
+        collected_at    TEXT,
+        source_timestamp TEXT    -- 原始事件时间戳 ISO 8601
     )
     """,
     # registry_keys — 注册表键值表（数据采集增强 P1-6）
@@ -431,7 +439,8 @@ DDL_STATEMENTS = [
         value_type      TEXT,
         value_data      TEXT,
         last_write_time TEXT,
-        collected_at    TEXT
+        collected_at    TEXT,
+        source_timestamp TEXT    -- 原始事件时间戳 ISO 8601
     )
     """,
     # process_events — 进程实时事件表（T15 实时事件管道，快照并行检测）
@@ -468,7 +477,7 @@ DDL_STATEMENTS = [
         obfuscation_score REAL,
         behinder_godzilla_signal INTEGER,
         details         TEXT,        -- JSON：完整 webshell 证据（audit/取证）
-        created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        source_timestamp TEXT    -- 原始事件时间戳 ISO 8601
     )
     """,
     # memory_shells — 内存码（Java 内存马 / PHP 扩展）检测命中表（融合扩充 A §2.2）
@@ -484,7 +493,7 @@ DDL_STATEMENTS = [
         risk_score      INTEGER DEFAULT 0,
         matched_rules   TEXT,        -- JSON：命中规则列表
         details         TEXT,        -- JSON：完整内存马证据（audit/取证）
-        created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        source_timestamp TEXT    -- 原始事件时间戳 ISO 8601
     )
     """,
     # remediation_checklist — 处置清单（任务⑤ 处置闭环）
@@ -2064,6 +2073,54 @@ def _migrate_users_table(conn: sqlite3.Connection) -> None:
             pass
 
 
+def _migrate_source_timestamp(conn: sqlite3.Connection) -> None:
+    """检测并添加 CM 分析表的 source_timestamp TEXT 列（幂等）.
+
+    对 11 张 CM 分析表逐表使用 PRAGMA table_info 守卫模式，
+    列缺失才 ALTER TABLE ADD COLUMN，可重复执行。
+    """
+    tables = [
+        "abnormal_processes",
+        "suspicious_connections",
+        "suspicious_startup_items",
+        "persistence_items",
+        "ioc_hits",
+        "network_connections",
+        "file_hashes",
+        "wmi_subscriptions",
+        "registry_keys",
+        "webshells",
+        "memory_shells",
+    ]
+    for table in tables:
+        cursor = conn.execute(f"PRAGMA table_info({table})")
+        existing_columns: set[str] = {row["name"] for row in cursor.fetchall()}
+        if "source_timestamp" not in existing_columns:
+            try:
+                conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN source_timestamp TEXT"
+                )
+                logger.info("Added column 'source_timestamp' to %s table", table)
+            except Exception as exc:
+                logger.warning("Failed to add source_timestamp to %s: %s", table, exc)
+
+
+def _migrate_users_table(conn: sqlite3.Connection) -> None:
+    """为 users 表追加 is_active / last_login / display_name 列（幂等）."""
+    for col, col_type, default in [
+        ("is_active", "INTEGER", 1),
+        ("last_login", "TEXT", None),
+        ("display_name", "TEXT", None),
+    ]:
+        try:
+            if default is not None:
+                conn.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type} DEFAULT {default}")
+            else:
+                conn.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type}")
+        except Exception:
+            pass
+
+
 def _seed_system_settings(conn: sqlite3.Connection) -> None:
     """预置 system_settings 种子数据."""
     defaults = [
@@ -2333,6 +2390,8 @@ def init_db() -> None:
         _ensure_index("alerts", "idx_alerts_last_seen", "last_seen_at")
         _ensure_index("agents", "idx_agents_host", "host_id")
         _ensure_index("agents", "idx_agents_agent_id", "agent_id")
+        # source_timestamp 迁移：CM 分析表追加列
+        _migrate_source_timestamp(conn)
         # F7/F8 护栏与 MCP 表索引（DDL 已建表，此处补索引）
         _init_guardrail_mcp(conn)
         logger.info("Database initialized successfully at %s", settings.DB_PATH)

@@ -247,6 +247,8 @@ class AnalysisService:
         logger.info("Detected %d suspicious startup items", len(suspicious_startup))
 
         if isinstance(registry_keys, list) and registry_keys:
+            for item in (registry_keys or []):
+                item["source_timestamp"] = (item.get("last_write_time") or item.get("collected_at"))
             RegistryKey.batch_create(host_id, registry_keys)
             logger.info("Extracted %d registry keys", len(registry_keys))
 
@@ -284,16 +286,22 @@ class AnalysisService:
         # P0-1: 网络连接
         net_data = raw_data.get("network_connections", [])
         if isinstance(net_data, list) and net_data:
+            for item in net_data:
+                item["source_timestamp"] = (item.get("timestamp") or item.get("collected_at"))
             NetworkConnection.batch_create(host_id, net_data)
             logger.info("Extracted %d network connections", len(net_data))
         # P0-2: 文件哈希
         fh_data = raw_data.get("file_hashes", [])
         if isinstance(fh_data, list) and fh_data:
+            for item in fh_data:
+                item["source_timestamp"] = (item.get("timestamp") or item.get("collected_at"))
             FileHash.batch_create(host_id, fh_data)
             logger.info("Extracted %d file hashes", len(fh_data))
         # P1-3: WMI 订阅
         wmi_data = raw_data.get("wmi_subscriptions", [])
         if isinstance(wmi_data, list) and wmi_data:
+            for item in wmi_data:
+                item["source_timestamp"] = (item.get("timestamp") or item.get("collected_at"))
             WmiSubscription.batch_create(host_id, wmi_data)
             logger.info("Extracted %d WMI subscriptions", len(wmi_data))
 

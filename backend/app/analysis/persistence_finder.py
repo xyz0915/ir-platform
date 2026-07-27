@@ -42,6 +42,9 @@ class PersistenceFinder:
                 if isinstance(entries, list):
                     for entry in entries:
                         if isinstance(entry, dict):
+                            source_ts = (entry.get("timestamp")
+                                         or entry.get("last_write_time")
+                                         or entry.get("start_time"))
                             items.append({
                                 "type": ptype,
                                 "name": entry.get("name", ""),
@@ -51,6 +54,7 @@ class PersistenceFinder:
                                 "is_suspicious": False,
                                 "reason": "",
                                 "details": entry,
+                                "source_timestamp": source_ts,
                             })
 
         # 从 startup_items 获取
@@ -58,6 +62,9 @@ class PersistenceFinder:
         if isinstance(startup_items, list):
             for item in startup_items:
                 if isinstance(item, dict):
+                    source_ts = (item.get("timestamp")
+                                 or item.get("last_write_time")
+                                 or item.get("start_time"))
                     items.append({
                         "type": item.get("type", "unknown"),
                         "name": item.get("name", ""),
@@ -67,6 +74,7 @@ class PersistenceFinder:
                         "is_suspicious": False,
                         "reason": "",
                         "details": item,
+                        "source_timestamp": source_ts,
                     })
 
         # 从 registry 获取
@@ -76,6 +84,9 @@ class PersistenceFinder:
             if isinstance(run_keys, list):
                 for entry in run_keys:
                     if isinstance(entry, dict):
+                        source_ts = (entry.get("timestamp")
+                                     or entry.get("last_write_time")
+                                     or entry.get("start_time"))
                         items.append({
                             "type": "run_key",
                             "name": entry.get("name", ""),
@@ -85,6 +96,7 @@ class PersistenceFinder:
                             "is_suspicious": False,
                             "reason": "",
                             "details": entry,
+                            "source_timestamp": source_ts,
                         })
 
         return items

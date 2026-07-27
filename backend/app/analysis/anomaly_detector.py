@@ -257,6 +257,7 @@ class AnomalyDetector:
                 "risk_score": risk_score,
                 "matched_rules": matched_rules_list,
                 "attack_path": attack_path,
+                "source_timestamp": base_item.get("start_time"),
                 # 内部字段（最终返回前剔除）
                 "_pid": pid,
                 "_item": base_item,
@@ -359,6 +360,7 @@ class AnomalyDetector:
                 "reason": match["reason"],
                 "rule_name": match["rule_name"],
                 "severity": match["severity"],
+                "source_timestamp": item.get("timestamp"),
             })
 
         return suspicious_connections
@@ -395,6 +397,7 @@ class AnomalyDetector:
                 "reason": match["reason"],
                 "rule_name": match["rule_name"],
                 "severity": match["severity"],
+                "source_timestamp": item.get("last_write_time") or item.get("timestamp"),
             })
 
         return suspicious_items

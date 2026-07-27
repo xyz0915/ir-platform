@@ -119,9 +119,31 @@ def cm_row_to_canonical(table: str, row: dict, host_id: int, cfg: dict) -> Canon
     evidence = build_evidence(row, cfg["evidence_fields"])
     evidence["sync_source"] = table
 
-    timestamp = row.get("collected_at") or row.get("created_at") or row.get("imported_at")
+    # ── 新版时间戳优先级链（P0 → fallback）──
+    # 1. 显式透传的原始时间戳
+    timestamp = row.get("source_timestamp")
+
+    # 2. 从 details JSON 提取（向后兼容存量数据）
     if not timestamp:
-        # 从 hosts.collection_time 取 Agent 采集时间
+        try:
+            details = json.loads(row.get("details") or "{}")
+            if isinstance(details, dict):
+                timestamp = (details.get("source_timestamp")
+                             or details.get("start_time")
+                             or details.get("timestamp"))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+
+    # 3. 表级专用时间戳字段
+    if not timestamp:
+        timestamp = row.get("collected_at")
+
+    # 4. 记录创建/导入时间
+    if not timestamp:
+        timestamp = row.get("created_at") or row.get("imported_at")
+
+    # 5. 降级到 hosts.collection_time（Agent 采集时间）
+    if not timestamp:
         try:
             from app.database import get_connection as _gc
             with _gc() as _c:
@@ -133,8 +155,12 @@ def cm_row_to_canonical(table: str, row: dict, host_id: int, cfg: dict) -> Canon
                     timestamp = r["collection_time"]
         except Exception:
             pass
+
+    # 6. 最终兜底
     if not timestamp:
         timestamp = datetime.now().isoformat()
+
+    evidence["source_timestamp"] = row.get("source_timestamp")
     status = row.get("status", "pending")
     assignee = row.get("assigned_to")
 
