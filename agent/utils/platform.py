@@ -2,12 +2,16 @@
 
 import logging
 import platform as _platform
+import re
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+
+# 统一目标时区：UTC+8
+TARGET_TZ = timezone(timedelta(hours=8))
 
 
 def is_windows() -> bool:
@@ -164,6 +168,173 @@ def format_timestamp(dt: datetime) -> str:
     if dt.tzinfo is None:
         from datetime import timezone
         dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat()
+
+
+def _parse_dotnet_date(ts: str) -> Optional[str]:
+    """解析 .NET ``/Date(ms)/`` 格式时间戳.
+
+    Args:
+        ts: 形如 ``/Date(1785118871000)/`` 的字符串.
+
+    Returns:
+        ISO 8601 格式时间字符串（带 UTC+8 时区），解析失败返回 None.
+    """
+    try:
+        match = re.match(r'/Date\((-?\d+)\)/', ts.strip())
+        if not match:
+            return None
+        ms = int(match.group(1))
+        # 使用 timedelta 代替 fromtimestamp，避免负数时间戳在 Windows 上抛 OSError
+        unix_epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        dt = unix_epoch + timedelta(seconds=ms / 1000.0)
+        # 转为 UTC+8
+        dt = dt.astimezone(TARGET_TZ)
+        return dt.isoformat()
+    except (ValueError, OSError, OverflowError) as exc:
+        logger.warning("Failed to parse .NET date '%s': %s", ts, exc)
+        return None
+
+
+def _parse_chrome_epoch(ts: str) -> Optional[str]:
+    """解析 Chrome epoch（1601-01-01 微秒计数）时间戳.
+
+    Chrome/Firefox 使用 WebKit 时间：自 1601-01-01 UTC 以来的微秒数.
+
+    Args:
+        ts: 数字字符串，如 ``132626567210000000``.
+
+    Returns:
+        ISO 8601 格式时间字符串（带 UTC+8 时区），解析失败返回 None.
+    """
+    try:
+        microseconds = int(ts)
+        # Chrome epoch 起始：1601-01-01 UTC
+        chrome_epoch = datetime(1601, 1, 1, tzinfo=timezone.utc)
+        dt = chrome_epoch + timedelta(microseconds=microseconds)
+        dt = dt.astimezone(TARGET_TZ)
+        return dt.isoformat()
+    except (ValueError, OSError, OverflowError) as exc:
+        logger.warning("Failed to parse Chrome epoch '%s': %s", ts, exc)
+        return None
+
+
+def _get_local_timezone() -> timezone:
+    """获取当前系统的本地时区偏移."""
+    now = datetime.now().astimezone()
+    return now.tzinfo  # type: ignore[return-value]
+
+
+def normalize_timestamp(ts: Any, source: str = "") -> str:
+    """统一格式化时间戳：输入任意格式 → ISO 8601 带 UTC+8 时区.
+
+    支持的输入格式：
+      - ``2026-07-27T10:21:47``          → 加系统时区
+      - ``2026-07-27T10:21:47+08:00``    → 保持（转为 UTC+8���
+      - ``2026-07-27 10:21:47``          → 替换空格为 T + 加时区
+      - ``/Date(1785118871000)/``         → .NET 格式
+      - ``132626567210000000``            → Chrome epoch（需 17+ 位数字）
+      - ``""`` / ``None``                 → 返回 ``""``
+
+    Args:
+        ts: 任意格式的时间戳.
+        source: 来源标记（如采集器名），用于日志.
+
+    Returns:
+        标准化后的 ISO 8601 时间字符串（带 UTC+8 时区）.
+        解析失败返回原值（不抛异常）.
+    """
+    if not ts:
+        return ""
+
+    ts_str = str(ts).strip()
+    if not ts_str:
+        return ""
+
+    # ── 已包含时区信息的 ISO 8601（带 +/- 或 Z） ──
+    if re.search(r'[+-]\d{2}:\d{2}$', ts_str) or ts_str.endswith('Z'):
+        try:
+            # 处理末尾 Z → +00:00
+            normalized = ts_str
+            if normalized.endswith('Z'):
+                normalized = normalized[:-1] + '+00:00'
+            dt = datetime.fromisoformat(normalized)
+            dt = dt.astimezone(TARGET_TZ)
+            return dt.isoformat()
+        except (ValueError, TypeError):
+            pass
+
+    # ── .NET /Date(ms)/ 格式 ──
+    if '/Date(' in ts_str:
+        result = _parse_dotnet_date(ts_str)
+        if result:
+            return result
+
+    # ── Chrome epoch（17+ 位纯数字） ──
+    # 2026 年的 Unix ms ≈ 1.78e12（13 位），Chrome epoch ≈ 1.32e17（18 位）
+    if re.match(r'^\d{17,}$', ts_str):
+        result = _parse_chrome_epoch(ts_str)
+        if result:
+            return result
+
+    # ── 空格分隔格式：2026-07-27 10:21:47 ──
+    if ' ' in ts_str:
+        # 检查是否类似 ISO 日期+时间（日期部分 + 空格 + 时间部分）
+        space_match = re.match(
+            r'^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}(?:\.\d+)?)$',
+            ts_str,
+        )
+        if space_match:
+            iso_str = f"{space_match.group(1)}T{space_match.group(2)}"
+            try:
+                dt = datetime.fromisoformat(iso_str)
+                # 无时区 → 假设本地时区
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=_get_local_timezone())
+                dt = dt.astimezone(TARGET_TZ)
+                return dt.isoformat()
+            except (ValueError, TypeError):
+                pass
+
+    # ── ISO 8601 无时区：2026-07-27T10:21:47 ──
+    try:
+        dt = datetime.fromisoformat(ts_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=_get_local_timezone())
+        dt = dt.astimezone(TARGET_TZ)
+        return dt.isoformat()
+    except (ValueError, TypeError):
+        pass
+
+    # ── 纯日期格式：2026-07-27 ──
+    try:
+        dt = datetime.strptime(ts_str, "%Y-%m-%d")
+        dt = dt.replace(tzinfo=_get_local_timezone())
+        dt = dt.astimezone(TARGET_TZ)
+        return dt.isoformat()
+    except (ValueError, TypeError):
+        pass
+
+    # ── 所有解析均失败 → 记录警告，返回原值 ──
+    logger.warning(
+        "normalize_timestamp: unable to parse '%s' (source=%s), keeping original",
+        ts_str, source,
+    )
+    return ts_str
+
+
+def to_utc8(dt: datetime) -> str:
+    """将 datetime 对象统一转为 UTC+8 并返回 ISO 格式字符串.
+
+    Args:
+        dt: 待转换的 datetime 对象。无时区时假设为本地时区.
+
+    Returns:
+        ISO 8601 格式时间字符串（带 +08:00 时区）.
+    """
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_get_local_timezone())
+    dt = dt.astimezone(TARGET_TZ)
     return dt.isoformat()
 
 

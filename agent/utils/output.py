@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
+from utils.platform import normalize_timestamp
 from collectors.resource_budget import MAX_REPORT_BYTES
 
 logger = logging.getLogger(__name__)
@@ -116,6 +117,14 @@ def build_output(metadata: dict, raw_results: dict, collection_health: Optional[
 
     # 跨采集器去重：按 dedup_key 合并同源条目（先到先保留）
     _deduplicate(output)
+
+    # 统一时间标准化（Phase 1：先处理 timeline 作为试点）
+    for key in ["timeline"]:
+        items = output.get(key, [])
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict) and "timestamp" in item:
+                    item["timestamp"] = normalize_timestamp(item["timestamp"], source=key)
 
     # 资源预算闭环：超 MAX_REPORT_BYTES 时按优先级丢弃最重载荷
     _enforce_report_budget(output)

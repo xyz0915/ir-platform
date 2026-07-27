@@ -9,7 +9,7 @@ import time
 from typing import Any
 
 from collectors.base_collector import BaseCollector
-from utils.platform import is_windows, is_linux
+from utils.platform import is_windows, is_linux, normalize_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,7 @@ class BrowserCollector(BaseCollector):
                 (cutoff,),
             )
             for row in cursor:
-                history.append({"url": row[0], "title": row[1] or "", "visit_time": row[2] or ""})
+                history.append({"url": row[0], "title": row[1] or "", "visit_time": normalize_timestamp(row[2]) if row[2] else ""})
             conn.close()
         except Exception as exc:
             logger.debug("Chrome history read failed: %s", exc)
@@ -144,7 +144,7 @@ class BrowserCollector(BaseCollector):
                     "path": row[0] or "",
                     "url": row[1] or "",
                     "size": row[2] or 0,
-                    "time": row[3] or "",
+                    "time": normalize_timestamp(row[3]) if row[3] else "",
                 })
             conn.close()
         except Exception as exc:
@@ -222,7 +222,7 @@ class BrowserCollector(BaseCollector):
                 (cutoff,),
             )
             for row in cursor:
-                history.append({"url": row[0], "title": row[1] or "", "visit_time": row[2] or ""})
+                history.append({"url": row[0], "title": row[1] or "", "visit_time": normalize_timestamp(row[2]) if row[2] else ""})
             conn.close()
         except Exception as exc:
             logger.debug("Firefox history read failed: %s", exc)
@@ -251,7 +251,7 @@ class BrowserCollector(BaseCollector):
                 (cutoff,),
             )
             for row in cursor:
-                downloads.append({"url": row[0], "time": row[1] or ""})
+                downloads.append({"url": row[0], "time": normalize_timestamp(row[1]) if row[1] else ""})
             conn.close()
         except Exception as exc:
             logger.debug("Firefox downloads read failed: %s", exc)

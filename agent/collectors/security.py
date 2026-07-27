@@ -5,7 +5,7 @@ from typing import Any
 
 from collectors.base_collector import BaseCollector
 from collectors.logs import _safe_wevtutil_query
-from utils.platform import is_windows, is_linux, run_command
+from utils.platform import is_windows, is_linux, run_command, normalize_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +33,13 @@ class SecurityCollector(BaseCollector):
 
     def _collect_windows(self) -> dict:
         """Windows 安全信息采集."""
+        event_data = self._get_windows_event_summary()
         return {
             "antivirus": self._get_windows_antivirus(),
             "firewall_rules": self._get_windows_firewall(),
             "audit_policy": self._get_windows_audit_policy(),
-            "event_ids_summary": self._get_windows_event_summary(),
+            "event_ids_summary": event_data.get("event_ids_summary", {}),
+            "event_records": event_data.get("event_records", []),
         }
 
     def _get_windows_antivirus(self) -> list:
@@ -109,8 +111,14 @@ class SecurityCollector(BaseCollector):
         return policy
 
     def _get_windows_event_summary(self) -> dict:
-        """获取安全事件 ID 统计（按 log_days 时间窗口过滤）."""
+        """获取安全事件 ID 统计及前 N 条事件记录（按 log_days 时间窗口过滤）.
+
+        Returns:
+            {"event_ids_summary": {"4625": 3, ...}, "event_records": [...]}.
+            event_records 最多 100 条，每条含 event_id / time / description 字段.
+        """
         summary: dict[str, int] = {}
+        records: list[dict[str, str]] = []
 
         # 计算 timediff 阈值（毫秒）
         timediff_ms = self.log_days * 86400 * 1000
@@ -119,13 +127,36 @@ class SecurityCollector(BaseCollector):
         # 使用安全查询（timediff 带 60s 超时 + 无时间过滤 fallback）
         output = _safe_wevtutil_query("Security", query, 1000, timeout=60)
         if output:
+            current_record: dict[str, str] = {}
             for line in output.split("\n"):
                 if "Event ID" in line or "事件 ID" in line:
                     parts = line.split(":")
                     if len(parts) >= 2:
                         event_id = parts[-1].strip()
                         summary[event_id] = summary.get(event_id, 0) + 1
-        return summary
+
+                        # 如果还在收 records 且未满 100 条，收完当前条再 flush
+                        if len(records) < 100:
+                            if current_record and current_record.get("event_id"):
+                                records.append(current_record)
+                            current_record = {"event_id": event_id, "time": "", "description": ""}
+                elif ":" in line:
+                    key, _, value = line.partition(":")
+                    key = key.strip()
+                    value = value.strip()
+                    if key == "Time" and current_record:
+                        current_record["time"] = normalize_timestamp(value)
+                    elif key == "Description" and current_record:
+                        current_record["description"] = value
+
+            # flush last record
+            if current_record and current_record.get("event_id") and len(records) < 100:
+                records.append(current_record)
+
+        return {
+            "event_ids_summary": summary,
+            "event_records": records[:100],
+        }
 
     def _collect_linux(self) -> dict:
         """Linux 安全信息采集."""

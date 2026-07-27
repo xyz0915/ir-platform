@@ -6,7 +6,7 @@ import socket
 from typing import Any
 
 from collectors.base_collector import BaseCollector
-from utils.platform import is_windows, is_linux, run_command, read_file_safe, get_timestamp
+from utils.platform import is_windows, is_linux, run_command, read_file_safe, get_timestamp, normalize_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +83,7 @@ class NetworkCollector(BaseCollector):
                         "remote_port": int(conn.get("RemotePort", 0)),
                         "state": str(conn.get("State", "")),
                         "owning_process": int(conn.get("OwningProcess", 0)),
-                        "creation_time": str(conn.get("CreationTime", "")),
+                        "creation_time": normalize_timestamp(str(conn.get("CreationTime", ""))),
                         "collected_at": get_timestamp(),
                     })
                 logger.info(

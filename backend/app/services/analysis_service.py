@@ -294,7 +294,9 @@ class AnalysisService:
         fh_data = raw_data.get("file_hashes", [])
         if isinstance(fh_data, list) and fh_data:
             for item in fh_data:
-                item["source_timestamp"] = (item.get("timestamp") or item.get("collected_at"))
+                item["source_timestamp"] = (item.get("file_mtime")
+                                             or item.get("timestamp")
+                                             or item.get("collected_at"))
             FileHash.batch_create(host_id, fh_data)
             logger.info("Extracted %d file hashes", len(fh_data))
         # P1-3: WMI 订阅

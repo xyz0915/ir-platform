@@ -70,6 +70,8 @@ class TimelineCollector(BaseCollector):
                     "source": "processes",
                     "description": f"进程启动: {proc.get('name', 'unknown')} (PID: {proc.get('pid')})",
                     "severity": "info",
+                    "time_source": "psutil.create_time",
+                    "time_confidence": "high",
                     "details": {
                         "pid": proc.get("pid"),
                         "ppid": proc.get("ppid"),
@@ -93,6 +95,8 @@ class TimelineCollector(BaseCollector):
                     "source": "network",
                     "description": f"DNS 解析: {domain} -> {entry.get('value', '')}",
                     "severity": "info",
+                    "time_source": "collected_at",
+                    "time_confidence": "low",
                     "details": entry,
                 })
         return events
@@ -113,6 +117,8 @@ class TimelineCollector(BaseCollector):
                         "source": f"logs.{log_type}",
                         "description": entry.get("description", entry.get("raw", ""))[:200],
                         "severity": "medium" if log_type == "security" else "info",
+                        "time_source": "Windows.EventLog.TimeCreated",
+                        "time_confidence": "high",
                         "details": entry,
                     })
         return events
@@ -130,6 +136,8 @@ class TimelineCollector(BaseCollector):
                     "source": "files",
                     "description": f"文件修改: {file_info.get('path', '')}",
                     "severity": "info",
+                    "time_source": "os.stat().st_mtime",
+                    "time_confidence": "high",
                     "details": file_info,
                 })
 
@@ -143,6 +151,8 @@ class TimelineCollector(BaseCollector):
                     "source": "files",
                     "description": f"可疑文件: {file_info.get('path', '')} - {file_info.get('reason', '')}",
                     "severity": "medium",
+                    "time_source": "os.stat().st_mtime",
+                    "time_confidence": "medium",
                     "details": file_info,
                 })
         return events
@@ -162,6 +172,8 @@ class TimelineCollector(BaseCollector):
                         "source": f"browser.{browser_name}",
                         "description": f"访问网站: {entry.get('title', entry.get('url', ''))[:100]}",
                         "severity": "info",
+                        "time_source": "browser.history.visit_time",
+                        "time_confidence": "medium",
                         "details": entry,
                     })
         return events
@@ -191,6 +203,8 @@ class TimelineCollector(BaseCollector):
                     "source": "security",
                     "description": f"安全事件 {event_id}: {important_ids[event_id]} (次数: {count})",
                     "severity": "high" if event_id in ["4625", "4720"] else "medium",
+                    "time_source": "Windows.EventLog.TimeCreated",
+                    "time_confidence": "high",
                     "details": {"event_id": event_id, "count": count},
                 })
         return events

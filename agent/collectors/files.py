@@ -4,7 +4,7 @@ import hashlib
 import logging
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from collectors.base_collector import BaseCollector
@@ -78,8 +78,8 @@ class FilesCollector(BaseCollector):
                                 recent.append({
                                     "path": filepath,
                                     "size": stat.st_size,
-                                    "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                                    "created": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+                                    "modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+                                    "created": datetime.fromtimestamp(stat.st_ctime, tz=timezone.utc).isoformat(),
                                 })
                         except (OSError, PermissionError):
                             continue
@@ -111,7 +111,7 @@ class FilesCollector(BaseCollector):
                                 suspicious.append({
                                     "path": filepath,
                                     "size": stat.st_size,
-                                    "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                                    "modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
                                     "reason": f"可执行文件在可疑路径: {path}",
                                 })
                             except (OSError, PermissionError):
@@ -147,7 +147,7 @@ class FilesCollector(BaseCollector):
                         temp_files.append({
                             "path": filepath,
                             "size": stat.st_size,
-                            "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                            "modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
                         })
                     if len(temp_files) > 200:
                         break
@@ -350,6 +350,7 @@ class FilesCollector(BaseCollector):
             try:
                 stat = os.stat(filepath)
                 file_size = stat.st_size
+                file_mtime = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
             except (OSError, PermissionError):
                 continue
 
@@ -371,6 +372,7 @@ class FilesCollector(BaseCollector):
                 "product_name": product_info["product_name"],
                 "product_version": product_info["product_version"],
                 "collected_at": now,
+                "file_mtime": file_mtime,
             })
 
         logger.info("Collected %d file hashes (SHA256) from suspicious paths", len(results))

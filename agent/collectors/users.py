@@ -4,7 +4,7 @@ import logging
 from typing import Any
 
 from collectors.base_collector import BaseCollector
-from utils.platform import is_windows, is_linux, run_command, read_file_lines_safe
+from utils.platform import is_windows, is_linux, run_command, read_file_lines_safe, normalize_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,8 @@ class UsersCollector(BaseCollector):
             "uid": None,
             "home_dir": None,
             "last_logon": None,
+            "last_logon_raw": None,
+            "created_at": None,
             "is_admin": False,
             "is_disabled": False,
         }
@@ -68,7 +70,13 @@ class UsersCollector(BaseCollector):
                 elif "last logon" in line_lower or "上次登录" in line_lower:
                     parts = line.split(")", 1) if ")" in line else line.split("：", 1)
                     if len(parts) > 1:
-                        info["last_logon"] = parts[-1].strip()
+                        raw_val = parts[-1].strip()
+                        info["last_logon_raw"] = raw_val
+                        info["last_logon"] = normalize_timestamp(raw_val)
+                elif "account created" in line_lower or "帐户创建" in line_lower:
+                    parts = line.split(")", 1) if ")" in line else line.split("：", 1)
+                    if len(parts) > 1:
+                        info["created_at"] = normalize_timestamp(parts[-1].strip())
         return info
 
     def _collect_linux(self) -> list:

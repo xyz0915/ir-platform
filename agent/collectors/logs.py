@@ -4,7 +4,7 @@ import logging
 from typing import Any
 
 from collectors.base_collector import BaseCollector
-from utils.platform import is_windows, is_linux, run_command, read_file_lines_safe
+from utils.platform import is_windows, is_linux, run_command, read_file_lines_safe, normalize_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -106,12 +106,12 @@ class LogsCollector(BaseCollector):
                 key, _, value = line.partition(":")
                 key = key.strip()
                 value = value.strip()
-                if key == "EventID":
+                if key in ("EventID", "Event ID"):
                     current["event_id"] = value
                 elif key == "Type":
                     current["type"] = value
-                elif key == "Time":
-                    current["time"] = value
+                elif key in ("Time", "Date", "Time Created"):
+                    current["time"] = normalize_timestamp(value)
                 elif key == "Source":
                     current["source"] = value
                 elif key == "Computer":

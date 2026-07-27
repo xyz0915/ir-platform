@@ -12,7 +12,7 @@
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, List, Optional
 
 from collectors.base_collector import BaseCollector
@@ -71,10 +71,10 @@ class ProcessesCollector(BaseCollector):
 
                 create_time = info.get("create_time")
                 start_time = ""
-                if create_time:
+                if create_time is not None:  # None 跳过，0 也格式化
                     try:
-                        start_time = datetime.fromtimestamp(create_time).isoformat()
-                    except (ValueError, OSError):
+                        start_time = datetime.fromtimestamp(create_time, tz=timezone.utc).isoformat()
+                    except (ValueError, OSError, OverflowError):
                         start_time = ""
 
                 cmdline = info.get("cmdline")
@@ -153,7 +153,7 @@ class ProcessesCollector(BaseCollector):
                                 # wmic 格式: 20260711230710.123456+480 (YYYYMMDDHHMMSS.ffffff±ZZZ)
                                 wmic_ct = wmic_ct.strip()
                                 dt_str = wmic_ct.split(".")[0]
-                                start_time = f"{dt_str[0:4]}-{dt_str[4:6]}-{dt_str[6:8]}T{dt_str[8:10]}:{dt_str[10:12]}:{dt_str[12:14]}"
+                                start_time = f"{dt_str[0:4]}-{dt_str[4:6]}-{dt_str[6:8]}T{dt_str[8:10]}:{dt_str[10:12]}:{dt_str[12:14]}+08:00"
                             except Exception:
                                 start_time = ""
                         pd = {

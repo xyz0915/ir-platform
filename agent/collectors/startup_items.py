@@ -2,6 +2,7 @@
 
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from collectors.base_collector import BaseCollector
@@ -60,11 +61,22 @@ class StartupItemsCollector(BaseCollector):
         for hive, key_path, location, user in run_keys:
             try:
                 with winreg.OpenKey(hive, key_path) as key:
-                    # 获取注册表键的最后写入时间
+                    # L66-73: 获取注册表键的最后写入时间
+                    # winreg.QueryInfoKey[2] 在 Python 3.13 上返回 FILETIME int
+                    # (100-ns 间隔自 1601-01-01 UTC)，早期版本返回 datetime
                     try:
                         info = winreg.QueryInfoKey(key)
-                        lwt = info[2]
-                        last_write_str = lwt.isoformat() if lwt else ""
+                        lwt_raw = info[2]
+                        if isinstance(lwt_raw, int):
+                            # FILETIME → datetime
+                            filetime_epoch = datetime(1601, 1, 1, tzinfo=timezone.utc)
+                            seconds = lwt_raw / 10_000_000.0
+                            last_write_str = (filetime_epoch + timedelta(seconds=seconds)).isoformat()
+                        else:
+                            try:
+                                last_write_str = lwt_raw.isoformat()
+                            except Exception:
+                                last_write_str = ""
                     except Exception:
                         last_write_str = ""
                     index = 0
@@ -119,6 +131,9 @@ class StartupItemsCollector(BaseCollector):
                         "location": path,
                         "user": user,
                         "type": "startup_folder",
+                        "last_write_time": datetime.fromtimestamp(
+                            os.path.getmtime(filepath), tz=timezone.utc
+                        ).isoformat(),
                         "collected_at": get_timestamp(),
                     })
             except (PermissionError, OSError):
@@ -142,12 +157,25 @@ class StartupItemsCollector(BaseCollector):
                 if key in ("TaskName", "任务名"):
                     if current:
                         items.append(current)
+                    # 从任务名构造系统 Tasks 目录下的文件路径
+                    normalized_name = value.lstrip("\\")
+                    task_file_path = os.path.join(
+                        os.environ.get("SystemRoot", "C:\\Windows"),
+                        "System32", "Tasks", normalized_name,
+                    )
+                    task_lwt = ""
+                    try:
+                        mtime = os.path.getmtime(task_file_path)
+                        task_lwt = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+                    except OSError:
+                        pass
                     current = {
                         "name": value,
                         "command": "",
                         "location": "Task Scheduler",
                         "user": "",
                         "type": "scheduled_task",
+                        "last_write_time": task_lwt,
                         "collected_at": get_timestamp(),
                         "dedup_key": f"task:{value}",
                     }
