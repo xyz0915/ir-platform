@@ -453,7 +453,7 @@ class LogMapper(BaseMapper):
 
     def map(self, raw: dict) -> dict | None:
         """将单条日志条目映射为 SecurityEvent 字段字典。"""
-        event_id = str(raw.get("event_id", ""))
+        event_id = str(raw.get("event_id") or "")
         classification = self._EVENT_ID_MAP.get(event_id, {})
         log_name = raw.get("log_name", "unknown")
 
