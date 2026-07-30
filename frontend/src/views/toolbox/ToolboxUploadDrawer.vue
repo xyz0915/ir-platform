@@ -179,8 +179,13 @@ const rules = {
   ],
   toolFile: [
     {
-      validator: () => toolFileRaw !== null,
-      message: '请上传工具文件',
+      validator: (_rule, _value, callback) => {
+        if (!isEditMode.value && !toolFileRaw) {
+          callback(new Error('请上传工具文件'))
+        } else {
+          callback()
+        }
+      },
       trigger: 'change',
     },
   ],
