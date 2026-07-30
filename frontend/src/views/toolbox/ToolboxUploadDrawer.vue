@@ -60,7 +60,7 @@
         </el-form-item>
 
         <!-- 工具文件 -->
-        <el-form-item label="工具文件" prop="toolFile" :required="!isEditMode">
+        <el-form-item label="工具文件">
           <el-upload
             ref="toolUploadRef"
             :auto-upload="false"
@@ -74,11 +74,15 @@
             <el-icon class="upload-icon"><UploadFilled /></el-icon>
             <div class="upload-text">
               拖拽或 <em>点击选择</em> 工具文件
+              <span style="color:#ff3b30;">*</span>
             </div>
             <template #tip>
               <div class="upload-hint">支持 .exe .zip .tar.gz .py .ps1，最大 200MB</div>
             </template>
           </el-upload>
+          <div v-if="showToolFileError" class="upload-error">
+            请上传工具文件
+          </div>
         </el-form-item>
 
         <!-- 操作文档 -->
@@ -168,6 +172,7 @@ const form = reactive({
 
 const toolFileList = ref([])
 const docFileList = ref([])
+const showToolFileError = ref(false)
 let toolFileRaw = null
 let docFileRaw = null
 
@@ -177,31 +182,17 @@ const rules = {
     { required: true, message: '请输入版本号', trigger: 'blur' },
     { pattern: /^\d+\.\d+\.\d+$/, message: '版本号格式必须为 x.y.z', trigger: 'blur' },
   ],
-  toolFile: [
-    {
-      validator: (_rule, _value, callback) => {
-        if (!isEditMode.value && !toolFileRaw) {
-          callback(new Error('请上传工具文件'))
-        } else {
-          callback()
-        }
-      },
-      trigger: 'change',
-    },
-  ],
 }
 
 // ── File handlers ──
 function onToolFileChange(uploadFile) {
   toolFileRaw = uploadFile.raw
   toolFileList.value = [uploadFile]
-  // 主动触发 toolFile 字段校验
-  formRef.value?.validateField('toolFile').catch(() => {})
+  showToolFileError.value = false
 }
 function onToolFileRemove() {
   toolFileRaw = null
   toolFileList.value = []
-  formRef.value?.validateField('toolFile').catch(() => {})
 }
 function onDocFileChange(uploadFile) {
   docFileRaw = uploadFile.raw
@@ -256,6 +247,7 @@ watch(
         docFileRaw = null
         toolFileList.value = []
         docFileList.value = []
+        showToolFileError.value = false
       }
     }
   }
@@ -267,9 +259,11 @@ async function handleSubmit() {
   if (!valid) return
 
   if (!isEditMode.value && !toolFileRaw) {
+    showToolFileError.value = true
     ElMessage.warning('请上传工具文件')
     return
   }
+  showToolFileError.value = false
 
   submitting.value = true
   try {
@@ -347,6 +341,12 @@ function handleClose() {
   font-size: 11px;
   color: var(--color-fg-muted, #d2d2d7);
   margin-top: 4px;
+}
+.upload-error {
+  font-size: 12px;
+  color: var(--el-color-danger, #f56c6c);
+  margin-top: 6px;
+  line-height: 1;
 }
 .upload-footer {
   display: flex;
