@@ -177,16 +177,26 @@ const rules = {
     { required: true, message: '请输入版本号', trigger: 'blur' },
     { pattern: /^\d+\.\d+\.\d+$/, message: '版本号格式必须为 x.y.z', trigger: 'blur' },
   ],
+  toolFile: [
+    {
+      validator: () => toolFileRaw !== null,
+      message: '请上传工具文件',
+      trigger: 'change',
+    },
+  ],
 }
 
 // ── File handlers ──
 function onToolFileChange(uploadFile) {
   toolFileRaw = uploadFile.raw
   toolFileList.value = [uploadFile]
+  // 主动触发 toolFile 字段校验
+  formRef.value?.validateField('toolFile').catch(() => {})
 }
 function onToolFileRemove() {
   toolFileRaw = null
   toolFileList.value = []
+  formRef.value?.validateField('toolFile').catch(() => {})
 }
 function onDocFileChange(uploadFile) {
   docFileRaw = uploadFile.raw
