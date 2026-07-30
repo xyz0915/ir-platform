@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>应急工具箱</title>
+  <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      background: #f5f5f5;
+      color: #1d1d1f;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Top Bar ── */
+    .top-bar {
+      height: 52px; display: flex; align-items: center; justify-content: space-between;
+      padding: 0 28px; background: #fff;
+      border-bottom: 1px solid #e8e8ed;
+    }
+    .top-bar-left { display: flex; align-items: center; gap: 6px; }
+    .top-bar-left svg { width: 20px; height: 20px; }
+    .top-bar-left .brand { font-size: 15px; font-weight: 600; color: #1d1d1f; letter-spacing: .3px; }
+    .top-bar-left .sep { width: 1px; height: 16px; background: #d2d2d7; margin: 0 10px; }
+    .top-bar-left .nav { font-size: 13px; color: #86868b; }
+    .top-bar-left .nav span { color: #1d1d1f; font-weight: 500; }
+    .top-bar-right { display: flex; align-items: center; gap: 14px; }
+    .avatar { width: 28px; height: 28px; border-radius: 50%; background: #e8e8ed; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #86868b; }
+
+    /* ── Page Header ── */
+    .page-wrap { max-width: 1280px; margin: 0 auto; padding: 0 28px; }
+    .page-header {
+      padding: 28px 0 20px;
+      display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+    }
+    .page-header h1 { font-size: 24px; font-weight: 700; color: #1d1d1f; letter-spacing: -.3px; }
+    .page-header .subtitle { font-size: 13px; color: #86868b; margin-top: 4px; }
+    .header-actions { display: flex; gap: 8px; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      height: 34px; padding: 0 16px; border-radius: 8px;
+      font-size: 13px; font-weight: 500; cursor: pointer;
+      border: 1px solid #d2d2d7; background: #fff; color: #1d1d1f;
+      transition: all .15s; white-space: nowrap;
+    }
+    .btn:hover { background: #f5f5f5; }
+    .btn-primary { background: #0071e3; color: #fff; border-color: #0071e3; }
+    .btn-primary:hover { background: #0077ed; }
+
+    /* ── Stats Row ── */
+    .stats-row {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+      padding-bottom: 24px;
+    }
+    .stat-card {
+      background: #fff; border-radius: 10px; border: 1px solid #e8e8ed;
+      padding: 18px 20px; display: flex; align-items: center; gap: 14px;
+    }
+    .stat-card .num { font-size: 22px; font-weight: 700; color: #1d1d1f; line-height: 1.2; }
+    .stat-card .label { font-size: 12px; color: #86868b; line-height: 1.4; }
+
+    /* ── Search & Filters ── */
+    .filter-bar {
+      display: flex; align-items: center; gap: 12px;
+      padding-bottom: 20px; flex-wrap: wrap;
+    }
+    .search-input {
+      width: 280px; height: 34px; padding: 0 12px; border-radius: 8px;
+      border: 1px solid #d2d2d7; outline: none; font-size: 13px;
+      transition: border-color .15s;
+    }
+    .search-input:focus { border-color: #0071e3; }
+    .cat-group { display: flex; gap: 4px; flex-wrap: wrap; }
+    .cat-chip {
+      padding: 0 14px; height: 30px; line-height: 30px; border-radius: 15px;
+      font-size: 12px; border: 1px solid #e8e8ed; background: #fff;
+      color: #515154; cursor: pointer; transition: all .15s; user-select: none;
+    }
+    .cat-chip:hover { border-color: #d2d2d7; background: #f5f5f5; }
+    .cat-chip.active { background: #0071e3; color: #fff; border-color: #0071e3; }
+    .cat-chip .cnt { opacity: .55; margin-left: 4px; font-size: 11px; }
+
+    /* ── Grid ── */
+    .tool-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 12px;
+      padding-bottom: 40px;
+    }
+
+    /* ── Card ── */
+    .card {
+      background: #fff; border-radius: 10px; border: 1px solid #e8e8ed;
+      padding: 20px; cursor: pointer; transition: all .18s;
+      display: flex; flex-direction: column; position: relative;
+    }
+    .card:hover { border-color: #d2d2d7; box-shadow: 0 2px 8px rgba(0,0,0,.04); }
+    .card-top { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 8px; }
+    .card-icon {
+      width: 36px; height: 36px; border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; font-weight: 600; color: #fff; flex-shrink: 0;
+    }
+    .c1 { background: #5856d6; } .c2 { background: #007aff; }
+    .c3 { background: #ff3b30; } .c4 { background: #ff9500; }
+    .c5 { background: #34c759; } .c6 { background: #8e8e93; }
+    .card-info { margin-left: 12px; flex: 1; min-width: 0; }
+    .card-name { font-size: 15px; font-weight: 600; color: #1d1d1f; }
+    .card-meta { font-size: 12px; color: #86868b; margin-top: 2px; display: flex; gap: 8px; align-items: center; }
+    .card-meta .tag { background: #f5f5f5; padding: 1px 8px; border-radius: 4px; font-size: 11px; color: #515154; }
+    .doc-badge { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; }
+    .doc-badge.yes { color: #34c759; } .doc-badge.no { color: #ff9500; }
+    .card-desc { font-size: 13px; color: #515154; line-height: 1.5; margin-top: 8px; flex: 1; }
+    .card-footer {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-top: 12px; padding-top: 12px; border-top: 1px solid #f2f2f7;
+    }
+    .card-stats { font-size: 12px; color: #86868b; display: flex; gap: 14px; }
+    .dl-btn {
+      height: 28px; padding: 0 12px; border-radius: 6px;
+      border: 1px solid #d2d2d7; background: #fff; font-size: 12px; cursor: pointer;
+      transition: all .12s; color: #1d1d1f;
+    }
+    .dl-btn:hover { background: #0071e3; color: #fff; border-color: #0071e3; }
+
+    /* ── Drawer ── */
+    .overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,.24);
+      z-index: 900; opacity: 0; pointer-events: none; transition: opacity .25s;
+    }
+    .overlay.show { opacity: 1; pointer-events: auto; }
+    .drawer {
+      position: fixed; top: 0; right: -520px; width: 520px; height: 100%;
+      background: #fff; z-index: 901;
+      transition: right .3s cubic-bezier(.25,.1,.25,1);
+      display: flex; flex-direction: column;
+    }
+    .drawer.show { right: 0; }
+    .drawer-hd {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 20px 24px; border-bottom: 1px solid #e8e8ed; flex-shrink: 0;
+    }
+    .drawer-hd h2 { font-size: 17px; font-weight: 600; }
+    .drawer-close { width: 28px; height: 28px; border-radius: 6px; border: none; background: transparent; font-size: 18px; color: #86868b; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+    .drawer-close:hover { background: #f5f5f5; }
+    .drawer-bd { flex: 1; overflow-y: auto; padding: 20px 24px; }
+    .drawer-ft {
+      padding: 16px 24px; border-top: 1px solid #e8e8ed;
+      display: flex; gap: 8px; justify-content: flex-end; flex-shrink: 0;
+    }
+
+    /* ── Detail Sections ── */
+    .dl-section { margin-bottom: 24px; }
+    .dl-section:last-child { margin-bottom: 0; }
+    .dl-label { font-size: 11px; color: #86868b; margin-bottom: 6px; letter-spacing: .4px; }
+    .dl-value { font-size: 13px; color: #1d1d1f; line-height: 1.6; }
+    .dl-meta { display: flex; gap: 20px; flex-wrap: wrap; }
+    .dl-meta-item { }
+    .dl-meta-item .v { font-weight: 600; }
+    .dl-tags { display: flex; gap: 4px; flex-wrap: wrap; }
+    .dl-tag {
+      padding: 2px 10px; border-radius: 12px; font-size: 12px;
+      background: #f2f2f7; color: #515154;
+    }
+    .v-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 0; border-bottom: 1px solid #f2f2f7;
+    }
+    .v-row:last-child { border-bottom: none; }
+    .v-row .ver { font-weight: 500; font-size: 13px; }
+    .v-row .date { font-size: 12px; color: #86868b; }
+    .v-row .log { font-size: 12px; color: #515154; margin-top: 2px; }
+    .v-badge { font-size: 11px; padding: 1px 8px; border-radius: 4px; background: #e8f5e9; color: #2e7d32; }
+
+    .doc-preview {
+      background: #fafafa; border-radius: 8px; padding: 16px;
+      font-size: 13px; line-height: 1.7; color: #1d1d1f;
+      border: 1px solid #e8e8ed; max-height: 320px; overflow-y: auto;
+    }
+    .doc-preview h1 { font-size: 16px; margin: 10px 0 8px; font-weight: 600; }
+    .doc-preview h2 { font-size: 14px; margin: 8px 0 6px; font-weight: 600; }
+    .doc-preview code {
+      background: #f2f2f7; padding: 1px 6px; border-radius: 4px; font-size: 12px; color: #515154;
+    }
+    .doc-preview pre {
+      background: #1d1d1f; color: #f5f5f5; padding: 12px 14px; border-radius: 6px;
+      overflow-x: auto; font-size: 12px; margin: 10px 0; line-height: 1.6;
+    }
+    .doc-preview ul, .doc-preview ol { padding-left: 20px; margin: 6px 0; }
+    .doc-preview li { margin: 2px 0; }
+    .doc-preview table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 8px 0; }
+    .doc-preview td { border: 1px solid #e8e8ed; padding: 6px 10px; }
+
+    /* ── Upload Form ── */
+    .uf-group { margin-bottom: 18px; }
+    .uf-group label { display: block; font-size: 13px; font-weight: 500; color: #1d1d1f; margin-bottom: 6px; }
+    .uf-group .hint { font-size: 12px; color: #86868b; margin-top: 4px; }
+    .uf-input {
+      width: 100%; height: 36px; padding: 0 12px; border-radius: 8px;
+      border: 1px solid #d2d2d7; outline: none; font-size: 13px;
+      transition: border-color .15s;
+    }
+    .uf-input:focus { border-color: #0071e3; }
+    .uf-textarea {
+      width: 100%; padding: 8px 12px; border-radius: 8px;
+      border: 1px solid #d2d2d7; outline: none; font-size: 13px;
+      resize: vertical; min-height: 56px; font-family: inherit;
+    }
+    .uf-textarea:focus { border-color: #0071e3; }
+    .uf-select {
+      width: 100%; height: 36px; padding: 0 12px; border-radius: 8px;
+      border: 1px solid #d2d2d7; outline: none; font-size: 13px;
+      background: #fff; cursor: pointer;
+    }
+    .uf-row { display: flex; gap: 12px; }
+    .uf-row > * { flex: 1; }
+    .uf-dropzone {
+      border: 2px dashed #d2d2d7; border-radius: 8px;
+      padding: 24px; text-align: center; cursor: pointer; transition: all .15s;
+    }
+    .uf-dropzone:hover { border-color: #0071e3; background: #f5f9ff; }
+    .uf-dropzone .icon { font-size: 24px; color: #86868b; margin-bottom: 4px; }
+    .uf-dropzone .txt { font-size: 13px; color: #515154; }
+    .uf-dropzone .txt strong { color: #0071e3; }
+    .uf-dropzone .sub { font-size: 11px; color: #d2d2d7; margin-top: 4px; }
+
+    @media (max-width: 768px) {
+      .page-wrap { padding: 0 16px; }
+      .tool-grid { grid-template-columns: 1fr; }
+      .stats-row { grid-template-columns: repeat(2, 1fr); }
+      .drawer { width: 100%; right: -100%; }
+      .search-input { width: 100%; }
+      .filter-bar { flex-direction: column; align-items: stretch; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Nav -->
+<div class="top-bar">
+  <div class="top-bar-left">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#1d1d1f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+    <span class="brand">应急平台</span>
+    <span class="sep"></span>
+    <span class="nav">智能分析 / <span>应急工具箱</span></span>
+  </div>
+  <div class="top-bar-right">
+    <span style="font-size:13px;color:#86868b;">admin</span>
+    <div class="avatar">A</div>
+  </div>
+</div>
+
+<!-- Page -->
+<div class="page-wrap">
+
+  <div class="page-header">
+    <div>
+      <h1>应急工具箱</h1>
+      <div class="subtitle">统一管理应急响应工具与操作文档</div>
+    </div>
+    <div class="header-actions">
+      <input class="search-input" id="searchBox" placeholder="搜索工具名称或描述…" oninput="filterTools()" />
+      <button class="btn btn-primary" onclick="showUpload()">+ 上传工具</button>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats-row">
+    <div class="stat-card"><div><div class="num">24</div><div class="label">工具总数</div></div></div>
+    <div class="stat-card"><div><div class="num">186</div><div class="label">累计下载</div></div></div>
+    <div class="stat-card"><div><div class="num">8</div><div class="label">今日新增</div></div></div>
+    <div class="stat-card"><div><div class="num">6</div><div class="label">分类</div></div></div>
+  </div>
+
+  <!-- Filters -->
+  <div class="filter-bar">
+    <div class="cat-group" id="catGroup">
+      <span class="cat-chip active" data-cat="全部" onclick="switchCat(this)">全部 <span class="cnt">24</span></span>
+      <span class="cat-chip" data-cat="内存取证" onclick="switchCat(this)">内存取证 <span class="cnt">6</span></span>
+      <span class="cat-chip" data-cat="恶意分析" onclick="switchCat(this)">恶意分析 <span class="cnt">5</span></span>
+      <span class="cat-chip" data-cat="查杀清理" onclick="switchCat(this)">查杀清理 <span class="cnt">4</span></span>
+      <span class="cat-chip" data-cat="网络检测" onclick="switchCat(this)">网络检测 <span class="cnt">3</span></span>
+      <span class="cat-chip" data-cat="日志分析" onclick="switchCat(this)">日志分析 <span class="cnt">3</span></span>
+      <span class="cat-chip" data-cat="实用工具" onclick="switchCat(this)">实用工具 <span class="cnt">3</span></span>
+    </div>
+  </div>
+
+  <!-- Grid -->
+  <div class="tool-grid" id="toolGrid"></div>
+</div>
+
+<!-- Detail Drawer -->
+<div class="overlay" id="detailOverlay" onclick="closeDetail()"></div>
+<div class="drawer" id="detailDrawer">
+  <div class="drawer-hd">
+    <h2 id="detailTitle">—</h2>
+    <button class="drawer-close" onclick="closeDetail()">✕</button>
+  </div>
+  <div class="drawer-bd" id="detailBody"></div>
+  <div class="drawer-ft">
+    <button class="btn" onclick="closeDetail()" style="height:34px;">关闭</button>
+    <button class="btn btn-primary" id="detailDlBtn" style="height:34px;">下载工具</button>
+  </div>
+</div>
+
+<!-- Upload Drawer -->
+<div class="overlay" id="uploadOverlay" onclick="closeUpload()"></div>
+<div class="drawer" id="uploadDrawer">
+  <div class="drawer-hd">
+    <h2>上传应急工具</h2>
+    <button class="drawer-close" onclick="closeUpload()">✕</button>
+  </div>
+  <div class="drawer-bd">
+    <div class="uf-group">
+      <label>工具名称 <span style="color:#ff3b30;">*</span></label>
+      <input class="uf-input" placeholder="例如：Volatility 内存取证工具" />
+    </div>
+    <div class="uf-group">
+      <label>简要描述</label>
+      <textarea class="uf-textarea" rows="2" placeholder="工具用途、适用场景等"></textarea>
+    </div>
+    <div class="uf-row">
+      <div class="uf-group">
+        <label>分类</label>
+        <select class="uf-select">
+          <option>内存取证</option><option>恶意分析</option><option>查杀清理</option>
+          <option>网络检测</option><option>日志分析</option><option>实用工具</option>
+        </select>
+      </div>
+      <div class="uf-group">
+        <label>版本号</label>
+        <input class="uf-input" placeholder="1.0.0" />
+      </div>
+    </div>
+    <div class="uf-group">
+      <label>标签</label>
+      <input class="uf-input" placeholder="例如：内存, Rootkit, 取证（逗号分隔）" />
+    </div>
+    <div class="uf-group">
+      <label>工具文件 <span style="color:#ff3b30;">*</span></label>
+      <div class="uf-dropzone">
+        <div class="icon">📁</div>
+        <div class="txt">拖拽或 <strong>点击选择</strong> 工具文件</div>
+        <div class="sub">支持 .exe .zip .tar.gz .py .ps1，最大 200MB</div>
+      </div>
+    </div>
+    <div class="uf-group">
+      <label>操作文档</label>
+      <div class="uf-dropzone" style="padding:18px;">
+        <div class="txt">📄 拖拽或点击选择文档（.md / .pdf / .html）</div>
+      </div>
+    </div>
+    <div class="uf-group">
+      <label>更新日志</label>
+      <textarea class="uf-textarea" rows="3" placeholder="描述此版本的主要变更…"></textarea>
+    </div>
+  </div>
+  <div class="drawer-ft">
+    <button class="btn" onclick="closeUpload()" style="height:34px;">取消</button>
+    <button class="btn btn-primary" style="height:34px;">提交上传</button>
+  </div>
+</div>
+
+<script>
+const tools = [
+  { id:1, name:'Volatility 3', cat:'内存取证', ver:'2.5.0', dls:42, author:'admin',
+    desc:'开源内存取证框架，支持 Windows/Linux/macOS 内存映像分析，可提取进程、网络连接、DLL 列表、注册表等信息。内置 30+ 插件，覆盖进程扫描、网络连接取证、恶意代码检测等场景。',
+    tags:['内存','取证','Windows','Linux'], updated:'2026-07-28', col:'c1',
+    doc:'<h1>Volatility 3 操作说明</h1><p><strong>基本用法</strong></p><pre><code># 获取内存镜像信息\npython vol.py -f memory.dump windows.info\n\n# 列出所有进程\npython vol.py -f memory.dump windows.pslist\n\n# 提取指定进程内存\npython vol.py -f memory.dump windows.memmap --pid 1234</code></pre><p><strong>隐藏进程检测</strong></p><pre><code>python vol.py -f memory.dump windows.psscan</code></pre><p><strong>网络连接取证</strong></p><pre><code>python vol.py -f memory.dump windows.netscan</code></pre><p><strong>恶意代码检测</strong><br>使用 malfind 插件检测被注入的可疑内存页。</p>' },
+  { id:2, name:'Process Explorer', cat:'恶意分析', ver:'17.05', dls:38, author:'admin',
+    desc:'Sysinternals 进程管理工具，提供比任务管理器更详细的进程信息。支持 DLL 加载分析、句柄查看、VirusTotal 集成。',
+    tags:['进程','Windows','分析'], updated:'2026-07-25', col:'c2',
+    doc:'<h1>Process Explorer 指南</h1><p><strong>核心功能</strong></p><ul><li>进程树视图：查看父子进程关系</li><li>DLL 查看：检查进程加载的可疑模块</li><li>句柄查看：查看进程打开的文件和注册表</li><li>VirusTotal 集成：右键提交文件在线检测</li></ul><p><strong>应急场景</strong></p><ol><li>定位可疑进程 → 右键 → Check VirusTotal</li><li>查看进程属性 → TCP/IP 标签 → 检查外连</li><li>搜索 DLL → 确认非微软签名的模块</li></ol>' },
+  { id:3, name:'Malware Remover', cat:'查杀清理', ver:'2.1.0', dls:27, author:'admin',
+    desc:'轻量级恶意软件清除工具。支持驱动级 Rootkit 扫描、顽固文件强制删除、启动项和计划任务可疑条目清理。',
+    tags:['查杀','Rootkit','Windows'], updated:'2026-07-22', col:'c3',
+    doc:'' },
+  { id:4, name:'Wireshark Portable', cat:'网络检测', ver:'4.2.5', dls:31, author:'admin',
+    desc:'便携版网络抓包工具，无需安装即开即用。适用于现场应急的网络流量取证、恶意通信分析和协议解析。',
+    tags:['网络','抓包','Windows'], updated:'2026-07-20', col:'c4',
+    doc:'<h1>Wireshark 应急抓包</h1><p><strong>快速开始</strong><br>选择网络接口 → 双击开始抓包 → 输入过滤表达式</p><p><strong>常用过滤规则</strong></p><table><tr><td>指定 IP</td><td><code>ip.addr == 10.0.0.1</code></td></tr><tr><td>DNS 查询</td><td><code>dns</code></td></tr><tr><td>HTTP 请求</td><td><code>http.request</code></td></tr><tr><td>可疑端口</td><td><code>tcp.port == 4444</code></td></tr></table><p><strong>取证技巧</strong><br>统计 → 对话 → 查看通信量最大的远程地址<br>追踪流 → TCP 流 → 查看完整会话内容</p>' },
+  { id:5, name:'Log Parser Studio', cat:'日志分析', ver:'2.2', dls:19, author:'admin',
+    desc:'基于 LogParser 的 GUI 查询工具。支持用 SQL 语法查询 EVTX、CSV、IIS 等多种日志格式，预置 100+ 安全场景模板。',
+    tags:['日志','Windows','EVTX'], updated:'2026-07-18', col:'c5',
+    doc:'<h1>Log Parser Studio</h1><p><strong>查询示例</strong></p><pre><code>SELECT TimeGenerated, EventID, Message\nFROM \'C:\\Logs\\Security.evtx\'\nWHERE EventID IN (4624, 4625, 4648)\nORDER BY TimeGenerated DESC</code></pre><p>内置 100+ 安全场景查询模板，覆盖登录审计、进程创建、网络连接等常见分析场景。</p>' },
+  { id:6, name:'Sysinternals Suite', cat:'实用工具', ver:'2026.06', dls:29, author:'admin',
+    desc:'微软 Sysinternals 工具集打包，含 Autoruns、ProcDump、PsExec、TCPView 等 70+ 实用工具，一次下载全部搞定。',
+    tags:['Windows','工具集','微软'], updated:'2026-07-15', col:'c6',
+    doc:'' },
+];
+
+let activeCat = '全部';
+
+function render(list) {
+  const g = document.getElementById('toolGrid');
+  g.innerHTML = list.map(t => {
+    const hasDoc = !!t.doc;
+    return `<div class="card" onclick="openDetail(${t.id})">
+      <div class="card-top">
+        <div class="card-icon ${t.col}">${t.name[0]}</div>
+        <div class="card-info">
+          <div class="card-name">${t.name}</div>
+          <div class="card-meta">
+            <span>v${t.ver}</span>
+            <span class="tag">${t.cat}</span>
+            <span class="doc-badge ${hasDoc ? 'yes' : 'no'}">● ${hasDoc ? '有文档' : '仅工具'}</span>
+          </div>
+        </div>
+      </div>
+      <div class="card-desc">${t.desc}</div>
+      <div class="card-footer">
+        <div class="card-stats"><span>${t.dls} 次下载</span><span>${t.updated}</span></div>
+        <button class="dl-btn" onclick="event.stopPropagation(); dl(${t.id})">下载</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+function dl(id) {
+  const t = tools.find(x => x.id === id);
+  if (t) alert('下载文件：' + t.name + ' v' + t.ver);
+}
+function filterTools() {
+  const q = document.getElementById('searchBox').value.toLowerCase();
+  let list = tools;
+  if (activeCat !== '全部') list = list.filter(t => t.cat === activeCat);
+  if (q) list = list.filter(t => t.name.toLowerCase().includes(q) || t.desc.toLowerCase().includes(q));
+  render(list);
+}
+function switchCat(el) {
+  document.querySelectorAll('.cat-chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  activeCat = el.getAttribute('data-cat');
+  filterTools();
+}
+function openDetail(id) {
+  const t = tools.find(x => x.id === id); if (!t) return;
+  document.getElementById('detailTitle').textContent = t.name;
+  const tags = t.tags.map(x => `<span class="dl-tag">${x}</span>`).join('');
+  const verPrev = (parseFloat(t.ver)-0.1 >= 1 ? (parseFloat(t.ver)-0.1).toFixed(1) : '1.0');
+  document.getElementById('detailBody').innerHTML = `
+    <div class="dl-section">
+      <div class="dl-label">基本信息</div>
+      <div class="dl-value">
+        <div class="dl-meta">
+          <span class="dl-meta-item">版本: <span class="v">v${t.ver}</span></span>
+          <span class="dl-meta-item">分类: <span class="v">${t.cat}</span></span>
+          <span class="dl-meta-item">上传: <span class="v">${t.author}</span></span>
+          <span class="dl-meta-item">更新: <span class="v">${t.updated}</span></span>
+          <span class="dl-meta-item">下载: <span class="v">${t.dls}</span></span>
+        </div>
+      </div>
+    </div>
+    <div class="dl-section">
+      <div class="dl-label">描述</div>
+      <div class="dl-value">${t.desc}</div>
+    </div>
+    <div class="dl-section">
+      <div class="dl-label">标签</div>
+      <div class="dl-tags">${tags}</div>
+    </div>
+    <div class="dl-section">
+      <div class="dl-label">版本历史</div>
+      <div class="v-row"><div><div class="ver">v${t.ver} <span class="v-badge">当前</span></div><div class="log">${t.updated} 发布</div></div><span class="date">最新</span></div>
+      <div class="v-row"><div><div class="ver">v${verPrev}</div><div class="log">缺陷修复与性能优化</div></div><span class="date">2026-06-15</span></div>
+      <div class="v-row"><div><div class="ver">v1.0.0</div><div class="log">初始版本</div></div><span class="date">2026-05-01</span></div>
+    </div>
+    <div class="dl-section">
+      <div class="dl-label">操作文档</div>
+      ${t.doc ? `<div class="doc-preview">${t.doc}</div>` : '<div class="dl-value" style="color:#86868b;">暂无操作文档，仅提供工具文件</div>'}
+    </div>`;
+  document.getElementById('detailDlBtn').onclick = () => alert('下载：' + t.name + ' v' + t.ver);
+  document.getElementById('detailOverlay').classList.add('show');
+  document.getElementById('detailDrawer').classList.add('show');
+}
+function closeDetail() {
+  document.getElementById('detailOverlay').classList.remove('show');
+  document.getElementById('detailDrawer').classList.remove('show');
+}
+function showUpload() {
+  document.getElementById('uploadOverlay').classList.add('show');
+  document.getElementById('uploadDrawer').classList.add('show');
+}
+function closeUpload() {
+  document.getElementById('uploadOverlay').classList.remove('show');
+  document.getElementById('uploadDrawer').classList.remove('show');
+}
+render(tools);
+</script>
+</body>
+</html>

@@ -222,6 +222,7 @@ from app.api import rules_coverage  # noqa: E402  # T-P1-3 规则覆盖率看板
 from app.api import agent_dashboard  # noqa: E402  # F1 智能体维度聚合看板
 from app.api import agent_guardrails  # noqa: E402  # F8 护栏门禁
 from app.api import mcp  # noqa: E402  # F7 MCP 工具服务端
+from app.api import tools  # noqa: E402  # 应急工具箱
 
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(case_hosts.router, prefix="/api", tags=["案件"])  # 必须在 cases.router 之前注册
@@ -266,6 +267,7 @@ app.include_router(rules_coverage.router, tags=["规则覆盖率"])  # T-P1-3 �
 app.include_router(agent_dashboard.router, prefix="/api/agents", tags=["智能体看板"])  # F1 聚合看板
 app.include_router(agent_guardrails.router, prefix="/api/agent-guardrails", tags=["护栏"])  # F8 护栏门禁
 app.include_router(mcp.router, prefix="/api/mcp", tags=["MCP工具"])  # F7 MCP 工具服务端
+app.include_router(tools.router)  # 应急工具箱（router 已自带 /api/tools 前缀）
 
 
 @app.get("/api/health")

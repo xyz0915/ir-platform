@@ -510,6 +510,66 @@ DDL_STATEMENTS = [
         updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
     )
     """,
+    # tools — 应急工具主表
+    """
+    CREATE TABLE IF NOT EXISTS tools (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        name            TEXT NOT NULL,
+        description     TEXT DEFAULT '',
+        category        TEXT NOT NULL DEFAULT 'other',
+        os_type         TEXT DEFAULT 'windows',
+        author_id       INTEGER NOT NULL REFERENCES users(id),
+        current_version TEXT NOT NULL DEFAULT '1.0.0',
+        download_count  INTEGER NOT NULL DEFAULT 0,
+        status          TEXT NOT NULL DEFAULT 'active',
+        tags            TEXT DEFAULT '[]',
+        created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        updated_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_tools_category ON tools(category)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_tools_status ON tools(status)
+    """,
+    # tool_versions — 工具版本表
+    """
+    CREATE TABLE IF NOT EXISTS tool_versions (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        tool_id         INTEGER NOT NULL REFERENCES tools(id) ON DELETE CASCADE,
+        version         TEXT NOT NULL,
+        file_name       TEXT NOT NULL,
+        file_path       TEXT NOT NULL,
+        file_size       INTEGER DEFAULT 0,
+        file_hash       TEXT DEFAULT '',
+        doc_file_name   TEXT DEFAULT '',
+        doc_file_path   TEXT DEFAULT '',
+        doc_file_type   TEXT DEFAULT '',
+        change_log      TEXT DEFAULT '',
+        created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_tool_versions_tool_id ON tool_versions(tool_id)
+    """,
+    # tool_downloads — 下载日志表
+    """
+    CREATE TABLE IF NOT EXISTS tool_downloads (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        tool_id         INTEGER NOT NULL REFERENCES tools(id),
+        version_id      INTEGER REFERENCES tool_versions(id),
+        user_id         INTEGER REFERENCES users(id),
+        ip_address      TEXT DEFAULT '',
+        downloaded_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_tool_downloads_tool_id ON tool_downloads(tool_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_tool_downloads_user_id ON tool_downloads(user_id)
+    """,
     # knowledge_drafts — AI 自动知识草稿（AI 自动知识入库）
     """
     CREATE TABLE IF NOT EXISTS knowledge_drafts (

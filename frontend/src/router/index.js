@@ -135,6 +135,12 @@ const routes = [
         component: () => import('@/views/KbFeedbackView.vue')
       },
       {
+        path: 'tools',
+        name: 'Toolbox',
+        component: () => import('@/views/toolbox/ToolboxListView.vue'),
+        meta: { title: '应急工具箱' },
+      },
+      {
         path: 'agent-management',
         name: 'AgentManagementV2',
         // 兼容别名：重定向到智能体编排管理下的智能体模块（M2）

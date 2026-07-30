@@ -132,6 +132,7 @@ const navGroups = [
       { icon: Connection, label: '事件归并', path: '/incident-clusters', activeMatch: '/incident-clusters' },
       { icon: Aim, label: '根因分析', path: '/root-cause', activeMatch: '/root-cause' },
       { icon: Collection, label: '知识自进化', path: '/kb-feedback', activeMatch: '/kb-feedback' },
+      { icon: Tools, label: '应急工具箱', path: '/tools', activeMatch: '/tools' },
     ],
   },
   {
