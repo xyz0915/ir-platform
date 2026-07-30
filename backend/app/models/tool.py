@@ -168,7 +168,7 @@ class Tool:
         """获取统计概览.
 
         Returns:
-            dict: {total: 工具总数, downloads: 累计下载, today: 今日新增, categories: 分类数}.
+            dict: {total_tools, total_downloads, today_new, category_count}.
         """
         with get_connection() as conn:
             total = conn.execute(
@@ -183,7 +183,12 @@ class Tool:
             cats = conn.execute(
                 "SELECT COUNT(DISTINCT category) FROM tools WHERE status='active'"
             ).fetchone()[0]
-            return {"total": total, "downloads": downloads, "today": today, "categories": cats}
+            return {
+                "total_tools": total,
+                "total_downloads": downloads,
+                "today_new": today,
+                "category_count": cats,
+            }
 
     @staticmethod
     def get_categories() -> list[dict]:

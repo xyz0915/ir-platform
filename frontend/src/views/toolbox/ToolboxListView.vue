@@ -255,7 +255,7 @@ async function loadCategories() {
   try {
     const res = await getToolCategories()
     if (res.code === 0 && res.data) {
-      const cats = res.data.categories || []
+      const cats = Array.isArray(res.data) ? res.data : (res.data.categories || [])
       const totalCount = cats.reduce((sum, c) => sum + c.count, 0)
       categoryList.value = [
         { name: '全部', count: totalCount },
