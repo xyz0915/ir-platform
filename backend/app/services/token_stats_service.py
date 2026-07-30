@@ -20,17 +20,59 @@ class TokenStatsService:
     """
 
     @staticmethod
-    def get_daily_stats(days: int = 30) -> list[dict]:
+    def get_daily_stats(days: int = 30, group_by: Optional[str] = None) -> list[dict]:
         """获取按日期聚合的 Token 消耗统计.
 
         Args:
             days: 统计最近 N 天的数据.
+            group_by: 分组维度 — "endpoint" 按endpoint分组, "model" 按model_name分组.
 
         Returns:
-            [{date, total_tokens, prompt_tokens, completion_tokens, count}, ...]
+            默认: [{date, total_tokens, prompt_tokens, completion_tokens, count}, ...]
+            按分组: [{date, endpoint/model_name, total_tokens, ...}, ...]
             按日期升序排列（旧→新）.
         """
         start_date = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+        if group_by == "endpoint":
+            with get_connection() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT
+                        DATE(created_at) as date,
+                        endpoint,
+                        COALESCE(SUM(prompt_tokens), 0) as prompt_tokens,
+                        COALESCE(SUM(completion_tokens), 0) as completion_tokens,
+                        COALESCE(SUM(total_tokens), 0) as total_tokens,
+                        COUNT(*) as count
+                    FROM ai_audit_log
+                    WHERE created_at >= ?
+                    GROUP BY DATE(created_at), endpoint
+                    ORDER BY date ASC, endpoint
+                    """,
+                    (start_date,),
+                ).fetchall()
+            return [dict(row) for row in rows]
+
+        if group_by == "model":
+            with get_connection() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT
+                        DATE(created_at) as date,
+                        model_name,
+                        COALESCE(SUM(prompt_tokens), 0) as prompt_tokens,
+                        COALESCE(SUM(completion_tokens), 0) as completion_tokens,
+                        COALESCE(SUM(total_tokens), 0) as total_tokens,
+                        COUNT(*) as count
+                    FROM ai_audit_log
+                    WHERE created_at >= ?
+                    GROUP BY DATE(created_at), model_name
+                    ORDER BY date ASC, model_name
+                    """,
+                    (start_date,),
+                ).fetchall()
+            return [dict(row) for row in rows]
 
         with get_connection() as conn:
             rows = conn.execute(
@@ -138,6 +180,22 @@ class TokenStatsService:
         # 成功率
         success_rate = round(success_calls / total_calls, 4) if total_calls > 0 else 0.0
 
+        # 按 endpoint 分类统计
+        with get_connection() as conn:
+            endpoint_rows = conn.execute(
+                """
+                SELECT
+                    endpoint,
+                    COALESCE(SUM(total_tokens), 0) as total_tokens,
+                    COUNT(*) as total_calls
+                FROM ai_audit_log
+                WHERE endpoint IS NOT NULL AND endpoint != ''
+                GROUP BY endpoint
+                ORDER BY total_calls DESC
+                """
+            ).fetchall()
+        by_endpoint = [dict(r) for r in endpoint_rows]
+
         return {
             "total_tokens": total_tokens,
             "total_calls": total_calls,
@@ -145,4 +203,5 @@ class TokenStatsService:
             "success_rate": success_rate,
             "this_month_tokens": int(month.get("month_tokens", 0)),
             "this_month_calls": int(month.get("month_calls", 0)),
+            "by_endpoint": by_endpoint,
         }

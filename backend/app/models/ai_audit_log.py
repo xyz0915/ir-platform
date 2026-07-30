@@ -33,6 +33,9 @@ class AiAuditLog:
         error_message: Optional[str] = None,
         ip_address: str = "",
         user_id: Optional[int] = None,
+        endpoint: str = "",
+        intent: str = "",
+        audit_log_id: Optional[int] = None,
     ) -> dict:
         """创建审计日志记录."""
         with get_connection() as conn:
@@ -42,14 +45,16 @@ class AiAuditLog:
                 (host_id, host_name, profile_id, profile_name, model_name,
                  status, prompt_tokens, completion_tokens, total_tokens,
                  latency_ms, masked_mode, prompt, response,
-                 error_message, ip_address, user_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 error_message, ip_address, user_id,
+                 endpoint, intent, audit_log_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     host_id, host_name, profile_id, profile_name, model_name,
                     status, prompt_tokens, completion_tokens, total_tokens,
                     latency_ms, masked_mode, prompt, response,
                     error_message, ip_address, user_id,
+                    endpoint, intent, audit_log_id,
                 ),
             )
             log_id = cursor.lastrowid
@@ -81,6 +86,8 @@ class AiAuditLog:
         end_date: Optional[str] = None,
         masked_mode: Optional[int] = None,
         order_by: str = "created_at DESC",
+        endpoint: Optional[str] = None,
+        keyword: Optional[str] = None,
     ) -> dict:
         """列出审计日志（支持分页和筛选）.
 
@@ -95,6 +102,8 @@ class AiAuditLog:
             end_date: 截止日期（ISO格式）.
             masked_mode: 按脱敏模式筛选（0或1）.
             order_by: 排序方式.
+            endpoint: 按调用来源标识筛选.
+            keyword: 搜索关键词（匹配 prompt/response/error_message）.
 
         Returns:
             {"items": [...], "total": int, "page": int, "page_size": int}
@@ -123,6 +132,13 @@ class AiAuditLog:
         if end_date:
             conditions.append("created_at <= ?")
             params.append(end_date)
+        if endpoint:
+            conditions.append("endpoint = ?")
+            params.append(endpoint)
+        if keyword:
+            conditions.append("(prompt LIKE ? OR response LIKE ? OR error_message LIKE ?)")
+            kw = f"%{keyword}%"
+            params.extend([kw, kw, kw])
 
         where_clause = ""
         if conditions:
@@ -153,10 +169,18 @@ class AiAuditLog:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         profile_id: Optional[int] = None,
+        group_by: Optional[str] = None,
     ) -> dict:
         """获取Token使用统计.
 
+        Args:
+            start_date: 起始日期.
+            end_date: 截止日期.
+            profile_id: 按Profile筛选.
+            group_by: 分组维度 — "endpoint" 按endpoint分组, "model" 按model_name分组.
+
         Returns:
+            当 group_by 为空时：
             {
                 "total_prompt_tokens": int,
                 "total_completion_tokens": int,
@@ -165,8 +189,9 @@ class AiAuditLog:
                 "success_calls": int,
                 "failed_calls": int,
                 "avg_latency_ms": int,
-                "total_cost_estimate": str  (简单估算)
+                "total_cost_estimate": str
             }
+            当 group_by 指定时返回分组列表。
         """
         conditions: list[str] = []
         params: list[Any] = []
@@ -184,6 +209,50 @@ class AiAuditLog:
         where_clause = ""
         if conditions:
             where_clause = "WHERE " + " AND ".join(conditions)
+
+        if group_by == "endpoint":
+            with get_connection() as conn:
+                rows = conn.execute(
+                    f"""
+                    SELECT
+                        DATE(created_at) as date,
+                        endpoint,
+                        COALESCE(SUM(prompt_tokens), 0) as total_prompt_tokens,
+                        COALESCE(SUM(completion_tokens), 0) as total_completion_tokens,
+                        COALESCE(SUM(total_tokens), 0) as total_tokens,
+                        COUNT(*) as total_calls,
+                        SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_calls,
+                        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_calls,
+                        COALESCE(AVG(latency_ms), 0) as avg_latency_ms
+                    FROM ai_audit_log {where_clause}
+                    GROUP BY DATE(created_at), endpoint
+                    ORDER BY date DESC, endpoint
+                    """,
+                    params,
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+        if group_by == "model":
+            with get_connection() as conn:
+                rows = conn.execute(
+                    f"""
+                    SELECT
+                        DATE(created_at) as date,
+                        model_name,
+                        COALESCE(SUM(prompt_tokens), 0) as total_prompt_tokens,
+                        COALESCE(SUM(completion_tokens), 0) as total_completion_tokens,
+                        COALESCE(SUM(total_tokens), 0) as total_tokens,
+                        COUNT(*) as total_calls,
+                        SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_calls,
+                        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_calls,
+                        COALESCE(AVG(latency_ms), 0) as avg_latency_ms
+                    FROM ai_audit_log {where_clause}
+                    GROUP BY DATE(created_at), model_name
+                    ORDER BY date DESC, model_name
+                    """,
+                    params,
+                ).fetchall()
+            return [dict(r) for r in rows]
 
         with get_connection() as conn:
             stats = conn.execute(

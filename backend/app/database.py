@@ -274,6 +274,9 @@ DDL_STATEMENTS = [
         error_message       TEXT,
         ip_address          TEXT,
         user_id             INTEGER,
+        endpoint            TEXT,
+        intent              TEXT,
+        audit_log_id        INTEGER,
         created_at          TEXT    NOT NULL DEFAULT (datetime('now'))
     )
     """,
@@ -2377,7 +2380,7 @@ def init_db() -> None:
         conn.execute("CREATE TABLE IF NOT EXISTS ai_feedback (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, query TEXT, reply TEXT, rating INTEGER, comment TEXT, created_at TEXT DEFAULT (datetime('now')))")
         conn.execute("CREATE TABLE IF NOT EXISTS playbook_presets (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, steps TEXT, tags TEXT, created_at TEXT DEFAULT (datetime('now')))")
         # ai_audit_log 补齐 endpoint / intent 列（DLL已有 total_tokens/latency_ms/model_name）
-        for col in [("endpoint", "TEXT"), ("intent", "TEXT")]:
+        for col in [("endpoint", "TEXT"), ("intent", "TEXT"), ("audit_log_id", "INTEGER")]:
             try:
                 conn.execute(f"ALTER TABLE ai_audit_log ADD COLUMN {col[0]} {col[1]}")
             except Exception:

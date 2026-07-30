@@ -1,32 +1,60 @@
 sequenceDiagram
-    participant User
-    participant NodeLibrary
-    participant CanvasArea
-    participant PipelineNode
-    participant PipelineEditorStore
-    participant ConfigPanel
+    participant Client as 前端/API 调用方
+    participant API as /api/ai 端点
+    participant NR as ai_noise_reduce
+    participant AIS as AiService
+    participant AS as AuditService
+    participant DB as SQLite<br/>(ai_audit_log)
 
-    User->>NodeLibrary: 点击/拖拽节点类型
-    NodeLibrary->>PipelineEditorStore: addNode(type, position)
-    PipelineEditorStore-->>CanvasArea: pipelineNodes 更新
-    CanvasArea->>PipelineNode: 渲染新节点
+    Note over Client,DB: P0 #1: ai_noise_reduce 审计链路（修复后）
 
-    User->>PipelineNode: 点击节点
-    PipelineNode->>PipelineEditorStore: selectNode(nodeId)
-    PipelineEditorStore->>ConfigPanel: selectedNode computed 变化
-    ConfigPanel->>ConfigPanel: 渲染 5 个 section
+    Client->>API: POST /api/ai/noise-reduce
+    API->>NR: noise_reduce(case_id, host_id)
+    NR->>NR: build_events_summary(events)
+    NR->>AIS: call_llm(audit_context={endpoint:"noise_reduce", intent:"ai_noise_reduce", ...})
+    activate AIS
+    AIS->>AIS: 记录开始时间
+    AIS->>AIS: _do_llm_request() → HTTP POST
+    AIS->>AIS: 计算耗时
+    alt 成功
+        AIS->>AS: log_call(status="success", endpoint="noise_reduce", ...)
+        AS->>DB: INSERT INTO ai_audit_log
+        DB-->>AS: OK
+        AS-->>AIS: OK
+        AIS-->>NR: 返回 LLM 响应
+    else 失败
+        AIS->>AS: log_call(status="failed", error_message="...", endpoint="noise_reduce", ...)
+        AS->>DB: INSERT INTO ai_audit_log
+        DB-->>AS: OK
+        AIS-->>NR: 抛出异常
+        NR->>NR: 回退到 mock
+    end
+    deactivate AIS
+    NR->>NR: save_results(verdicts)
+    NR-->>API: 返回统计
+    API-->>Client: 200 OK
 
-    User->>ConfigPanel: 编辑提示词
-    ConfigPanel->>PipelineEditorStore: updateNodeConfig(nodeId, { prompt })
-    PipelineEditorStore->>PipelineEditorStore: configDirty = true
+    Note over Client,DB: P0 #2: AiService.call_llm 统一审计
 
-    Note over User,PipelineEditorStore: --- 连线操作 ---
+    Client->>API: POST /api/ai/narrate-incident
+    API->>AIS: call_llm(audit_context={endpoint:"narrate", ...})
+    AIS->>AS: log_call(...)
+    AS->>DB: INSERT INTO ai_audit_log
 
-    User->>PipelineNode: 点击 cn-out 连接器
-    PipelineNode->>PipelineEditorStore: startConnect(sourceId)
-    PipelineEditorStore->>PipelineEditorStore: connectMode=true, connectSource=sourceId
+    Note over Client,DB: P1 #4: 查询扩展筛选条件
 
-    User->>PipelineNode: 点击另一节点的 cn-in
-    PipelineNode->>PipelineEditorStore: completeConnect(targetId)
-    PipelineEditorStore->>PipelineEditorStore: connections.push({sourceId, targetId})
-    PipelineEditorStore->>PipelineEditorStore: connectMode=false
+    Client->>API: GET /audit-logs?endpoint=noise_reduce&keyword=断路器
+    API->>AS: query_logs(endpoint="noise_reduce", keyword="断路器")
+    AS->>DB: SELECT ... WHERE endpoint=? AND (prompt LIKE ? OR ...)
+    DB-->>AS: 筛选后的日志列表
+    AS-->>API: 返回分页结果
+    API-->>Client: 200 OK
+
+    Note over Client,DB: P2 #7: Token 统计分组
+
+    Client->>API: GET /stats/tokens?days=30&group_by=endpoint
+    API->>TSS: get_daily_stats(days=30, group_by="endpoint")
+    TSS->>DB: SELECT DATE, endpoint, SUM(...) GROUP BY DATE, endpoint
+    DB-->>TSS: 分组统计结果
+    TSS-->>API: 返回
+    API-->>Client: 200 OK

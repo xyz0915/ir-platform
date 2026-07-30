@@ -1,72 +1,45 @@
 classDiagram
-    class PipelineNode {
-        +string id
-        +string type
-        +string label
-        +Position position
-        +string badgeText
-        +string statText
-        +object config
-        +array dependencies
-        +array tools
-        +string prompt
-        +array variables
-        +boolean hasInConnector
-        +boolean hasOutConnector
-        +int track
-        +int stepIndex
-        +boolean selected
-        +select()
-        +move(x, y)
+    class AuditService {
+        +log_call(**kwargs) None
+        +query_logs(page, page_size, host_id, status, days, model_name, endpoint, start_time, end_time, min_tokens, max_tokens, keyword) dict
+        +get_detail(log_id) dict
+        +create_audit_log(user_id, username, action_type, detail, target_type, target_id, ip_address) None
     }
 
-    class Connection {
-        +string sourceId
-        +string targetId
-        +string pathD
-        +boolean isCrossTrack
-        +string dashStyle
+    class AiService {
+        +call_llm(api_base_url, api_key, model, system_prompt, user_prompt, max_tokens, temperature, audit_context) dict
+        +call_llm_stream(api_base_url, api_key, model, system_prompt, user_prompt, max_tokens, temperature) AsyncGenerator
+        +analyze_with_ai(host_id) dict
+        +analyze_with_ai_json(host_id) dict
+        +chat_with_ai(host_id, message, conversation_history, mode, focus_area, base_report_id) dict
+        -_write_audit(audit_context, llm_response, latency_ms, status, error) None
     }
 
-    class PipelineEditorStore {
-        +array~PipelineNode~ pipelineNodes
-        +array~Connection~ connections
-        +string selectedNodeId
-        +boolean configDirty
-        +number zoomLevel
-        +boolean connectMode
-        +string connectSource
-        +array validationMessages
-        +boolean isValid
-        +addNode(type, position)
-        +removeNode(nodeId)
-        +moveNode(nodeId, position)
-        +selectNode(nodeId)
-        +startConnect(sourceId)
-        +completeConnect(targetId)
-        +cancelConnect()
-        +updateNodeConfig(nodeId, patch)
-        +validatePipeline()
-        +runPipeline(eventId)
-        +clearCanvas()
+    class AiAuditLog {
+        +create(host_id, host_name, profile_id, profile_name, model_name, status, prompt_tokens, completion_tokens, total_tokens, latency_ms, masked_mode, prompt, response, error_message, ip_address, user_id, endpoint, intent, audit_log_id) dict
+        +get_by_id(log_id) dict
+        +list_all(page, page_size, host_id, profile_id, status, model_name, start_date, end_date, masked_mode, endpoint, keyword, order_by) dict
+        +get_token_stats(start_date, end_date, profile_id, group_by) dict
+        +get_token_summary(group_by) list
     }
 
-    class AgentManagementStore {
-        +array agents
-        +array pipeline
-        +array presets
-        +object currentRun
-        +string selectedNode
-        +fetchAgents()
-        +addToPipeline(agent)
-        +removeFromPipeline(name)
-        +updateNodeConfig(name, config)
-        +startPipeline(eventId)
-        +savePreset(name, desc)
-        +loadPresetToPipeline(preset)
+    class TokenStatsService {
+        +get_daily_stats(days, group_by) list
+        +get_monthly_stats(months) list
+        +get_summary() dict
     }
 
-    PipelineEditorStore --> PipelineNode : manages
-    PipelineEditorStore --> Connection : manages
-    PipelineEditorStore --> AgentManagementStore : bridges via selectedNodeId
-    AgentManagementStore --> PipelineEditorStore : reads pipelineNodes for run/validate
+    class noise_reduce {
+        +noise_reduce(case_id, host_id) dict
+        +analyze_with_llm(summary, case_context) list
+        +ensure_ai_columns() None
+        +build_events_summary(events) str
+        +save_results(verdicts, original_events) dict
+    }
+
+    AuditService ..> AiAuditLog : delegates to
+    AuditService ..> database : reads/writes
+    AiService ..> AuditService : writes audit log via
+    AiService ..> noise_reduce : called by
+    TokenStatsService ..> AiAuditLog : reads stats from
+    AiService ..> database : reads/writes

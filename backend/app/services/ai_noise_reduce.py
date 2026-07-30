@@ -156,6 +156,16 @@ async def analyze_with_llm(summary: str, case_context: str = "") -> list[dict]:
                     user_prompt=prompt,
                     max_tokens=config.get("max_tokens", 4096),
                     temperature=config.get("temperature", 0.3),
+                    audit_context={
+                        "endpoint": "noise_reduce",
+                        "intent": "ai_noise_reduce",
+                        "host_id": None,
+                        "host_name": "",
+                        "model_name": config.get("model_name", "gpt-4o"),
+                        "user_id": None,
+                        "ip_address": "",
+                        "prompt": prompt,
+                    },
                 ),
                 timeout=180.0,
             )

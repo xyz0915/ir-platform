@@ -32,7 +32,7 @@ class AuditService:
                 "host_id", "host_name", "profile_id", "profile_name", "model_name",
                 "status", "prompt_tokens", "completion_tokens", "total_tokens",
                 "latency_ms", "masked_mode", "prompt", "response", "error_message",
-                "ip_address", "user_id",
+                "ip_address", "user_id", "endpoint", "intent", "audit_log_id",
             ]
             insert_cols = [c for c in columns if c in kwargs]
             insert_vals = [kwargs.get(c) for c in insert_cols]
@@ -45,7 +45,14 @@ class AuditService:
 
     @staticmethod
     def query_logs(page: int = 1, page_size: int = 20, host_id: Optional[int] = None,
-                   status: Optional[str] = None, days: int = 90) -> dict:
+                   status: Optional[str] = None, days: int = 90,
+                   model_name: Optional[str] = None,
+                   endpoint: Optional[str] = None,
+                   start_time: Optional[str] = None,
+                   end_time: Optional[str] = None,
+                   min_tokens: Optional[int] = None,
+                   max_tokens: Optional[int] = None,
+                   keyword: Optional[str] = None) -> dict:
         """分页查询 AI 调用审计日志."""
         with get_connection() as conn:
             conditions = []
@@ -59,6 +66,28 @@ class AuditService:
             if days:
                 conditions.append("created_at >= datetime('now', ?)")
                 params.append(f"-{days} days")
+            if model_name:
+                conditions.append("model_name = ?")
+                params.append(model_name)
+            if endpoint:
+                conditions.append("endpoint = ?")
+                params.append(endpoint)
+            if start_time:
+                conditions.append("created_at >= ?")
+                params.append(start_time)
+            if end_time:
+                conditions.append("created_at <= ?")
+                params.append(end_time)
+            if min_tokens is not None:
+                conditions.append("total_tokens >= ?")
+                params.append(min_tokens)
+            if max_tokens is not None:
+                conditions.append("total_tokens <= ?")
+                params.append(max_tokens)
+            if keyword:
+                conditions.append("(prompt LIKE ? OR response LIKE ? OR error_message LIKE ?)")
+                kw = f"%{keyword}%"
+                params.extend([kw, kw, kw])
 
             where = ""
             if conditions:

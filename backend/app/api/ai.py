@@ -1013,6 +1013,13 @@ def list_audit_logs(
     page_size: int = Query(default=20, ge=1, le=100, description="每页条数"),
     host_id: Optional[int] = Query(default=None, description="按主机ID筛选"),
     status: Optional[str] = Query(default=None, description="按状态筛选"),
+    model_name: Optional[str] = Query(default=None, description="按模型名称筛选"),
+    endpoint: Optional[str] = Query(default=None, description="按端点筛选"),
+    start_time: Optional[str] = Query(default=None, description="开始时间 ISO 8601"),
+    end_time: Optional[str] = Query(default=None, description="结束时间 ISO 8601"),
+    min_tokens: Optional[int] = Query(default=None, description="最小 Token 数"),
+    max_tokens: Optional[int] = Query(default=None, description="最大 Token 数"),
+    keyword: Optional[str] = Query(default=None, description="搜索关键词"),
     user: dict = Depends(get_current_user),
 ):
     """分页查询审计日志."""
@@ -1023,6 +1030,13 @@ def list_audit_logs(
             host_id=host_id,
             status=status,
             days=90,
+            model_name=model_name,
+            endpoint=endpoint,
+            start_time=start_time,
+            end_time=end_time,
+            min_tokens=min_tokens,
+            max_tokens=max_tokens,
+            keyword=keyword,
         )
         return _ok(result)
     except Exception as e:
@@ -1053,11 +1067,12 @@ def get_audit_log_detail(log_id: int, user: dict = Depends(get_current_user)):
 @router.get("/stats/tokens")
 def get_token_stats(
     days: int = Query(default=30, ge=1, le=365, description="统计天数"),
+    group_by: Optional[str] = Query(default=None, description="分组维度: endpoint/model"),
     user: dict = Depends(get_current_user),
 ):
     """Token 消耗统计（按日期聚合）."""
     try:
-        stats = TokenStatsService.get_daily_stats(days=days)
+        stats = TokenStatsService.get_daily_stats(days=days, group_by=group_by)
         return _ok({
             "items": stats,
             "days": days,

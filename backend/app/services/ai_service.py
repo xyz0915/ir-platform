@@ -192,6 +192,7 @@ class AiService:
         user_prompt: str,
         max_tokens: int,
         temperature: float,
+        audit_context: Optional[dict] = None,
     ) -> dict:
         """调用 OpenAI-compatible 格式的 LLM API（非流式）.
 
@@ -202,6 +203,8 @@ class AiService:
         已集成断路器（@with_retry + CircuitBreaker.call），
         熔断时抛出 RuntimeError 由上层降级处理.
 
+        当提供 audit_context 时，自动记录审计日志（计时 + Token 用量）.
+
         Args:
             api_base_url: API 基础 URL.
             api_key: API Key（已解密）.
@@ -210,6 +213,7 @@ class AiService:
             user_prompt: 用户提示词.
             max_tokens: 最大生成 token 数.
             temperature: 生成温度.
+            audit_context: 审计上下文，包含 endpoint, intent, host_id, user_id 等.
 
         Returns:
             LLM API 原始响应 JSON.
@@ -259,7 +263,60 @@ class AiService:
                 resp.raise_for_status()
                 return resp.json()
 
-        return await AiService._ai_circuit_breaker.call(_do_llm_request)
+        import time as _time
+        start_time = _time.monotonic()
+        try:
+            result = await AiService._ai_circuit_breaker.call(_do_llm_request)
+            elapsed_ms = int((_time.monotonic() - start_time) * 1000)
+            AiService._write_audit(audit_context, result, elapsed_ms, "success", None)
+            return result
+        except Exception as e:
+            elapsed_ms = int((_time.monotonic() - start_time) * 1000)
+            AiService._write_audit(audit_context, None, elapsed_ms, "failed", str(e))
+            raise
+
+    @staticmethod
+    def _write_audit(audit_context: Optional[dict],
+                     llm_response: Optional[dict],
+                     latency_ms: int,
+                     status: str,
+                     error: Optional[str]) -> None:
+        """写入 AI 调用审计日志（非阻塞，失败仅记录警告）.
+
+        Args:
+            audit_context: 审计上下文（为 None 时跳过）.
+            llm_response: LLM 响应（从中提取 usage 和响应文本）.
+            latency_ms: 调用延迟（毫秒）.
+            status: 调用状态（success/failed）.
+            error: 错误信息.
+        """
+        if not audit_context:
+            return
+        try:
+            from app.services.audit_service import AuditService
+            usage = llm_response.get("usage", {}) if llm_response else {}
+            choices = llm_response.get("choices", []) if llm_response else []
+            response_text = choices[0].get("message", {}).get("content", "") if choices else ""
+            AuditService.log_call(
+                host_id=audit_context.get("host_id"),
+                host_name=audit_context.get("host_name", ""),
+                model_name=audit_context.get("model_name", ""),
+                status=status,
+                prompt_tokens=usage.get("prompt_tokens", 0),
+                completion_tokens=usage.get("completion_tokens", 0),
+                total_tokens=usage.get("total_tokens", 0),
+                latency_ms=latency_ms,
+                prompt=audit_context.get("prompt", ""),
+                response=response_text,
+                error_message=error,
+                ip_address=audit_context.get("ip_address", ""),
+                user_id=audit_context.get("user_id"),
+                endpoint=audit_context.get("endpoint", ""),
+                intent=audit_context.get("intent", ""),
+                audit_log_id=audit_context.get("audit_log_id"),
+            )
+        except Exception:
+            logger.warning("Audit write failed (non-blocking)", exc_info=True)
 
     @staticmethod
     async def call_llm_stream(
