@@ -267,7 +267,7 @@ async function handleSubmit() {
     fd.append('change_log', form.changeLog || '')
 
     if (!isEditMode.value && toolFileRaw) {
-      fd.append('file', toolFileRaw)
+      fd.append('tool_file', toolFileRaw)
     }
     if (docFileRaw) {
       fd.append('doc_file', docFileRaw)
@@ -282,12 +282,14 @@ async function handleSubmit() {
       res = await uploadTool(fd)
     }
 
-    if (res.code === 0) {
+    if (res && res.code === 0) {
       ElMessage.success(isEditMode.value ? '工具已更新' : '上传成功')
       emit('success')
+    } else {
+      ElMessage.error(res?.message || '操作失败')
     }
-  } catch {
-    // request.js handles error messages
+  } catch (e) {
+    ElMessage.error(e?.message || '请求失败，请稍后重试')
   } finally {
     submitting.value = false
   }
