@@ -24,10 +24,18 @@ from typing import Any, Callable, Optional
 import httpx
 
 from app.models.agent_run import AgentRun, AgentRunStep, NodeRunRepository
+from app.models.hitl_approval import HitlApproval
 from app.services.agents.agent_definition import AgentDefinition
 from app.services.agents.agent_registry import AgentRegistry
 from app.services.agents.cache_manager import CacheManager, cache_manager
 from app.services.agents.node_fixtures import get_fixture
+from app.services.agents.pipeline_common import (
+    HITL_EXPIRE_TTL,
+    HITL_WAIT_TIMEOUT,
+    _safe_sse,
+    _stable_dict,
+    compute_final_status,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +68,7 @@ class PipelineRun:
         self.completed_time: Optional[float] = None
         self.cancelled = False
         self.sse_events: list[dict] = []  # 缓存 SSE 事件用于重连
+        self.tasks: set[asyncio.Task] = set()  # P2-6: 在途节点任务登记（取消时中断）
 
 
 class PipelineEngine:
@@ -73,11 +82,14 @@ class PipelineEngine:
         self._cache = cache_manager
         self._runs: dict[str, PipelineRun] = {}
         self._hitl_events: dict[str, asyncio.Event] = {}  # run_id → approval Event
+        self._run_complete_events: dict[str, asyncio.Event] = {}  # run_id → 完成 Event（resume 可选等待）
         self._max_concurrent = max_concurrent
         # P0-2.1: 全局管道并发控制
         self._global_semaphore: asyncio.Semaphore = asyncio.Semaphore(self._GLOBAL_MAX_RUNS)
-        # P1-1.4: 启动时恢复 DB 中 waiting_hitl 的审批事件
-        self._restore_hitl_events()
+        # P2-4: 构造期不访问 DB；waiting_hitl 事件改为 run()/resume() 首次调用时懒恢复
+        self._restored = False
+        self._HITL_WAIT_TIMEOUT: float = HITL_WAIT_TIMEOUT
+        self._HITL_EXPIRE_TTL: float = HITL_EXPIRE_TTL
 
     # ── 拓扑排序 ──
 
@@ -145,6 +157,8 @@ class PipelineEngine:
         Returns:
             {"run_id", "status", "stages", "total_elapsed", "results"}
         """
+        # P2-4: 首次调用时懒恢复 DB 中 waiting_hitl 事件（构造期不触 DB）
+        self._ensure_restored()
         # P0-5.1: 结构化日志 — pipeline 开始
         logger.info(
             json.dumps({"event": "pipeline_started", "run_id": run_id, "agents": agent_names, "ensure_reporter": ensure_reporter})
@@ -177,6 +191,10 @@ class PipelineEngine:
             run.status = "running"
             # 1. 获取依赖图
             graph = self._registry.get_dependency_graph(effective_names)
+            # P1-1: 环检测 — 引擎层兜底（有环抛 ValueError，由下方 except 捕获置 failed）
+            cycle = self._registry.detect_cycle(graph)
+            if cycle:
+                raise ValueError(f"DAG 存在环: {' → '.join(cycle)}")
             # 2. 拓扑排序 → 分批
             batches = self._topological_sort(graph)
             run.total_batches = len(batches)
@@ -189,23 +207,34 @@ class PipelineEngine:
 
                 run.current_batch = batch_idx
                 self._push_sse(run_id, "batch_start", {"batch": batch_idx, "agents": batch}, on_sse)
-                # 并行执行 batch 内所有 Agent
+                # P2-6: 登记在途 task，取消时中断
                 tasks = []
                 for agent_name in batch:
                     if agent_name not in effective_names:
                         continue
-                    tasks.append(self._run_single(agent_name, run, user, use_cache, on_sse))
-                await asyncio.gather(*tasks)
+                    task = asyncio.create_task(
+                        self._run_single(agent_name, run, user, use_cache, on_sse)
+                    )
+                    run.tasks.add(task)
+                    tasks.append(task)
+                try:
+                    # P2-6: return_exceptions=True 使子任务 CancelledError 不向上传播，
+                    # run() 得以收尾（状态 cancelled + DB 持久化）；外部取消 run 任务本身仍会传播。
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    if run.cancelled:
+                        break
+                finally:
+                    for t in tasks:
+                        run.tasks.discard(t)
 
                 self._push_sse(run_id, "batch_complete", {"batch": batch_idx}, on_sse)
             # 4. 完成
             run.completed_time = time.time()
-            if not run.cancelled:
-                run.status = "completed"
+            final_status = compute_final_status(run)  # P1-3: 不再无条件 completed
+            run.status = final_status
             total_elapsed = round(run.completed_time - run.start_time, 1)
             # 持久化：最终状态
             try:
-                final_status = "completed" if not run.cancelled else "cancelled"
                 AgentRun.update(
                     run.run_id,
                     status=final_status,
@@ -241,8 +270,38 @@ class PipelineEngine:
                 "total_elapsed": total_elapsed,
                 "results": results,
             }
+        except ValueError as exc:
+            # P1-1: 引擎级致命错误（环检测等）→ 标记 failed，不静默丢节点
+            logger.error("PipelineEngine: run 启动失败 run_id=%s: %s", run_id, exc)
+            run_obj = locals().get("run")
+            if run_obj is not None:
+                run_obj.status = "failed"
+                run_obj.completed_time = time.time()
+                self._add_stage(run_obj, "graph", "failed", error=str(exc))
+                self._push_sse(run_id, "stage_error", {"name": "graph", "error": str(exc)}, on_sse)
+                try:
+                    AgentRun.update(
+                        run_obj.run_id,
+                        status="failed",
+                        result_json=json.dumps({"error": str(exc)}, ensure_ascii=False),
+                    )
+                except Exception:
+                    pass
+                return {
+                    "run_id": run_id,
+                    "status": "failed",
+                    "error": str(exc),
+                    "stages": run_obj.stages,
+                    "results": {},
+                }
+            raise
         finally:
             self._global_semaphore.release()
+            # P2-4: run 完成事件（resume 可选等待）
+            done_ev = self._run_complete_events.get(run_id)
+            if done_ev:
+                done_ev.set()
+                self._run_complete_events.pop(run_id, None)
             # P0-5.3: 定期清理过期 run 记录
             self._cleanup_expired_runs()
 
@@ -272,8 +331,18 @@ class PipelineEngine:
         self._push_sse(run.run_id, "stage_start", {"name": agent_name}, on_sse)
         start = time.time()
 
-        # 缓存检查
-        cache_params = {"event_id": run.event_id, "agent": agent_name}
+        # P1-2: 节点 input_params（节点配置 > run 级 ctx）
+        input_params = {
+            **(agent_def.config or {}).get("input_params", {}),
+            **(run.ctx.get("input_params") or {}),
+        }
+        # P2-1: 缓存键含 host_id 与 input_params（_stable_dict 归一化）
+        cache_params = {
+            "event_id": run.event_id,
+            "host_id": run.ctx.get("host_id"),
+            "agent": agent_name,
+            "input_params": _stable_dict(input_params),
+        }
         cached_result: Optional[dict] = None
         if use_cache:
             cached_result = self._cache.get(agent_name, cache_params)
@@ -296,29 +365,56 @@ class PipelineEngine:
         max_retries = 2
         last_exc = None
         result = None
-        for attempt in range(max_retries + 1):
+        try:
+            for attempt in range(max_retries + 1):
+                try:
+                    result = await self._execute_agent(agent_def, run)
+                    last_exc = None
+                    break
+                except RETRYABLE_ERRORS as exc:
+                    last_exc = exc
+                    if attempt < max_retries:
+                        wait = 1.0 * (2 ** attempt)
+                        logger.warning(
+                            "PipelineEngine: Agent '%s' attempt %d/%d failed (%s), retrying in %.1fs",
+                            agent_name, attempt + 1, max_retries + 1, type(exc).__name__, wait
+                        )
+                        await asyncio.sleep(wait)
+                        continue
+                    # 最终尝试失败 → 进入错误处理
+                except Exception as exc:
+                    # 非重试异常直接进入错误处理
+                    last_exc = exc
+                    break
+        except asyncio.CancelledError:
+            # P2-6: 节点任务被取消 → 标记 stage cancelled 并 re-raise（gather 统一结束）
+            self._add_stage(run, agent_name, "cancelled", elapsed=round(time.time() - start, 1), error="cancelled")
             try:
-                result = await self._execute_agent(agent_def, run)
-                last_exc = None
-                break
-            except RETRYABLE_ERRORS as exc:
-                last_exc = exc
-                if attempt < max_retries:
-                    wait = 1.0 * (2 ** attempt)
-                    logger.warning(
-                        "PipelineEngine: Agent '%s' attempt %d/%d failed (%s), retrying in %.1fs",
-                        agent_name, attempt + 1, max_retries + 1, type(exc).__name__, wait
-                    )
-                    await asyncio.sleep(wait)
-                    continue
-                # 最终尝试失败 → 进入错误处理
-            except Exception as exc:
-                # 非重试异常直接进入错误处理
-                last_exc = exc
-                break
+                AgentRunStep.add(
+                    run_id=run.run_id, stage=agent_name, agent=agent_name,
+                    status="cancelled", output_json={"error": "cancelled"},
+                )
+            except Exception:
+                pass
+            raise
 
         if last_exc is None:
             elapsed = round(time.time() - start, 1)
+
+            # P1-4: 节点显式失败（如 guardrail 阻断 status="blocked"）→ 记 stage failed
+            node_status = result.get("status")
+            if node_status not in (None, "success", "completed"):
+                error_msg = result.get("error") or node_status or "node_failed"
+                self._add_stage(run, agent_name, "failed", elapsed=elapsed, error=error_msg, output=result)
+                self._push_sse(run.run_id, "stage_error", {"name": agent_name, "error": error_msg}, on_sse)
+                try:
+                    AgentRunStep.add(
+                        run_id=run.run_id, stage=agent_name, agent=agent_name,
+                        status="failed", output_json=result,
+                    )
+                except Exception:
+                    pass
+                return {"name": agent_name, "status": "failed", "error": error_msg}
 
             # 检查 HITL
             if agent_def.hitl and result.get("hitl_triggered"):
@@ -334,10 +430,92 @@ class PipelineEngine:
                     AgentRun.update(run.run_id, status="waiting_hitl", stage=agent_name)
                 except Exception as exc:
                     logger.warning("PipelineEngine: step 持久化失败 (hitl): %s", exc)
-                # 创建 HITL 审批事件（供 resume 恢复）
+                # ── P0-2：先写审批记录（失败则 fail-safe，不等待）──
+                approval = await self._create_hitl_approval(run, agent_def, result)
+                if approval is None:
+                    self._add_stage(run, agent_name, "failed", error="hitl_approval_create_failed")
+                    self._push_sse(run.run_id, "stage_error",
+                                   {"name": agent_name, "error": "hitl_approval_create_failed"}, on_sse)
+                    return {"name": agent_name, "status": "failed", "error": "hitl_approval_create_failed"}
+                # ── P0-1：创建 Event 并等待（带超时兜底，默认 1800s）──
                 hitl_event = asyncio.Event()
                 self._hitl_events[run.run_id] = hitl_event
-                return {"name": agent_name, "status": "waiting_hitl", "output": result}
+                self._push_sse(run.run_id, "hitl_waiting_confirm",
+                               {"name": agent_name, "approval_id": approval.get("id")}, on_sse)
+                try:
+                    await asyncio.wait_for(hitl_event.wait(), timeout=self._HITL_WAIT_TIMEOUT)
+                except asyncio.TimeoutError:
+                    # 超时兜底：审批置 expired，stage 标记 failed，不无限挂起
+                    try:
+                        HitlApproval.update_status(approval["id"], HitlApproval.STATUS_EXPIRED,
+                                                   reason="审批超时未决议")
+                    except Exception as exc:
+                        logger.warning("PipelineEngine: 审批置 expired 失败: %s", exc)
+                    self._add_stage(run, agent_name, "failed", elapsed=elapsed,
+                                    error="hitl_timeout",
+                                    output={**result, "hitl_decision": {"status": "expired"}})
+                    self._push_sse(run.run_id, "stage_error", {"name": agent_name, "error": "hitl_timeout"}, on_sse)
+                    try:
+                        AgentRunStep.add(run_id=run.run_id, stage=agent_name, agent=agent_name,
+                                         status="failed",
+                                         output_json={"error": "hitl_timeout", "hitl_decision": {"status": "expired"}})
+                    except Exception:
+                        pass
+                    logger.info(json.dumps({"event": "hitl_timeout", "run_id": run.run_id, "agent": agent_name}))
+                    return {"name": agent_name, "status": "failed", "error": "hitl_timeout"}
+                except asyncio.CancelledError:
+                    # P2-6：run 被取消 → 标记 cancelled 并 re-raise（gather 统一结束）
+                    self._add_stage(run, agent_name, "cancelled", elapsed=elapsed,
+                                    output={**result, "hitl_decision": {"status": "cancelled"}})
+                    self._push_sse(run.run_id, "stage_error", {"name": agent_name, "error": "cancelled"}, on_sse)
+                    try:
+                        AgentRunStep.add(run_id=run.run_id, stage=agent_name, agent=agent_name,
+                                         status="cancelled",
+                                         output_json={"error": "cancelled", "hitl_decision": {"status": "cancelled"}})
+                    except Exception:
+                        pass
+                    raise
+                # 决议已到达：approved → 执行真实处置（P0-4）；rejected → 仅记录
+                approved = bool(getattr(hitl_event, "result", False))
+                hitl_decision = {
+                    "status": "approved" if approved else "rejected",
+                    "approval_id": approval.get("id"),
+                    "action": approval.get("action"),
+                    "decided_by": getattr(hitl_event, "decided_by", None),
+                }
+                executed: dict = {}
+                if approved:
+                    try:
+                        from app.services.agents.responder_agent import ResponderAgent
+                        operator = ((run.ctx or {}).get("user") or {}).get("username") or "admin"
+                        executed, rollback = await ResponderAgent().execute_action(
+                            action=approval.get("action") or "export_report",
+                            target=_jl(approval.get("target_json")) or {},
+                            event_id=run.event_id,
+                            operator=operator,
+                        )
+                        hitl_decision["executed"] = executed
+                        hitl_decision["rollback"] = rollback
+                    except Exception as exc:
+                        logger.exception("PipelineEngine: 处置动作执行失败 run_id=%s: %s", run.run_id, exc)
+                        hitl_decision["executed"] = {"success": False, "error": str(exc)}
+                result["hitl_decision"] = hitl_decision
+                # 恢复到 running，标记本 stage 完成（输出带 hitl_decision），继续后续 batch
+                run.status = "running"
+                self._add_stage(run, agent_name, "completed", elapsed=elapsed, output=result)
+                self._push_sse(run.run_id, "stage_complete", {"name": agent_name, "elapsed": elapsed,
+                                                              "hitl_decision": hitl_decision}, on_sse)
+                try:
+                    AgentRunStep.add(run_id=run.run_id, stage=agent_name, agent=agent_name, status="success",
+                                     output_json=result, confidence=result.get("confidence", 0.0),
+                                     evidence_json=result.get("evidence", []))
+                    AgentRun.update(run.run_id, stage=agent_name, confidence=result.get("confidence", 0.0))
+                except Exception as exc:
+                    logger.warning("PipelineEngine: step 持久化失败 (hitl success): %s", exc)
+                logger.info(json.dumps({"event": "hitl_resumed", "run_id": run.run_id, "agent": agent_name,
+                                        "decision": hitl_decision.get("status")}))
+                return {"name": agent_name, "status": "completed", "output": result,
+                        "hitl_decision": hitl_decision}
             # 正常完成
             self._add_stage(run, agent_name, "completed", elapsed=elapsed, output=result)
             self._push_sse(run.run_id, "stage_complete", {
@@ -372,6 +550,53 @@ class PipelineEngine:
                 )
             except Exception: pass
             return {"name": agent_name, "status": "failed", "error": error_msg}
+
+    # ── P0-2: 创建 HITL 审批记录（对齐 Orchestrator.wait_hitl 字段语义）──
+    async def _create_hitl_approval(
+        self, run: PipelineRun, agent_def: AgentDefinition, result: dict
+    ) -> Optional[dict]:
+        """写一条 pending 审批记录。
+
+        动作/目标/回滚预案数据来源优先级：
+        1) responder 写入 ``run.ctx.responder_action``；
+        2) ``agent_def.config`` 显式声明（自定义 HITL 节点）；
+        3) 兜底 ``'custom'`` / ``{}``。
+
+        Returns:
+            审批 dict；创建失败返回 ``None``（调用方 fail-safe 不进入等待，
+            保证审批端点永不 404）。
+        """
+        ra = (run.ctx or {}).get("responder_action", {}) or {}
+        action = ra.get("action") or (agent_def.config or {}).get("action") or "custom"
+        target_json = ra.get("target") or (agent_def.config or {}).get("target") or {}
+        auto_rollback_plan = (
+            ra.get("auto_rollback_plan")
+            or (agent_def.config or {}).get("auto_rollback_plan")
+            or {}
+        )
+        requested_by = None
+        user_ctx = (run.ctx or {}).get("user")
+        if isinstance(user_ctx, dict):
+            requested_by = user_ctx.get("id")
+        try:
+            approval = HitlApproval.create(
+                run_id=run.run_id,
+                action=action,
+                requested_by=requested_by,
+                target_json=target_json,
+                auto_rollback_plan=auto_rollback_plan,
+                reason=str(result.get("output", ""))[:500],
+            )
+            logger.info(
+                "PipelineEngine: HITL approval created run_id=%s approval_id=%s action=%s",
+                run.run_id, approval.get("id"), action,
+            )
+            return approval
+        except Exception as exc:
+            logger.exception(
+                "PipelineEngine: HitlApproval.create 失败 run_id=%s: %s", run.run_id, exc
+            )
+            return None
 
     # ──────────────────────────────────────────────────────────────
     # 节点级可视化调试（Phase 3 / KC-1 解耦）
@@ -540,6 +765,7 @@ class PipelineEngine:
             "branch": self._run_branch,
             "llm": self._run_llm,
             "trigger": self._run_triage,
+            "guardrail": self._run_guardrail,  # P1-4: 合规门禁节点
         }.get(node_type)
 
     def _run_simulated(self, node_type: str, node_name: str, input_params: dict, context_vars: dict) -> dict:
@@ -791,14 +1017,12 @@ class PipelineEngine:
 
     async def _run_root_cause(self, ctx: dict, input_params: dict, mode: str) -> dict:
         """根因定位 — 读取前面 Agent 的输出，用 LLM 综合分析识别第一触发点。"""
-        # 搜集 ctx 中已有的分析结果（兼容 output 是 dict 或 str）
+        # 搜集 ctx 中已有的分析结果（P2-2：经 _stage_output 读取，未完成返回 {}）
         prev_outputs = []
-        for s in (ctx.get("stages") or []):
-            raw = s.get("output") or s.get("output_text") or {}
-            if isinstance(raw, dict):
-                text = raw.get("output", "") or raw.get("analysis", "") or ""
-            else:
-                text = str(raw)
+        stages = ctx.get("stages") or []
+        for s in stages:
+            raw = self._stage_output(stages, s.get("name"))
+            text = raw.get("output", "") or raw.get("analysis", "") or ""
             if text:
                 prev_outputs.append(f"=== {s['name']} ===\n{text[:500]}")
         combined = "\n\n".join(prev_outputs) if prev_outputs else "无前置分析数据。"
@@ -916,6 +1140,7 @@ class PipelineEngine:
                 "summary": summary,
                 "prompt_used": prompt,
                 "model": model,
+                "query": query,  # P1-2: 回显透传的 query（验收 input_params 透传）
             },
         }
 
@@ -1018,6 +1243,16 @@ class PipelineEngine:
             "structured": {"summary": output},
         }
 
+    async def _run_guardrail(self, ctx: dict, input_params: dict, mode: str) -> dict:
+        """合规门禁（Guardrail）节点 — 记录 + 默认放行，显式 block 才阻断（P1-4）。
+
+        委托 ``GuardrailAgent.evaluate``（独立类便于单测）；阻断时返回
+        ``status="blocked"``，由 ``_execute_agent``/``_run_single`` 反映为
+        stage failed，下游节点（拓扑序在后续 batch）不会执行。
+        """
+        from app.services.agents.guardrail_agent import GuardrailAgent
+        return GuardrailAgent().evaluate(input_params)
+
     async def _execute_agent(self, agent_def: AgentDefinition, run: PipelineRun) -> dict:
         """执行 Agent（模板方法，对接现有 Agent 子类或生成摘要）。
 
@@ -1079,11 +1314,16 @@ class PipelineEngine:
                 if host_id:
                     # 兼容整管 run：回写共享 ctx（仅整管路径，调试路径不写回）
                     run.ctx["host_id"] = host_id
+            # P1-2: input_params 透传（节点配置 > run 级 ctx）
+            input_params = {
+                **(agent_def.config or {}).get("input_params", {}),
+                **(run.ctx.get("input_params") or {}),
+            }
             ctx = {
                 "host_id": host_id,
                 "event_id": run.event_id,
                 "stages": run.stages,
-                "input_params": {},
+                "input_params": input_params,
                 "context_vars": run.ctx,
             }
             runner = self._get_node_runner(name)
@@ -1091,16 +1331,38 @@ class PipelineEngine:
                 # 未知 custom Agent — 数据驱动摘要兜底
                 result = await self._run_unknown(agent_def, ctx)
             else:
-                result = await runner(ctx, {}, "real")
+                result = await runner(ctx, input_params, "real")
+            # P1-4: 透传节点显式状态（如 guardrail 阻断 status="blocked"），供 _run_single 判 failed
+            node_status = result.get("status", "success")
             return {
                 "stage": name,
                 "output": result.get("output", ""),
                 "confidence": result.get("confidence", 0.0),
                 "evidence": result.get("evidence", []),
+                "structured": result.get("structured", {}),  # P1-2: 保留节点结构化输出（prompt_used/query 等）
                 "hitl_triggered": False,
+                "status": node_status,
+                "error": result.get("error", "") if node_status != "success" else "",
             }
 
     # ── Stage 管理 ──
+
+    def _stage_output(self, stages_or_run, name: str) -> dict:
+        """读取指定 stage 的输出；未完成/未执行返回 ``{}``（P2-2 输出依赖防护）。
+
+        接受 PipelineRun 实例或 stages 列表（``_run_<node>`` 仅持有 ctx.stages）。
+        仅返回 ``status == "completed"`` 的 stage 输出，避免同批并发读到半成品。
+        """
+        stages = getattr(stages_or_run, "stages", None) or stages_or_run or []
+        for s in stages:
+            if s.get("name") == name and s.get("status") == "completed":
+                out = s.get("output")
+                if isinstance(out, dict):
+                    return out
+                if out is not None:
+                    return {"output": out}
+                return {}
+        return {}
 
     def _add_stage(
         self,
@@ -1142,10 +1404,8 @@ class PipelineEngine:
     ) -> None:
         """推送 SSE 事件。"""
         if on_sse:
-            try:
-                asyncio.ensure_future(on_sse(event_type, data))
-            except Exception:
-                pass
+            # P2-5: 协程内异常可观测（logger.exception），不再静默吞
+            asyncio.ensure_future(_safe_sse(on_sse, event_type, data))
         # 同时更新 run 中的 sse_events 缓存
         run = self._runs.get(run_id)
         if run:
@@ -1155,6 +1415,10 @@ class PipelineEngine:
 
     def cancel(self, run_id: str) -> bool:
         """取消正在执行的管道。
+
+        P2-6：除置 cancelled 标志外，还唤醒 waiting_hitl 等待
+        （``event.set(result=False)`` 使 ``_run_single`` 醒来标记 cancelled），
+        并中断 in-flight 节点任务（``task.cancel()``）。
 
         Args:
             run_id: 运行 ID。
@@ -1168,13 +1432,25 @@ class PipelineEngine:
         run.cancelled = True
         run.status = "cancelled"
         run.completed_time = time.time()
+        # P2-6: 唤醒 HITL 等待（result=False 让 _run_single 标记 cancelled）
+        ev = self._hitl_events.get(run_id)
+        if ev and not ev.is_set():
+            ev.result = False  # type: ignore[attr-defined]
+            ev.set()
+        # P2-6: 中断 in-flight 节点任务
+        for t in list(run.tasks):
+            if not t.done():
+                t.cancel()
         logger.info("PipelineEngine cancelled: run_id=%s", run_id)
         return True
 
     async def resume(self, run_id: str, approved: bool, user: dict) -> bool:
-        """恢复 HITL 暂停的管道。
+        """恢复 HITL 暂停的管道（DAG 路径）。
 
-        P1-1.4: 进程重启后自动从 DB 恢复 waiting_hitl 事件。
+        - 内存中已有 Event → 直接唤醒（in-process 主路径）；
+        - 内存无 Event 但 DB 是 waiting_hitl → 重建 Event 后唤醒（进程重启恢复）；
+        - ``_runs`` 无该 run（孤儿）→ 调度 ``_continue_orphan_run`` 尽力续跑；
+        - 其余情况返回 False。
 
         Args:
             run_id: 运行 ID。
@@ -1184,10 +1460,10 @@ class PipelineEngine:
         Returns:
             bool: 是否成功恢复。
         """
+        # P2-4: 首次调用时懒恢复 DB 中 waiting_hitl 事件
+        self._ensure_restored()
         hitl_event = self._hitl_events.get(run_id)
-        # P1-1.4: 进程重启后 _hitl_events 为空 → 从 DB 重建
         if hitl_event is None:
-            from app.models.agent_run import AgentRun
             run_record = AgentRun.get_by_run_id(run_id)
             if run_record and run_record.get("status") == "waiting_hitl":
                 hitl_event = asyncio.Event()
@@ -1202,16 +1478,130 @@ class PipelineEngine:
                     run_id,
                 )
                 return False
-        # 标记审批结果
-            # 标记审批结果
-            hitl_event.result = approved  # type: ignore[attr-defined]
-            hitl_event.set()
-            # 更新 run 状态
-            run = self._runs.get(run_id)
-            if run:
+
+        # ── P0-3 核心：置位代码【移出】 if hitl_event is None 块 ──
+        hitl_event.result = approved  # type: ignore[attr-defined]
+        hitl_event.decided_by = (user or {}).get("id")  # type: ignore[attr-defined]
+        hitl_event.set()
+
+        run = self._runs.get(run_id)
+        if run:
+            # 防御：仅 waiting_hitl 状态恢复为 running（避免覆盖已完成状态）
+            if run.status == "waiting_hitl":
                 run.status = "running"
+                try:
+                    AgentRun.update(run_id, status="running")
+                except Exception as exc:
+                    logger.warning("PipelineEngine.resume: AgentRun.update(running) 失败: %s", exc)
             return True
-        return False
+        # 进程重启孤儿：内存 PipelineRun 已丢失，尽力从 DB 续跑剩余节点
+        asyncio.create_task(self._continue_orphan_run(run_id, approved))
+        return True
+
+    # ── P0-3: 进程重启孤儿 run 的尽力续跑（best-effort，后台任务，异常不外抛）──
+    async def _continue_orphan_run(self, run_id: str, approved: bool) -> None:
+        """审批后内存 PipelineRun 已丢失时的续跑。
+
+        从 ``agent_runs.ctx_json`` 还原 pipeline 定义，从 ``agent_run_steps``
+        还原已完成节点；对 status=waiting_hitl 的节点直接以本次决议标记完成
+        （避免重复触发 HITL / 重复审批），其余节点按拓扑序续跑，最终收敛到
+        completed / failed / cancelled。任一步失败仅置 DB failed + 日志，
+        不向 API 抛出（后台任务）。
+
+        设计取舍：本路径为尽力而为；动作执行仍遵循「唯一执行点 = _run_single
+        等待恢复后」原则，孤儿续跑不重复执行处置动作（记录 hitl_decision 即可）。
+        """
+        try:
+            run_record = AgentRun.get_by_run_id(run_id)
+            if not run_record:
+                logger.warning("Orphan resume failed: run_id=%s 无记录", run_id)
+                return
+            ctx = _jl(run_record.get("ctx_json")) or {}
+            agent_names = list(ctx.get("agent_names") or [])
+            event_id = run_record.get("event_id") or ctx.get("event_id")
+            user = ctx.get("user") or {}
+            if not agent_names:
+                logger.warning("Orphan resume failed: run_id=%s ctx 无 agent_names", run_id)
+                AgentRun.update(run_id, status="failed",
+                                result_json=json.dumps({"error": "orphan_resume_missing_agent_names"}, ensure_ascii=False))
+                return
+            # 对齐 run() 的 ensure_reporter 语义（custom 路径总是尾部补 reporter）
+            if "reporter" not in agent_names:
+                agent_names.append("reporter")
+
+            # 从 agent_run_steps 还原：已完成节点 + waiting_hitl 节点
+            completed: set[str] = set()
+            hitl_pending_nodes: list[str] = []
+            for step in AgentRunStep.list_by_run(run_id):
+                st = step.get("status")
+                agent = step.get("agent") or step.get("stage")
+                if not agent:
+                    continue
+                if st in ("success", "completed"):
+                    completed.add(agent)
+                elif st == "waiting_hitl":
+                    hitl_pending_nodes.append(agent)
+
+            run = PipelineRun(run_id, agent_names, event_id, ctx)
+            run.status = "running"
+            self._runs[run_id] = run
+            graph = self._registry.get_dependency_graph(agent_names)
+            batches = self._topological_sort(graph)
+            run.total_batches = len(batches)
+            for batch_idx, batch in enumerate(batches):
+                if run.cancelled:
+                    break
+                run.current_batch = batch_idx
+                tasks = []
+                for agent_name in batch:
+                    if agent_name not in agent_names or agent_name in completed:
+                        continue
+                    if agent_name in hitl_pending_nodes:
+                        # 本次决议即该节点的 HITL 决议（不重复触发审批门）
+                        hitl_decision = {
+                            "status": "approved" if approved else "rejected",
+                            "resumed_by": "pipeline_engine_orphan",
+                            "note": "orphan_resume_resolved_without_action",
+                        }
+                        self._add_stage(run, agent_name, "completed",
+                                        output={"hitl_decision": hitl_decision,
+                                                "note": "orphan_resume"})
+                        try:
+                            AgentRunStep.add(run_id=run_id, stage=agent_name, agent=agent_name,
+                                             status="success",
+                                             output_json={"hitl_decision": hitl_decision})
+                        except Exception:
+                            pass
+                        completed.add(agent_name)
+                        continue
+                    task = asyncio.create_task(
+                        self._run_single(agent_name, run, user, True, None)
+                    )
+                    run.tasks.add(task)
+                    tasks.append(task)
+                if not tasks:
+                    continue
+                await asyncio.gather(*tasks)
+                for t in tasks:
+                    run.tasks.discard(t)
+            run.completed_time = time.time()
+            final_status = compute_final_status(run)
+            run.status = final_status
+            AgentRun.update(
+                run_id, status=final_status,
+                result_json=json.dumps({"stages": run.stages, "agent_names": run.agent_names,
+                                        "orphan_resume": True}, default=str, ensure_ascii=False),
+            )
+            logger.info("Orphan resume finished: run_id=%s status=%s", run_id, final_status)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception("Orphan resume failed: run_id=%s: %s", run_id, exc)
+            try:
+                AgentRun.update(run_id, status="failed",
+                                result_json=json.dumps({"error": f"orphan_resume_failed: {exc}"}, ensure_ascii=False))
+            except Exception:
+                pass
 
     def get_status(self, run_id: str) -> Optional[dict]:
         """获取管道运行状态。
@@ -1250,6 +1640,65 @@ class PipelineEngine:
         self._runs.pop(run_id, None)
         self._hitl_events.pop(run_id, None)
 
+    # ── P2-4: 懒恢复（构造期不触 DB）──
+    def _ensure_restored(self) -> None:
+        """首次 run()/resume() 调用时恢复 DB 中 waiting_hitl 事件。
+
+        模块导入期（``pipeline_engine = PipelineEngine()``）不再访问数据库；
+        恢复失败仅记录日志，不阻断运行（运行时再尝试）。
+        """
+        if self._restored:
+            return
+        try:
+            self._restore_hitl_events()
+            # P2-3: 进程重启后残留的超龄 waiting_hitl 孤儿记录，一并兜底过期
+            self._expire_orphan_waiting_hitl()
+        except Exception as exc:
+            logger.debug("PipelineEngine: 懒恢复失败（忽略，运行时再试）: %s", exc)
+        finally:
+            self._restored = True
+
+    # ── P2-3: 孤儿 waiting_hitl 过期兜底（进程重启后 _runs 为空）──
+    def _expire_orphan_waiting_hitl(self) -> int:
+        """扫描 DB 中超龄 waiting_hitl 记录并置 expired + failed。
+
+        进程重启后内存 ``_runs`` 为空，``_cleanup_expired_runs`` 的内存路径
+        无法覆盖这些残留记录；在 ``_ensure_restored`` 时对 DB 做同等过期处理。
+        """
+        from app.models.agent_run import AgentRun
+        try:
+            data = AgentRun.list_all(status="waiting_hitl")
+        except Exception as exc:
+            logger.debug("PipelineEngine: 孤儿 waiting_hitl 扫描失败: %s", exc)
+            return 0
+        expired = 0
+        for rec in (data.get("items") or []):
+            run_id = rec.get("run_id")
+            updated_at = rec.get("updated_at") or rec.get("created_at")
+            if not updated_at:
+                continue
+            try:
+                dt = datetime.strptime(str(updated_at), "%Y-%m-%d %H:%M:%S")
+                age = time.time() - dt.replace(tzinfo=timezone.utc).timestamp()
+            except (ValueError, TypeError):
+                continue  # 无法解析时间 → 保守不处理
+            if age <= self._HITL_EXPIRE_TTL:
+                continue
+            try:
+                for ap in HitlApproval.list_by_run(run_id):
+                    if ap.get("status") == HitlApproval.STATUS_PENDING:
+                        HitlApproval.update_status(ap["id"], HitlApproval.STATUS_EXPIRED,
+                                                   reason="审批超时未决议（清理）")
+                AgentRun.update(run_id, status="failed",
+                                result_json=json.dumps({"error": "hitl_expired_cleanup"}, ensure_ascii=False))
+                expired += 1
+            except Exception as exc:
+                logger.warning("PipelineEngine: 孤儿 waiting_hitl 过期失败 run_id=%s: %s", run_id, exc)
+        if expired:
+            logger.info("PipelineEngine: 清理 %d 条孤儿 waiting_hitl 记录 (TTL=%.0fs)",
+                        expired, self._HITL_EXPIRE_TTL)
+        return expired
+
     # ── P1-1.4: 恢复 DB 中 waiting_hitl 的审批事件（进程重启后）──
     def _restore_hitl_events(self) -> int:
         """从 agent_runs 表扫描 status=waiting_hitl 的记录，重建 asyncio.Event。
@@ -1274,7 +1723,11 @@ class PipelineEngine:
 
     # ── P0-5.3: 定期清理过期的 _runs 记录，防止内存 OOM ──
     def _cleanup_expired_runs(self, ttl: Optional[float] = None) -> int:
-        """清理已完成/失败/取消超过 TTL 的运行记录，释放内存。
+        """清理超龄运行记录，释放内存。
+
+        - ``completed / failed / cancelled``：超过 ``ttl``（默认 _CLEANUP_TTL=3600s）；
+        - ``waiting_hitl``（P2-3）：超过 ``HITL_EXPIRE_TTL``（默认 24h）→
+          相关 pending 审批置 expired + DB status=failed + 内存清理。
 
         Args:
             ttl: 过期秒数（默认 _CLEANUP_TTL = 3600s）。
@@ -1286,7 +1739,23 @@ class PipelineEngine:
         now = time.time()
         expired_ids = []
         for run_id, run in list(self._runs.items()):
-            if run.status in ("completed", "failed", "cancelled"):
+            if run.status == "waiting_hitl":
+                # P2-3: waiting_hitl 超 TTL → 审批 expired + DB failed + 内存清理
+                if (now - run.start_time) > self._HITL_EXPIRE_TTL:
+                    try:
+                        for ap in HitlApproval.list_by_run(run_id):
+                            if ap.get("status") == HitlApproval.STATUS_PENDING:
+                                HitlApproval.update_status(ap["id"], HitlApproval.STATUS_EXPIRED,
+                                                           reason="审批超时未决议（清理）")
+                    except Exception as exc:
+                        logger.warning("PipelineEngine: waiting_hitl 审批过期失败: %s", exc)
+                    try:
+                        AgentRun.update(run_id, status="failed",
+                                        result_json=json.dumps({"error": "hitl_expired_cleanup"}, ensure_ascii=False))
+                    except Exception as exc:
+                        logger.warning("PipelineEngine: waiting_hitl DB 置 failed 失败: %s", exc)
+                    expired_ids.append(run_id)
+            elif run.status in ("completed", "failed", "cancelled"):
                 completed = run.completed_time or (run.start_time + ttl)
                 if (now - completed) > ttl:
                     expired_ids.append(run_id)

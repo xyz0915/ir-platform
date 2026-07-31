@@ -228,6 +228,19 @@ SIMULATE_LLM = {
     "evidence": [],
 }
 
+SIMULATE_GUARDRAIL = {
+    "output_text": "# 合规门禁（Guardrail）\n校验通过，已记录。",
+    "structured": {
+        "blocked": False,
+        "checks": [{"rule": "default_policy", "passed": True, "detail": ""}],
+        "policy": "default",
+    },
+    "confidence": 1.0,
+    "evidence": [
+        {"type": "guardrail_check", "checks": [{"rule": "default_policy", "passed": True}]},
+    ],
+}
+
 SIMULATE_TRIAGE = {
     "output_text": (
         "# 触发器分诊报告（模拟）\n\n"
@@ -290,6 +303,7 @@ _FIXTURE_MAP = {
     "branch": SIMULATE_BRANCH,
     "llm": SIMULATE_LLM,
     "trigger": SIMULATE_TRIAGE,
+    "guardrail": SIMULATE_GUARDRAIL,
 }
 
 

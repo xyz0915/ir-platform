@@ -468,6 +468,22 @@ class Orchestrator:
             "user": user or {},
         })
 
+        # P0-3: 模式感知分流 — DAG/custom 路径委托 pipeline_engine（函数级 import 避免循环依赖）
+        # 硬编码路径（mode != custom / 缺失）行为完全不变。
+        if ctx.get("mode") == "custom":
+            from app.services.agents.pipeline_engine import pipeline_engine
+            approved = approval.get("status") == HitlApproval.STATUS_APPROVED
+            resumed = await pipeline_engine.resume(run_id, approved=approved, user=user or {})
+            if resumed:
+                return {
+                    "run_id": run_id,
+                    "status": "running",           # 引擎异步续跑，最终状态经 SSE/轮询可见
+                    "executed": None,
+                    "result": {"stage": "resumed", "engine": "pipeline_engine", "approved": approved},
+                    "resumed_by": "pipeline_engine",
+                }
+            # 引擎无法恢复（如非 waiting_hitl）→ 退回现有 custom 收尾逻辑（reporter 刷新）
+
         hitl_decision: Optional[dict] = None
         executed: dict = {}
         if approval.get("status") == HitlApproval.STATUS_APPROVED:

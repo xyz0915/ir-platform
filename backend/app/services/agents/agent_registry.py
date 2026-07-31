@@ -221,4 +221,23 @@ class AgentRegistry:
                 f"Circular dependency detected: {' → '.join(cycle)}"
             )
 
+        # P2-2: 引用未声明依赖的输出 → warning（建议声明依赖，否则同批并发可能读到半成品）
+        for name in agent_names:
+            agent = all_agents.get(name)
+            if not agent:
+                continue
+            cfg = agent.config or {}
+            input_params = cfg.get("input_params") or {}
+            if not isinstance(input_params, dict):
+                continue
+            for key, val in input_params.items():
+                if isinstance(val, str) and val.startswith("{dep:") and val.endswith("}"):
+                    dep_name = val[len("{dep:"):-1]
+                    if dep_name and dep_name not in agent.depends_on:
+                        messages.append(
+                            f"Agent '{name}' input_params.{key} 引用 '{dep_name}' 的输出，"
+                            f"但 '{dep_name}' 未在 depends_on 声明——建议声明依赖，"
+                            f"否则同批并发可能读到半成品"
+                        )
+
         return messages

@@ -94,6 +94,17 @@ async def create_agent_run(
             ctx["resolved_rule_id"] = resolved.rule_id
             ctx["resolved_match_type"] = resolved.match_type
 
+    # P1-1: 同步校验 DAG 合法性（缺失/禁用 agent、有环 → 即时 400，不静默丢节点）
+    if agent_names:
+        from app.services.agents.agent_registry import AgentRegistry
+        validation_errors = AgentRegistry().validate_pipeline(agent_names)
+        blocking_errors = [
+            m for m in validation_errors
+            if "not found" in m or "disabled" in m or "Circular" in m
+        ]
+        if blocking_errors:
+            raise HTTPException(status_code=400, detail="; ".join(blocking_errors))
+
     run = _orchestrator.start_run(
         event_id=event_id,
         case_id=case_id,
@@ -218,6 +229,12 @@ def cancel_agent_run(
             detail=f"Cannot cancel run in status: {run.get('status')}",
         )
     AgentRun.update(run_id, status="cancelled")
+    # P2-6: 引擎内取消配套（唤醒 waiting_hitl + 中断在途任务）
+    try:
+        from app.services.agents.pipeline_engine import pipeline_engine
+        pipeline_engine.cancel(run_id)
+    except Exception as exc:
+        logger.warning("pipeline_engine.cancel 失败 run_id=%s: %s", run_id, exc)
     return {"code": 0, "data": {"run_id": run_id, "status": "cancelled"}}
 
 
