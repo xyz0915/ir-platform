@@ -1086,7 +1086,12 @@ DDL_STATEMENTS = [
         name        TEXT NOT NULL UNIQUE,
         description TEXT DEFAULT '',
         agents      TEXT NOT NULL DEFAULT '[]',
-        created_at  TEXT DEFAULT (datetime('now'))
+        created_at  TEXT DEFAULT (datetime('now')),
+        author      TEXT DEFAULT '',
+        category    TEXT DEFAULT 'other',
+        tags        TEXT DEFAULT '[]',      -- JSON 数组
+        usage_count INTEGER NOT NULL DEFAULT 0,
+        last_used_at TEXT
     )
     """,
     # ── F8 护栏门禁（§3）──
@@ -1637,6 +1642,39 @@ def _alter_agent_definitions_add_tools_model_profile(conn: sqlite3.Connection) -
     if "model_profile" not in existing:
         conn.execute("ALTER TABLE agent_definitions ADD COLUMN model_profile TEXT DEFAULT ''")
         logger.info("Migrated: agent_definitions.model_profile")
+
+
+def _migrate_pipeline_presets_meta(conn: sqlite3.Connection) -> None:
+    """检测并添加 pipeline_presets 表的元数据列（幂等）.
+
+    新增 5 列（预设卡片选择器所需）:
+      - author        TEXT DEFAULT ''       # 创建人
+      - category      TEXT DEFAULT 'other'  # 分类：取证 / 分析 / 处置 / 其他
+      - tags          TEXT DEFAULT '[]'     # JSON 数组标签
+      - usage_count   INTEGER NOT NULL DEFAULT 0   # 使用次数
+      - last_used_at  TEXT                  # 最近使用时间
+
+    新库由 DDL_STATEMENTS 的 CREATE TABLE 直接建好；此处仅补齐升级前的旧库。
+    使用 PRAGMA table_info 守卫模式（参考 _migrate_source_timestamp），
+    列缺失才 ALTER TABLE ADD COLUMN，可重复执行。
+    """
+    cursor = conn.execute("PRAGMA table_info(pipeline_presets)")
+    existing_columns: set[str] = {row["name"] for row in cursor.fetchall()}
+
+    new_columns: list[tuple[str, str]] = [
+        ("author", "TEXT DEFAULT ''"),
+        ("category", "TEXT DEFAULT 'other'"),
+        ("tags", "TEXT DEFAULT '[]'"),
+        ("usage_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("last_used_at", "TEXT"),
+    ]
+
+    for col_name, col_type in new_columns:
+        if col_name not in existing_columns:
+            conn.execute(
+                f"ALTER TABLE pipeline_presets ADD COLUMN {col_name} {col_type}"
+            )
+            logger.info("Added column '%s' to pipeline_presets table", col_name)
 
 
 def _create_agent_baselines_table(conn: sqlite3.Connection) -> None:
@@ -2430,6 +2468,8 @@ def init_db() -> None:
         _alter_cases_priority(conn)
         # Fix A: agent_definitions 增加 tools / model_profile 列（兼容存量库）
         _alter_agent_definitions_add_tools_model_profile(conn)
+        # 预设选择器元数据：pipeline_presets 增加 author/category/tags/usage_count/last_used_at 列
+        _migrate_pipeline_presets_meta(conn)
         # AI 自动知识入库（knowledge_drafts 已通过 DDL 幂等创建）
         _init_knowledge_drafts(conn)
         # 系统设置一期：users 表迁移 + 预置系统参数

@@ -25,7 +25,7 @@
         >
           🐞 调试模式
         </button>
-        <button class="btn" @click="onLoadPreset">加载预设</button>
+        <button class="btn" @click="presetPickerVisible = true">加载预设</button>
         <button class="btn" @click="onSaveAs">另存为</button>
         <button class="btn" @click="onSetDefault">设为默认</button>
         <button class="btn btn-primary" @click="onPublish">发布</button>
@@ -105,11 +105,18 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 加载预设：产品级卡片选择器（替代旧 ElMessageBox 列表） -->
+    <PresetPickerDialog
+      :visible="presetPickerVisible"
+      @close="presetPickerVisible = false"
+      @selected="onPresetSelected"
+    />
   </div>
 </template>
 
 <script setup>
-import { h, ref } from 'vue'
+import { ref } from 'vue'
 import { onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { usePipelineEditorStore } from '@/stores/pipelineEditor'
@@ -118,8 +125,18 @@ import NodeLibrary from '@/components/agents/pipeline/NodeLibrary.vue'
 import CanvasArea from '@/components/agents/pipeline/CanvasArea.vue'
 import ConfigPanel from '@/components/agents/pipeline/ConfigPanel.vue'
 import DebugPanel from '@/components/agents/pipeline/DebugPanel.vue'
+import PresetPickerDialog from '@/components/agents/PresetPickerDialog.vue'
 
 const store = usePipelineEditorStore()
+
+// ===== H2: 加载预设（产品级卡片选择器） =====
+
+const presetPickerVisible = ref(false)
+
+function onPresetSelected(preset) {
+  store.loadPreset(preset)
+  ElMessage.success('预设已加载')
+}
 
 // ===== config-default-pipeline: 设为默认流程 =====
 
@@ -240,79 +257,6 @@ function onKeyDown(e) {
     store.removeNode(store.selectedNodeId)
     ElMessage.info('节点已删除')
     e.preventDefault()
-  }
-}
-
-// ===== H2: 加载预设 =====
-
-async function onLoadPreset() {
-  try {
-    const res = await agentApi.pipeline.getPresets()
-    const presets = res.data || res || []
-    if (!presets.length) {
-      ElMessage.info('暂无可用预设')
-      return
-    }
-
-    // 使用 ElMessageBox 展示预设列表供选择，选中后高亮并显示对勾
-    let selectedPreset = null
-    let selectedEl = null
-    await ElMessageBox({
-      title: '加载预设',
-      message: h('div', { class: 'preset-list' },
-        presets.map(p => h('div', {
-          class: 'preset-item',
-          style: {
-            padding: '8px 12px',
-            cursor: 'pointer',
-            borderBottom: '0.5px solid var(--color-border-default)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-          },
-          onClick: (e) => {
-            selectedPreset = p
-            selectedEl = e.currentTarget
-            // 视觉反馈：高亮 + 左侧强调色 + 对勾
-            document.querySelectorAll('.preset-item').forEach(el => {
-              el.style.background = ''
-              el.style.borderLeft = ''
-              el.style.fontWeight = ''
-              const check = el.querySelector('.preset-check')
-              if (check) check.style.display = 'none'
-            })
-            e.currentTarget.style.background = 'var(--color-accent-subtle)'
-            e.currentTarget.style.borderLeft = '3px solid var(--color-accent)'
-            e.currentTarget.style.fontWeight = '500'
-            const check = e.currentTarget.querySelector('.preset-check')
-            if (check) check.style.display = 'inline'
-          },
-        }, [
-          h('div', null, [
-            h('div', { style: 'font-weight:500' }, p.name || p.preset_name),
-            h('div', { style: 'font-size:11px;color:var(--color-fg-light)' }, p.description || ''),
-          ]),
-          h('div', { class: 'preset-check', style: 'display:none;color:var(--color-accent);font-weight:bold;font-size:16px;padding-left:8px;' }, '✓'),
-        ]))
-      ),
-      showCancelButton: true,
-      confirmButtonText: '加载',
-      beforeClose: (action, instance, done) => {
-        if (action === 'confirm') {
-          if (!selectedPreset) {
-            ElMessage.warning('请先选择一个预设，再点击加载')
-            return
-          }
-          store.loadPreset(selectedPreset)
-          ElMessage.success('预设已加载')
-        }
-        done()
-      },
-    })
-  } catch (e) {
-    if (e !== 'cancel' && !e?.toString?.().includes('cancel')) {
-      ElMessage.error('加载预设失败: ' + (e.message || e))
-    }
   }
 }
 

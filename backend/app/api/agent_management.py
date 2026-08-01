@@ -425,10 +425,21 @@ def create_preset(
     data: dict,
     current_user: Optional[dict] = Depends(get_current_user),
 ):
-    """保存管道为预置模板。"""
+    """保存管道为预置模板。
+
+    请求体为自由字典，除 name / description / agents 外，支持可选元数据：
+      - category: 分类（取证 / 分析 / 处置 / 其他），缺省 'other'
+      - tags:     标签数组（list[str]），缺省 []
+    author 自动取当前登录用户名（未登录则为空字符串）。
+    """
     name = data.get("name", "")
     description = data.get("description", "")
     agents = data.get("agents", [])
+    category = data.get("category", "other")
+    tags = data.get("tags", [])
+    author = ""
+    if current_user:
+        author = current_user.get("username", "") if isinstance(current_user, dict) else str(current_user)
     if not name or not agents:
         _err(400, "name and agents are required")
     # 唯一性预检：name 在 DB 层有 UNIQUE 约束，直接尝试 INSERT 会触发
@@ -440,6 +451,9 @@ def create_preset(
             "name": name,
             "description": description,
             "agents": agents,
+            "author": author,
+            "category": category,
+            "tags": tags,
         })
     except Exception as exc:
         # 兜底：极小概率下的竞态（预检通过但并发写入仍冲突），仍给出 409 而非 500
@@ -448,6 +462,21 @@ def create_preset(
             _err(409, f"预设名称 '{name}' 已存在")
         raise
     return _ok(data=preset)
+
+
+@router.post("/api/agent-management/pipeline/presets/{preset_id}/use")
+def use_preset(
+    preset_id: int,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    """记录一次预设加载使用（usage_count +1 并刷新 last_used_at）。
+
+    前端在选择器确认加载某预设后调用，用于统计预设热度。
+    """
+    success = PipelinePresetModel.increment_usage(preset_id)
+    if not success:
+        _err(404, f"Preset '{preset_id}' not found")
+    return _ok(message="recorded")
 
 
 @router.delete("/api/agent-management/pipeline/presets/{preset_id}")

@@ -30,6 +30,7 @@ import {
   createPreset,
   deletePreset,
   updatePreset,
+  recordPresetUse,
   runNode,
   simulateBranch,
   getNodeRuns,
@@ -92,6 +93,7 @@ const agentApi = {
     createPreset: (name, description, agents) => createPreset(name, description, agents),
     deletePreset: (presetId) => deletePreset(presetId),
     updatePreset: (id, data) => updatePreset(id, data),
+    recordPresetUse: (presetId) => recordPresetUse(presetId),
     // 种子 DAG：当前走 Mock（后端 presets 就绪后切真实）
     getSample: () => pipelineMock.getSample(),
     // Phase 3 · 单节点调试 / 分支模拟（USE_MOCK.nodeDebug 门控）

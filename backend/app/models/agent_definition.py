@@ -205,19 +205,35 @@ class PipelinePresetModel:
 
     @staticmethod
     def create(data: dict) -> dict:
-        """创建一条 Pipeline 预设."""
+        """创建一条 Pipeline 预设（含元数据字段）.
+
+        Args:
+            data: 预设数据。支持字段：
+                name(必填), description, agents(必填, list[str]),
+                author, category, tags(list[str]), usage_count, last_used_at。
+                缺失的元数据字段使用默认值。
+        """
         agents = data.get("agents", [])
         agents_str = json.dumps(agents, ensure_ascii=False) if isinstance(agents, list) else str(agents)
+        tags = data.get("tags", [])
+        tags_str = json.dumps(tags, ensure_ascii=False) if isinstance(tags, list) else str(tags)
         with get_connection() as conn:
             cursor = conn.execute(
                 """
-                INSERT INTO pipeline_presets (name, description, agents)
-                VALUES (?, ?, ?)
+                INSERT INTO pipeline_presets
+                    (name, description, agents, author, category, tags,
+                     usage_count, last_used_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     data["name"],
                     data.get("description", ""),
                     agents_str,
+                    data.get("author", ""),
+                    data.get("category", "other"),
+                    tags_str,
+                    int(data.get("usage_count", 0) or 0),
+                    data.get("last_used_at"),
                 ),
             )
             pid = cursor.lastrowid
@@ -225,7 +241,7 @@ class PipelinePresetModel:
 
     @staticmethod
     def get(pid: int) -> Optional[dict]:
-        """按主键查询 Pipeline 预设，自动解析 agents JSON."""
+        """按主键查询 Pipeline 预设，自动解析 agents / tags JSON."""
         with get_connection() as conn:
             row = conn.execute(
                 "SELECT * FROM pipeline_presets WHERE id = ?", (pid,)
@@ -234,11 +250,12 @@ class PipelinePresetModel:
                 return None
             result = dict(row)
             result["agents"] = _d(result.get("agents"), [])
+            result["tags"] = _d(result.get("tags"), [])
             return result
 
     @staticmethod
     def list() -> list[dict]:
-        """列出所有 Pipeline 预设，自动解析 agents JSON."""
+        """列出所有 Pipeline 预设，自动解析 agents / tags JSON."""
         with get_connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM pipeline_presets ORDER BY name ASC"
@@ -247,12 +264,13 @@ class PipelinePresetModel:
         for row in rows:
             d = dict(row)
             d["agents"] = _d(d.get("agents"), [])
+            d["tags"] = _d(d.get("tags"), [])
             results.append(d)
         return results
 
     @staticmethod
     def get_by_name(name: str) -> Optional[dict]:
-        """按 name 查询 Pipeline 预设，自动解析 agents JSON. 返回 None 表示不存在."""
+        """按 name 查询 Pipeline 预设，自动解析 agents / tags JSON. 返回 None 表示不存在."""
         with get_connection() as conn:
             row = conn.execute(
                 "SELECT * FROM pipeline_presets WHERE name = ?", (name,)
@@ -261,6 +279,7 @@ class PipelinePresetModel:
             return None
         result = dict(row)
         result["agents"] = _d(result.get("agents"), [])
+        result["tags"] = _d(result.get("tags"), [])
         return result
 
     @staticmethod
@@ -305,3 +324,57 @@ class PipelinePresetModel:
                 values,
             )
         return PipelinePresetModel.get(pid)
+
+    @staticmethod
+    def increment_usage(preset_id: int) -> bool:
+        """记录一次预设加载使用：usage_count +1 并刷新 last_used_at.
+
+        Args:
+            preset_id: 预设主键 id。
+
+        Returns:
+            True 表示更新成功，False 表示预设不存在。
+        """
+        with get_connection() as conn:
+            cursor = conn.execute(
+                "UPDATE pipeline_presets SET usage_count = usage_count + 1, "
+                "last_used_at = datetime('now') WHERE id = ?",
+                (preset_id,),
+            )
+            return cursor.rowcount > 0
+
+    @staticmethod
+    def update_meta(preset_id: int, **kwargs: Any) -> Optional[dict]:
+        """更新预设元数据字段（白名单：category / tags / description）.
+
+        与 update() 不同，该方法仅允许修改展示型元数据，避免误改
+        name / agents 等结构性字段；tags 传入 list 时自动序列化为 JSON。
+
+        Args:
+            preset_id: 预设主键 id。
+            **kwargs: 允许 category / tags / description 三个字段。
+
+        Returns:
+            更新后的完整记录，或 None（记录不存在）。
+        """
+        allowed = {"category", "tags", "description"}
+        data: dict[str, Any] = {}
+        for k in allowed:
+            if k not in kwargs:
+                continue
+            v = kwargs[k]
+            if k == "tags":
+                data[k] = json.dumps(v, ensure_ascii=False) if isinstance(v, list) else str(v)
+            else:
+                data[k] = v
+        if not data:
+            return PipelinePresetModel.get(preset_id)
+        clauses = [f"{k} = ?" for k in data]
+        values = list(data.values())
+        values.append(preset_id)
+        with get_connection() as conn:
+            conn.execute(
+                f"UPDATE pipeline_presets SET {', '.join(clauses)} WHERE id = ?",
+                values,
+            )
+        return PipelinePresetModel.get(preset_id)

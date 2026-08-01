@@ -86,6 +86,11 @@ export function deletePreset(presetId) {
   return request.delete(`/agent-management/pipeline/presets/${presetId}`)
 }
 
+/** 记录一次预设加载使用（usage_count +1，用于预设热度统计）。 */
+export function recordPresetUse(presetId) {
+  return request.post(`/agent-management/pipeline/presets/${presetId}/use`)
+}
+
 /** 更新预置模板（如修改状态为 published）。 */
 export function updatePreset(presetId, data) {
   return request.put(`/agent-management/pipeline/presets/${presetId}`, data)
