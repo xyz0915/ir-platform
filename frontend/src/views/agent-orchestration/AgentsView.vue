@@ -1,9 +1,9 @@
 <template>
-  <!-- M2 容器：包装增强后的 AgentManagementView（含「智能体库」Tab）。
-       保持原有 Pipeline Builder / Execution History 可用实现不变。 -->
-  <AgentManagementView />
+  <!-- 智能体菜单：直接渲染智能体库（不再包装 AgentManagementView，
+       避免误渲染「流水线编排」Tab 导致与 /agent-orchestration/pipeline 内容重复）。 -->
+  <AgentLibraryPanel />
 </template>
 
 <script setup>
-import AgentManagementView from '@/views/AgentManagementView.vue'
+import AgentLibraryPanel from '@/components/agents/AgentLibraryPanel.vue'
 </script>
