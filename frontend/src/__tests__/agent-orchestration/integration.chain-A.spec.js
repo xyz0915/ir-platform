@@ -130,7 +130,7 @@ describe('集成链路 A：M2 → M3 → M6 → M8 跨模块协同', () => {
 
     // ① M2 创建自定义 Agent
     const agent = await m2.registerAgent({ agent_id: 'a1', display_name: 'A1', kind: 'custom', status: 'active' })
-    expect(agent.agent_id).toBe('a1')
+    expect(agent.data.agent_id).toBe('a1')
     expect(agentApi.createAgent).toHaveBeenCalled()
 
     // ② M3 加载种子 DAG 并执行，得到 run_id

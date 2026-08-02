@@ -52,12 +52,12 @@ describe('M2 AgentManagement Store：CRUD 状态机', () => {
     expect(store.agents.length).toBe(1)
   })
 
-  it('registerAgent 注册后刷新列表并返回数据', async () => {
+  it('registerAgent 注册后刷新列表并返回完整响应信封（含 data + warning，P2）', async () => {
     const store = useAgentManagementStore()
     const r = await store.registerAgent({ name: 'custom-a', display_name: 'A' })
     expect(api.createAgent).toHaveBeenCalledWith({ name: 'custom-a', display_name: 'A' })
     expect(api.listAgents).toHaveBeenCalled() // 刷新
-    expect(r).toEqual({ name: 'custom-a' })
+    expect(r.data).toEqual({ name: 'custom-a' })
   })
 
   it('updateAgentAction 更新后刷新列表', async () => {
