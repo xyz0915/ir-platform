@@ -12,6 +12,7 @@ from app.models.agent_run import NodeRunRepository
 from app.services.agents.agent_definition import AgentDefinition
 from app.services.agents.agent_registry import AgentRegistry
 from app.services.agents.cache_manager import cache_manager
+from app.services.agents.execution_mode import build_agent_warning
 from app.services.agents.hitl_manager import hitl_manager
 from app.services.agents.pipeline_engine import pipeline_engine
 from app.services.auth_service import get_current_user
@@ -22,9 +23,19 @@ router = APIRouter()
 
 
 # ── Helper ──
-def _ok(data=None, message="ok"):
-    """标准成功响应格式。"""
-    return {"code": 0, "data": data, "message": message}
+def _ok(data=None, message="ok", warning=None):
+    """标准成功响应格式（P2：可选顶层 warning，向后兼容）。
+
+    Args:
+        data: 响应数据。
+        message: 成功消息。
+        warning: 可选顶层 warning 文案；None/空串时不返回该字段，
+            既有消费方只读 code/data/message 不受影响。
+    """
+    resp = {"code": 0, "data": data, "message": message}
+    if warning:
+        resp["warning"] = warning
+    return resp
 
 
 def _err(code: int, detail: str):
@@ -66,7 +77,8 @@ def create_agent(
     try:
         agent_def = AgentDefinition.from_dict(data)
         result = registry.register(agent_def)
-        return _ok(data=result.to_dict())
+        warning = build_agent_warning(result.name, result.tools, result.model_profile)
+        return _ok(data=result.to_dict(), warning=warning)
     except ValueError as e:
         _err(409, str(e))
 
@@ -85,7 +97,8 @@ def update_agent(
     registry = AgentRegistry()
     try:
         result = registry.update(name, data)
-        return _ok(data=result.to_dict())
+        warning = build_agent_warning(result.name, result.tools, result.model_profile)
+        return _ok(data=result.to_dict(), warning=warning)
     except ValueError as e:
         _err(404, str(e))
 

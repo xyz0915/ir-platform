@@ -37,6 +37,43 @@ class ToolRegistry:
         return McpServer.get_by_id(server_id)
 
     @staticmethod
+    def call_tool(tool_id: str, args: dict) -> dict:
+        """真实调用工具（幂等包裹）：tool_id → server → transport → call_tool。
+
+        任何失败都返回 ``{"ok": False, "tool_id": ..., "error": ...}``，**不抛异常**
+        （P0/P1 自定义智能体工具执行的唯一入口；同步调用，调用方用
+        ``asyncio.to_thread`` 包裹避免阻塞事件循环）。
+
+        Args:
+            tool_id: 工具业务主键（``mcp_tools.tool_id``）。
+            args: 调用参数字典（缺省自动补 ``{}``）。
+
+        Returns:
+            ``{"ok": bool, "tool_id": str, "result": Any, "error": Optional[str]}``。
+        """
+        tool = McpTool.get_by_id(tool_id)
+        if not tool:
+            return {"ok": False, "tool_id": tool_id, "error": f"tool '{tool_id}' 未注册"}
+        server = McpServer.get_by_id(tool.get("server_id", ""))
+        if not server:
+            return {"ok": False, "tool_id": tool_id, "error": f"tool '{tool_id}' 的 MCP 服务器不存在"}
+        transport = None
+        try:
+            transport = get_transport(server)
+            transport.connect()
+            result = transport.call_tool(tool.get("name", tool_id), args or {})
+            return {"ok": True, "tool_id": tool_id, "result": result}
+        except Exception as exc:
+            logger.warning("ToolRegistry.call_tool failed: tool=%s: %s", tool_id, exc)
+            return {"ok": False, "tool_id": tool_id, "error": str(exc)}
+        finally:
+            if transport is not None:
+                try:
+                    transport.disconnect()
+                except Exception as exc:
+                    logger.warning("ToolRegistry.call_tool disconnect 异常 tool=%s: %s", tool_id, exc)
+
+    @staticmethod
     def refresh_tools(server_id: str) -> dict:
         """触发 schema 刷新（经 transport 实时同步）。
 

@@ -80,13 +80,13 @@ export const useAgentManagementStore = defineStore('agentManagement', () => {
   /**
    * 注册新 Agent，注册成功后自动刷新列表。
    * @param {object} data — Agent 定义数据
-   * @returns {Promise<object>} 注册后的 Agent 对象
+   * @returns {Promise<object>} 完整响应信封（含 data + 可选顶层 warning，P2）
    */
   async function registerAgent(data) {
     try {
       const res = await agentApi.createAgent(data)
       await fetchAgents()
-      return res.data || null
+      return res
     } catch (e) {
       console.error('[agentManagement] registerAgent failed:', e)
       throw e
@@ -97,13 +97,13 @@ export const useAgentManagementStore = defineStore('agentManagement', () => {
    * 更新 Agent 配置，成功后自动刷新列表。
    * @param {string} name — Agent 名称
    * @param {object} data — 需要更新的字段
-   * @returns {Promise<object>} 更新后的 Agent 对象
+   * @returns {Promise<object>} 完整响应信封（含 data + 可选顶层 warning，P2）
    */
   async function updateAgentAction(name, data) {
     try {
       const res = await agentApi.updateAgent(name, data)
       await fetchAgents()
-      return res.data || null
+      return res
     } catch (e) {
       console.error('[agentManagement] updateAgent failed:', e)
       throw e

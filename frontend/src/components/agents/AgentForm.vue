@@ -6,9 +6,24 @@
     @update:model-value="(v) => emit('update:visible', v)"
     @close="emit('update:visible', false)"
   >
+    <el-alert
+      type="info"
+      :closable="false"
+      show-icon
+      title="运行类型说明"
+      description="内置智能体按固定逻辑运行；自定义智能体运行时按 name 分派，未匹配已知类型时将走“摘要/自定义执行”模式（可配置关联工具与模型获得真实分析）。"
+      style="margin-bottom: 16px"
+    />
     <el-form :model="form" label-width="110px" size="default">
       <el-form-item label="标识 Name" required>
         <el-input v-model="form.name" :disabled="!!editingAgent" placeholder="如 incident-custom-phish" />
+        <div v-if="nameHint" class="af-name-hint">{{ nameHint }}</div>
+      </el-form-item>
+      <el-form-item label="运行类型 type" required>
+        <el-radio-group v-model="form.type">
+          <el-radio value="custom">自定义执行（custom）</el-radio>
+          <el-radio value="built-in">内置（built-in）</el-radio>
+        </el-radio-group>
       </el-form-item>
       <el-form-item label="显示名" required>
         <el-input v-model="form.display_name" placeholder="如 钓鱼事件快处 Agent" />
@@ -39,16 +54,20 @@
           <el-option v-for="a in agentOptions" :key="a.name" :label="a.display_name" :value="a.name" />
         </el-select>
       </el-form-item>
-      <el-form-item label="关联工具">
-        <el-select v-model="form.tools" multiple filterable placeholder="ToolRegistry 工具" style="width: 100%">
-          <el-option v-for="t in toolOptions" :key="t.tool_id" :label="`${t.name} (${t.tool_id})`" :value="t.tool_id" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="模型 Profile">
-        <el-select v-model="form.model_profile" filterable placeholder="关联 AgentLLM profile" style="width: 100%">
-          <el-option v-for="p in profileOptions" :key="p.profile_id" :label="`${p.name} / ${p.provider}`" :value="p.profile_id" />
-        </el-select>
-      </el-form-item>
+      <template v-if="form.type === 'custom'">
+        <el-form-item label="关联工具">
+          <el-select v-model="form.tools" multiple filterable placeholder="ToolRegistry 工具" style="width: 100%">
+            <el-option v-for="t in toolOptions" :key="t.tool_id" :label="`${t.name} (${t.tool_id})`" :value="t.tool_id" />
+          </el-select>
+          <div class="af-field-hint">运行时通过 ToolRegistry 真实调用，结果并入证据；调用失败不阻断管道。</div>
+        </el-form-item>
+        <el-form-item label="模型 Profile">
+          <el-select v-model="form.model_profile" filterable placeholder="关联 AgentLLM profile" style="width: 100%">
+            <el-option v-for="p in profileOptions" :key="p.profile_id" :label="`${p.name} / ${p.provider}`" :value="p.profile_id" />
+          </el-select>
+          <div class="af-field-hint">运行时使用该模型基于 prompt 生成分析结论；未配置则走静态摘要兜底。</div>
+        </el-form-item>
+      </template>
     </el-form>
     <template #footer>
       <el-button @click="emit('update:visible', false)">取消</el-button>
@@ -62,6 +81,7 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useAgentManagementStore } from '@/stores/agentManagement'
 import agentApi from '@/api/agent'
+import { ALL_KNOWN_TYPES_SET } from '@/constants/agentRuntime'
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -76,10 +96,19 @@ const form = ref({
   name: '',
   display_name: '',
   description: '',
+  type: 'custom',
   data_sources: [],
   depends_on: [],
   tools: [],
   model_profile: '',
+})
+
+/** name 输入预检（P2）：非空且不在已知类型 → 内联提示走摘要/自定义执行模式。 */
+const nameHint = computed(() => {
+  const name = (form.value.name || '').trim()
+  if (!name) return ''
+  if (ALL_KNOWN_TYPES_SET.has(name)) return ''
+  return '该智能体将走摘要/自定义执行模式（未匹配内置运行类型）。'
 })
 
 /** 数据来源常用预设（用户仍可通过 el-select 的 allow-create 自由新增）。 */
@@ -99,13 +128,14 @@ watch(
           name: a.name,
           display_name: a.display_name || '',
           description: a.description || '',
+          type: a.type || a.kind || 'custom',
           data_sources: Array.isArray(a.data_sources) ? a.data_sources : [],
           depends_on: a.depends_on || [],
           tools: a.tools || [],
           model_profile: a.model_profile || '',
         }
       } else {
-        form.value = { name: '', display_name: '', description: '', data_sources: [], depends_on: [], tools: [], model_profile: '' }
+        form.value = { name: '', display_name: '', description: '', type: 'custom', data_sources: [], depends_on: [], tools: [], model_profile: '' }
       }
     }
   }
@@ -129,25 +159,31 @@ async function onSave() {
     ElMessage.warning('标识与显示名必填')
     return
   }
+  // P1 payload 修复：kind:'custom' → type: form.type；status:'active' → enabled: true
   const payload = {
     name: form.value.name.trim(),
     display_name: form.value.display_name.trim(),
     description: form.value.description,
-    kind: 'custom',
+    type: form.value.type,
     data_sources: Array.isArray(form.value.data_sources) ? form.value.data_sources : [],
     depends_on: form.value.depends_on,
     tools: form.value.tools,
     model_profile: form.value.model_profile,
-    status: 'active',
+    enabled: true,
   }
   saving.value = true
   try {
+    let res = null
     if (props.editingAgent) {
-      await store.updateAgentAction(form.value.name, payload)
+      res = await store.updateAgentAction(form.value.name, payload)
       ElMessage.success('智能体已更新')
     } else {
-      await store.registerAgent(payload)
+      res = await store.registerAgent(payload)
       ElMessage.success('智能体已注册')
+    }
+    // P2：保存成功后展示后端顶层 warning（若有）
+    if (res && res.warning) {
+      ElMessage.warning(res.warning)
     }
     emit('saved')
     emit('update:visible', false)
@@ -158,3 +194,18 @@ async function onSave() {
   }
 }
 </script>
+
+<style scoped>
+.af-name-hint {
+  font-size: 12px;
+  color: var(--el-color-warning, #e6a23c);
+  line-height: 1.5;
+  margin-top: 4px;
+}
+.af-field-hint {
+  font-size: 12px;
+  color: var(--el-text-color-secondary, #909399);
+  line-height: 1.5;
+  margin-top: 4px;
+}
+</style>

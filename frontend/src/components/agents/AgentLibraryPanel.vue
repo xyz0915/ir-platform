@@ -26,8 +26,8 @@
         <div class="al-card-head">
           <span class="al-dot" :style="{ background: agentColor(agent.name) }" />
           <span class="al-card-name">{{ agent.display_name }}</span>
-          <el-tag size="small" :type="agent.kind === 'builtin' ? 'primary' : 'success'" effect="plain">
-            {{ agent.kind === 'builtin' ? '内置' : '自定义' }}
+          <el-tag size="small" :type="isBuiltin(agent) ? 'primary' : 'success'" effect="plain">
+            {{ isBuiltin(agent) ? '内置' : '自定义' }}
           </el-tag>
         </div>
         <div class="al-card-desc">{{ agent.description || '暂无描述' }}</div>
@@ -51,8 +51,8 @@
           <div class="al-d-row">
             <span class="al-d-k">类型</span>
             <span class="al-d-v">
-              <el-tag size="small" :type="selected.kind === 'builtin' ? 'primary' : 'success'" effect="plain">
-                {{ selected.kind === 'builtin' ? '内置' : '自定义' }}
+              <el-tag size="small" :type="isBuiltin(selected) ? 'primary' : 'success'" effect="plain">
+                {{ isBuiltin(selected) ? '内置' : '自定义' }}
               </el-tag>
             </span>
           </div>
@@ -60,7 +60,7 @@
             <span class="al-d-k">状态</span>
             <span class="al-d-v">
               <el-switch
-                v-if="selected.kind !== 'builtin'"
+                v-if="!isBuiltin(selected)"
                 :model-value="selected.enabled"
                 @change="toggleEnabled(selected)"
               />
@@ -98,7 +98,7 @@
           </div>
         </div>
 
-        <div class="al-d-actions" v-if="selected.kind !== 'builtin'">
+        <div class="al-d-actions" v-if="!isBuiltin(selected)">
           <el-button size="small" @click="editAgent(selected)">编辑</el-button>
           <el-button size="small" type="danger" plain @click="removeAgent(selected)">删除</el-button>
         </div>
@@ -124,7 +124,18 @@ const editingAgent = ref(null)
 const drawer = ref(false)
 const selected = ref(null)
 
-const customCount = computed(() => store.agents.filter((a) => a.kind === 'custom').length)
+const customCount = computed(() => store.agents.filter((a) => isCustom(a)).length)
+
+/** 内置/自定义判断（P1 兼容）：后端回显 type（'built-in'/'custom'），
+ *  旧前端数据可能只有 kind（'builtin'/'custom'），两者都兼容。 */
+function isBuiltin(agent) {
+  const t = agent.type || agent.kind
+  return t === 'built-in' || t === 'builtin'
+}
+function isCustom(agent) {
+  const t = agent.type || agent.kind
+  return t === 'custom'
+}
 
 const toolMap = ref({})
 const profileMap = ref({})

@@ -52,6 +52,16 @@ def _jl(value: Any, default: Any = None) -> Any:
         return default
 
 
+def _truncate(value: Any, max_len: int = 2000) -> str:
+    """安全截断为字符串（超长加省略号，避免 SSE/DB 载荷膨胀）。"""
+    if value is None:
+        return ""
+    text = str(value)
+    if len(text) <= max_len:
+        return text
+    return text[:max_len] + "…"
+
+
 class PipelineRun:
     """管道运行实例 — 跟踪每步的状态与元数据。"""
 
@@ -1126,21 +1136,78 @@ class PipelineEngine:
         }
 
     async def _run_llm(self, ctx: dict, input_params: dict, mode: str) -> dict:
-        """自定义 LLM 节点 — 基于 prompt / model / input_params 合成分析结论。"""
+        """自定义 LLM 节点 — P1 增强：支持 agent_ref 引用已注册智能体配置。
+
+        合并优先级（高 → 低）：
+        1. ``input_params.model_profile`` / ``input_params.tools``（节点显式配置）；
+        2. ``agent_ref`` 指向智能体的 ``model_profile`` / ``tools``；
+        3. ``agent_ref`` 智能体的 ``config.input_params.prompt`` 或 ``description``（prompt 兜底）；
+        4. 无任何 profile 来源 → **保持现有静态合成行为**（不意外联网）。
+
+        工具执行复用 P0 的 ``_run_tools_safe``；LLM 调用统一走 ``_call_llm_safe``
+        （AgentLLM 封装，禁止直连 httpx）。
+
+        Args:
+            ctx: 执行上下文。
+            input_params: 节点输入参数。
+            mode: "real" | "simulate"（本期不区分）。
+
+        Returns:
+            ``{stage, output, confidence, evidence, structured}`` 同构结果。
+        """
         prompt = input_params.get("prompt") or ""
         model = input_params.get("model") or "gpt-4"
         query = input_params.get("query", "")
-        summary = f"（自定义 LLM 节点）基于输入参数合成的结论：{query or '(未提供 query)'}"
+        agent_ref = input_params.get("agent_ref") or ""
+        model_profile = input_params.get("model_profile") or ""
+        tools = list(input_params.get("tools") or [])
+        context_vars = ctx.get("context_vars") or {}
+        user = context_vars.get("user") or {}
+
+        # 1) agent_ref 解析：合并已注册智能体的 model_profile/tools
+        if agent_ref:
+            agent_def = self._registry.get(agent_ref)
+            if agent_def:
+                model_profile = model_profile or agent_def.model_profile
+                tools = tools or list(agent_def.tools or [])
+                if not prompt:
+                    prompt = (
+                        (agent_def.config or {}).get("input_params", {}).get("prompt")
+                        or agent_def.description or ""
+                    )
+
+        # 2) 工具执行（复用 P0 助手，结果并入 evidence）
+        tool_run = await self._run_tools_safe(tools, ctx)
+        evidence = list(tool_run["evidence"])
+
+        # 3) LLM 真实调用（仅当有 profile 来源：显式 model_profile 或 agent_ref 带 model_profile）
+        output, confidence, used_llm = "", 0.6, False
+        profile = self._resolve_llm_profile(model_profile) if model_profile else None
+        if profile and (prompt or query):
+            final_prompt = prompt or f"请基于以下查询给出分析结论：{query}"
+            llm_res = await self._call_llm_safe(profile, final_prompt, user)
+            if llm_res["used"]:
+                output, confidence, used_llm = llm_res["content"], 0.85, True
+
+        # 4) 兜底：原静态合成输出（保持向后兼容）
+        if not output:
+            summary = f"（自定义 LLM 节点）基于输入参数合成的结论：{query or '(未提供 query)'}"
+            output = f"# 自定义大模型节点\n{summary}"
+
         return {
             "stage": "llm",
-            "output": f"# 自定义大模型节点\n{summary}",
-            "confidence": 0.6,
-            "evidence": [],
+            "output": output,
+            "confidence": confidence,
+            "evidence": evidence,
             "structured": {
-                "summary": summary,
+                "summary": output[:160],
                 "prompt_used": prompt,
                 "model": model,
-                "query": query,  # P1-2: 回显透传的 query（验收 input_params 透传）
+                "query": query,
+                "agent_ref": agent_ref,
+                "used_llm": used_llm,
+                "model_profile": model_profile,
+                "tools": tools,
             },
         }
 
@@ -1227,20 +1294,233 @@ class PipelineEngine:
             return "分诊已完成"
         return first_line[:max_len]
 
-    async def _run_unknown(self, agent_def: AgentDefinition, ctx: dict) -> dict:
-        """未知 custom Agent — 数据驱动摘要兜底。"""
-        data_sources = agent_def.data_sources or []
-        summary_parts = [f"# {agent_def.display_name}"]
+    # ── P0/P1 共享助手：LLM / 工具安全调用（真实 IO，失败不阻断）──
+
+    def _resolve_llm_profile(self, model_profile: str) -> Optional[dict]:
+        """把 agent_def.model_profile（存 profile_id 字符串）解析为 AiConfigProfile 字典。
+
+        解析优先级：id → profile_name → 激活 profile（最终兜底）。
+
+        Args:
+            model_profile: profile_id 字符串（可为空 / 数字 / profile_name）。
+
+        Returns:
+            AiConfigProfile 字典；无任何配置时返回 ``None``。
+        """
+        from app.models.ai_config import AiConfigProfile
+        if not model_profile:
+            return AiConfigProfile.get_active()
+        if str(model_profile).isdigit():
+            p = AiConfigProfile.get_by_id(int(model_profile))
+            if p:
+                return p
+        for p in AiConfigProfile.list_all():
+            if p.get("profile_name") == model_profile:
+                return p
+        return AiConfigProfile.get_active()
+
+    async def _call_llm_safe(
+        self, profile: dict, prompt: str, user: dict, timeout: float = 60.0
+    ) -> dict:
+        """LLM 安全调用（超时 + 降级，不抛异常）。
+
+        Args:
+            profile: AiConfigProfile 字典。
+            prompt: 调用提示词。
+            user: 当前用户字典（缺失兜底 ``{"id": 1}``，与 _run_root_cause 一致）。
+            timeout: 单次调用超时秒数（默认 60s）。
+
+        Returns:
+            ``{"content": str, "used": bool, "error": Optional[str]}``。
+        """
+        from app.services.agent_llm import AgentLLM
+        try:
+            llm = AgentLLM(profile)
+            resp = await asyncio.wait_for(
+                llm.call(prompt, user=user or {"id": 1}),
+                timeout=timeout,
+            )
+            if not resp.get("degraded") and resp.get("content"):
+                return {"content": resp["content"], "used": True, "error": None}
+            return {"content": "", "used": False, "error": resp.get("error") or "LLM 降级/无内容"}
+        except asyncio.TimeoutError:
+            return {"content": "", "used": False, "error": f"LLM 调用超时(>{timeout}s)"}
+        except Exception as exc:
+            logger.warning("PipelineEngine._call_llm_safe failed: %s", exc)
+            return {"content": "", "used": False, "error": f"LLM 调用异常: {exc}"}
+
+    def _tool_timeout(self, tool_id: str) -> float:
+        """单工具超时：优先 tool 定义 timeout_ms，夹取 [5, 30] 秒。
+
+        Args:
+            tool_id: 工具业务主键。
+
+        Returns:
+            超时秒数（float，范围 [5, 30]）。
+        """
+        from app.models.mcp import McpTool
+        try:
+            tool = McpTool.get_by_id(tool_id)
+            timeout_ms = int(tool.get("timeout_ms") or 30000) if tool else 30000
+        except Exception:
+            timeout_ms = 30000
+        return max(5.0, min(30.0, timeout_ms / 1000.0))
+
+    async def _run_tools_safe(self, tools: list, ctx: dict) -> dict:
+        """执行 tools 列表中的每个工具，返回
+        ``{"evidence": list, "tool_results": list, "errors": list[str], "used": bool}``。
+
+        - 真实调用 ``ToolRegistry.call_tool``（``asyncio.to_thread`` 包裹，避免阻塞事件循环）；
+        - 单工具超时夹取 [5, 30]s；
+        - 任何失败只写 evidence/errors，**不阻断**其余工具。
+
+        Args:
+            tools: tool_id 列表。
+            ctx: 执行上下文（含 host_id/event_id/input_params）。
+
+        Returns:
+            见上方结构；``used`` 表示是否有至少一个工具成功。
+        """
+        from app.services.mcp.registry import ToolRegistry
+        evidence: list = []
+        tool_results: list = []
+        errors: list = []
+        used = False
+        input_params = ctx.get("input_params") or {}
+        raw_tool_args = input_params.get("tool_args")
+        explicit_args = raw_tool_args if isinstance(raw_tool_args, dict) else {}
+        for tool_id in (tools or []):
+            # 构造工具参数：显式 tool_args[tool_id] > 通用上下文（host_id/event_id）
+            args = dict(explicit_args.get(tool_id) or {})
+            args.setdefault("host_id", ctx.get("host_id"))
+            args.setdefault("event_id", ctx.get("event_id"))
+            tool_timeout = self._tool_timeout(tool_id)
+            try:
+                res = await asyncio.wait_for(
+                    asyncio.to_thread(ToolRegistry.call_tool, tool_id, args),
+                    timeout=tool_timeout,
+                )
+                if not isinstance(res, dict):
+                    res = {"ok": False, "tool_id": tool_id, "error": "tool 返回非 dict"}
+                tool_results.append(res)
+                if res.get("ok"):
+                    used = True
+                    evidence.append({
+                        "type": "tool_call", "ref": tool_id,
+                        "status": "success",
+                        "result": _truncate(res.get("result"), 2000),
+                    })
+                else:
+                    evidence.append({
+                        "type": "tool_call", "ref": tool_id,
+                        "status": "failed", "error": res.get("error"),
+                    })
+                    errors.append(f"tool {tool_id}: {res.get('error')}")
+            except asyncio.TimeoutError:
+                evidence.append({"type": "tool_call", "ref": tool_id, "status": "failed", "error": "timeout"})
+                errors.append(f"tool {tool_id}: 超时")
+            except Exception as exc:  # 任何异常都不阻断
+                logger.warning("PipelineEngine._run_tools_safe failed tool=%s: %s", tool_id, exc)
+                evidence.append({"type": "tool_call", "ref": tool_id, "status": "failed", "error": str(exc)})
+                errors.append(f"tool {tool_id}: {exc}")
+        return {"evidence": evidence, "tool_results": tool_results, "errors": errors, "used": used}
+
+    def _build_agent_prompt(
+        self, agent_def: AgentDefinition, tool_results: list, data_sources: list
+    ) -> str:
+        """自动构造分析 prompt（无 input_params.prompt 时兜底）。
+
+        Args:
+            agent_def: Agent 定义。
+            tool_results: 工具执行结果列表（每条含 ok/tool_id/result/error）。
+            data_sources: 数据源名称列表。
+
+        Returns:
+            拼接后的 prompt 文本。
+        """
+        parts = ["你是一名应急响应分析师。请基于以下上下文对事件进行分析并给出结论。"]
+        if agent_def.description:
+            parts.append(f"智能体职责: {agent_def.description}")
         if data_sources:
-            summary_parts.append(f"数据源: {', '.join(data_sources)}")
-        summary_parts.append(f"依赖: {', '.join(agent_def.depends_on) if agent_def.depends_on else '无'}")
-        output = "\n".join(summary_parts)
+            parts.append(f"数据源: {', '.join(data_sources)}")
+        if tool_results:
+            parts.append("工具执行结果:")
+            for r in tool_results:
+                rid = r.get("tool_id") if isinstance(r, dict) else ""
+                if isinstance(r, dict) and r.get("ok"):
+                    parts.append(f"- {rid}: {_truncate(r.get('result'), 500)}")
+                else:
+                    err = r.get("error") if isinstance(r, dict) else "未知错误"
+                    parts.append(f"- {rid}: 执行失败({err})")
+        else:
+            parts.append("（无工具结果，请基于通用知识给出分析框架与建议）")
+        parts.append("请用中文简洁回答。")
+        return "\n".join(parts)
+
+    async def _run_unknown(self, agent_def: AgentDefinition, ctx: dict) -> dict:
+        """未知 custom Agent — 真实执行（P0）。
+
+        行为矩阵：
+        1) tools → ToolRegistry 真实调用，结果并入 evidence；
+        2) model_profile → AgentLLM 真实生成分析结论（prompt 可引用工具结果）；
+        3) 都无 → 原静态摘要兜底（向后兼容，输出形状与旧实现一致）。
+
+        Args:
+            agent_def: Agent 定义。
+            ctx: 执行上下文。
+
+        Returns:
+            ``{stage, output, confidence, evidence, structured}`` 同构结果。
+        """
+        data_sources = agent_def.data_sources or []
+        input_params = ctx.get("input_params") or {}
+        context_vars = ctx.get("context_vars") or {}
+        user = context_vars.get("user") or {}
+
+        # 1) 工具执行
+        tool_run = await self._run_tools_safe(agent_def.tools or [], ctx)
+        evidence = list(tool_run["evidence"])
+        errors = list(tool_run["errors"])
+
+        # 2) LLM 生成结论（仅显式配置了 model_profile 才调，避免意外联网）
+        output, confidence, used_llm = "", 0.5, False
+        profile = self._resolve_llm_profile(agent_def.model_profile)
+        if agent_def.model_profile and profile:
+            prompt = input_params.get("prompt") or self._build_agent_prompt(
+                agent_def, tool_run["tool_results"], data_sources
+            )
+            llm_res = await self._call_llm_safe(profile, prompt, user)
+            if llm_res["used"]:
+                output, confidence, used_llm = llm_res["content"], 0.8, True
+            else:
+                errors.append(llm_res["error"])
+
+        # 3) 兜底：原静态摘要（保持旧输出形状）；有工具结果时输出工具摘要
+        if not output:
+            summary_parts = [f"# {agent_def.display_name}"]
+            if data_sources:
+                summary_parts.append(f"数据源: {', '.join(data_sources)}")
+            summary_parts.append(f"依赖: {', '.join(agent_def.depends_on) if agent_def.depends_on else '无'}")
+            if tool_run["used"]:
+                summary_parts.append(f"工具执行: {len(tool_run['tool_results'])} 个工具已调用（详见证据）")
+            if errors:
+                summary_parts.append(f"执行提示: {'; '.join(errors[:5])}")
+            output = "\n".join(summary_parts)
+
         return {
             "stage": agent_def.name,
             "output": output,
-            "confidence": 0.5,
-            "evidence": [],
-            "structured": {"summary": output},
+            "confidence": confidence,
+            "evidence": evidence,
+            "structured": {
+                "summary": output[:160],
+                "used_llm": used_llm,
+                "used_tools": tool_run["used"],
+                "model_profile": agent_def.model_profile,
+                "tools": list(agent_def.tools or []),
+                "errors": errors[:10],
+                "tool_results": tool_run["tool_results"],
+            },
         }
 
     async def _run_guardrail(self, ctx: dict, input_params: dict, mode: str) -> dict:

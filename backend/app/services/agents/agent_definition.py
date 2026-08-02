@@ -44,6 +44,7 @@ class AgentDefinition:
             "name": self.name,
             "display_name": self.display_name,
             "type": self.type,
+            "kind": self.type,  # P1 兼容别名：旧前端读 agent.kind 判断内置/自定义
             "description": self.description,
             "data_sources": list(self.data_sources),
             "depends_on": list(self.depends_on),
