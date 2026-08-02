@@ -130,6 +130,13 @@ const toolMap = ref({})
 const profileMap = ref({})
 
 onMounted(async () => {
+  // 面板独立渲染（无 props/emits），挂载时自行拉取智能体列表。
+  // store.fetchAgents/fetchPresets 内部已 catch 错误并置空数组，安全。
+  try {
+    await Promise.all([store.fetchAgents(), store.fetchPresets()])
+  } catch (e) {
+    console.error('[AgentLibrary] 加载智能体列表失败', e)
+  }
   try {
     const [t, p] = await Promise.all([
       agentApi.tools.listTools(),
