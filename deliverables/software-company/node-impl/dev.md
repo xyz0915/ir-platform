@@ -127,6 +127,16 @@ parallel runner: OK / guardrail runner (compat): OK
 - 前端 `npx vite build --outDir <临时目录>`：**构建成功**（38.57s，仅 chunk>500kB 警告；验证后已清理临时 dist）
 - 后端 `pytest`（test_pipeline_node_debug / test_pipeline_branch_sim / test_dag_hitl_flow / test_preset_meta / test_p0_custom_agent_real_execution / test_p1_llm_agent_ref）：**52 passed**（仅 Pydantic 弃用警告）
 
+### 4.4 Round 1 修复验证（BUG-1/2/3）
+
+| 缺陷 | 验证 |
+|------|------|
+| BUG-1 guard 整管阻断 | `run(["guard","qa_after_guard"], ctx block=true)` → `{'guard':'failed','qa_after_guard':'skipped'}` + run=failed；对照组 block=false → 双双 completed |
+| BUG-2 execute_node blocked 映射 | `execute_node('guard',{block:true})` → 顶层 `status='blocked'`；block=false → `'success'` |
+| BUG-3 垃圾表达式 | `_eval_condition_expr('!!!'/'foo bar baz'/'1 + 2')` 均 `False`；`{dep:...}` 引用存在性真值/运算符仍正确 |
+
+- 回归 pytest（test_dag_hitl_flow / test_dag_robustness / test_dag_validation / test_pipeline_node_debug / test_pipeline_node_triage / test_pipeline_branch_sim / test_p0_custom_agent_real_execution / test_p1_llm_agent_ref / test_preset_meta）：结果见 commit 报告（Round 2 由 QA 复核）。
+
 ---
 
 ## 5. 已知边界与设计取舍（偏离/说明）
@@ -135,6 +145,27 @@ parallel runner: OK / guardrail runner (compat): OK
 2. **condition 不物理剪枝**（A2 决策 1）：输出 `condition_met/branch_taken` 信号，被裁剪分支若仍声明依赖会被执行；后续迭代可支持"节点级 skip"（输入参数约定）。
 3. **表达式求值为子集实现**：比较运算符按 `>= <= == != > <` 顺序 `split(op,1)`，字面量中含运算符的极端表达式（如字符串值内含 `==`）可能解析偏差；单条异常 fail-safe 为 `result=false`，不阻断节点。
 4. **整管路径节点名 = 注册 agent 名**（B3 #5 历史脆弱性）：新节点均注册 name=type 的 preset agent，画布节点名请使用类型字符串或与预设一致（本期不重构前端 runPipeline 的 name 发送逻辑）。
+
+---
+
+## 5b. Round 1 QA 缺陷修复（BUG-1/2/3）
+
+QA（T05）发现 3 个源码缺陷，已修复并回归（详见 §4.4）：
+
+### BUG-1（P0）：guard 整管阻断不生效 → 批间失败门控
+- **现象**：整管 `run(["guard","qa_after_guard"])`（qa_after_guard depends_on=["guard"]，ctx block=true）→ guard stage=failed，但下游仍 completed。
+- **根因**：`run()` 分批循环只在 `run.cancelled` 时 break，不检查批内 stage 失败。
+- **修复**：`pipeline_engine.py` `run()` 批循环增加**依赖级失败门控**——某节点 `graph[agent]` 的依赖 stage 处于 `failed/blocked/skipped` → 该节点标记 `skipped` 不执行（`_add_stage` + SSE stage_error + `AgentRunStep.add(status="skipped")`）。新增 `_stage_failed(run, name)` 助手。并行分支中不依赖失败节点的仍正常执行（DAG 语义）。`_continue_orphan_run` 孤儿续跑路径同步应用同一门控（含 DB failed 记录还原）。
+- **语义确认**：本次改动是 design A3.1/B4 的验收要求（"guard 阻断 → 下游 stage 不执行"），在本次范围。对既有 8 节点的行为变化：某节点失败后其**直接/传递依赖**的下游不再执行（此前会继续跑）——与 DAG 语义一致；`test_dag_hitl_flow.py` 超时/审批失败场景下 reporter 被跳过不影响其断言（reporter 非断言对象）。
+
+### BUG-2（P1）：execute_node 不映射 blocked
+- **现象**：`execute_node('guard', {block:true})` 顶层返回 status='success'。
+- **根因**：`execute_node` 状态映射只处理 `result.status=='failed'`，漏掉 `'blocked'`。
+- **修复**：`pipeline_engine.py` `execute_node` 状态映射扩展为 `("failed", "blocked")` → 顶层 status 透传 `'blocked'`（error 兜底 "节点已阻断"）。
+
+### BUG-3（P2）：condition 垃圾表达式求值为 True
+- **现象**：`_eval_condition_expr('!!!')` / `'foo bar baz'` / `'1 + 2'` 均返回 True（无运算符兜底 `bool(字面量)`），与 A3.3「表达式非法 → result=false」冲突。
+- **修复**：`_eval_condition_expr` 兜底分支改为——仅 `{dep:...}` 引用按存在性真值处理（`val is not None and val != "" and val != [] and val != {}`）；其余无运算符的非法表达式一律返回 `False`。
 
 ---
 

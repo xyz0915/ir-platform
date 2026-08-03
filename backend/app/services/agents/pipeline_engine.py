@@ -222,6 +222,28 @@ class PipelineEngine:
                 for agent_name in batch:
                     if agent_name not in effective_names:
                         continue
+                    # 11 节点真实化（BUG-1）：批间失败门控 —
+                    # 依赖 stage 失败/阻断/skipped → 本节点标记 skipped 不执行。
+                    # 语义：guard 阻断（status=blocked→stage failed）后，依赖它的下游不再执行
+                    # （design A3.1/B4）；并行分支中不依赖失败节点的仍正常执行（DAG 语义）。
+                    failed_deps = [
+                        d for d in (graph.get(agent_name) or [])
+                        if self._stage_failed(run, d)
+                    ]
+                    if failed_deps:
+                        self._add_stage(run, agent_name, "skipped",
+                                        error=f"依赖 stage 失败/阻断: {', '.join(failed_deps)}")
+                        self._push_sse(run.run_id, "stage_error",
+                                       {"name": agent_name, "error": "skipped: dependency failed"}, on_sse)
+                        try:
+                            AgentRunStep.add(
+                                run_id=run.run_id, stage=agent_name, agent=agent_name,
+                                status="skipped",
+                                output_json={"error": f"dependency_failed: {', '.join(failed_deps)}"},
+                            )
+                        except Exception as exc:
+                            logger.warning("PipelineEngine: skipped step 持久化失败: %s", exc)
+                        continue
                     task = asyncio.create_task(
                         self._run_single(agent_name, run, user, use_cache, on_sse)
                     )
@@ -677,11 +699,17 @@ class PipelineEngine:
                 node_name, mode, exc,
             )
 
-        # 允许执行体在不抛异常的情况下显式声明失败（如缺失 event_id），
-        # 便于单节点调试给出友好的失败提示而非 500。
-        if status != "failed" and result.get("status") == "failed":
-            status = "failed"
-            error = result.get("error") or error or "节点执行失败"
+        # 允许执行体在不抛异常的情况下显式声明失败/阻断（如缺失 event_id、guard 阻断），
+        # 便于单节点调试给出友好的状态而非 500。
+        node_status = result.get("status")
+        if status != "failed" and node_status in ("failed", "blocked"):
+            # BUG-2：guard 阻断（status="blocked"）也要映射到顶层，不能显示为 success
+            status = node_status
+            error = (
+                result.get("error")
+                or error
+                or ("节点执行失败" if node_status == "failed" else "节点已阻断")
+            )
 
         elapsed_ms = round((time.time() - start_ts) * 1000, 1)
         input_received = {
@@ -2175,8 +2203,13 @@ class PipelineEngine:
                     return ln >= rn
                 if op == "<=":
                     return ln <= rn
-        # 兜底：单操作数按真值处理（引用路径存在即 true）
-        return bool(self._eval_operand(expr, ctx))
+        # 兜底（BUG-3）：仅 {dep:...} 引用按存在性真值处理（A3.3 语义）；
+        # 其余无运算符的非法表达式（如 "!!!" / "foo bar baz" / "1 + 2"）一律返回 False，
+        # 避免垃圾表达式被 bool(字面量) 误判为 True 而错误命中 branch_taken。
+        if expr.startswith("{dep:"):
+            val = self._eval_operand(expr, ctx)
+            return val is not None and val != "" and val != [] and val != {}
+        return False
 
     def _extract_keywords(self, ctx: dict, max_len: int = 120) -> str:
         """从已完成 stage 输出中提取检索关键词（output 节点 keyword 兜底）。
@@ -2307,6 +2340,25 @@ class PipelineEngine:
                     return {"output": out}
                 return {}
         return {}
+
+    def _stage_failed(self, run: PipelineRun, name: str) -> bool:
+        """判断指定 stage 是否为失败/阻断/skipped 态（批间失败门控用，BUG-1）。
+
+        - ``failed``：节点显式失败（如 guard 阻断、intel-query 查询失败）；
+        - ``blocked``：guard 显式阻断（兼容直接落 stage 为 blocked 的场景）；
+        - ``skipped``：依赖已失败被跳过的节点，其下游应传递跳过。
+
+        Args:
+            run: PipelineRun 实例。
+            name: stage 名称。
+
+        Returns:
+            bool：该 stage 存在且处于失败/阻断/skipped 态。
+        """
+        for s in run.stages:
+            if s.get("name") == name and s.get("status") in ("failed", "blocked", "skipped"):
+                return True
+        return False
 
     def _add_stage(
         self,
@@ -2473,9 +2525,10 @@ class PipelineEngine:
             if "reporter" not in agent_names:
                 agent_names.append("reporter")
 
-            # 从 agent_run_steps 还原：已完成节点 + waiting_hitl 节点
+            # 从 agent_run_steps 还原：已完成节点 + waiting_hitl 节点 + 失败节点
             completed: set[str] = set()
             hitl_pending_nodes: list[str] = []
+            failed_nodes: set[str] = set()
             for step in AgentRunStep.list_by_run(run_id):
                 st = step.get("status")
                 agent = step.get("agent") or step.get("stage")
@@ -2485,6 +2538,8 @@ class PipelineEngine:
                     completed.add(agent)
                 elif st == "waiting_hitl":
                     hitl_pending_nodes.append(agent)
+                elif st in ("failed", "blocked", "skipped"):
+                    failed_nodes.add(agent)
 
             run = PipelineRun(run_id, agent_names, event_id, ctx)
             run.status = "running"
@@ -2499,6 +2554,23 @@ class PipelineEngine:
                 tasks = []
                 for agent_name in batch:
                     if agent_name not in agent_names or agent_name in completed:
+                        continue
+                    # 11 节点真实化（BUG-1）：孤儿续跑同样做批间失败门控 —
+                    # 依赖（DB 失败记录 或 本次续跑失败 stage）→ 标记 skipped 不执行
+                    failed_deps = [
+                        d for d in (graph.get(agent_name) or [])
+                        if d in failed_nodes or self._stage_failed(run, d)
+                    ]
+                    if failed_deps:
+                        self._add_stage(run, agent_name, "skipped",
+                                        error=f"依赖 stage 失败/阻断: {', '.join(failed_deps)}")
+                        try:
+                            AgentRunStep.add(run_id=run_id, stage=agent_name, agent=agent_name,
+                                             status="skipped",
+                                             output_json={"error": f"dependency_failed: {', '.join(failed_deps)}"})
+                        except Exception:
+                            pass
+                        failed_nodes.add(agent_name)
                         continue
                     if agent_name in hitl_pending_nodes:
                         # 本次决议即该节点的 HITL 决议（不重复触发审批门）
