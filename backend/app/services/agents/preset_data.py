@@ -112,6 +112,178 @@ PRESET_AGENTS = [
         "enabled": True,
         "hitl": False,
     },
+    # ── 11 节点真实化：10 个新 preset agent（name=runner 键=前端 NodeType 字符串）──
+    {
+        "name": "guard",
+        "display_name": "护栏",
+        "type": "custom",
+        "description": "合规门禁节点：策略检查 + 显式阻断（GuardrailAgent.evaluate）",
+        "data_sources": [],
+        "depends_on": [],
+        "enabled": True,
+        "hitl": False,
+        "config": {
+            "input_params": {
+                "policy": "default",
+                "checks": [{"rule": "default_policy", "detail": ""}],
+                "block": False,
+                "reason": "",
+            }
+        },
+    },
+    {
+        "name": "hitl",
+        "display_name": "人工审核",
+        "type": "custom",
+        "description": "人工审核节点：等待审批链决策后执行处置动作",
+        "data_sources": [],
+        "depends_on": [],
+        "enabled": True,
+        "hitl": True,  # 必须：_run_single L430 需 agent_def.hitl=True 才进入等待
+        "config": {
+            # 顶层 action/target 供 _create_hitl_approval 读取（agent_def.config.action/target）
+            "action": "export_report",
+            "target": {"report_type": "incident"},
+            "auto_rollback_plan": {},
+            "input_params": {
+                "action": "export_report",
+                "target": {"report_type": "incident"},
+                "auto_rollback_plan": {},
+                "reason": "人工审核节点",
+            },
+        },
+    },
+    {
+        "name": "condition",
+        "display_name": "条件分支",
+        "type": "custom",
+        "description": "条件分支节点：对前置输出做表达式求值，输出 branch_taken/condition_met 决策信号",
+        "data_sources": [],
+        "depends_on": [],
+        "enabled": True,
+        "hitl": False,
+        "config": {
+            "input_params": {
+                "conditions": [{"label": "默认", "expr": "true"}],
+                "source": "",
+            }
+        },
+    },
+    {
+        "name": "parallel",
+        "display_name": "并行分支",
+        "type": "custom",
+        "description": "并行分支节点：纯标记，下游声明依赖本节点后由拓扑排序天然并行",
+        "data_sources": [],
+        "depends_on": [],
+        "enabled": True,
+        "hitl": False,
+        "config": {
+            "input_params": {
+                "branches": [{"label": "分支A", "target": ""}],
+            }
+        },
+    },
+    {
+        "name": "data-process",
+        "display_name": "数据处理",
+        "type": "custom",
+        "description": "数据处理节点：select/filter/rename/limit 操作链",
+        "data_sources": [],
+        "depends_on": [],
+        "enabled": True,
+        "hitl": False,
+        "config": {
+            "input_params": {
+                "source": "",
+                "operations": [],
+            }
+        },
+    },
+    {
+        "name": "intel-query",
+        "display_name": "外部情报查询",
+        "type": "custom",
+        "description": "外部情报查询节点：复用 EnrichmentService 查询 ip/domain 并落库",
+        "data_sources": [],
+        "depends_on": [],
+        "enabled": True,
+        "hitl": False,
+        "config": {
+            "input_params": {
+                "ioc_type": "ip",
+                "ioc_value": "",
+                "provider_name": "",
+            }
+        },
+    },
+    {
+        "name": "action",
+        "display_name": "处置执行",
+        "type": "custom",
+        "description": "处置执行节点：调用 ActionService 执行 7 种处置动作（require_hitl 可走审批链）",
+        "data_sources": [],
+        "depends_on": [],
+        "enabled": True,
+        "hitl": False,
+        "config": {
+            "input_params": {
+                "action": "export_report",
+                "target": {},
+                "operator": "",
+                "require_hitl": False,
+            }
+        },
+    },
+    {
+        "name": "output",
+        "display_name": "知识库",
+        "type": "custom",
+        "description": "知识库输出节点：复用 KnowledgeRetriever 检索安全知识",
+        "data_sources": [],
+        "depends_on": [],
+        "enabled": True,
+        "hitl": False,
+        "config": {
+            "input_params": {
+                "keyword": "",
+                "category": "",
+                "limit": 5,
+            }
+        },
+    },
+    {
+        "name": "mcp-tool",
+        "display_name": "MCP 工具",
+        "type": "custom",
+        "description": "MCP 工具节点：调用 ToolRegistry 单工具路径",
+        "data_sources": [],
+        "depends_on": [],
+        "enabled": True,
+        "hitl": False,
+        "config": {
+            "input_params": {
+                "tool_id": "",
+                "args": {},
+            }
+        },
+    },
+    {
+        "name": "intel-source",
+        "display_name": "情报源接入",
+        "type": "custom",
+        "description": "情报源接入节点：只读 ThreatIntelProviderConfig，输出可用源列表（剔除 api_key_ref）",
+        "data_sources": [],
+        "depends_on": [],
+        "enabled": True,
+        "hitl": False,
+        "config": {
+            "input_params": {
+                "enabled_only": True,
+                "provider": "",
+            }
+        },
+    },
 ]
 
 

@@ -763,8 +763,14 @@ class PipelineEngine:
         return None
 
     def _get_node_runner(self, node_type: str):
-        """按节点类型映射内部 ``_run_<node>`` 执行体。"""
+        """按节点类型映射内部 ``_run_<node>`` 执行体。
+
+        runner 键 = 前端 NodeType 字符串（B3 共享知识 #1），整管路径
+        （``_execute_agent`` 用 agent_def.name）与单节点调试路径
+        （``execute_node`` 用 node_type）才能同时命中。
+        """
         return {
+            # ── 7 个应急响应分析节点 ──
             "file_analysis": self._run_file_analysis,
             "process_analysis": self._run_process_analysis,
             "network_analysis": self._run_network_analysis,
@@ -775,7 +781,18 @@ class PipelineEngine:
             "branch": self._run_branch,
             "llm": self._run_llm,
             "trigger": self._run_triage,
-            "guardrail": self._run_guardrail,  # P1-4: 合规门禁节点
+            "guardrail": self._run_guardrail,  # P1-4: 合规门禁节点（保留向后兼容）
+            # ── 11 节点真实化：guard 映射修复（P0）+ 9 个新 runner ──
+            "guard": self._run_guardrail,        # ← P0 修复：前端 GUARD='guard'，保留 guardrail 兼容
+            "hitl": self._run_hitl,              # 人工审核
+            "condition": self._run_condition,    # 条件分支
+            "parallel": self._run_parallel,      # 并行分支
+            "data-process": self._run_data_process,   # 数据处理
+            "intel-query": self._run_intel_query,     # 外部情报查询
+            "action": self._run_action,               # 处置执行
+            "output": self._run_output,               # 知识库输出
+            "mcp-tool": self._run_mcp_tool,           # MCP 工具
+            "intel-source": self._run_intel_source,   # 情报源接入
         }.get(node_type)
 
     def _run_simulated(self, node_type: str, node_name: str, input_params: dict, context_vars: dict) -> dict:
@@ -1161,6 +1178,8 @@ class PipelineEngine:
         agent_ref = input_params.get("agent_ref") or ""
         model_profile = input_params.get("model_profile") or ""
         tools = list(input_params.get("tools") or [])
+        # 11 节点：allow_default_llm 开关（默认 False，保持"零意外联网"）
+        allow_default_llm = bool(input_params.get("allow_default_llm", False))
         context_vars = ctx.get("context_vars") or {}
         user = context_vars.get("user") or {}
 
@@ -1180,9 +1199,12 @@ class PipelineEngine:
         tool_run = await self._run_tools_safe(tools, ctx)
         evidence = list(tool_run["evidence"])
 
-        # 3) LLM 真实调用（仅当有 profile 来源：显式 model_profile 或 agent_ref 带 model_profile）
+        # 3) LLM 真实调用（有 profile 来源：显式 model_profile / agent_ref 带 model_profile /
+        #    或 allow_default_llm=true 时允许用激活 profile —— 默认关闭）
         output, confidence, used_llm = "", 0.6, False
         profile = self._resolve_llm_profile(model_profile) if model_profile else None
+        if profile is None and allow_default_llm:
+            profile = self._resolve_llm_profile("")   # 激活 profile（最终兜底）
         if profile and (prompt or query):
             final_prompt = prompt or f"请基于以下查询给出分析结论：{query}"
             llm_res = await self._call_llm_safe(profile, final_prompt, user)
@@ -1207,6 +1229,7 @@ class PipelineEngine:
                 "agent_ref": agent_ref,
                 "used_llm": used_llm,
                 "model_profile": model_profile,
+                "allow_default_llm": allow_default_llm,
                 "tools": tools,
             },
         }
@@ -1533,6 +1556,647 @@ class PipelineEngine:
         from app.services.agents.guardrail_agent import GuardrailAgent
         return GuardrailAgent().evaluate(input_params)
 
+    # ──────────────────────────────────────────────────────────────
+    # 11 节点真实化：新增 9 个 runner + 公共助手（设计 A3.2-A3.11 / A5.1）
+    # 统一签名 (ctx, input_params, mode) -> 同构 dict
+    # ──────────────────────────────────────────────────────────────
+
+    async def _run_hitl(self, ctx: dict, input_params: dict, mode: str) -> dict:
+        """人工审核节点 — 返回 ``hitl_triggered=True`` + action/target，走现有审批链。
+
+        触发条件（B3 共享知识 #6）：``agent_def.hitl == True AND result.hitl_triggered == True``。
+        preset ``hitl`` 已置 ``hitl=True``；审批创建/等待/恢复全部复用 ``_run_single``
+        既有 HITL 分支（``_create_hitl_approval`` → SSE ``hitl_waiting`` → resume 执行处置）。
+        """
+        action = input_params.get("action") or "export_report"
+        target = input_params.get("target") or {}
+        rollback = input_params.get("auto_rollback_plan") or {}
+        reason = input_params.get("reason") or "人工审核节点"
+        return {
+            "stage": "hitl",
+            "output": f"# 人工审核\n等待审批动作: {action}\n审批原因: {reason}",
+            "confidence": 1.0,
+            "evidence": [{"type": "hitl_request", "ref": f"action={action}", "target": target}],
+            "structured": {
+                "action": action,
+                "target": target,
+                "auto_rollback_plan": rollback,
+                "reason": reason,
+                "hitl_triggered": True,
+            },
+            "hitl_triggered": True,  # 关键：触发 _run_single 的 HITL 分支（L430）
+        }
+
+    async def _run_condition(self, ctx: dict, input_params: dict, mode: str) -> dict:
+        """条件分支节点 — 输出控制信号方案（A2 决策 1，不物理剪枝）。
+
+        对 ``input_params.conditions`` 逐条做表达式求值（JSONPath 子集 + 比较运算符），
+        短路取首个命中分支；输出 ``branch_taken`` / ``condition_met`` / ``evaluations`` /
+        ``downstream_active``。单条表达式异常只记 error，不阻断整节点。
+        """
+        conditions = input_params.get("conditions") or []
+        evaluations: list = []
+        branch_taken = None
+        met = False
+        for cond in conditions:
+            cond = cond or {}
+            expr = (cond.get("expr") or "").strip()
+            ok, err = False, None
+            try:
+                ok = bool(self._eval_condition_expr(expr, ctx))
+            except Exception as exc:  # noqa: BLE001 — 单条表达式异常 fail-safe
+                ok, err = False, str(exc)
+            evaluations.append({"label": cond.get("label"), "expr": expr, "result": ok, "error": err})
+            if ok and branch_taken is None:
+                branch_taken, met = cond.get("label"), True
+        if not conditions:
+            output = "# 条件分支\n未配置 conditions 表达式。"
+            confidence = 0.5
+        else:
+            output = f"# 条件分支\n命中分支: {branch_taken or '（无命中）'}"
+            confidence = 1.0 if met else 0.5
+        downstream_active = (
+            [b.get("target") for b in conditions if b.get("label") == branch_taken]
+            if branch_taken is not None else []
+        )
+        return {
+            "stage": "condition",
+            "output": output,
+            "confidence": confidence,
+            "evidence": [{"type": "condition_eval", "branch_taken": branch_taken, "evaluations": evaluations}],
+            "structured": {
+                "branch_taken": branch_taken,
+                "condition_met": met,
+                "evaluations": evaluations,
+                "downstream_active": downstream_active,
+            },
+        }
+
+    async def _run_parallel(self, ctx: dict, input_params: dict, mode: str) -> dict:
+        """并行分支节点 — 纯标记节点（A2 决策 2，零引擎改动）。
+
+        输出分支列表 + ``parallel_mode``；下游节点只需声明 ``depends_on=[parallel 节点名]``，
+        现有拓扑排序自然将其放入同一批并行执行。
+        """
+        branches = input_params.get("branches") or []
+        branch_list = [
+            {"label": b.get("label"), "target": b.get("target")}
+            for b in branches if isinstance(b, dict)
+        ]
+        return {
+            "stage": "parallel",
+            "output": "# 并行分支\n下游节点声明依赖本节点后将并行执行。",
+            "confidence": 1.0,
+            "evidence": [{"type": "parallel_branches", "branches": branch_list}],
+            "structured": {
+                "branches": branch_list,
+                "parallel_mode": "batch",
+                "branch_count": len(branch_list),
+            },
+        }
+
+    async def _run_data_process(self, ctx: dict, input_params: dict, mode: str) -> dict:
+        """数据处理节点 — select/filter/rename/limit 操作链（A3.5）。
+
+        ``source`` 为 ``{dep:<name>}.path`` 引用（缺省取全部前置 stage 输出拼接）；
+        ``operations`` 按序执行，单条 op 异常只记 errors 继续后续 op（fail-safe）。
+        """
+        source = input_params.get("source") or ""
+        operations = input_params.get("operations") or []
+        # 1) 解析数据源
+        if source:
+            data = self._read_dep_output(ctx, source)
+        else:
+            data = {}
+            for s in (ctx.get("stages") or []):
+                out = self._stage_output(ctx.get("stages"), s.get("name"))
+                if out:
+                    data[s.get("name")] = out
+        if data is None:
+            data = []
+        # 2) 顺序执行 operations
+        transformed = data
+        errors: list = []
+        for op in operations:
+            op = op or {}
+            op_type = op.get("op")
+            try:
+                if op_type == "select":
+                    fields = op.get("fields") or []
+                    if isinstance(transformed, list):
+                        transformed = [
+                            {k: item.get(k) for k in fields if isinstance(item, dict) and k in item}
+                            for item in transformed
+                        ]
+                    elif isinstance(transformed, dict):
+                        transformed = {k: transformed[k] for k in fields if k in transformed}
+                elif op_type == "filter":
+                    field = op.get("field")
+                    regex = op.get("regex")
+                    if isinstance(transformed, list) and field and regex:
+                        pattern = re.compile(str(regex))
+                        transformed = [
+                            item for item in transformed
+                            if isinstance(item, dict) and pattern.search(str(item.get(field, "")))
+                        ]
+                elif op_type == "rename":
+                    mapping = op.get("mapping") or {}
+                    if isinstance(transformed, list):
+                        renamed = []
+                        for item in transformed:
+                            if isinstance(item, dict):
+                                renamed.append({mapping.get(k, k): v for k, v in item.items()})
+                            else:
+                                renamed.append(item)
+                        transformed = renamed
+                    elif isinstance(transformed, dict):
+                        transformed = {mapping.get(k, k): v for k, v in transformed.items()}
+                elif op_type == "limit":
+                    n = int(op.get("n", 10) or 10)
+                    if isinstance(transformed, list):
+                        transformed = transformed[:n]
+                    elif isinstance(transformed, dict):
+                        transformed = dict(list(transformed.items())[:n])
+                else:
+                    errors.append(f"op '{op_type}' 未知")
+            except Exception as exc:  # noqa: BLE001 — 单条 op 异常 fail-safe
+                errors.append(f"op '{op_type}' 失败: {exc}")
+        processed_count = (
+            len(transformed) if isinstance(transformed, list)
+            else (len(transformed) if isinstance(transformed, dict) else 0)
+        )
+        output = f"# 数据处理\n处理完成，产出 {processed_count} 条。"
+        if errors:
+            output += "\n部分操作失败: " + "; ".join(errors[:5])
+        return {
+            "stage": "data-process",
+            "output": output,
+            "confidence": 0.9,
+            "evidence": [{
+                "type": "data_process",
+                "operations": [o.get("op") for o in operations if isinstance(o, dict)],
+                "errors": errors[:10],
+            }],
+            "structured": {
+                "transformed": transformed,
+                "processed_count": processed_count,
+                "errors": errors[:10],
+            },
+        }
+
+    async def _run_intel_query(self, ctx: dict, input_params: dict, mode: str) -> dict:
+        """外部情报查询节点 — 复用 EnrichmentService.enrich_ioc（A3.6）。
+
+        仅支持 ip/domain（hash 友好报错）；真实外部 IO 一律 ``asyncio.to_thread`` +
+        60s 超时包裹，任何异常返回 ``status="failed"`` + 可读 error，不抛 500。
+        """
+        ioc_type = (input_params.get("ioc_type") or "").lower()
+        ioc_value = (input_params.get("ioc_value") or "").strip()
+        provider_name = (input_params.get("provider_name") or "").strip() or None
+        if ioc_type not in ("ip", "domain"):
+            return {
+                "stage": "intel-query",
+                "status": "failed",
+                "error": "unsupported_ioc_type",
+                "output": "intel-query 仅支持 ip/domain（hash 请用 mcp-tool 或威胁情报节点）",
+                "confidence": 0.0,
+                "evidence": [],
+                "structured": {"ioc_type": ioc_type, "ioc_value": ioc_value, "error": "unsupported_ioc_type"},
+            }
+        if not ioc_value:
+            return {
+                "stage": "intel-query",
+                "status": "failed",
+                "error": "missing_ioc_value",
+                "output": "intel-query 缺少 ioc_value。",
+                "confidence": 0.0,
+                "evidence": [],
+                "structured": {"ioc_type": ioc_type, "ioc_value": "", "error": "missing_ioc_value"},
+            }
+        from app.services.enrichment_service import EnrichmentService
+        try:
+            record = await asyncio.wait_for(
+                asyncio.to_thread(
+                    EnrichmentService.instance().enrich_ioc,
+                    None, ioc_type, ioc_value, provider_name, False,
+                ),
+                timeout=60.0,
+            )
+        except Exception as exc:  # noqa: BLE001 — 配额/网络/无 provider → fail-safe
+            logger.warning("PipelineEngine._run_intel_query failed %s/%s: %s", ioc_type, ioc_value, exc)
+            return {
+                "stage": "intel-query",
+                "status": "failed",
+                "error": f"intel_query_failed: {exc}",
+                "output": f"外部情报查询失败：{exc}",
+                "confidence": 0.0,
+                "evidence": [],
+                "structured": {"ioc_type": ioc_type, "ioc_value": ioc_value, "error": str(exc)},
+            }
+        record = record or {}
+        return {
+            "stage": "intel-query",
+            "output": f"# 外部情报查询\n{ioc_type}: {ioc_value}\n威胁等级: {record.get('threat_level') or 'unknown'}",
+            "confidence": 0.85 if record.get("risk_score") is not None else 0.5,
+            "evidence": [{"type": "intel_query", "ref": ioc_value, "ioc_type": ioc_type, "provider": record.get("provider")}],
+            "structured": {
+                "record": record,
+                "risk_score": record.get("risk_score"),
+                "judgments": record.get("judgments"),
+                "threat_level": record.get("threat_level"),
+                "providers": record.get("providers"),
+                "ioc_type": ioc_type,
+                "ioc_value": ioc_value,
+            },
+        }
+
+    async def _run_action(self, ctx: dict, input_params: dict, mode: str) -> dict:
+        """处置执行节点 — 复用 ActionService.execute + disposition_service（A3.7）。
+
+        默认直接执行（画布显式配置即授权）；``require_hitl=true`` 时返回
+        ``hitl_triggered=True`` 走审批链（复用同一 HITL 分支）。写处置日志失败仅 warning。
+        """
+        action = input_params.get("action") or "export_report"
+        target = input_params.get("target") or {}
+        context_vars = ctx.get("context_vars") or {}
+        operator = (
+            input_params.get("operator")
+            or (context_vars.get("user") or {}).get("username")
+            or "admin"
+        )
+        if input_params.get("require_hitl"):
+            return {
+                "stage": "action",
+                "hitl_triggered": True,
+                "output": f"# 处置执行\n动作 {action} 需人工审批，等待审批链…",
+                "confidence": 0.8,
+                "evidence": [{"type": "action_hitl", "ref": f"action={action}", "target": target}],
+                "structured": {
+                    "action": action,
+                    "target": target,
+                    "mode": "hitl",
+                    "require_hitl": True,
+                    "operator": operator,
+                },
+                "hitl_triggered": True,
+            }
+        from app.services.action_service import ActionService
+        try:
+            ar = await ActionService.execute(action, target)
+            executed = ar.model_dump() if hasattr(ar, "model_dump") else dict(ar)
+        except Exception as exc:  # noqa: BLE001 — 执行器异常 → 不抛
+            logger.warning("PipelineEngine._run_action execute failed %s: %s", action, exc)
+            executed = {"success": False, "action": action, "error": str(exc)}
+        event_id = ctx.get("event_id")
+        if event_id:
+            try:
+                from app.services.disposition_service import add_disposition
+                add_disposition(event_id=str(event_id), action=action,
+                                operator=operator, comment="action 节点执行")
+            except Exception as exc:  # noqa: BLE001 — 写日志失败仅 warning
+                logger.warning("PipelineEngine._run_action add_disposition failed: %s", exc)
+        return {
+            "stage": "action",
+            "output": f"# 处置执行\n动作 {action} 已执行：{'成功' if executed.get('success') else '失败'}",
+            "confidence": 1.0 if executed.get("success") else 0.3,
+            "evidence": [{"type": "action_executed", "ref": f"action={action}", "result": _truncate(executed, 2000)}],
+            "structured": {
+                "action": action,
+                "target": target,
+                "operator": operator,
+                "executed": executed,
+            },
+        }
+
+    async def _run_output(self, ctx: dict, input_params: dict, mode: str) -> dict:
+        """知识库输出节点 — 复用 KnowledgeRetriever.retrieve（A3.8）。
+
+        keyword 为空时用前置 stage 输出拼接生成查询文本（``_extract_keywords`` 兜底）；
+        chroma/embedding 不可用由服务层自动关键词回退；任何异常返回空结果 + errors。
+        """
+        keyword = (input_params.get("keyword") or "").strip()
+        category = (input_params.get("category") or "").strip()
+        try:
+            limit = max(1, int(input_params.get("limit", 5) or 5))
+        except (ValueError, TypeError):
+            limit = 5
+        if not keyword:
+            keyword = self._extract_keywords(ctx) or "安全事件分析"
+        from app.services.knowledge_retriever import KnowledgeRetriever
+        try:
+            results = await asyncio.to_thread(
+                KnowledgeRetriever.retrieve,
+                {"summary": keyword, "category": category, "_raw_data": {}},
+                limit,
+                True,
+            )
+        except Exception as exc:  # noqa: BLE001 — 检索失败 fail-safe
+            logger.warning("PipelineEngine._run_output retrieve failed: %s", exc)
+            results = []
+        items: list = []
+        if isinstance(results, list):
+            for r in results:
+                items.append(r if isinstance(r, dict) else {"text": str(r)})
+        return {
+            "stage": "output",
+            "output": f"# 知识库检索\n关键词: {keyword}\n命中 {len(items)} 条。",
+            "confidence": 0.8 if items else 0.3,
+            "evidence": [{"type": "knowledge_retrieve", "keyword": keyword, "count": len(items)}],
+            "structured": {
+                "keyword": keyword,
+                "category": category,
+                "limit": limit,
+                "count": len(items),
+                "items": items[:limit],
+            },
+        }
+
+    async def _run_mcp_tool(self, ctx: dict, input_params: dict, mode: str) -> dict:
+        """MCP 工具节点 — 复用 _run_tools_safe 单工具路径（A3.9）。
+
+        ``input_params.args`` 注入 ``ctx.input_params.tool_args[tool_id]`` 透传给工具；
+        工具未注册/超时 → evidence 记 failed + errors，**不阻断** node 本身。
+        """
+        tool_id = (input_params.get("tool_id") or "").strip()
+        args = input_params.get("args") or {}
+        if not tool_id:
+            return {
+                "stage": "mcp-tool",
+                "status": "failed",
+                "error": "missing_tool_id",
+                "output": "mcp-tool 节点缺少 tool_id。",
+                "confidence": 0.0,
+                "evidence": [],
+                "structured": {"tool_id": "", "args": args, "error": "missing_tool_id"},
+            }
+        # 注入 args → _run_tools_safe 读取的 ctx.input_params.tool_args[tool_id]
+        tools_ctx = dict(ctx)
+        tools_input = dict(ctx.get("input_params") or {})
+        tool_args = dict(tools_input.get("tool_args") or {})
+        tool_args[tool_id] = args
+        tools_input["tool_args"] = tool_args
+        tools_ctx["input_params"] = tools_input
+        tool_run = await self._run_tools_safe([tool_id], tools_ctx)
+        return {
+            "stage": "mcp-tool",
+            "output": f"# MCP 工具\n工具 {tool_id} 调用完成（{'成功' if tool_run['used'] else '失败'}）。",
+            "confidence": 1.0 if tool_run["used"] else 0.3,
+            "evidence": tool_run["evidence"],
+            "structured": {
+                "tool_id": tool_id,
+                "args": args,
+                "results": tool_run["tool_results"],
+                "errors": tool_run["errors"][:10],
+                "used": tool_run["used"],
+            },
+        }
+
+    async def _run_intel_source(self, ctx: dict, input_params: dict, mode: str) -> dict:
+        """情报源接入节点 — 只读 ThreatIntelProviderConfig.load()（A3.10）。
+
+        过滤 enabled/provider，剔除 ``api_key_ref``（不泄露）；无外部 IO。
+        """
+        from app.models.threat_intel import ThreatIntelProviderConfig
+        enabled_only = bool(input_params.get("enabled_only", True))
+        provider_filter = (input_params.get("provider") or "").strip()
+        try:
+            configs = ThreatIntelProviderConfig.load()
+        except Exception as exc:  # noqa: BLE001 — 配置缺失 fail-safe
+            logger.warning("PipelineEngine._run_intel_source load failed: %s", exc)
+            configs = []
+        sources: list = []
+        for c in (configs or []):
+            if enabled_only and not c.get("enabled", True):
+                continue
+            if provider_filter and c.get("name") != provider_filter:
+                continue
+            sources.append({
+                "name": c.get("name"),
+                "type": c.get("type"),
+                "base_url": c.get("base_url"),
+                "enabled": bool(c.get("enabled", True)),
+                "rate_limit_qps": c.get("rate_limit_qps"),
+                "endpoints": c.get("endpoints") or {},
+            })
+        return {
+            "stage": "intel-source",
+            "output": f"# 情报源接入\n可用情报源 {len(sources)} 个。",
+            "confidence": 1.0 if sources else 0.3,
+            "evidence": [{"type": "intel_sources", "count": len(sources)}],
+            "structured": {
+                "sources": sources,
+                "count": len(sources),
+                "message": "未配置情报源。" if not sources else None,
+            },
+        }
+
+    # ── 公共助手（A5.1 #4）──
+
+    @staticmethod
+    def _jsonpath_get(data: Any, path: str) -> Any:
+        """点路径 + 整数索引解析：``a.b[0].c``（data-process/condition 共用）。
+
+        遍历 dict 键与 list 索引；任一环缺失/越界返回 ``None``（不抛异常）。
+
+        Args:
+            data: 根对象（dict/list）。
+            path: 点路径，支持 ``[n]`` 整数索引。
+
+        Returns:
+            路径解析结果；无法解析返回 ``None``。
+        """
+        if data is None or not path:
+            return data
+        current = data
+        tokens = re.findall(r"[^.\[\]]+|\[\d+\]", path)
+        for tok in tokens:
+            if tok.startswith("[") and tok.endswith("]"):
+                try:
+                    idx = int(tok[1:-1])
+                except ValueError:
+                    return None
+                if isinstance(current, list) and 0 <= idx < len(current):
+                    current = current[idx]
+                else:
+                    return None
+            else:
+                if isinstance(current, dict) and tok in current:
+                    current = current[tok]
+                else:
+                    return None
+        return current
+
+    def _read_dep_output(self, ctx: dict, dep_expr: str) -> Any:
+        """解析 ``{dep:<agent_name>}`` 引用 → ``_stage_output`` 结果 + 点路径。
+
+        兼容两种写法：``{dep:name}`` / ``{dep:name}.structured.used_llm`` / ``name.path``。
+
+        Args:
+            ctx: 执行上下文（含 ``stages``）。
+            dep_expr: 依赖引用表达式。
+
+        Returns:
+            前置 stage 输出 dict 或路径解析结果；无法解析返回 ``None``。
+        """
+        dep_expr = (dep_expr or "").strip()
+        match = re.match(r"^\{dep:([a-zA-Z0-9_\-]+)\}(.*)$", dep_expr)
+        if match:
+            name = match.group(1)
+            path = match.group(2).lstrip(".")
+        else:
+            # 无 {dep:} 前缀时按整体作为 stage 名（兼容简单写法）
+            parts = dep_expr.split(".", 1)
+            name = parts[0]
+            path = parts[1] if len(parts) > 1 else ""
+        stages = ctx.get("stages") or []
+        data = self._stage_output(stages, name)
+        if path:
+            return self._jsonpath_get(data, path)
+        return data
+
+    @staticmethod
+    def _parse_literal(token: str) -> Any:
+        """解析表达式字面量：字符串（单/双引号）、数字、``true/false/null``。
+
+        Args:
+            token: 待解析 token。
+
+        Returns:
+            解析后的 Python 值；无法识别按原字符串返回。
+        """
+        token = (token or "").strip()
+        if token == "true":
+            return True
+        if token == "false":
+            return False
+        if token == "null":
+            return None
+        if len(token) >= 2 and token[0] == token[-1] and token[0] in ("'", '"'):
+            return token[1:-1]
+        try:
+            return int(token)
+        except (ValueError, TypeError):
+            pass
+        try:
+            return float(token)
+        except (ValueError, TypeError):
+            pass
+        return token
+
+    def _eval_operand(self, token: str, ctx: dict) -> Any:
+        """求值单个操作数：``{dep:name}.path`` 引用或字面量。
+
+        Args:
+            token: 操作数 token。
+            ctx: 执行上下文。
+
+        Returns:
+            解析后的值；无法解析返回 ``None``。
+        """
+        token = (token or "").strip()
+        if not token:
+            return None
+        if token.startswith("{dep:"):
+            return self._read_dep_output(ctx, token)
+        return self._parse_literal(token)
+
+    def _eval_condition_expr(self, expr: str, ctx: dict) -> bool:
+        """条件表达式求值（A5.2）：JSONPath 子集 + 比较运算符 + contains/exists/regex。
+
+        支持语法：
+        - 引用：``{dep:<agent_name>}.path``（``_read_dep_output`` 解析）；
+        - 字面量：字符串（单/双引号）、数字、``true/false/null``；
+        - 比较：``== != > < >= <=``（数值/相等比较）；
+        - 集合：``lhs contains rhs``（子串/包含）、``path exists``（存在性）；
+        - 正则：``lhs regex "pattern"``。
+        非法表达式返回 ``False``，不抛异常（condition 节点 fail-safe 语义）。
+
+        Args:
+            expr: 表达式字符串。
+            ctx: 执行上下文（含 ``stages``）。
+
+        Returns:
+            bool 求值结果。
+        """
+        expr = (expr or "").strip()
+        if not expr:
+            return False
+        # 裸布尔字面量
+        if expr in ("true", "false"):
+            return expr == "true"
+        if expr == "null":
+            return False
+        # regex 运算符：`lhs regex "pattern"`
+        regex_match = re.match(r"^(.*?)\s+regex\s+(.+)$", expr)
+        if regex_match:
+            lhs = self._eval_operand(regex_match.group(1), ctx)
+            pattern = self._parse_literal(regex_match.group(2).strip())
+            if lhs is None:
+                return False
+            try:
+                return re.search(str(pattern), str(lhs)) is not None
+            except re.error:
+                return False
+        # exists 运算符：`path exists`
+        exists_match = re.match(r"^(.*?)\s+exists$", expr)
+        if exists_match:
+            val = self._eval_operand(exists_match.group(1), ctx)
+            return val is not None and val != "" and val != [] and val != {}
+        # contains 运算符：`lhs contains rhs`
+        contains_match = re.match(r"^(.*?)\s+contains\s+(.+)$", expr)
+        if contains_match:
+            lhs = self._eval_operand(contains_match.group(1), ctx)
+            rhs = self._parse_literal(contains_match.group(2).strip())
+            if isinstance(lhs, (list, dict, str)):
+                try:
+                    return rhs in lhs
+                except TypeError:
+                    return False
+            return False
+        # 比较运算符（先长后短）
+        for op in (">=", "<=", "==", "!=", ">", "<"):
+            if op in expr:
+                left, right = expr.split(op, 1)
+                lv = self._eval_operand(left.strip(), ctx)
+                rv = self._parse_literal(right.strip())
+                if op == "==":
+                    return lv == rv
+                if op == "!=":
+                    return lv != rv
+                try:
+                    ln, rn = float(lv), float(rv)
+                except (TypeError, ValueError):
+                    return False
+                if op == ">":
+                    return ln > rn
+                if op == "<":
+                    return ln < rn
+                if op == ">=":
+                    return ln >= rn
+                if op == "<=":
+                    return ln <= rn
+        # 兜底：单操作数按真值处理（引用路径存在即 true）
+        return bool(self._eval_operand(expr, ctx))
+
+    def _extract_keywords(self, ctx: dict, max_len: int = 120) -> str:
+        """从已完成 stage 输出中提取检索关键词（output 节点 keyword 兜底）。
+
+        Args:
+            ctx: 执行上下文。
+            max_len: 关键词文本最大长度。
+
+        Returns:
+            拼接的关键词文本；无可用输出返回空字符串。
+        """
+        parts: list[str] = []
+        for s in (ctx.get("stages") or []):
+            raw = self._stage_output(ctx.get("stages"), s.get("name"))
+            text = raw.get("output", "") if isinstance(raw, dict) else ""
+            text = text or (raw.get("summary", "") if isinstance(raw, dict) else "")
+            if text:
+                parts.append(str(text)[:max_len])
+        return " ".join(parts)[:max_len] if parts else ""
+
     async def _execute_agent(self, agent_def: AgentDefinition, run: PipelineRun) -> dict:
         """执行 Agent（模板方法，对接现有 Agent 子类或生成摘要）。
 
@@ -1620,7 +2284,7 @@ class PipelineEngine:
                 "confidence": result.get("confidence", 0.0),
                 "evidence": result.get("evidence", []),
                 "structured": result.get("structured", {}),  # P1-2: 保留节点结构化输出（prompt_used/query 等）
-                "hitl_triggered": False,
+                "hitl_triggered": result.get("hitl_triggered", False),  # 11 节点：透传 hitl 标志（hitl/action(require_hitl)）
                 "status": node_status,
                 "error": result.get("error", "") if node_status != "success" else "",
             }

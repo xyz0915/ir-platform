@@ -30,6 +30,13 @@ export const NodeType = {
   TIMELINE: 'timeline',
   ROOT_CAUSE: 'root_cause',
   THREAT_INTEL: 'threat_intel',
+  // ── 增量：11 节点真实化 6 个新节点，值须与 pipeline_engine._get_node_runner 的 key 完全一致 ──
+  CONDITION: 'condition',
+  PARALLEL: 'parallel',
+  DATA_PROCESS: 'data-process',
+  INTEL_QUERY: 'intel-query',
+  MCP_TOOL: 'mcp-tool',
+  INTEL_SOURCE: 'intel-source',
 }
 
 // ==========================================================================
@@ -132,6 +139,37 @@ export const NodeTypeMeta = {
     icon: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4M12 16h.01"/>',
     phase: 'analysis', badgeColor: 'badge-info', track: 0,
   },
+  // ── 增量：11 节点真实化 6 个新节点的元信息（值 = 后端 runner key）──
+  [NodeType.CONDITION]: {
+    label: '条件分支',
+    icon: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="12" r="3"/><path d="M6 9v6M15 12H9a3 3 0 0 1-3-3"/>',
+    phase: 'security', badgeColor: 'badge-info', track: 0,
+  },
+  [NodeType.PARALLEL]: {
+    label: '并行分支',
+    icon: '<circle cx="12" cy="12" r="10"/><line x1="8" y1="12" x2="16" y2="12"/>',
+    phase: 'security', badgeColor: 'badge-info', track: 0,
+  },
+  [NodeType.DATA_PROCESS]: {
+    label: '数据处理',
+    icon: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+    phase: 'analysis', badgeColor: 'badge-info', track: 0,
+  },
+  [NodeType.INTEL_QUERY]: {
+    label: '外部情报查询',
+    icon: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+    phase: 'analysis', badgeColor: 'badge-info', track: 0,
+  },
+  [NodeType.MCP_TOOL]: {
+    label: 'MCP 工具',
+    icon: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+    phase: 'security', badgeColor: 'badge-info', track: 1,
+  },
+  [NodeType.INTEL_SOURCE]: {
+    label: '情报源接入',
+    icon: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+    phase: 'analysis', badgeColor: 'badge-info', track: 0,
+  },
 }
 
 // ==========================================================================
@@ -192,6 +230,36 @@ export function syncTo8px(y) {
 let nodeIdCounter = 0
 
 /**
+ * 各节点类型的默认 input_params 骨架（写入 node.config.input_params）。
+ * 后端 runner 从 agent_def.config.input_params / run 级 ctx 读取并合并；
+ * 前端 config.input_params 供调试面板 / 配置面板读写（A4 存储约定）。
+ */
+export const NODE_DEFAULT_INPUT_PARAMS = {
+  [NodeType.GUARD]: { policy: 'default', checks: [{ rule: 'default_policy', detail: '' }], block: false, reason: '' },
+  [NodeType.HITL]: { action: 'export_report', target: { report_type: 'incident' }, auto_rollback_plan: {}, reason: '人工审核节点' },
+  [NodeType.CONDITION]: { conditions: [{ label: '默认', expr: 'true' }], source: '' },
+  [NodeType.PARALLEL]: { branches: [{ label: '分支A', target: '' }] },
+  [NodeType.DATA_PROCESS]: { source: '', operations: [] },
+  [NodeType.INTEL_QUERY]: { ioc_type: 'ip', ioc_value: '', provider_name: '' },
+  [NodeType.ACTION]: { action: 'export_report', target: {}, operator: '', require_hitl: false },
+  [NodeType.OUTPUT]: { keyword: '', category: '', limit: 5 },
+  [NodeType.MCP_TOOL]: { tool_id: '', args: {} },
+  [NodeType.INTEL_SOURCE]: { enabled_only: true, provider: '' },
+  [NodeType.LLM]: { prompt: '', model: 'gpt-4', model_profile: '', agent_ref: '', allow_default_llm: false },
+}
+
+/** 处置动作下拉选项（guard/hitl/action 共用）。 */
+export const ACTION_OPTIONS = [
+  'block_ip',
+  'isolate_host',
+  'export_report',
+  'mark_false_positive',
+  'add_whitelist',
+  'create_case',
+  'add_note',
+]
+
+/**
  * 创建一个新的 PipelineNode 数据对象。
  *
  * @param {string} type  — NodeType 值
@@ -229,6 +297,10 @@ export function createNodeData(type, position, name) {
       model: '',
       temperature: 0.2,
       ...(type === NodeType.BRANCH ? { branches: [] } : {}),
+      // 11 节点真实化：新/既有节点默认 input_params 骨架（A4 存储约定）
+      ...(NODE_DEFAULT_INPUT_PARAMS[type]
+        ? { input_params: JSON.parse(JSON.stringify(NODE_DEFAULT_INPUT_PARAMS[type])) }
+        : {}),
     },
     dependencies: {
       upstream: [],

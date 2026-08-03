@@ -292,6 +292,184 @@ SIMULATE_DEFAULT = {
     "evidence": [],
 }
 
+# ──────────────────────────────────────────────────────────────────────
+# 11 节点真实化：10 个新节点的合成 fixture（与真实 _run_<node> 返回同构）
+# ──────────────────────────────────────────────────────────────────────
+
+SIMULATE_GUARD = {
+    "output_text": "# 合规门禁（Guardrail）\n校验通过，已记录。",
+    "structured": {
+        "blocked": False,
+        "checks": [{"rule": "default_policy", "passed": True, "detail": ""}],
+        "policy": "default",
+    },
+    "confidence": 1.0,
+    "evidence": [
+        {"type": "guardrail_check", "checks": [{"rule": "default_policy", "passed": True}]},
+    ],
+}
+
+SIMULATE_HITL = {
+    "output_text": "# 人工审核\n等待审批动作: export_report\n审批原因: 人工审核节点（模拟）",
+    "structured": {
+        "action": "export_report",
+        "target": {"report_type": "incident"},
+        "auto_rollback_plan": {},
+        "reason": "人工审核节点（模拟）",
+        "hitl_triggered": True,
+    },
+    "confidence": 1.0,
+    "evidence": [
+        {"type": "hitl_request", "ref": "action=export_report", "target": {"report_type": "incident"}},
+    ],
+}
+
+SIMULATE_CONDITION = {
+    "output_text": "# 条件分支\n命中分支: 默认（模拟）",
+    "structured": {
+        "branch_taken": "默认",
+        "condition_met": True,
+        "evaluations": [
+            {"label": "默认", "expr": "true", "result": True, "error": None},
+        ],
+        "downstream_active": [],
+    },
+    "confidence": 1.0,
+    "evidence": [
+        {"type": "condition_eval", "branch_taken": "默认", "evaluations": [{"label": "默认", "result": True}]},
+    ],
+}
+
+SIMULATE_PARALLEL = {
+    "output_text": "# 并行分支\n下游节点声明依赖本节点后将并行执行（模拟）。",
+    "structured": {
+        "branches": [
+            {"label": "分支A", "target": "network_analysis"},
+            {"label": "分支B", "target": "file_analysis"},
+        ],
+        "parallel_mode": "batch",
+        "branch_count": 2,
+    },
+    "confidence": 1.0,
+    "evidence": [
+        {"type": "parallel_branches", "branches": [
+            {"label": "分支A", "target": "network_analysis"},
+            {"label": "分支B", "target": "file_analysis"},
+        ]},
+    ],
+}
+
+SIMULATE_DATA_PROCESS = {
+    "output_text": "# 数据处理\n处理完成，产出 3 条（模拟）。",
+    "structured": {
+        "transformed": [
+            {"name": "payload.dll", "path": "C:\\Windows\\Temp\\payload.dll"},
+            {"name": "config.bin", "path": "C:\\ProgramData\\evil\\config.bin"},
+            {"name": "ransom_note.txt", "path": "C:\\Users\\victim\\Desktop\\ransom_note.txt"},
+        ],
+        "processed_count": 3,
+        "errors": [],
+    },
+    "confidence": 0.9,
+    "evidence": [
+        {"type": "data_process", "operations": ["select", "limit"], "errors": []},
+    ],
+}
+
+SIMULATE_INTEL_QUERY = {
+    "output_text": "# 外部情报查询\nip: 185.220.101.32\n威胁等级: high（模拟）",
+    "structured": {
+        "record": {
+            "ioc_type": "ip",
+            "ioc_value": "185.220.101.32",
+            "provider": "threatbook",
+            "risk_score": 92,
+            "judgments": ["malicious"],
+            "threat_level": "high",
+            "providers": ["threatbook"],
+        },
+        "risk_score": 92,
+        "judgments": ["malicious"],
+        "threat_level": "high",
+        "providers": ["threatbook"],
+        "ioc_type": "ip",
+        "ioc_value": "185.220.101.32",
+    },
+    "confidence": 0.85,
+    "evidence": [
+        {"type": "intel_query", "ref": "185.220.101.32", "ioc_type": "ip", "provider": "threatbook"},
+    ],
+}
+
+SIMULATE_ACTION = {
+    "output_text": "# 处置执行\n动作 export_report 已执行：成功（模拟）",
+    "structured": {
+        "action": "export_report",
+        "target": {},
+        "operator": "admin",
+        "executed": {
+            "success": True,
+            "action": "export_report",
+            "status": "completed",
+            "result": {"report_type": "summary", "file_url": "/api/reports/latest.pdf"},
+            "exec_time_ms": 200,
+        },
+    },
+    "confidence": 1.0,
+    "evidence": [
+        {"type": "action_executed", "ref": "action=export_report", "result": {"success": True}},
+    ],
+}
+
+SIMULATE_OUTPUT = {
+    "output_text": "# 知识库检索\n关键词: 勒索软件\n命中 2 条（模拟）。",
+    "structured": {
+        "keyword": "勒索软件",
+        "category": "",
+        "limit": 5,
+        "count": 2,
+        "items": [
+            {"text": "（模拟）勒索软件 T1486 加密手法与处置建议"},
+            {"text": "（模拟）勒索软件家族 IoC 与清除指引"},
+        ],
+    },
+    "confidence": 0.8,
+    "evidence": [
+        {"type": "knowledge_retrieve", "keyword": "勒索软件", "count": 2},
+    ],
+}
+
+SIMULATE_MCP_TOOL = {
+    "output_text": "# MCP 工具\n工具 vt_scan 调用完成（模拟）。",
+    "structured": {
+        "tool_id": "vt_scan",
+        "args": {},
+        "results": [{"ok": True, "tool_id": "vt_scan", "result": "（模拟）扫描结果"}],
+        "errors": [],
+        "used": True,
+    },
+    "confidence": 1.0,
+    "evidence": [
+        {"type": "tool_call", "ref": "vt_scan", "status": "success", "result": "（模拟）扫描结果"},
+    ],
+}
+
+SIMULATE_INTEL_SOURCE = {
+    "output_text": "# 情报源接入\n可用情报源 2 个（模拟）。",
+    "structured": {
+        "sources": [
+            {"name": "threatbook", "type": "threatbook", "base_url": "https://api.threatbook.cn", "enabled": True, "rate_limit_qps": 2, "endpoints": {}},
+            {"name": "osint", "type": "custom", "base_url": "https://osint.example", "enabled": True, "rate_limit_qps": 1, "endpoints": {}},
+        ],
+        "count": 2,
+        "message": None,
+    },
+    "confidence": 1.0,
+    "evidence": [
+        {"type": "intel_sources", "count": 2},
+    ],
+}
+
 _FIXTURE_MAP = {
     "file_analysis": SIMULATE_FILE_ANALYSIS,
     "process_analysis": SIMULATE_PROCESS_ANALYSIS,
@@ -304,6 +482,17 @@ _FIXTURE_MAP = {
     "llm": SIMULATE_LLM,
     "trigger": SIMULATE_TRIAGE,
     "guardrail": SIMULATE_GUARDRAIL,
+    # ── 11 节点真实化：10 个新节点 fixture ──
+    "guard": SIMULATE_GUARD,
+    "hitl": SIMULATE_HITL,
+    "condition": SIMULATE_CONDITION,
+    "parallel": SIMULATE_PARALLEL,
+    "data-process": SIMULATE_DATA_PROCESS,
+    "intel-query": SIMULATE_INTEL_QUERY,
+    "action": SIMULATE_ACTION,
+    "output": SIMULATE_OUTPUT,
+    "mcp-tool": SIMULATE_MCP_TOOL,
+    "intel-source": SIMULATE_INTEL_SOURCE,
 }
 
 

@@ -49,16 +49,16 @@ const nodeGroups = [
     name: '流程控制',
     items: [
       { type: NodeType.TRIGGER, label: '触发器', icon: NodeTypeMeta[NodeType.TRIGGER].icon, count: 3 },
-      { type: 'condition', label: '条件分支', icon: '<polyline points="9 18 15 12 9 6"/>', count: 2 },
-      { type: 'parallel', label: '并行分支', icon: '<circle cx="12" cy="12" r="10"/><line x1="8" y1="12" x2="16" y2="12"/>', count: 1 },
+      { type: NodeType.CONDITION, label: '条件分支', icon: NodeTypeMeta[NodeType.CONDITION].icon, count: 2 },
+      { type: NodeType.PARALLEL, label: '并行分支', icon: NodeTypeMeta[NodeType.PARALLEL].icon, count: 1 },
     ],
   },
   {
     name: '调查分析',
     items: [
       { type: NodeType.LLM, label: '大模型调用', icon: NodeTypeMeta[NodeType.LLM].icon, count: 8 },
-      { type: 'data-process', label: '数据处理', icon: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>', count: 5 },
-      { type: 'intel-query', label: '外部情报查询', icon: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>', count: 4 },
+      { type: NodeType.DATA_PROCESS, label: '数据处理', icon: NodeTypeMeta[NodeType.DATA_PROCESS].icon, count: 5 },
+      { type: NodeType.INTEL_QUERY, label: '外部情报查询', icon: NodeTypeMeta[NodeType.INTEL_QUERY].icon, count: 4 },
       // ── 增量：7 个后端分析节点（type 一律引用 NodeType 枚举，避免字符串字面量）──
       { type: NodeType.FILE_ANALYSIS, label: '文件分析', icon: NodeTypeMeta[NodeType.FILE_ANALYSIS].icon, count: 1 },
       { type: NodeType.PROCESS_ANALYSIS, label: '进程分析', icon: NodeTypeMeta[NodeType.PROCESS_ANALYSIS].icon, count: 1 },
@@ -81,8 +81,8 @@ const nodeGroups = [
     name: '数据源',
     items: [
       { type: NodeType.OUTPUT, label: '知识库', icon: NodeTypeMeta[NodeType.OUTPUT].icon, count: 3 },
-      { type: 'mcp-tool', label: 'MCP 工具', icon: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>', count: 12 },
-      { type: 'intel-source', label: '情报源接入', icon: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>', count: 5 },
+      { type: NodeType.MCP_TOOL, label: 'MCP 工具', icon: NodeTypeMeta[NodeType.MCP_TOOL].icon, count: 12 },
+      { type: NodeType.INTEL_SOURCE, label: '情报源接入', icon: NodeTypeMeta[NodeType.INTEL_SOURCE].icon, count: 5 },
     ],
   },
 ]
