@@ -1,11 +1,17 @@
 /**
- * M5 记忆与 RAG Store 单元测试（加载 + 文档总量）。
+ * M5 记忆与 RAG Store 单元测试（加载 + 文档总量 + P2 长期记忆动作）。
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 
 const api = vi.hoisted(() => ({
-  memory: { listKnowledgeBases: vi.fn() },
+  memory: {
+    listKnowledgeBases: vi.fn(),
+    listMemories: vi.fn(),
+    searchMemories: vi.fn(),
+    createMemory: vi.fn(),
+    deleteMemory: vi.fn(),
+  },
 }))
 vi.mock('@/api/agent', () => ({ default: api }))
 
@@ -71,5 +77,77 @@ describe('M5 Memory Store：加载 + 文档总量', () => {
     expect(store.drafts[0].title).toBe('新增恶意软件')
     expect(store.vectorDocCount).toBe(42)
     expect(store.collectionReady).toBe(true)
+  })
+})
+
+describe('M5 Memory Store：P2 长期记忆动作', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    api.memory.listMemories.mockResolvedValue({
+      code: 0,
+      data: {
+        items: [
+          { id: 1, agent_name: 'root_cause', memory_type: 'conclusion', content: '根因是 powershell C2', source_node: 'root_cause', event_id: 'evt-1', host_id: 3, created_by: 'system', created_at: '2026-08-04 08:00:00' },
+        ],
+        total: 1,
+        page: 1,
+        page_size: 10,
+      },
+      message: 'ok',
+    })
+    api.memory.searchMemories.mockResolvedValue({
+      code: 0,
+      data: { items: [{ id: 2, agent_name: 'responder', memory_type: 'disposition', content: '已隔离主机', created_by: 'admin', created_at: '2026-08-04 09:00:00' }], total: 1 },
+      message: 'ok',
+    })
+    api.memory.createMemory.mockResolvedValue({
+      code: 0,
+      data: { id: 9, agent_name: 'manual', memory_type: 'summary', content: '手动记忆', created_by: 'admin', created_at: '2026-08-04 10:00:00' },
+      message: 'ok',
+    })
+    api.memory.deleteMemory.mockResolvedValue({ code: 0, data: { deleted: true }, message: 'ok' })
+  })
+
+  it('fetchMemories 写入列表 + total 并重置 loading', async () => {
+    const store = useMemoryStore()
+    const p = store.fetchMemories()
+    expect(store.memoryLoading).toBe(true)
+    await p
+    expect(store.memoryLoading).toBe(false)
+    expect(store.memories.length).toBe(1)
+    expect(store.memoryTotal).toBe(1)
+    expect(store.memoryMode).toBe('list')
+    expect(api.memory.listMemories).toHaveBeenCalled()
+  })
+
+  it('searchMemories 写入检索结果并置 search 模式', async () => {
+    const store = useMemoryStore()
+    await store.searchMemories('powershell', { memory_type: 'conclusion' })
+    expect(store.memoryMode).toBe('search')
+    expect(store.memoryQuery.q).toBe('powershell')
+    expect(store.memories[0].agent_name).toBe('responder')
+    expect(store.memoryTotal).toBe(1)
+    expect(api.memory.searchMemories).toHaveBeenCalledWith('powershell', { memory_type: 'conclusion' })
+  })
+
+  it('addMemory 调 createMemory 并刷新列表（list 模式）', async () => {
+    const store = useMemoryStore()
+    const row = await store.addMemory({ content: '手动记忆', memory_type: 'summary' })
+    expect(row.id).toBe(9)
+    expect(api.memory.createMemory).toHaveBeenCalledWith({ content: '手动记忆', memory_type: 'summary' })
+    // list 模式刷新 → 重新拉列表
+    expect(api.memory.listMemories).toHaveBeenCalled()
+  })
+
+  it('removeMemory 调 deleteMemory 并刷新列表（search 模式重跑检索）', async () => {
+    const store = useMemoryStore()
+    await store.searchMemories('powershell')
+    vi.clearAllMocks()
+    const data = await store.removeMemory(2)
+    expect(data.deleted).toBe(true)
+    expect(api.memory.deleteMemory).toHaveBeenCalledWith(2)
+    // search 模式刷新 → 重跑关键词检索
+    expect(api.memory.searchMemories).toHaveBeenCalled()
   })
 })

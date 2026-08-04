@@ -158,6 +158,15 @@ const agentApi = {
   memory: {
     listKnowledgeBases: () =>
       (USE_MOCK.memory ? memoryMock.listKnowledgeBases() : memoryReal.listKnowledgeBases()),
+    // P2 长期记忆 agent_memories（p2-design.md §5-§6）
+    listMemories: (params = {}) =>
+      (USE_MOCK.memory ? memoryMock.listMemories(params) : memoryReal.listMemories(params)),
+    searchMemories: (q, params = {}) =>
+      (USE_MOCK.memory ? memoryMock.searchMemories(q, params) : memoryReal.searchMemories(q, params)),
+    createMemory: (payload = {}) =>
+      (USE_MOCK.memory ? memoryMock.createMemory(payload) : memoryReal.createMemory(payload)),
+    deleteMemory: (id) =>
+      (USE_MOCK.memory ? memoryMock.deleteMemory(id) : memoryReal.deleteMemory(id)),
   },
 
   // ── M9 设置（拆分键门控：listModelProfiles 走 settings，getDeploymentConfig 走 settingsDeployment） ──

@@ -37,7 +37,14 @@ vi.mock('@/api/agent', () => ({
       evaluate: () => ok({ passed: true }),
     },
     tools: { listTools: () => ok([]), listMcpServers: () => ok([]) },
-    memory: { listKnowledgeBases: () => ok([]) },
+    memory: {
+      listKnowledgeBases: () => ok([]),
+      // P2 长期记忆（MemoryRagView onMounted 会调 fetchMemories）
+      listMemories: () => ok({ items: [], total: 0, page: 1, page_size: 10 }),
+      searchMemories: () => ok({ items: [], total: 0 }),
+      createMemory: () => ok({ id: 1, created_at: '' }),
+      deleteMemory: () => ok({ deleted: true }),
+    },
     settings: {
       listModelProfiles: () => ok([]),
       getDeploymentConfig: () => ok({ stateless_enabled: true, redis_connected: true, sse_protocol: 'step_*', hitl_protocol: 'hitl_approval + resume' }),
@@ -156,6 +163,9 @@ describe('智能体编排集成视图挂载冒烟', () => {
               props: ['modelValue'],
             },
             ElSelect: { template: '<div class="stub-el-select"><slot /></div>' },
+            // P2 长期记忆：MemoryRagView 使用 el-option；stub ElSelect 后真实
+            // ElOption 找不到注入会抛错，故一并桩掉（与 ElSelect 桩同层约定）。
+            ElOption: { template: '<span class="stub-el-option" />' },
           },
         },
         attachTo: document.body,

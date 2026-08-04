@@ -59,7 +59,8 @@ describe('智能体编排 9 模块路由可达性', () => {
       }
       expect(cur.name, `导航后路由名不匹配: ${t.path}`).toBe(t.name)
     }
-  })
+    // 全量套件并行导入（70s+）时默认 5s 超时偏紧，放宽到 30s 吸收负载抖动（断言不变）
+  }, 30000)
 
   it('组件定义均可静态解析（import 不抛错）', async () => {
     const viewImports = [

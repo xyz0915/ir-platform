@@ -45,6 +45,114 @@
       />
     </div>
 
+    <!-- 长期记忆（P2 agent_memories） -->
+    <h3 class="mr-section mr-mt">长期记忆 ({{ store.memoryTotal }})</h3>
+    <div class="mem-toolbar">
+      <el-input
+        v-model="searchQ"
+        placeholder="检索记忆（内容 / 标签）"
+        clearable
+        class="mem-search"
+        @keyup.enter="onSearch"
+        @clear="onClearSearch"
+      />
+      <el-select
+        v-model="typeFilter"
+        placeholder="全部类型"
+        clearable
+        class="mem-type-select"
+        @change="onTypeChange"
+      >
+        <el-option label="全部类型" value="" />
+        <el-option v-for="t in MEMORY_TYPES" :key="t" :label="TYPE_LABELS[t]" :value="t" />
+      </el-select>
+      <el-button type="primary" :loading="store.memorySearchLoading" @click="onSearch">搜索</el-button>
+      <el-button type="primary" plain @click="openCreate">+ 写入记忆</el-button>
+    </div>
+
+    <el-table
+      :data="store.memories"
+      v-loading="store.memoryLoading || store.memorySearchLoading"
+      border
+      class="mem-table"
+      empty-text="暂无记忆；流水线关键节点（root_cause/llm/reporter/responder/action）会自动沉淀，也可手动写入"
+    >
+      <el-table-column label="类型" width="100">
+        <template #default="{ row }">
+          <el-tag :type="typeTagType(row.memory_type)" size="small">
+            {{ TYPE_LABELS[row.memory_type] || row.memory_type }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="内容" min-width="280" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.content }}</template>
+      </el-table-column>
+      <el-table-column label="来源 Agent" prop="agent_name" width="120" />
+      <el-table-column label="节点" prop="source_node" width="110" />
+      <el-table-column label="事件" prop="event_id" width="120" show-overflow-tooltip />
+      <el-table-column label="主机" width="70">
+        <template #default="{ row }">{{ row.host_id ?? '—' }}</template>
+      </el-table-column>
+      <el-table-column label="写入人" prop="created_by" width="90" />
+      <el-table-column label="时间" width="150">
+        <template #default="{ row }">{{ fmtTime(row.created_at) }}</template>
+      </el-table-column>
+      <el-table-column label="操作" width="90" fixed="right">
+        <template #default="{ row }">
+          <el-button link type="danger" @click="onDelete(row)">删除</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+
+    <div class="mem-pager">
+      <el-pagination
+        background
+        layout="total, prev, pager, next"
+        :total="store.memoryTotal"
+        :page-size="store.memoryPageSize"
+        :current-page="store.memoryPage"
+        @current-change="onPageChange"
+      />
+    </div>
+
+    <!-- 写入记忆对话框 -->
+    <el-dialog v-model="createVisible" title="写入长期记忆" width="520px">
+      <el-form label-width="96px">
+        <el-form-item label="内容" required>
+          <el-input
+            v-model="createForm.content"
+            type="textarea"
+            :rows="4"
+            placeholder="记忆正文（必填，截断 4000 字符）"
+          />
+        </el-form-item>
+        <el-form-item label="类型">
+          <el-select v-model="createForm.memory_type" class="mem-type-select">
+            <el-option v-for="t in MEMORY_TYPES" :key="t" :label="TYPE_LABELS[t]" :value="t" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="来源 Agent">
+          <el-input v-model="createForm.agent_name" placeholder="可选，如 root_cause" />
+        </el-form-item>
+        <el-form-item label="节点">
+          <el-input v-model="createForm.source_node" placeholder="可选，如 root_cause" />
+        </el-form-item>
+        <el-form-item label="事件 ID">
+          <el-input v-model="createForm.event_id" placeholder="可选" />
+        </el-form-item>
+        <el-form-item label="主机 ID">
+          <el-input v-model="createForm.host_id" placeholder="可选，数字" />
+        </el-form-item>
+        <el-form-item label="标签">
+          <el-input v-model="createForm.tags" placeholder="逗号分隔，如 powershell, C2" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="createVisible = false">取消</el-button>
+        <el-button type="primary" :loading="createSubmitting" @click="onCreate">提交</el-button>
+      </template>
+    </el-dialog>
+
     <!-- RAG 检索增强示意 -->
     <h3 class="mr-section mr-mt">检索增强 (RAG) 示意</h3>
     <el-card class="mr-hint-card" shadow="never">
@@ -70,7 +178,8 @@
 </template>
 
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Right } from '@element-plus/icons-vue'
 import { useMemoryStore } from '@/stores/memory'
 import KnowledgeBaseCard from '@/components/agents/KnowledgeBaseCard.vue'
@@ -78,13 +187,176 @@ import KnowledgeBaseCard from '@/components/agents/KnowledgeBaseCard.vue'
 const store = useMemoryStore()
 const vectorStore = computed(() => store.stats.vector_store || 'Chroma')
 
-onMounted(store.fetchKnowledgeBases)
+// ── P2 长期记忆 ──
+const MEMORY_TYPES = ['conclusion', 'summary', 'action', 'disposition']
+const TYPE_LABELS = {
+  conclusion: '结论',
+  summary: '摘要',
+  action: '处置动作',
+  disposition: '处置记录',
+}
+const TYPE_TAG_MAP = {
+  conclusion: 'danger',
+  summary: 'primary',
+  action: 'warning',
+  disposition: 'success',
+}
+
+const searchQ = ref('')
+const typeFilter = ref('')
+const createVisible = ref(false)
+const createSubmitting = ref(false)
+const createForm = reactive({
+  content: '',
+  memory_type: 'summary',
+  agent_name: '',
+  source_node: '',
+  event_id: '',
+  host_id: '',
+  tags: '',
+})
+
+onMounted(() => {
+  // 初始加载（fail-safe：失败仅由拦截器提示，不产生 unhandled rejection）
+  store.fetchKnowledgeBases().catch(() => {})
+  store.fetchMemories().catch(() => {})
+})
+
+function typeTagType(t) {
+  return TYPE_TAG_MAP[t] || 'info'
+}
+
+function currentFilters() {
+  return { memory_type: typeFilter.value || undefined }
+}
+
+function showError(err) {
+  // 后端 400/404 错误信封为 {detail:...}（HTTPException），统一读取兜底
+  const msg =
+    (err && err.response && err.response.data && err.response.data.detail) ||
+    (err && err.message) ||
+    '操作失败'
+  ElMessage.error(msg)
+}
+
+async function onSearch() {
+  const q = searchQ.value.trim()
+  if (!q) {
+    ElMessage.warning('请输入检索关键词')
+    return
+  }
+  try {
+    await store.searchMemories(q, currentFilters())
+  } catch (err) {
+    showError(err)
+  }
+}
+
+async function onClearSearch() {
+  try {
+    await store.fetchMemories(currentFilters())
+  } catch (err) {
+    showError(err)
+  }
+}
+
+async function onTypeChange() {
+  if (store.memoryMode === 'search' && searchQ.value.trim()) {
+    await onSearch()
+  } else {
+    try {
+      await store.fetchMemories(currentFilters())
+    } catch (err) {
+      showError(err)
+    }
+  }
+}
+
+async function onPageChange(page) {
+  store.memoryPage = page
+  try {
+    if (store.memoryMode === 'search' && searchQ.value.trim()) {
+      await store.searchMemories(searchQ.value.trim(), currentFilters())
+    } else {
+      await store.fetchMemories(currentFilters())
+    }
+  } catch (err) {
+    showError(err)
+  }
+}
+
+function openCreate() {
+  createForm.content = ''
+  createForm.memory_type = 'summary'
+  createForm.agent_name = ''
+  createForm.source_node = ''
+  createForm.event_id = ''
+  createForm.host_id = ''
+  createForm.tags = ''
+  createVisible.value = true
+}
+
+async function onCreate() {
+  if (!createForm.content.trim()) {
+    ElMessage.warning('记忆内容不能为空')
+    return
+  }
+  createSubmitting.value = true
+  try {
+    const tags = createForm.tags
+      ? createForm.tags.split(/[,，]/).map((s) => s.trim()).filter(Boolean)
+      : []
+    const payload = {
+      content: createForm.content.trim(),
+      memory_type: createForm.memory_type,
+      agent_name: createForm.agent_name.trim() || undefined,
+      source_node: createForm.source_node.trim() || undefined,
+      event_id: createForm.event_id.trim() || undefined,
+      host_id: createForm.host_id ? Number(createForm.host_id) : undefined,
+      tags,
+    }
+    await store.addMemory(payload)
+    createVisible.value = false
+    ElMessage.success('记忆已写入')
+  } catch (err) {
+    showError(err)
+  } finally {
+    createSubmitting.value = false
+  }
+}
+
+async function onDelete(row) {
+  try {
+    await ElMessageBox.confirm('确认删除这条记忆？删除后不可恢复。', '删除记忆', {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+  } catch {
+    return // 用户取消
+  }
+  try {
+    await store.removeMemory(row.id)
+    ElMessage.success('已删除')
+  } catch (err) {
+    showError(err)
+  }
+}
+
+function fmtTime(iso) {
+  if (!iso) return '—'
+  try {
+    return new Date(iso).toLocaleString('zh-CN', { hour12: false })
+  } catch {
+    return iso
+  }
+}
 </script>
 
 <style scoped>
 .memory-rag-view { padding: 16px; }
 .mr-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.mr-title h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.mr-title h2 { margin: 0; font-size: 18px; font-weight: 600; color: #111827; }
 .mr-sub { display: block; font-size: 12px; color: var(--color-fg-subtle); margin-top: 2px; }
 
 .mr-stats { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
@@ -94,16 +366,23 @@ onMounted(store.fetchKnowledgeBases)
   padding: 12px 16px; display: flex; flex-direction: column; gap: 4px;
 }
 .gs-label { font-size: 12px; color: var(--color-fg-subtle); }
-.gs-value { font-size: 22px; font-weight: 700; color: var(--color-fg-default); font-family: ui-monospace, monospace; }
+.gs-value { font-size: 22px; font-weight: 700; color: #111827; font-family: ui-monospace, monospace; }
 .gs-sm { font-size: 15px; line-height: 1.6; }
 .gs-blue { color: #3B82F6; }
 .gs-green { color: #10B981; }
 .gs-ok { color: #10B981; }
 .gs-warn { color: #F59E0B; }
 
-.mr-section { font-size: 14px; font-weight: 500; margin: 0 0 10px; }
+.mr-section { font-size: 14px; font-weight: 500; margin: 0 0 10px; color: #111827; }
 .mr-mt { margin-top: 22px; }
 .mr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+
+/* ── P2 长期记忆区块 ── */
+.mem-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.mem-search { width: 260px; }
+.mem-type-select { width: 140px; }
+.mem-table { border-radius: 8px; }
+.mem-pager { display: flex; justify-content: flex-end; margin-top: 12px; }
 
 .mr-hint-card { border-radius: 10px; border: 1px solid var(--color-border-default); }
 .mr-hint { font-size: 13px; color: var(--color-fg-muted); line-height: 1.7; margin: 0 0 12px; }

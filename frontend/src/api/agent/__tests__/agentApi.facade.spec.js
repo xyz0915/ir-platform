@@ -122,6 +122,25 @@ describe('agentApi 适配层：真实/Mock 路由切换', () => {
     expect(res.data.length).toBeGreaterThan(0)
   })
 
+  it('M5 memory P2 长期记忆 → Mock（信封同构，list/search/create/delete 均可路由）', async () => {
+    const list = await agentApi.memory.listMemories({ page: 1, page_size: 10 })
+    expect(list.code).toBe(0)
+    expect(list.data).toMatchObject({ items: [], total: 0 })
+
+    const search = await agentApi.memory.searchMemories('powershell', { memory_type: 'conclusion' })
+    expect(search.code).toBe(0)
+    expect(search.data).toMatchObject({ items: [], total: 0 })
+
+    const created = await agentApi.memory.createMemory({ content: 'x', memory_type: 'summary' })
+    expect(created.code).toBe(0)
+    expect(created.data.content).toBe('x')
+    expect(created.data.id).toBeTruthy()
+
+    const del = await agentApi.memory.deleteMemory(1)
+    expect(del.code).toBe(0)
+    expect(del.data.deleted).toBe(true)
+  })
+
   it('M9 settings.* → Mock', async () => {
     const profiles = await agentApi.settings.listModelProfiles()
     const cfg = await agentApi.settings.getDeploymentConfig()
