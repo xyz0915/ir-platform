@@ -11,6 +11,8 @@
   向量化仅留扩展位（文档注明，不在本模型实现）。
 """
 
+from __future__ import annotations  # noqa: E402  # 延迟注解求值：类内 `list` 静态方法遮蔽内置 list，避免 `-> list[dict]` 注解在定义时求值报 TypeError（对齐 pipeline_default_rule.py 惯例）
+
 import json
 import logging
 from typing import Any, Optional
