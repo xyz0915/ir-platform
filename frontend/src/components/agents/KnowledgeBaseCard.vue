@@ -29,8 +29,11 @@
       <span class="kv-value gv-mono">{{ kb.embedding_model }}</span>
     </div>
 
-    <!-- 更新时间 -->
-    <div class="kb-foot">更新于 {{ fmtTime(kb.updated_at) }}</div>
+    <!-- 索引时间 / 更新时间 -->
+    <div class="kb-foot">
+      <template v-if="kb.index_updated_at">索引时间 {{ fmtTime(kb.index_updated_at) }}</template>
+      <template v-else>更新于 {{ fmtTime(kb.updated_at) }}</template>
+    </div>
   </div>
 </template>
 

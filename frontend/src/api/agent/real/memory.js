@@ -1,32 +1,32 @@
 /**
- * M5 记忆与 RAG 真实适配器（F3 后端就绪后启用）。
+ * M5 记忆与 RAG 真实适配器（P0：真实向量库统计）。
  * USE_MOCK.memory=false 时由 facade 切换至此，调用方零改动。
- * 端点对齐：GET /api/knowledge/drafts?status=approved（07 §5.2 / §4.2）。
+ * 端点对齐：GET /api/knowledge/bases（P0 改造后返回聚合结构，07 §5 P0 方案）。
  *
- * 映射（方案 a，零后端成本）：将 approved 知识草稿映射为 KnowledgeBase 形态，
- * 使 store 对 Mock / 真实两条路径拿到同一 shape（store 零改动）。
- *   draft_{id}      → kb_id
- *   title           → name
- *   category        → vector_store 占位
- *   severity        → 透传（附加字段）
- *   reviewed_at||created_at → updated_at
+ * 消费结构（统一信封 {code, data, message}）：
+ *   data.bases  → 真实向量库条目数组（collection 可用时 1 条 ir_rules，否则 []）
+ *   data.stats  → 向量库统计 { doc_count, embedding_model, vector_store,
+ *                              index_updated_at, approved_drafts, collection_ready }
+ *   data.drafts → 已批准草稿精简列表（id/title/category/severity/reviewed_at）
+ *
+ * 适配器做 shape 归一（缺字段给安全默认值），store 负责拆分到状态。
  */
 import request from '@/api/index'
 
 const BASE = '/knowledge' // F3 后端真实路由（07 §5.2）
 
 export function listKnowledgeBases() {
-  return request({ url: `${BASE}/drafts?status=approved`, method: 'GET' }).then((res) => {
-    const drafts = (res && res.data) || []
-    const mapped = drafts.map((d) => ({
-      kb_id: `draft_${d.id}`,
-      name: d.title,
-      embedding_model: 'n/a', // 草稿无向量模型概念
-      vector_store: d.category || 'knowledge_draft', // 占位
-      doc_count: 1, // 每条草稿视为 1 个知识项
-      updated_at: d.reviewed_at || d.created_at || '',
-      severity: d.severity, // 透传给 UI 标签
-    }))
-    return { code: 0, data: mapped, message: 'success' }
+  return request({ url: `${BASE}/bases`, method: 'GET' }).then((res) => {
+    const payload = (res && res.data) || {}
+    const data = payload && typeof payload === 'object' ? payload : {}
+    return {
+      code: 0,
+      data: {
+        bases: Array.isArray(data.bases) ? data.bases : [],
+        stats: data.stats && typeof data.stats === 'object' ? data.stats : {},
+        drafts: Array.isArray(data.drafts) ? data.drafts : [],
+      },
+      message: 'success',
+    }
   })
 }

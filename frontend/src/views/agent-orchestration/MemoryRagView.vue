@@ -4,7 +4,7 @@
     <div class="mr-toolbar">
       <div class="mr-title">
         <h2>记忆与 RAG</h2>
-        <span class="mr-sub">长期记忆 / 知识库 / 向量库（Mock 适配层，F3）</span>
+        <span class="mr-sub">长期记忆 / 知识库 / 向量库（真实数据）</span>
       </div>
       <el-button @click="store.fetchKnowledgeBases" :loading="store.loading">刷新</el-button>
     </div>
@@ -16,8 +16,18 @@
         <span class="gs-value">{{ store.knowledgeBases.length }}</span>
       </div>
       <div class="mr-stat">
-        <span class="gs-label">文档总量</span>
-        <span class="gs-value gs-blue">{{ store.totalDocs.toLocaleString('zh-CN') }}</span>
+        <span class="gs-label">向量文档总数</span>
+        <span class="gs-value gs-blue">{{ store.vectorDocCount.toLocaleString('zh-CN') }}</span>
+      </div>
+      <div class="mr-stat">
+        <span class="gs-label">已批准草稿</span>
+        <span class="gs-value gs-green">{{ (store.stats.approved_drafts || 0).toLocaleString('zh-CN') }}</span>
+      </div>
+      <div class="mr-stat">
+        <span class="gs-label">索引状态</span>
+        <span class="gs-value gs-sm" :class="store.collectionReady ? 'gs-ok' : 'gs-warn'">
+          {{ store.collectionReady ? '就绪' : '未就绪/降级关键词检索' }}
+        </span>
       </div>
     </div>
 
@@ -29,16 +39,20 @@
         :key="kb.kb_id"
         :kb="kb"
       />
-      <el-empty v-if="!store.loading && store.knowledgeBases.length === 0" description="暂无知识库" />
+      <el-empty
+        v-if="!store.loading && store.knowledgeBases.length === 0"
+        description="向量库未初始化，当前使用关键词检索降级"
+      />
     </div>
 
     <!-- RAG 检索增强示意 -->
     <h3 class="mr-section mr-mt">检索增强 (RAG) 示意</h3>
     <el-card class="mr-hint-card" shadow="never">
       <p class="mr-hint">
-        运行时，编排智能体从以上知识库检索相似上下文（文档块 + 向量相似度），注入到 Prompt
-        以提升调查与处置的准确率。向量相似度检索服务由
-        <code>{{ primaryStore }}</code> 提供，检索结果经「护栏」评估后进入推理链路。
+        运行时，编排智能体可经由画布「知识库」节点从向量库检索相似上下文
+        （文档块 + 向量相似度）注入到 Prompt，提升调查与处置的准确率。
+        向量相似度检索服务由 <code>{{ vectorStore }}</code> 提供；
+        知识增强注入需在流程中显式触发（画布知识库节点），自动注入开关见设置。
       </p>
       <div class="mr-flow">
         <span class="mr-flow-node">查询</span>
@@ -56,13 +70,13 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { Right } from '@element-plus/icons-vue'
 import { useMemoryStore } from '@/stores/memory'
 import KnowledgeBaseCard from '@/components/agents/KnowledgeBaseCard.vue'
 
 const store = useMemoryStore()
-const primaryStore = ref('Chroma')
+const vectorStore = computed(() => store.stats.vector_store || 'Chroma')
 
 onMounted(store.fetchKnowledgeBases)
 </script>
@@ -73,15 +87,19 @@ onMounted(store.fetchKnowledgeBases)
 .mr-title h2 { margin: 0; font-size: 18px; font-weight: 600; }
 .mr-sub { display: block; font-size: 12px; color: var(--color-fg-subtle); margin-top: 2px; }
 
-.mr-stats { display: flex; gap: 12px; margin-bottom: 16px; }
+.mr-stats { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
 .mr-stat {
-  flex: 1; max-width: 220px; background: var(--color-canvas-default);
+  flex: 1; min-width: 150px; max-width: 240px; background: var(--color-canvas-default);
   border: 0.5px solid var(--color-border-default); border-radius: 8px;
   padding: 12px 16px; display: flex; flex-direction: column; gap: 4px;
 }
 .gs-label { font-size: 12px; color: var(--color-fg-subtle); }
 .gs-value { font-size: 22px; font-weight: 700; color: var(--color-fg-default); font-family: ui-monospace, monospace; }
+.gs-sm { font-size: 15px; line-height: 1.6; }
 .gs-blue { color: #3B82F6; }
+.gs-green { color: #10B981; }
+.gs-ok { color: #10B981; }
+.gs-warn { color: #F59E0B; }
 
 .mr-section { font-size: 14px; font-weight: 500; margin: 0 0 10px; }
 .mr-mt { margin-top: 22px; }
