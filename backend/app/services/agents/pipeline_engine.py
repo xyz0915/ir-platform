@@ -63,6 +63,28 @@ def _truncate(value: Any, max_len: int = 2000) -> str:
     return text[:max_len] + "…"
 
 
+# ── P2: 长期记忆自动沉淀映射（§3.1）────────────────────────
+# agent_name/stage → (memory_type, source_node)；未命中映射且不在跳过集合的
+# 名称按「自定义 agent」处理 → conclusion（_run_unknown 路径）。
+_MEMORY_TYPE_MAP: dict[str, tuple[str, str]] = {
+    "root_cause": ("conclusion", "root_cause"),
+    "llm": ("conclusion", "llm"),
+    "reporter": ("summary", "report"),
+    "report": ("summary", "report"),
+    "responder": ("disposition", "response"),
+    "response": ("disposition", "response"),
+    "action": ("action", "action"),
+}
+# 已知不沉淀节点（避免噪音：triage/branch/condition/parallel/data-process/output/
+# guard/hitl 及各类分析节点均无独立"结论/摘要/处置"语义）。
+_MEMORY_SKIP_NODES: set[str] = {
+    "triage", "branch", "condition", "parallel", "data_process", "output",
+    "guard", "guardrail", "hitl", "threat_intel", "intel_query", "intel_source",
+    "mcp_tool", "file_analysis", "process_analysis", "network_analysis",
+    "registry_analysis", "timeline", "simulated", "graph",
+}
+
+
 class PipelineRun:
     """管道运行实例 — 跟踪每步的状态与元数据。"""
 
@@ -547,6 +569,13 @@ class PipelineEngine:
                     logger.warning("PipelineEngine: step 持久化失败 (hitl success): %s", exc)
                 logger.info(json.dumps({"event": "hitl_resumed", "run_id": run.run_id, "agent": agent_name,
                                         "decision": hitl_decision.get("status")}))
+                # P2: HITL 恢复（审批通过后处置已执行）同样属于成功路径 → 沉淀处置记录
+                # （responder/action 默认走 HITL 分支，若不在本处沉淀则验收 C 的
+                #   responder→disposition / action→action 无法达成）
+                try:
+                    self._sediment_memory(run, agent_name, result)
+                except Exception as exc:  # noqa: BLE001 — 沉淀失败仅 warning
+                    logger.warning("PipelineEngine: sediment memory skipped (hitl resume, agent=%s): %s", agent_name, exc)
                 return {"name": agent_name, "status": "completed", "output": result,
                         "hitl_decision": hitl_decision}
             # 正常完成
@@ -564,6 +593,11 @@ class PipelineEngine:
                 AgentRun.update(run.run_id, stage=agent_name, confidence=result.get("confidence", 0.0))
             except Exception as exc:
                 logger.warning("PipelineEngine: step 持久化失败 (success): %s", exc)
+            # P2: 长期记忆自动沉淀（fail-safe，不阻断节点；缓存命中路径已提前 return 天然不重复）
+            try:
+                self._sediment_memory(run, agent_name, result)
+            except Exception as exc:  # noqa: BLE001 — 沉淀失败仅 warning
+                logger.warning("PipelineEngine: sediment memory skipped (agent=%s): %s", agent_name, exc)
             # 写入缓存
             if use_cache:
                 self._cache.set(agent_name, cache_params, result)
@@ -630,6 +664,128 @@ class PipelineEngine:
                 "PipelineEngine: HitlApproval.create 失败 run_id=%s: %s", run.run_id, exc
             )
             return None
+
+    # ──────────────────────────────────────────────────────────────
+    # P2: 长期记忆自动沉淀（写入链路，§3）
+    # 仅关键节点（root_cause/llm/custom/reporter/responder/action）在成功路径沉淀；
+    # 纯追加、fail-safe、不写回 run.ctx/run.stages（零副作用）。
+    # ──────────────────────────────────────────────────────────────
+
+    def _memory_type_for(self, agent_name: str) -> Optional[tuple[str, str]]:
+        """按来源 agent_name/stage 推导 (memory_type, source_node)；不匹配返回 None.
+
+        Args:
+            agent_name: 节点/智能体名称。
+
+        Returns:
+            ``(memory_type, source_node)``；名称属于已知不沉淀节点返回 None；
+            未在映射表中也未在跳过集合的名称按「自定义 agent」→ conclusion。
+        """
+        mapped = _MEMORY_TYPE_MAP.get(agent_name)
+        if mapped:
+            return mapped
+        if agent_name in _MEMORY_SKIP_NODES:
+            return None
+        # 自定义 agent（_run_unknown）→ conclusion
+        return ("conclusion", agent_name)
+
+    def _extract_memory_content(self, result: dict, memory_type: str) -> Optional[str]:
+        """按 §3.1 提取优先级取首个非空文本，截断 IR_MEMORY_MAX_CONTENT；全空返回 None.
+
+        Args:
+            result: 节点执行结果 dict（含 output / structured / action / target）。
+            memory_type: 记忆类型（决定提取优先级）。
+
+        Returns:
+            归一化空白并截断后的正文；全空返回 None（调用方跳过不写）。
+        """
+        structured = result.get("structured") or {}
+        if not isinstance(structured, dict):
+            structured = {}
+        output = result.get("output") or ""
+        if not isinstance(output, str):
+            output = str(output)
+        candidates: list = []
+        if memory_type == "conclusion":
+            candidates = [structured.get("root_cause"), structured.get("summary"), output]
+        elif memory_type == "summary":
+            candidates = [structured.get("summary"), output]
+        elif memory_type == "action":
+            action = result.get("action") or structured.get("action")
+            target = result.get("target") or structured.get("target")
+            candidates = [structured.get("summary")]
+            if action:
+                candidates.append(f"动作: {action} 目标: {_jl(target) or ''}")
+            candidates.append(output)
+        else:  # disposition / 兜底
+            candidates = [output]
+        for cand in candidates:
+            if cand is None:
+                continue
+            text = " ".join(str(cand).split()).strip()
+            if text:
+                return text[: int(getattr(settings, "IR_MEMORY_MAX_CONTENT", 4000) or 4000)]
+        return None
+
+    def _sediment_memory(self, run: PipelineRun, agent_name: str, result: dict) -> None:
+        """关键节点执行成功后自动沉淀长期记忆（纯追加，fail-safe）.
+
+        决策顺序（§3.1）：
+        1. 全局 ``IR_MEMORY_AUTO_WRITE``（默认 True）> 节点 ``input_params.remember``
+           opt-out/opt-in（remember=False 跳过、remember=True 强制写，memory_type 缺省 summary）；
+        2. 类型推导（``_memory_type_for``）：不匹配且非显式 remember → 跳过；
+        3. 内容提取（``_extract_memory_content``）：全空 → 跳过；
+        4. 写 ``AgentMemory.create``（模型层 try/except 已吞异常，此处再兜一层）。
+
+        任何失败仅 ``logger.warning``，不阻断 stage/流水线；不写回 run.ctx/run.stages。
+
+        Args:
+            run: PipelineRun 实例（整管路径，含 run_id/event_id/ctx）。
+            agent_name: 节点/智能体名称。
+            result: 节点执行结果 dict（output/structured）。
+        """
+        try:
+            # 节点配置 input_params 与 run 级 ctx input_params 合并（P1-2 语义：run 级覆盖）
+            node_params: dict = {}
+            agent_def = self._registry.get(agent_name)
+            if agent_def:
+                node_params = (agent_def.config or {}).get("input_params", {}) or {}
+            input_params = {**node_params, **(run.ctx.get("input_params") or {})}
+            node_flag = input_params.get("remember")
+            if node_flag is not None:
+                if not node_flag:
+                    return  # 节点显式 opt-out
+            elif not settings.IR_MEMORY_AUTO_WRITE:
+                return  # 全局关（默认开，此分支仅当用户显式关）
+            # 类型推导 + 内容提取
+            mapped = self._memory_type_for(agent_name)
+            if mapped is None and not node_flag:
+                return
+            mtype, source_node = mapped if mapped else ("summary", agent_name)
+            content = self._extract_memory_content(result, mtype)
+            if not content:
+                return  # 无实质内容不写
+            from app.models.agent_memory import AgentMemory
+
+            AgentMemory.create(
+                run_id=run.run_id,
+                event_id=run.event_id,
+                host_id=run.ctx.get("host_id"),
+                agent_name=agent_name,
+                memory_type=mtype,
+                content=content,
+                source_node=source_node,
+                tags=(input_params.get("memory_tags") or []),
+                created_by="system",
+            )
+            logger.debug(
+                "PipelineEngine: memory sedimented agent=%s type=%s run=%s",
+                agent_name, mtype, run.run_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — 沉淀失败 fail-safe
+            logger.warning(
+                "PipelineEngine: sediment memory skipped (agent=%s): %s", agent_name, exc
+            )
 
     # ──────────────────────────────────────────────────────────────
     # 节点级可视化调试（Phase 3 / KC-1 解耦）
@@ -1560,6 +1716,155 @@ class PipelineEngine:
             logger.warning("RAG enhance skipped (node=%s): %s", ctx.get("agent_name"), exc)
             return prompt
 
+    # ── P2: 自动记忆增强钩子（长期记忆引用）────────────────────
+    # 独立钩子 _enhance_with_memory：与 P1 知识增强并存（先知识后记忆，各司其职）；
+    # 检索走 SQLite 关键词 LIKE（零依赖，本机无 chromadb 也能工作），向量化仅留扩展位。
+
+    def _memory_enabled(self, ctx: dict) -> bool:
+        """节点级 memory_enhance 覆盖全局开关（P2 R3，与 P1 _rag_enabled 同构）.
+
+        决策：``input_params.memory_enhance`` 显式 False → 跳过（opt-out 覆盖全局开）；
+        显式 True → 注入（opt-in）；否则回退全局 ``settings.IR_MEMORY_AUTO_ENHANCE``。
+
+        Args:
+            ctx: 节点执行上下文（含 input_params）。
+
+        Returns:
+            True 表示本次节点应执行记忆增强。
+        """
+        input_params = ctx.get("input_params") or {}
+        node_flag = input_params.get("memory_enhance")
+        if node_flag is not None:
+            return bool(node_flag)
+        return bool(settings.IR_MEMORY_AUTO_ENHANCE)
+
+    def _memory_top_k(self, ctx: dict) -> int:
+        """节点 memory_top_k 覆盖全局 Top-K（夹取 [1,10]，P2 R3）.
+
+        Args:
+            ctx: 节点执行上下文（含 input_params）。
+
+        Returns:
+            本次记忆检索的 Top-K 值（1..10）。
+        """
+        input_params = ctx.get("input_params") or {}
+        k = int(getattr(settings, "IR_MEMORY_ENHANCE_K", 3) or 3)
+        node_k = input_params.get("memory_top_k")
+        if node_k is not None:
+            try:
+                k = int(node_k)
+            except (ValueError, TypeError):
+                k = int(getattr(settings, "IR_MEMORY_ENHANCE_K", 3) or 3)
+        return max(1, min(10, k))
+
+    def _build_memory_query(self, ctx: dict) -> dict:
+        """从 ctx 构造记忆检索入参：q = 节点意图(prompt/query) → 前置 stage 摘要 → '安全事件'.
+
+        event_id/host_id 直接取 ctx（缺失为 None）；agent_name 维度由调用方按需传入，
+        此处不注入（默认检索同事件/同主机全部来源的记忆）。
+
+        Args:
+            ctx: 节点执行上下文。
+
+        Returns:
+            ``{"q": str, "event_id": Optional[str], "host_id": Optional[int]}``。
+        """
+        input_params = ctx.get("input_params") or {}
+        intent = (input_params.get("prompt") or input_params.get("query") or "").strip()
+        q = intent[:200] or self._extract_keywords(ctx) or "安全事件"
+        return {"q": q, "event_id": ctx.get("event_id"), "host_id": ctx.get("host_id")}
+
+    def _format_memory_block(self, memories: list) -> str:
+        """结构化记忆 → 注入文本块（[记忆增强] 头 + Top-K 序号化 + 附注 + [/记忆增强] 尾）.
+
+        单条格式：``{i}. [{memory_type}] {content[:300]}（来源: x · 事件: y · 主机: z · 时间: t）``，
+        附注项有则附、无则省；content 归一化空白并截断 300 字符；整块无有效条目返回空串。
+
+        Args:
+            memories: AgentMemory.search 返回的记忆行列表。
+
+        Returns:
+            注入文本块字符串；无有效条目返回空串。
+        """
+        header = getattr(
+            settings, "IR_MEMORY_INJECT_HEADER",
+            "[记忆增强] 以下为历史事件记忆（结论/摘要/处置记录，Top-K），供本次分析参考；如与当前事件无关请忽略：",
+        )
+        lines: list[str] = [header]
+        for i, mem in enumerate(memories, start=1):
+            if not isinstance(mem, dict):
+                continue
+            text = mem.get("content") or ""
+            if not text:
+                continue
+            body = " ".join(str(text).split())[:300]
+            line = f"{i}. [{mem.get('memory_type') or 'summary'}] {body}"
+            notes: list[str] = []
+            src = mem.get("source_node")
+            ev = mem.get("event_id")
+            hid = mem.get("host_id")
+            created = mem.get("created_at")
+            if src:
+                notes.append(f"来源: {src}")
+            if ev:
+                notes.append(f"事件: {ev}")
+            if hid is not None:
+                notes.append(f"主机: {hid}")
+            if created:
+                notes.append(f"时间: {created}")
+            if notes:
+                line += f"（{' · '.join(notes)}）"
+            lines.append(line)
+        if len(lines) == 1:
+            return ""
+        lines.append("[/记忆增强]")
+        return "\n".join(lines)
+
+    async def _enhance_with_memory(self, ctx: dict, prompt: str) -> str:
+        """记忆增强钩子：开关开启时按事件/主机检索历史记忆 Top-K 注入 Prompt.
+
+        - 开关默认关 → 直接返回原 prompt（零开销路径）；
+        - 检索经 ``asyncio.to_thread`` 包裹（AgentMemory.search 为同步阻塞，避免阻塞事件循环）
+          + ``wait_for`` 限时（settings.IR_MEMORY_RETRIEVE_TIMEOUT，默认 3s）；
+        - 严格 try/except：任何异常/超时/空命中只 ``logger.warning``，不阻断节点；
+        - 钩子是 ctx 的纯函数，不写回 run.ctx（无跨节点污染）。
+
+        Args:
+            ctx: 节点执行上下文。
+            prompt: 原始 LLM prompt。
+
+        Returns:
+            注入后的 prompt；未开启/失败/未命中时返回原 prompt。
+        """
+        if not self._memory_enabled(ctx):
+            return prompt
+        try:
+            q = self._build_memory_query(ctx)
+            k = self._memory_top_k(ctx)
+            from app.models.agent_memory import AgentMemory
+
+            memories = await asyncio.wait_for(
+                asyncio.to_thread(
+                    AgentMemory.search,
+                    q.get("q"),
+                    q.get("event_id"),
+                    q.get("host_id"),
+                    q.get("agent_name"),
+                    None,
+                    k,
+                ),
+                timeout=float(getattr(settings, "IR_MEMORY_RETRIEVE_TIMEOUT", 3.0) or 3.0),
+            )
+            if not memories:
+                return prompt
+            block = self._format_memory_block(memories)
+            if not block:
+                return prompt
+            return f"{block}\n\n{prompt}"
+        except Exception as exc:  # noqa: BLE001 — 检索失败 fail-safe
+            logger.warning("Memory enhance skipped (node=%s): %s", ctx.get("agent_name"), exc)
+            return prompt
+
     async def _call_llm_safe(
         self,
         profile: dict,
@@ -1573,6 +1878,8 @@ class PipelineEngine:
         P1：新增可选 ``ctx`` 参数 — 非 None 且 RAG 开关开启时，先经
         ``_enhance_with_knowledge`` 检索 Top-K 知识注入 Prompt 再调用 LLM；
         存量调用不传 ctx → 行为完全不变（红线约束）。
+        P2：在知识增强之后追加 ``_enhance_with_memory`` 记忆增强（默认关，
+        独立开关/超时/格式化/fail-safe，P1 语义不动）。
 
         Args:
             profile: AiConfigProfile 字典。
@@ -1589,6 +1896,7 @@ class PipelineEngine:
         try:
             if ctx:
                 prompt = await self._enhance_with_knowledge(ctx, prompt)
+                prompt = await self._enhance_with_memory(ctx, prompt)
             llm = AgentLLM(profile)
             resp = await asyncio.wait_for(
                 llm.call(prompt, user=user or {"id": 1}),

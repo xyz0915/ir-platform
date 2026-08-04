@@ -189,6 +189,26 @@ class Settings:
         "[知识增强] 以下为知识库检索到的历史处置经验（Top-K），供分析/处置参考；如与当前事件无关请忽略：",
     )
 
+    # ── 长期记忆（P2：agent_memories）──────────────────────────
+    # 自动沉淀总开关：关键节点执行成功后自动写长期记忆（纯追加，不读记忆、不改 prompt，
+    # 对存量流水线零影响）。默认 True；节点级 input_params.remember 可 opt-out/opt-in。
+    IR_MEMORY_AUTO_WRITE: bool = _env_flag("IR_MEMORY_AUTO_WRITE", True)
+    # 记忆增强总开关：LLM 类节点执行前自动检索历史记忆 Top-K 并注入 Prompt。默认关，
+    # 保证存量流水线 prompt 零变化；节点级 input_params.memory_enhance 可覆盖。
+    IR_MEMORY_AUTO_ENHANCE: bool = _env_flag("IR_MEMORY_AUTO_ENHANCE", False)
+    # 记忆增强 Top-K：每次注入的检索命中条数（节点级 input_params.memory_top_k 可覆盖，夹取 [1,10]）。
+    IR_MEMORY_ENHANCE_K: int = _env_int("IR_MEMORY_ENHANCE_K", 3)
+    # 记忆检索超时（秒）：AgentMemory.search 为同步阻塞，经 to_thread 包裹后
+    # 用 wait_for 限时，超时按未命中处理，不阻断节点。
+    IR_MEMORY_RETRIEVE_TIMEOUT: float = _env_float("IR_MEMORY_RETRIEVE_TIMEOUT", 3.0)
+    # 记忆正文最大长度（字符）：自动沉淀 / 手动写入统一截断，防单条记忆撑爆上下文。
+    IR_MEMORY_MAX_CONTENT: int = _env_int("IR_MEMORY_MAX_CONTENT", 4000)
+    # 记忆注入块头（可自定义；默认与页面「长期记忆」语义一致）。
+    IR_MEMORY_INJECT_HEADER: str = os.environ.get(
+        "IR_MEMORY_INJECT_HEADER",
+        "[记忆增强] 以下为历史事件记忆（结论/摘要/处置记录，Top-K），供本次分析参考；如与当前事件无关请忽略：",
+    )
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._warn_default_encryption_key()

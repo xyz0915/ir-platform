@@ -1176,6 +1176,40 @@ DDL_STATEMENTS = [
     """
     CREATE INDEX IF NOT EXISTS idx_pdr_global ON pipeline_default_rules(is_global)
     """,
+    # ── 长期记忆表（P2：agent_memories）────────────────────────
+    # 幂等建表 + 5 单列索引（event/host/type/agent/created），对新库旧库均自动生效，
+    # 无需 ALTER 迁移；记忆是独立留痕，不建 FK（agent_runs/security_events/hosts
+    # 可能被清案/删除，记忆不应被级联删除）。
+    """
+    CREATE TABLE IF NOT EXISTS agent_memories (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id       TEXT,                          -- agent_runs.run_id（整管路径）；手动写入/调试可为空
+        event_id     TEXT,                          -- security_events.id（关联事件，可为空）
+        host_id      INTEGER,                       -- hosts.id（关联主机，可为空）
+        agent_name   TEXT    NOT NULL DEFAULT '',   -- 来源 Agent/节点名（root_cause / responder / reporter / llm / <custom>）
+        memory_type  TEXT    NOT NULL DEFAULT 'summary',  -- conclusion | summary | action | disposition
+        content      TEXT    NOT NULL,              -- 记忆正文（结论/摘要/处置记录）
+        source_node  TEXT    DEFAULT '',            -- 来源节点类型（root_cause / action / report / llm ...）
+        tags         TEXT    DEFAULT '[]',          -- JSON 数组字符串（如 ["powershell","C2"]）
+        created_by   TEXT    DEFAULT 'system',      -- 写入人（API 手动=用户名；自动沉淀=system）
+        created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_agent_memories_event  ON agent_memories(event_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_agent_memories_host   ON agent_memories(host_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_agent_memories_type   ON agent_memories(memory_type)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_agent_memories_agent  ON agent_memories(agent_name)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_agent_memories_created ON agent_memories(created_at)
+    """,
 ]
 
 
@@ -1956,6 +1990,21 @@ def _init_knowledge_drafts(conn: sqlite3.Connection) -> None:
         logger.info("knowledge_drafts table ready")
 
 
+def _init_agent_memories(conn: sqlite3.Connection) -> None:
+    """确保 agent_memories 表存在（幂等：DDL 中用 IF NOT EXISTS）.
+
+    依赖 DDL_STATEMENTS 中的 CREATE TABLE IF NOT EXISTS agent_memories。
+    此函数作为显式钩子，方便将来在此处添加长期记忆相关的迁移逻辑
+    （例如：P2 之后的 updated_at / 向量化扩展位）。
+    """
+    # DDL 已通过 DDL_STATEMENTS 执行，此处仅做日志记录
+    cursor = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='agent_memories'"
+    )
+    if cursor.fetchone():
+        logger.info("agent_memories table ready")
+
+
 def _alter_rules_table_stats(conn: sqlite3.Connection) -> None:
     """检测并添加 rules 表效能统计列：hit_count / last_hit_at / avg_risk_score (#10/#16)."""
     cursor = conn.execute("PRAGMA table_info(rules)")
@@ -2472,6 +2521,8 @@ def init_db() -> None:
         _migrate_pipeline_presets_meta(conn)
         # AI 自动知识入库（knowledge_drafts 已通过 DDL 幂等创建）
         _init_knowledge_drafts(conn)
+        # 长期记忆表（agent_memories 已通过 DDL 幂等创建，P2）
+        _init_agent_memories(conn)
         # 系统设置一期：users 表迁移 + 预置系统参数
         _migrate_users_table(conn)
         _seed_system_settings(conn)
