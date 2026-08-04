@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -509,6 +510,28 @@ def _build_seed_index() -> bool:
         return False
 
 
+def _touch_index_metadata() -> None:
+    """重建成功后写入 index_updated_at 时间戳（幂等 + fail-safe）.
+
+    - ir_rules：P0 端点 _get_collection() 读取的主集合（页面"索引时间"数据源）
+    - ir_seed：实际被重建的集合（语义正确，供未来检索可观测）
+
+    合并保留既有 metadata（hnsw:space），避免 modify 覆盖丢失；
+    写入异常仅 logger.warning，不向调用方传播（reporter_agent / kb_self_evolve 零改动）。
+    """
+    try:
+        ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        for coll in (_get_collection(), _get_collection_by_name(COLLECTION_NAMES["seed"])):
+            if coll is None:
+                continue
+            meta = dict(coll.metadata or {})
+            meta["index_updated_at"] = ts
+            meta["updated_at"] = ts
+            coll.modify(metadata=meta)
+    except Exception as exc:
+        logger.warning("Failed to write index_updated_at metadata: %s", exc)
+
+
 # ============================================================================
 # 查询文本构建
 # ============================================================================
@@ -933,6 +956,11 @@ class KnowledgeRetriever:
         清空进程级缓存并重新加载种子数据（含已批准草稿），
         然后重建 ChromaDB 种子索引。
 
+        P1：重建成功（result=True）时调用 ``_touch_index_metadata()`` 写入
+        ``index_updated_at``/``updated_at`` 到 ir_rules + ir_seed collection
+        metadata，使 P0 端点 ``GET /api/knowledge/bases`` 自动显示最近索引时间。
+        失败（False）不写时间戳（未重建则不伪造"最近索引时间"）。
+
         Returns:
             True 表示重建成功，False 表示跳过或失败.
         """
@@ -965,6 +993,8 @@ class KnowledgeRetriever:
                 logger.warning("Failed to delete old seed entries: %s", exc)
 
             result = _build_seed_index()
+            if result:
+                _touch_index_metadata()  # P1：写时间戳，P0 端点 index_updated_at 自动生效
             logger.info("Seed index rebuild: %s", "success" if result else "failed")
             return result
         else:

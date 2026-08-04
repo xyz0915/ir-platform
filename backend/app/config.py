@@ -10,6 +10,64 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    """安全解析布尔环境变量（非法值回退默认，不崩溃）.
+
+    接受 1/true/yes/on（大小写不敏感）视为 True；其余视为 False。
+
+    Args:
+        name: 环境变量名。
+        default: 默认值。
+
+    Returns:
+        解析后的布尔值。
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_int(name: str, default: int) -> int:
+    """安全解析整数环境变量（非法值回退默认，不崩溃）.
+
+    Args:
+        name: 环境变量名。
+        default: 默认值。
+
+    Returns:
+        解析后的整数值。
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw.strip())
+    except (ValueError, TypeError):
+        logger.warning("Invalid int env %s=%r, using default %d", name, raw, default)
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    """安全解析浮点环境变量（非法值回退默认，不崩溃）.
+
+    Args:
+        name: 环境变量名。
+        default: 默认值。
+
+    Returns:
+        解析后的浮点值。
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw.strip())
+    except (ValueError, TypeError):
+        logger.warning("Invalid float env %s=%r, using default %s", name, raw, default)
+        return default
+
+
 class Settings:
     """全局配置类.
 
@@ -115,6 +173,21 @@ class Settings:
 
     # ── 规则引擎（Rule Engine）────────────────────────────────
     USE_BEHAVIOR_DB_RULES: bool = False    # 灰度开关：行为分析引擎从 DB 读取规则
+
+    # ── 自动 RAG 注入（P1）────────────────────────────────────
+    # 总开关：LLM 类节点执行前自动检索知识库 Top-K 并注入 Prompt。默认关，
+    # 保证存量流水线零行为变化；节点级 input_params.rag_enhance 可覆盖。
+    IR_RAG_AUTO_ENHANCE: bool = _env_flag("IR_RAG_AUTO_ENHANCE", False)
+    # Top-K：每次注入的检索命中条数（节点级 input_params.rag_top_k 可覆盖，夹取 [1,10]）。
+    IR_RAG_AUTO_ENHANCE_K: int = _env_int("IR_RAG_AUTO_ENHANCE_K", 3)
+    # 检索超时（秒）：KnowledgeRetriever.retrieve 为同步阻塞，经 to_thread 包裹后
+    # 用 wait_for 限时，超时按未命中处理，不阻断节点。
+    IR_RAG_RETRIEVE_TIMEOUT: float = _env_float("IR_RAG_RETRIEVE_TIMEOUT", 5.0)
+    # 注入块头（可自定义；默认与页面 RAG 示意语义一致）。
+    IR_RAG_INJECT_HEADER: str = os.environ.get(
+        "IR_RAG_INJECT_HEADER",
+        "[知识增强] 以下为知识库检索到的历史处置经验（Top-K），供分析/处置参考；如与当前事件无关请忽略：",
+    )
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

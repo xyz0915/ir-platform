@@ -23,6 +23,7 @@ from typing import Any, Callable, Optional
 
 import httpx
 
+from app.config import settings
 from app.models.agent_run import AgentRun, AgentRunStep, NodeRunRepository
 from app.models.hitl_approval import HitlApproval
 from app.services.agents.agent_definition import AgentDefinition
@@ -1082,28 +1083,25 @@ class PipelineEngine:
                 prev_outputs.append(f"=== {s['name']} ===\n{text[:500]}")
         combined = "\n\n".join(prev_outputs) if prev_outputs else "无前置分析数据。"
 
-        from app.services.agent_llm import AgentLLM
         from app.models.ai_config import AiConfigProfile
         profile = AiConfigProfile.get_active()
         result_text = combined
         confidence = 0.5
         used_llm = False
         if profile and combined:
-            try:
-                llm = AgentLLM(profile)
-                prompt = (
-                    f"你是一名应急响应分析师。以下是一次安全事件的多个分析 Agent 的输出。\n"
-                    f"请综合分析，找出：1) 攻击的根因（第一触发点）2) 攻击链路 3) 受影响资产。\n\n"
-                    f"{combined}\n\n"
-                    f"请用中文简洁回答。"
-                )
-                resp = await llm.call(prompt, user={"id": 1})
-                if not resp.get("degraded") and resp.get("content"):
-                    result_text = resp["content"]
-                    confidence = 0.85
-                    used_llm = True
-            except Exception:
-                pass
+            prompt = (
+                f"你是一名应急响应分析师。以下是一次安全事件的多个分析 Agent 的输出。\n"
+                f"请综合分析，找出：1) 攻击的根因（第一触发点）2) 攻击链路 3) 受影响资产。\n\n"
+                f"{combined}\n\n"
+                f"请用中文简洁回答。"
+            )
+            # P1: 统一走 _call_llm_safe（AgentLLM.call + degraded 判定 + 超时兜底，
+            # 语义与原直接 llm.call 等价），并传 ctx 使知识增强钩子覆盖 root_cause 节点
+            llm_res = await self._call_llm_safe(profile, prompt, {"id": 1}, ctx=ctx)
+            if llm_res["used"]:
+                result_text = llm_res["content"]
+                confidence = 0.85
+                used_llm = True
         return {
             "stage": "root_cause", "output": result_text, "confidence": confidence,
             "evidence": [],
@@ -1235,7 +1233,8 @@ class PipelineEngine:
             profile = self._resolve_llm_profile("")   # 激活 profile（最终兜底）
         if profile and (prompt or query):
             final_prompt = prompt or f"请基于以下查询给出分析结论：{query}"
-            llm_res = await self._call_llm_safe(profile, final_prompt, user)
+            # P1: 传 ctx → _call_llm_safe 内部按开关决定是否知识增强（默认关零行为变化）
+            llm_res = await self._call_llm_safe(profile, final_prompt, user, ctx=ctx)
             if llm_res["used"]:
                 output, confidence, used_llm = llm_res["content"], 0.85, True
 
@@ -1370,15 +1369,217 @@ class PipelineEngine:
                 return p
         return AiConfigProfile.get_active()
 
+    # ── P1: 自动 RAG 注入钩子（知识增强）────────────────────────
+
+    def _rag_enabled(self, ctx: dict) -> bool:
+        """节点级 rag_enhance 覆盖全局开关（P1 R2）.
+
+        决策：``input_params.rag_enhance`` 显式 False → 跳过（opt-out 覆盖全局开）；
+        显式 True → 注入（opt-in）；否则回退全局 ``settings.IR_RAG_AUTO_ENHANCE``。
+
+        Args:
+            ctx: 节点执行上下文（含 input_params）。
+
+        Returns:
+            True 表示本次节点应执行知识增强。
+        """
+        input_params = ctx.get("input_params") or {}
+        node_flag = input_params.get("rag_enhance")
+        if node_flag is not None:
+            return bool(node_flag)
+        return bool(settings.IR_RAG_AUTO_ENHANCE)
+
+    def _rag_top_k(self, ctx: dict) -> int:
+        """节点 rag_top_k 覆盖全局 Top-K（夹取 [1,10]，P1 R2）.
+
+        Args:
+            ctx: 节点执行上下文（含 input_params）。
+
+        Returns:
+            本次检索的 Top-K 值（1..10）。
+        """
+        input_params = ctx.get("input_params") or {}
+        k = settings.IR_RAG_AUTO_ENHANCE_K
+        node_k = input_params.get("rag_top_k")
+        if node_k is not None:
+            try:
+                k = int(node_k)
+            except (ValueError, TypeError):
+                k = settings.IR_RAG_AUTO_ENHANCE_K
+        return max(1, min(10, k))
+
+    def _build_rag_analysis_data(self, ctx: dict) -> dict:
+        """从 ctx 构造 KnowledgeRetriever.retrieve 入参（P1 R3）.
+
+        summary：节点自身意图优先（prompt/query），否则前置 stage 输出兜底；
+        category：节点 ``rag_category``/``category``（可空）；
+        _raw_data：host_id 存在时尽力反查结构化数据（提升三维检索命中率）。
+
+        Args:
+            ctx: 节点执行上下文。
+
+        Returns:
+            ``{"summary": str, "category": str, "_raw_data": dict}``。
+        """
+        input_params = ctx.get("input_params") or {}
+        intent = (input_params.get("prompt") or input_params.get("query") or "").strip()
+        summary = (intent[:512] or self._extract_keywords(ctx) or "安全事件分析")
+        category = (
+            input_params.get("rag_category")
+            or input_params.get("category")
+            or ""
+        ).strip()
+        host_id = ctx.get("host_id")
+        raw_data = self._build_rag_raw_data(host_id) if host_id else {}
+        return {"summary": summary, "category": category, "_raw_data": raw_data}
+
+    def _build_rag_raw_data(self, host_id: Any) -> dict:
+        """host_id 尽力反查 raw_data（进程/网络/WebShell/内存码骨架），全部 fail-safe + 限额.
+
+        复用与 ``_run_process_analysis``/``_run_network_analysis`` 相同的数据源，
+        保证三维维度检索（process/connection/webshell_ms）有效；最多 2 条限额 SQL，
+        任何失败静默降级（缺失维度留空列表）。
+
+        Args:
+            host_id: 主机 ID（可为空）。
+
+        Returns:
+            ``{"processes": [...], "network_connections": [...],
+                "webshell_items": [...], "memory_shell_items": [...]}``。
+        """
+        raw: dict = {
+            "processes": [],
+            "network_connections": [],
+            "webshell_items": [],
+            "memory_shell_items": [],
+        }
+        try:
+            from app.services.agents.data_provider import get_process_events
+
+            procs = get_process_events(host_id, limit=50) or []
+            raw["processes"] = [
+                {
+                    "name": p.get("process_name") or p.get("name"),
+                    "cmd": p.get("command_line") or p.get("cmd"),
+                }
+                for p in procs
+                if isinstance(p, dict)
+            ]
+        except Exception:  # noqa: BLE001 — 尽力而为，缺失留空
+            pass
+        try:
+            from app.database import get_connection
+
+            with get_connection() as conn:
+                rows = conn.execute(
+                    "SELECT local_addr, local_port, remote_addr, remote_port, protocol, process_name "
+                    "FROM network_connections WHERE host_id = ? "
+                    "ORDER BY threat_level DESC, id DESC LIMIT 30",
+                    (host_id,),
+                ).fetchall()
+                raw["network_connections"] = [dict(r) for r in rows]
+        except Exception:  # noqa: BLE001 — 尽力而为，缺失留空
+            pass
+        # webshell_items / memory_shell_items：从 security_events evidence 尽力解析，
+        # 缺失留空（不强制解析 evidence JSON，避免过度耦合）
+        return raw
+
+    def _format_knowledge_block(self, hits: list) -> str:
+        """结构化命中 → 注入文本块（formatted_text/evidence_text 序号化）.
+
+        格式：``[知识增强]`` 头 + Top-K 序号化命中 + ``[/知识增强]`` 尾；
+        命中含 ``_source_collection``（来源）/``evidence_type``（维度）/``entry_ref``（引用）
+        时附注，无则省略；整块无有效命中返回空串（调用方按未命中处理）。
+
+        Args:
+            hits: KnowledgeRetriever.retrieve(structured=True) 返回的结构化命中列表。
+
+        Returns:
+            注入文本块字符串；无有效命中返回空串。
+        """
+        lines: list[str] = [settings.IR_RAG_INJECT_HEADER]
+        for i, hit in enumerate(hits, start=1):
+            if not isinstance(hit, dict):
+                continue
+            text = hit.get("formatted_text") or hit.get("evidence_text") or ""
+            if not text:
+                continue
+            line = f"{i}. {' '.join(str(text).split())}"
+            notes: list[str] = []
+            src = hit.get("_source_collection")
+            dim = hit.get("evidence_type")
+            ref = hit.get("entry_ref")
+            if src:
+                notes.append(f"来源: {src}")
+            if dim:
+                notes.append(f"维度: {dim}")
+            if ref:
+                notes.append(f"引用: {ref}")
+            if notes:
+                line += f"\n   （{' · '.join(notes)}）"
+            lines.append(line)
+        if len(lines) == 1:
+            return ""
+        lines.append("[/知识增强]")
+        return "\n".join(lines)
+
+    async def _enhance_with_knowledge(self, ctx: dict, prompt: str) -> str:
+        """知识增强钩子：开关开启时检索 Top-K 注入 Prompt；任何失败返回原 prompt.
+
+        - 开关默认关 → 直接返回原 prompt（零开销路径）；
+        - 检索经 ``asyncio.to_thread`` 包裹（retrieve 为同步阻塞，避免阻塞事件循环）
+          + ``wait_for`` 限时（settings.IR_RAG_RETRIEVE_TIMEOUT，默认 5s）；
+        - 严格 try/except：任何异常/超时/空命中只 ``logger.warning``，不阻断节点；
+        - 钩子是 ctx 的纯函数，不写回 run.ctx（无跨节点污染）。
+
+        Args:
+            ctx: 节点执行上下文。
+            prompt: 原始 LLM prompt。
+
+        Returns:
+            注入后的 prompt；未开启/失败/未命中时返回原 prompt。
+        """
+        if not self._rag_enabled(ctx):
+            return prompt
+        try:
+            analysis_data = self._build_rag_analysis_data(ctx)
+            k = self._rag_top_k(ctx)
+            from app.services.knowledge_retriever import KnowledgeRetriever
+
+            hits = await asyncio.wait_for(
+                asyncio.to_thread(KnowledgeRetriever.retrieve, analysis_data, k, True),
+                timeout=settings.IR_RAG_RETRIEVE_TIMEOUT,
+            )
+            if not hits:
+                return prompt
+            block = self._format_knowledge_block(hits)
+            if not block:
+                return prompt
+            return f"{block}\n\n{prompt}"
+        except Exception as exc:  # noqa: BLE001 — 检索失败 fail-safe
+            logger.warning("RAG enhance skipped (node=%s): %s", ctx.get("agent_name"), exc)
+            return prompt
+
     async def _call_llm_safe(
-        self, profile: dict, prompt: str, user: dict, timeout: float = 60.0
+        self,
+        profile: dict,
+        prompt: str,
+        user: dict,
+        ctx: Optional[dict] = None,
+        timeout: float = 60.0,
     ) -> dict:
-        """LLM 安全调用（超时 + 降级，不抛异常）。
+        """LLM 安全调用（超时 + 降级，不抛异常）.
+
+        P1：新增可选 ``ctx`` 参数 — 非 None 且 RAG 开关开启时，先经
+        ``_enhance_with_knowledge`` 检索 Top-K 知识注入 Prompt 再调用 LLM；
+        存量调用不传 ctx → 行为完全不变（红线约束）。
 
         Args:
             profile: AiConfigProfile 字典。
             prompt: 调用提示词。
             user: 当前用户字典（缺失兜底 ``{"id": 1}``，与 _run_root_cause 一致）。
+            ctx: 节点执行上下文（含 input_params/context_vars/host_id/stages），
+                默认 None（不触发知识增强）。
             timeout: 单次调用超时秒数（默认 60s）。
 
         Returns:
@@ -1386,6 +1587,8 @@ class PipelineEngine:
         """
         from app.services.agent_llm import AgentLLM
         try:
+            if ctx:
+                prompt = await self._enhance_with_knowledge(ctx, prompt)
             llm = AgentLLM(profile)
             resp = await asyncio.wait_for(
                 llm.call(prompt, user=user or {"id": 1}),
@@ -1540,7 +1743,8 @@ class PipelineEngine:
             prompt = input_params.get("prompt") or self._build_agent_prompt(
                 agent_def, tool_run["tool_results"], data_sources
             )
-            llm_res = await self._call_llm_safe(profile, prompt, user)
+            # P1: 传 ctx → _call_llm_safe 内部按开关决定是否知识增强（默认关零行为变化）
+            llm_res = await self._call_llm_safe(profile, prompt, user, ctx=ctx)
             if llm_res["used"]:
                 output, confidence, used_llm = llm_res["content"], 0.8, True
             else:

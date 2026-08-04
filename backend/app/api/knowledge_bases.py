@@ -39,9 +39,10 @@ router = APIRouter()
 def _read_index_updated_at(collection: Any) -> str:
     """从 chroma collection metadata 读取最近一次索引/重建时间（fail-safe）.
 
-    服务层（knowledge_retriever）目前没有独立的 rebuild 时间戳记录机制，
-    因此优先尝试 collection.metadata 中的 `index_updated_at` / `updated_at`
-    （若未来 rebuild_seed_index 写入该字段即可自动生效）；读不到返回空串。
+    P1 起：服务层 ``rebuild_seed_index()`` 重建成功后会调用
+    ``_touch_index_metadata()`` 写入 ``index_updated_at`` / ``updated_at`` 到
+    collection metadata，因此本函数自动读到最近索引时间（端点零改动生效）；
+    读取不到（如从未重建）返回空串。
 
     Args:
         collection: chromadb collection 对象，可能为 None。
