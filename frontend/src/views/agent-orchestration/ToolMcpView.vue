@@ -1,11 +1,7 @@
 <template>
   <div class="tool-mcp-view">
-    <!-- 顶部 -->
+    <!-- 顶部（页面标题由 AgentOrchestrationLayout 顶部提供，此处仅保留操作按钮） -->
     <div class="tm-toolbar">
-      <div class="tm-title">
-        <h2>工具与 MCP</h2>
-        <span class="tm-sub">ToolRegistry 工具清单 + MCP 服务器状态（Mock 适配层）</span>
-      </div>
       <el-button @click="store.refreshAll" :loading="store.loading">刷新</el-button>
     </div>
 
@@ -67,9 +63,7 @@ onMounted(store.refreshAll)
 
 <style scoped>
 .tool-mcp-view { padding: 16px; }
-.tm-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.tm-title h2 { margin: 0; font-size: 18px; font-weight: 600; }
-.tm-sub { display: block; font-size: 12px; color: var(--color-fg-subtle); margin-top: 2px; }
+.tm-toolbar { display: flex; align-items: center; justify-content: flex-end; margin-bottom: 12px; }
 .tm-section { font-size: 14px; font-weight: 500; margin: 0 0 10px; }
 .tm-mt { margin-top: 22px; }
 

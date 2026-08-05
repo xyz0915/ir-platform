@@ -1,11 +1,7 @@
 <template>
   <div class="memory-rag-view">
-    <!-- 顶部 -->
+    <!-- 顶部（页面标题由 AgentOrchestrationLayout 顶部提供，此处仅保留操作按钮） -->
     <div class="mr-toolbar">
-      <div class="mr-title">
-        <h2>记忆与 RAG</h2>
-        <span class="mr-sub">长期记忆 / 知识库 / 向量库（真实数据）</span>
-      </div>
       <el-button @click="store.fetchKnowledgeBases" :loading="store.loading">刷新</el-button>
     </div>
 
@@ -355,9 +351,7 @@ function fmtTime(iso) {
 
 <style scoped>
 .memory-rag-view { padding: 16px; }
-.mr-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.mr-title h2 { margin: 0; font-size: 18px; font-weight: 600; color: #111827; }
-.mr-sub { display: block; font-size: 12px; color: var(--color-fg-subtle); margin-top: 2px; }
+.mr-toolbar { display: flex; align-items: center; justify-content: flex-end; margin-bottom: 12px; }
 
 .mr-stats { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
 .mr-stat {
