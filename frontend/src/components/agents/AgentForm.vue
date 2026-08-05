@@ -14,7 +14,7 @@
       description="内置智能体按固定逻辑运行；自定义智能体运行时按 name 分派，未匹配已知类型时将走“摘要/自定义执行”模式（可配置关联工具与模型获得真实分析）。"
       style="margin-bottom: 16px"
     />
-    <el-form :model="form" label-width="110px" size="default">
+    <el-form :model="form" label-width="110px" size="default" class="af-form">
       <el-form-item label="标识 Name" required>
         <el-input v-model="form.name" :disabled="!!editingAgent" placeholder="如 incident-custom-phish" />
         <div v-if="nameHint" class="af-name-hint">{{ nameHint }}</div>
@@ -71,7 +71,7 @@
     </el-form>
     <template #footer>
       <el-button @click="emit('update:visible', false)">取消</el-button>
-      <el-button type="primary" :loading="saving" @click="onSave">保存</el-button>
+      <el-button class="af-btn-dark" :loading="saving" @click="onSave">保存</el-button>
     </template>
   </el-dialog>
 </template>
@@ -196,9 +196,30 @@ async function onSave() {
 </script>
 
 <style scoped>
+/* 主操作按钮：黑底白字（去 EP 默认蓝 primary） */
+.af-btn-dark {
+  --el-button-bg-color: #111827;
+  --el-button-border-color: #111827;
+  --el-button-text-color: #fff;
+  --el-button-hover-bg-color: #1f2937;
+  --el-button-hover-border-color: #1f2937;
+  --el-button-hover-text-color: #fff;
+  --el-button-active-bg-color: #1f2937;
+  --el-button-active-border-color: #1f2937;
+  --el-button-active-text-color: #fff;
+}
+
+/* 单选选中态：近黑（去 EP 默认蓝） */
+.af-form :deep(.el-radio__input.is-checked .el-radio__inner) {
+  background: #111827;
+  border-color: #111827;
+}
+.af-form :deep(.el-radio__input.is-checked + .el-radio__label) { color: #111827; }
+.af-form :deep(.el-radio__inner:hover) { border-color: #111827; }
+
 .af-name-hint {
   font-size: 12px;
-  color: var(--el-color-warning, #e6a23c);
+  color: #6b7280;
   line-height: 1.5;
   margin-top: 4px;
 }

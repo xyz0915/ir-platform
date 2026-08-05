@@ -3,13 +3,13 @@
     <!-- 头部：统计 + 新建 -->
     <div class="al-header">
       <div class="al-stats">
-        <span>共 <b>{{ store.agents.length }}</b> 个</span>
+        <span>共 <span class="al-num">{{ store.agents.length }}</span> 个</span>
         <span class="al-sep">·</span>
-        <span>启用 <b>{{ store.availableAgents.length }}</b></span>
+        <span>启用 <span class="al-num">{{ store.availableAgents.length }}</span></span>
         <span class="al-sep">·</span>
-        <span>自定义 <b>{{ customCount }}</b></span>
+        <span>自定义 <span class="al-num">{{ customCount }}</span></span>
       </div>
-      <el-button size="small" type="primary" @click="showForm = true">
+      <el-button size="small" class="al-btn-dark" @click="showForm = true">
         <el-icon><Plus /></el-icon> 新建智能体
       </el-button>
     </div>
@@ -24,21 +24,29 @@
         @click="openDetail(agent)"
       >
         <div class="al-card-head">
-          <span class="al-dot" :style="{ background: agentColor(agent.name) }" />
+          <span
+            class="al-dot"
+            :class="{ on: agent.enabled }"
+            :title="agent.enabled ? '已启用' : '已禁用'"
+          />
           <span class="al-card-name">{{ agent.display_name }}</span>
-          <el-tag size="small" :type="isBuiltin(agent) ? 'primary' : 'success'" effect="plain">
-            {{ isBuiltin(agent) ? '内置' : '自定义' }}
-          </el-tag>
+          <span class="al-badge">
+            <span class="al-badge-dot" />{{ isBuiltin(agent) ? '内置' : '自定义' }}
+          </span>
         </div>
         <div class="al-card-desc">{{ agent.description || '暂无描述' }}</div>
         <div class="al-card-meta">
-          <span class="al-chip">{{ (agent.data_sources || []).length }} 数据源</span>
-          <span class="al-chip">{{ (agent.tools || []).length }} 工具</span>
-          <span class="al-chip">{{ (agent.depends_on || []).length }} 依赖</span>
+          <span class="al-chip"><span class="mono">{{ (agent.data_sources || []).length }}</span> 数据源</span>
+          <span class="al-chip"><span class="mono">{{ (agent.tools || []).length }}</span> 工具</span>
+          <span class="al-chip"><span class="mono">{{ (agent.depends_on || []).length }}</span> 依赖</span>
         </div>
       </div>
 
-      <el-empty v-if="!store.loading && store.agents.length === 0" description="暂无智能体" />
+      <!-- 自定义空状态：去大图标，仅居中灰字 + 主操作链接 -->
+      <div v-if="!store.loading && store.agents.length === 0" class="al-empty">
+        <p class="al-empty-text">暂无智能体</p>
+        <el-button link class="al-empty-action" @click="showForm = true">新建智能体</el-button>
+      </div>
     </div>
 
     <!-- 详情抽屉 -->
@@ -51,9 +59,9 @@
           <div class="al-d-row">
             <span class="al-d-k">类型</span>
             <span class="al-d-v">
-              <el-tag size="small" :type="isBuiltin(selected) ? 'primary' : 'success'" effect="plain">
-                {{ isBuiltin(selected) ? '内置' : '自定义' }}
-              </el-tag>
+              <span class="al-badge al-badge-lg">
+                <span class="al-badge-dot" />{{ isBuiltin(selected) ? '内置' : '自定义' }}
+              </span>
             </span>
           </div>
           <div class="al-d-row">
@@ -61,10 +69,11 @@
             <span class="al-d-v">
               <el-switch
                 v-if="!isBuiltin(selected)"
+                class="al-switch"
                 :model-value="selected.enabled"
                 @change="toggleEnabled(selected)"
               />
-              <el-tag v-else size="small" type="info" effect="plain">常驻</el-tag>
+              <span v-else class="al-d-status"><span class="al-dot on" />常驻</span>
             </span>
           </div>
           <div class="al-d-block">
@@ -99,8 +108,8 @@
         </div>
 
         <div class="al-d-actions" v-if="!isBuiltin(selected)">
-          <el-button size="small" @click="editAgent(selected)">编辑</el-button>
-          <el-button size="small" type="danger" plain @click="removeAgent(selected)">删除</el-button>
+          <el-button size="small" class="al-btn-outline" @click="editAgent(selected)">编辑</el-button>
+          <el-button size="small" link class="al-btn-danger" @click="removeAgent(selected)">删除</el-button>
         </div>
       </template>
     </el-drawer>
@@ -160,16 +169,6 @@ onMounted(async () => {
   }
 })
 
-function agentColor(name) {
-  const colors = {
-    triage: '#378ADD', file_analysis: '#639922', process_analysis: '#9B59B6',
-    network_analysis: '#D85A30', registry_analysis: '#F39C12',
-    threat_intel: '#E74C3C', timeline: '#185FA5',
-    root_cause: '#1D9E75', remediate: '#888780', reporter: '#378ADD',
-  }
-  return colors[name] || '#888'
-}
-
 function nameOf(name) {
   const a = store.agents.find((x) => x.name === name)
   return a ? a.display_name : name
@@ -214,7 +213,7 @@ function onSaved() {
 .agent-library { display: flex; flex-direction: column; height: 100%; }
 .al-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .al-stats { font-size: 13px; color: var(--color-fg-muted); }
-.al-stats b { color: var(--color-fg-default); }
+.al-num { color: #111827; font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .al-sep { margin: 0 6px; color: var(--color-border-default); }
 .al-grid {
   flex: 1;
@@ -231,20 +230,79 @@ function onSaved() {
   padding: 12px 14px;
   background: var(--color-canvas-default);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: box-shadow 0.15s, border-color 0.15s;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.al-card:hover { border-color: var(--color-accent-fg); box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
+.al-card:hover { border-color: #d1d5db; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05); }
 .al-card.disabled { opacity: 0.6; }
 .al-card-head { display: flex; align-items: center; gap: 8px; }
-.al-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+/* 状态点：启用绿 / 禁用灰（单色，去多色身份点） */
+.al-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; background: #9ca3af; }
+.al-dot.on { background: #16a34a; }
+
 .al-card-name { font-weight: 600; color: var(--color-fg-default); font-size: 14px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .al-card-desc { font-size: 12px; color: var(--color-fg-muted); line-height: 1.5; min-height: 36px;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .al-card-meta { display: flex; gap: 6px; flex-wrap: wrap; }
 .al-chip { font-size: 11px; padding: 2px 8px; background: var(--color-canvas-subtle); border-radius: 4px; color: var(--color-fg-muted); }
+.al-chip .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: inherit; }
+
+/* 类型徽标：单色灰点 + 灰字（替代 el-tag 多色） */
+.al-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--color-fg-muted);
+  background: var(--color-canvas-subtle);
+  border-radius: 999px;
+  padding: 2px 8px;
+  flex-shrink: 0;
+}
+.al-badge-lg { font-size: 12px; padding: 3px 10px; }
+.al-badge-dot { width: 6px; height: 6px; border-radius: 50%; background: #9ca3af; flex-shrink: 0; }
+
+/* 空状态：居中灰字 + 主操作链接 */
+.al-empty { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 56px 0; }
+.al-empty-text { font-size: 13px; color: #9ca3af; margin: 0; }
+.al-empty-action {
+  --el-button-text-color: #111827;
+  --el-button-hover-text-color: #4b5563;
+  font-size: 12px;
+}
+
+/* 按钮：主操作黑底白字；次操作白底黑边 hover 反色；删除灰 link hover 红 */
+.al-btn-dark {
+  --el-button-bg-color: #111827;
+  --el-button-border-color: #111827;
+  --el-button-text-color: #fff;
+  --el-button-hover-bg-color: #1f2937;
+  --el-button-hover-border-color: #1f2937;
+  --el-button-hover-text-color: #fff;
+  --el-button-active-bg-color: #1f2937;
+  --el-button-active-border-color: #1f2937;
+  --el-button-active-text-color: #fff;
+}
+.al-btn-outline {
+  --el-button-bg-color: #fff;
+  --el-button-border-color: #d1d5db;
+  --el-button-text-color: #111827;
+  --el-button-hover-bg-color: #111827;
+  --el-button-hover-border-color: #111827;
+  --el-button-hover-text-color: #fff;
+  --el-button-active-bg-color: #1f2937;
+  --el-button-active-border-color: #1f2937;
+  --el-button-active-text-color: #fff;
+}
+.al-btn-danger {
+  --el-button-text-color: #9ca3af;
+  --el-button-hover-text-color: #dc2626;
+  font-size: 12px;
+}
 
 .al-d-sheet { display: flex; flex-direction: column; gap: 12px; }
 .al-d-row { display: flex; gap: 12px; align-items: center; }
@@ -252,7 +310,21 @@ function onSaved() {
 .al-d-v { font-size: 13px; color: var(--color-fg-default); word-break: break-all; }
 .al-d-block { display: flex; flex-direction: column; gap: 6px; }
 .al-d-block .al-d-k { width: auto; }
+.al-d-status { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--color-fg-default); }
+
+/* 开关：启用态近黑（去 EP 默认蓝） */
+.al-switch {
+  --el-switch-on-color: #111827;
+  --el-switch-off-color: #9ca3af;
+}
+
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-.al-tag { margin: 0 4px 4px 0; }
+.al-tag {
+  --el-tag-bg-color: var(--color-canvas-subtle);
+  --el-tag-border-color: var(--color-border-default);
+  --el-tag-text-color: var(--color-fg-muted);
+  margin: 0 4px 4px 0;
+  font-size: 11px;
+}
 .al-d-actions { margin-top: 20px; display: flex; gap: 8px; }
 </style>

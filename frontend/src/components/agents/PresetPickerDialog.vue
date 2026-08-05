@@ -108,7 +108,7 @@
 
     <template #footer>
       <el-button @click="emit('close')">取消</el-button>
-      <el-button type="primary" :disabled="!selectedPreset" @click="onConfirm">
+      <el-button class="pp-btn-dark" :disabled="!selectedPreset" @click="onConfirm">
         加载选中
       </el-button>
     </template>
@@ -280,6 +280,19 @@ function formatDate(dateStr) {
   padding-bottom: 12px;
 }
 
+/* 主操作按钮：黑底白字（去 EP 默认蓝 primary） */
+.pp-btn-dark {
+  --el-button-bg-color: #111827;
+  --el-button-border-color: #111827;
+  --el-button-text-color: #fff;
+  --el-button-hover-bg-color: #1f2937;
+  --el-button-hover-border-color: #1f2937;
+  --el-button-hover-text-color: #fff;
+  --el-button-active-bg-color: #1f2937;
+  --el-button-active-border-color: #1f2937;
+  --el-button-active-text-color: #fff;
+}
+
 .picker-header {
   display: flex;
   flex-direction: column;
@@ -393,8 +406,8 @@ function formatDate(dateStr) {
 }
 
 .preset-card.selected {
-  border-color: #2563eb;
-  box-shadow: 0 0 0 1px #2563eb, 0 2px 8px rgba(37, 99, 235, 0.12);
+  border-color: #111827;
+  box-shadow: 0 0 0 1px #111827, 0 2px 8px rgba(17, 24, 39, 0.12);
 }
 
 .card-top {
@@ -439,7 +452,7 @@ function formatDate(dateStr) {
 }
 
 .selected-check {
-  color: #2563eb;
+  color: #111827;
   font-weight: 700;
   font-size: 14px;
   flex-shrink: 0;
@@ -449,9 +462,9 @@ function formatDate(dateStr) {
   flex-shrink: 0;
   font-size: 10px;
   line-height: 1;
-  color: #047857;
-  background: #d1fae5;
-  border: 1px solid #a7f3d0;
+  color: #6b7280;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
   border-radius: 999px;
   padding: 3px 7px;
 }
@@ -555,14 +568,14 @@ function formatDate(dateStr) {
   gap: 8px;
   margin-top: 12px;
   padding: 10px 14px;
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
   border-radius: 8px;
   font-size: 12px;
 }
 
 .preview-label {
-  color: #2563eb;
+  color: #111827;
   font-weight: 600;
   flex-shrink: 0;
 }
