@@ -22,7 +22,7 @@ const props = defineProps({
   title: { type: String, required: true },
   value: { type: [String, Number], default: '—' },
   icon: { type: [Object, Function, String], default: null },
-  color: { type: String, default: '#3B82F6' },
+  color: { type: String, default: '#111827' },
   /** 趋势值（如 +3 / -1），数值型按正负着色 */
   trend: { type: [Number, String], default: null },
 })
@@ -49,7 +49,7 @@ const trendLabel = computed(() => {
   padding: 16px 18px;
   background: var(--color-canvas-default);
   border: 1px solid var(--color-border-default);
-  border-top: 3px solid var(--color-accent-fg);
+  border-top: 3px solid #111827;
   border-radius: 10px;
 }
 .sc-icon {
@@ -62,7 +62,7 @@ const trendLabel = computed(() => {
   flex-shrink: 0;
 }
 .sc-body { min-width: 0; }
-.sc-value { font-size: 24px; font-weight: 700; line-height: 1.2; color: var(--color-fg-default); }
+.sc-value { font-size: 24px; font-weight: 700; line-height: 1.2; color: var(--color-fg-default); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -0.3px; }
 .sc-title { font-size: 12px; color: var(--color-fg-muted); margin-top: 2px; }
 .sc-trend { font-size: 11px; color: var(--color-fg-subtle); display: inline-flex; align-items: center; gap: 2px; margin-top: 2px; }
 </style>

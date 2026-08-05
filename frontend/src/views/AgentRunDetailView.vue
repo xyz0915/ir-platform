@@ -70,9 +70,10 @@
           <!-- 续跑点 -->
           <div class="obs-section" v-if="obs.run.resume_point">
             <h3>续跑点 (Resume Point)</h3>
-            <el-alert type="warning" :closable="false" show-icon class="obs-resume">
-              <template #title>{{ obs.run.resume_point }}</template>
-            </el-alert>
+            <div class="obs-resume">
+              <el-icon class="obs-resume-icon"><WarningFilled /></el-icon>
+              <span>{{ obs.run.resume_point }}</span>
+            </div>
           </div>
           <!-- Trace 树 -->
           <div class="obs-section">
@@ -89,7 +90,7 @@
             </div>
           </div>
         </template>
-        <el-empty v-else description="暂无可观测性数据" :image-size="60" />
+        <div v-else class="obs-empty">暂无可观测性数据</div>
       </div>
     </div>
 
@@ -110,6 +111,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { WarningFilled } from '@element-plus/icons-vue'
 import { useAgentOrchestrationStore } from '@/stores/agents'
 import { useObservabilityStore } from '@/stores/observability'
 import { useSSE } from '@/composables/useSSE'
@@ -373,8 +375,8 @@ function goBack() {
   border-radius: 4px;
 }
 .dt-tabs button.active {
-  background: var(--color-accent-subtle);
-  color: var(--color-accent-fg);
+  background: #111827;
+  color: #fff;
   font-weight: 500;
 }
 .dt-right {
@@ -445,7 +447,7 @@ function goBack() {
 }
 .divider-bar:hover,
 .is-dragging .divider-bar {
-  background: var(--color-accent-subtle, #eff6ff);
+  background: var(--color-canvas-subtle, #f3f4f6);
 }
 .divider-dots {
   display: flex;
@@ -463,7 +465,7 @@ function goBack() {
 }
 .divider-bar:hover .divider-dots span,
 .is-dragging .divider-dots span {
-  background: var(--color-accent-fg, #2563eb);
+  background: #4b5563;
 }
 .rp-placeholder {
   flex: 1;
@@ -512,7 +514,7 @@ function goBack() {
 .obs-card {
   background: var(--color-canvas-default);
   border: 0.5px solid var(--color-border-default);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 10px 12px;
 }
 .obs-logs {
@@ -520,7 +522,21 @@ function goBack() {
   overflow-y: auto;
 }
 .obs-resume {
-  background: var(--color-warning-subtle, rgba(245,158,11,0.08));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--color-canvas-subtle, #f6f8fa);
+  border: 0.5px solid var(--color-border-default);
+  border-left: 3px solid #d97706;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--color-fg-default);
+}
+.obs-resume-icon {
+  color: #d97706;
+  font-size: 14px;
+  flex-shrink: 0;
 }
 .cp-section {
   margin-bottom: 16px;
@@ -534,7 +550,7 @@ function goBack() {
   font-size: 13px;
   font-weight: 500;
   margin: 0 0 4px;
-  color: var(--color-accent-fg);
+  color: #111827;
 }
 .cp-output {
   margin: 0;
@@ -564,13 +580,13 @@ function goBack() {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #E74C3C;
+  background: #dc2626;
 }
 .sse-status.connected .sse-dot {
-  background: #2ECC71;
+  background: #16a34a;
 }
 .sse-status.archived .sse-dot {
-  background: #3498DB;
+  background: #4b5563;
 }
 .sse-reconnect {
   margin-left: auto;
@@ -580,7 +596,10 @@ function goBack() {
   border-radius: 4px;
   background: var(--color-canvas-subtle);
   cursor: pointer;
-  color: var(--color-accent-fg);
+  color: #111827;
+}
+.sse-reconnect:hover {
+  color: #dc2626;
 }
 
 .step-card.highlight-flash {
@@ -588,7 +607,7 @@ function goBack() {
 }
 @keyframes hl-flash {
   0%, 100% { background: var(--color-canvas-default); }
-  50% { background: var(--color-accent-subtle); }
+  50% { background: var(--color-canvas-subtle); }
 }
 
 /* 响应式: <1024px 上下布局 */

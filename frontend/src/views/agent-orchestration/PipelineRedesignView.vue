@@ -4,7 +4,7 @@
     <div class="topbar">
       <div class="topbar-left">
         <div class="logo">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#111827" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
           </svg>
           <span>工作流编排</span>
@@ -97,7 +97,7 @@
       <template #footer>
         <el-button @click="setDefaultDialogVisible = false">取消</el-button>
         <el-button
-          type="primary"
+          class="btn-dark"
           :loading="setDefaultSubmitting"
           @click="onConfirmSetDefault"
         >
@@ -413,21 +413,24 @@ onUnmounted(() => {
   background: var(--color-canvas-subtle);
 }
 .btn-debug-on {
-  background: var(--color-accent-fg);
+  background: #111827;
   color: #fff;
-  border-color: var(--color-accent-fg);
+  border-color: #111827;
 }
 .btn-debug-on:hover {
-  background: var(--color-accent-fg);
-  opacity: 0.9;
+  background: #1f2937;
+  border-color: #1f2937;
+  opacity: 1;
 }
 .btn-primary {
-  background: var(--color-accent-fg);
+  background: #111827;
   color: #fff;
-  border-color: var(--color-accent-fg);
+  border-color: #111827;
 }
 .btn-primary:hover {
-  opacity: 0.9;
+  background: #1f2937;
+  border-color: #1f2937;
+  opacity: 1;
 }
 
 /* ===== 三栏布局 ===== */
@@ -448,5 +451,18 @@ onUnmounted(() => {
   margin-left: 10px;
   font-size: 11px;
   color: var(--color-fg-muted);
+}
+
+/* 主按钮：黑底白字，hover 近黑加深 */
+.btn-dark {
+  --el-button-bg-color: #111827;
+  --el-button-border-color: #111827;
+  --el-button-text-color: #fff;
+  --el-button-hover-bg-color: #1f2937;
+  --el-button-hover-border-color: #1f2937;
+  --el-button-hover-text-color: #fff;
+  --el-button-active-bg-color: #1f2937;
+  --el-button-active-border-color: #1f2937;
+  --el-button-active-text-color: #fff;
 }
 </style>

@@ -87,17 +87,17 @@ function formatElapsed(s) {
 <style scoped>
 .step-card {
   border: 0.5px solid var(--color-border-default);
-  border-radius: 8px;
-  padding: 10px 12px;
+  border-radius: 10px;
+  padding: 12px 14px;
   margin-bottom: 6px;
   background: var(--color-canvas-default);
   transition: all 0.2s;
 }
 .step-card.is-running {
-  border-left: 3px solid #3498DB;
+  border-left: 3px solid #4b5563;
 }
 .step-card.is-failed {
-  border-left: 3px solid #E74C3C;
+  border-left: 3px solid #dc2626;
   background: var(--color-danger-subtle);
 }
 .sc-header {
@@ -107,14 +107,14 @@ function formatElapsed(s) {
   font-size: 12px;
 }
 .sc-status-icon { width: 18px; text-align: center; }
-.check-mark { color: #2ECC71; font-weight: bold; }
-.cross-mark { color: #E74C3C; font-weight: bold; }
+.check-mark { color: #16a34a; font-weight: bold; }
+.cross-mark { color: #dc2626; font-weight: bold; }
 .idle-mark { color: var(--color-fg-subtle); }
 .spinner {
   display: inline-block;
   width: 12px; height: 12px;
-  border: 2px solid #ddd;
-  border-top-color: #3498DB;
+  border: 2px solid #e5e7eb;
+  border-top-color: #4b5563;
   border-radius: 50%;
   animation: sc-spin 0.6s linear infinite;
 }
@@ -136,7 +136,7 @@ function formatElapsed(s) {
 .sc-output.typing::after {
   content: '|';
   animation: cursor-blink 0.6s step-end infinite;
-  color: var(--color-accent-fg);
+  color: #111827;
   margin-left: 2px;
 }
 @keyframes cursor-blink {

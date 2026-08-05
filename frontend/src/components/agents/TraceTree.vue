@@ -1,6 +1,6 @@
 <template>
   <div class="trace-tree">
-    <el-empty v-if="!trace.length" description="暂无 trace 数据" :image-size="50" />
+    <div v-if="!trace.length" class="tt-empty">暂无 trace 数据</div>
     <div v-for="node in tree" :key="node.span_id" class="tt-node" :style="{ paddingLeft: node.depth * 18 + 8 + 'px' }">
       <span class="tt-bar" :style="{ background: colorFor(node) }" />
       <span class="tt-name">{{ node.name }}</span>
@@ -50,13 +50,14 @@ const tree = computed(() => {
   return ordered
 })
 
+/** 语义色收敛：guardrail 橙 / hitl 绿 / error 红保留但压饱和度，默认改近黑灰（去蓝） */
 function colorFor(node) {
   const n = (node.name || '').toLowerCase()
-  if (n.includes('guardrail')) return '#F59E0B'
-  if (n.includes('hitl')) return '#22C55E'
-  if (n.includes('reflect')) return '#8B5CF6'
-  if (n.includes('error') || n.includes('fail')) return '#EF4444'
-  return '#3B82F6'
+  if (n.includes('guardrail')) return '#d97706'
+  if (n.includes('hitl')) return '#16a34a'
+  if (n.includes('reflect')) return '#6b7280'
+  if (n.includes('error') || n.includes('fail')) return '#dc2626'
+  return '#4b5563'
 }
 
 function formatMs(ms) {
@@ -77,6 +78,7 @@ function shortTime(iso) {
 
 <style scoped>
 .trace-tree { display: flex; flex-direction: column; gap: 2px; }
+.tt-empty { padding: 24px 0; text-align: center; font-size: 12px; color: #9ca3af; }
 .tt-node { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 6px; font-size: 12px; }
 .tt-node:hover { background: var(--color-canvas-subtle); }
 .tt-bar { width: 3px; height: 14px; border-radius: 2px; flex-shrink: 0; }

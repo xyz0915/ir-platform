@@ -26,7 +26,7 @@
                   :value="p.id"
                 />
               </el-select>
-              <el-link type="primary" @click="activeTab = 'default'">查看默认规则管理</el-link>
+              <el-link class="nav-link" @click="activeTab = 'default'">查看默认规则管理</el-link>
             </div>
           </div>
         </el-card>
@@ -59,7 +59,7 @@
             clearable
           />
           <el-button
-            type="primary"
+            class="btn-dark"
             :loading="store.submitting"
             @click="onStartRun"
           >
@@ -79,7 +79,7 @@
       <div class="toolbar-hint">
         闭环顺序：分诊(Triage) → 调查(Investigation) → 处置(Responder，触发 HITL) → 报告(Reporter)。
         处置动作默认零自主，需管理员在 HITL 面板批准后执行。
-        <el-link type="primary" @click="router.push('/agent-management')" style="margin-left: 8px;">
+        <el-link class="nav-link" @click="router.push('/agent-management')" style="margin-left: 8px;">
           自定义智能体组合 →
         </el-link>
       </div>
@@ -136,19 +136,20 @@
         <el-table-column prop="event_id" label="事件 ID" min-width="120" show-overflow-tooltip />
         <el-table-column prop="stage" label="阶段" min-width="110">
           <template #default="{ row }">
-            <el-tag size="small" effect="plain">{{ stageLabel(row.stage) }}</el-tag>
+            <span class="stage-cell">{{ stageLabel(row.stage) }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="status" label="状态" min-width="120">
           <template #default="{ row }">
-            <el-tag :type="statusTag(row.status)" size="small" effect="light">
+            <span class="run-status">
+              <span class="rs-dot" :class="`rs-${row.status}`" />
               {{ statusLabel(row.status) }}
-            </el-tag>
+            </span>
           </template>
         </el-table-column>
         <el-table-column prop="priority" label="优先级" min-width="90">
           <template #default="{ row }">
-            <el-tag :type="priorityTag(row.priority)" size="small" effect="dark">{{ row.priority }}</el-tag>
+            <span class="priority-cell mono">{{ row.priority || '—' }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="confidence" label="置信度" min-width="90">
@@ -156,7 +157,11 @@
             <span :class="confidenceClass(row.confidence)">{{ formatConfidence(row.confidence) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="created_at" label="创建时间" min-width="170" show-overflow-tooltip />
+        <el-table-column prop="created_at" label="创建时间" min-width="130" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="time-cell">{{ relativeTime(row.created_at) }}</span>
+          </template>
+        </el-table-column>
       </el-table>
 
       <div class="pager">
@@ -382,28 +387,20 @@ function statusLabel(status) {
   )
 }
 
-function statusTag(status) {
-  return (
-    {
-      pending: 'info',
-      running: 'primary',
-      waiting_hitl: 'warning',
-      completed: 'success',
-      failed: 'danger',
-      cancelled: 'info',
-    }[status] || 'info'
-  )
-}
-
-function priorityTag(priority) {
-  return (
-    {
-      P0: 'danger',
-      P1: 'warning',
-      P2: 'primary',
-      P3: 'info',
-    }[priority] || 'info'
-  )
+/** 相对时间：刚刚 / X 分钟前 / X 小时前 / X 天前 */
+function relativeTime(iso) {
+  if (!iso) return '—'
+  const t = new Date(iso)
+  if (Number.isNaN(t.getTime())) return iso
+  const diffMs = Date.now() - t.getTime()
+  const sec = Math.floor(diffMs / 1000)
+  if (sec < 60) return '刚刚'
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `${min} 分钟前`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr} 小时前`
+  const day = Math.floor(hr / 24)
+  return `${day} 天前`
 }
 
 function formatConfidence(v) {
@@ -431,7 +428,7 @@ function confidenceClass(v) {
 
 .toolbar-card,
 .block-card {
-  border-radius: 12px;
+  border-radius: 10px;
   border: 1px solid var(--color-border-default);
 }
 
@@ -499,11 +496,66 @@ function confidenceClass(v) {
 
 .runs-table {
   cursor: pointer;
+  border-radius: 10px;
+  --el-table-border-color: var(--color-border-default);
+  --el-table-header-bg-color: var(--color-canvas-subtle);
+  --el-table-header-text-color: #6b7280;
+  --el-table-row-hover-bg-color: var(--color-canvas-subtle);
+}
+.runs-table :deep(th.el-table__cell) {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 8px 10px;
+  height: 36px;
+}
+.runs-table :deep(td.el-table__cell) {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--color-fg-default);
+  height: 38px;
 }
 
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
+}
+
+/* 状态：单色圆点 + 文字（成功绿 / 运行中灰 / 失败红克制 / 其余灰） */
+.run-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-fg-default);
+}
+.rs-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.rs-completed { background: #16a34a; }
+.rs-running { background: #4b5563; }
+.rs-failed { background: #dc2626; }
+.rs-waiting_hitl { background: #d97706; }
+.rs-pending, .rs-cancelled, .rs-expired { background: #9ca3af; }
+
+/* 阶段：中性灰字，去 tag */
+.stage-cell {
+  font-size: 12px;
+  color: var(--color-fg-muted);
+}
+
+/* 优先级：近黑等宽，去彩色 tag */
+.priority-cell {
+  font-size: 12px;
+  color: #111827;
+  font-weight: 500;
+}
+
+.time-cell {
+  font-size: 12px;
+  color: var(--color-fg-subtle);
 }
 
 .pager {
@@ -513,16 +565,36 @@ function confidenceClass(v) {
 }
 
 .conf-high {
-  color: var(--color-success-fg, #16a34a);
+  color: #16a34a;
   font-weight: 600;
 }
 
 .conf-mid {
-  color: var(--color-accent-fg);
+  color: #4b5563;
 }
 
 .conf-low {
   color: var(--color-fg-muted);
+}
+
+/* 主按钮：黑底白字，hover 近黑加深 */
+.btn-dark {
+  --el-button-bg-color: #111827;
+  --el-button-border-color: #111827;
+  --el-button-text-color: #fff;
+  --el-button-hover-bg-color: #1f2937;
+  --el-button-hover-border-color: #1f2937;
+  --el-button-hover-text-color: #fff;
+  --el-button-active-bg-color: #1f2937;
+  --el-button-active-border-color: #1f2937;
+  --el-button-active-text-color: #fff;
+}
+
+/* 链接：近黑，hover 加深，去蓝色 */
+.nav-link {
+  --el-link-text-color: #111827;
+  --el-link-hover-text-color: #4b5563;
+  font-size: 12px;
 }
 
 /* ===== 默认流程 banner（P1-1） ===== */
@@ -531,7 +603,7 @@ function confidenceClass(v) {
 }
 
 .banner-card {
-  border-radius: 12px;
+  border-radius: 10px;
 }
 
 .banner-card.banner-success {
@@ -553,7 +625,7 @@ function confidenceClass(v) {
 
 .banner-icon {
   font-size: 20px;
-  color: var(--color-accent-fg, #2563eb);
+  color: #111827;
 }
 
 .banner-text {
@@ -582,7 +654,7 @@ function confidenceClass(v) {
 
 .banner-placeholder {
   padding: 12px 16px;
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--color-canvas-subtle, #f6f8fa);
   color: var(--color-fg-muted);
   font-size: 13px;
