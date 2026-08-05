@@ -95,6 +95,10 @@ class Settings:
     BACKEND_DIR: Path = Path(__file__).resolve().parent.parent
     DATA_DIR: Path = BACKEND_DIR / "data"
     DB_PATH: str = str(DATA_DIR / "ir_platform.db")
+    # SQLite journal mode（A6+A11 环境加固）：生产默认 WAL；测试库置 DELETE 规避
+    # Windows 上 -wal/-shm 附属文件锁导致的临时库清理失败与 WAL 争用挂起。
+    # 参考操作文档：docs/agent-orchestration-enhance-switches.md
+    DB_JOURNAL_MODE: str = os.environ.get("IR_DB_JOURNAL_MODE", "WAL")
     SECRET_KEY: str = os.environ.get(
         "IR_SECRET_KEY",
         "ir-platform-secret-key-2025-please-change-in-production",

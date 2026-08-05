@@ -74,9 +74,10 @@ def test_cycle_create_agent_run_returns_400(db_path):
     preset = PipelinePresetModel.create({"name": "cycle_preset", "agents": ["cycle_a", "cycle_b"]})
 
     client = _build_client()
-    resp = client.post("/api/agents/run", json={"preset_id": preset["id"]})
-    assert resp.status_code == 400, resp.text
-    assert "Circular" in resp.json()["detail"], resp.json()
+    with client:
+        resp = client.post("/api/agents/run", json={"preset_id": preset["id"]})
+        assert resp.status_code == 400, resp.text
+        assert "Circular" in resp.json()["detail"], resp.json()
 
 
 def test_cycle_engine_fallback_failed(db_path, engine, run_async, mock_llm):

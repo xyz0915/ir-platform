@@ -27,6 +27,9 @@ def _init_test_db(path: str) -> None:
     """设置 ``settings.DB_PATH`` 并建表 + 注入预置 Agent（幂等）。"""
     from app.config import settings
     settings.DB_PATH = path
+    # A6+A11 环境加固：测试库强制 DELETE journal mode，规避 Windows WAL 文件锁
+    # 导致的临时库清理失败 / 挂起 / 进程级崩溃。
+    settings.DB_JOURNAL_MODE = "DELETE"
     Path(settings.DATA_DIR).mkdir(parents=True, exist_ok=True)
     from app.database import init_db
     init_db()

@@ -37,11 +37,15 @@ def _build_client() -> tuple[TestClient, str]:
     fd, path = tempfile.mkstemp(suffix=".db", prefix="qa_fixa_e2e_")
     os.close(fd)
     config.settings.DB_PATH = path
+    # A6+A11 环境加固：测试库强制 DELETE journal mode，避免 Windows WAL 文件锁
+    config.settings.DB_JOURNAL_MODE = "DELETE"
     init_db()
     app = FastAPI()
     app.include_router(agent_mgmt_router)
     app.dependency_overrides[get_current_user] = lambda: _USER
-    return TestClient(app), path
+    client = TestClient(app)
+    client.__enter__()
+    return client, path
 
 
 def _cleanup(path: str) -> None:
@@ -79,6 +83,7 @@ class TestAgentApiE2E:
             assert data["tools"] == ["tool-x"]
             assert data["model_profile"] == "profile-y"
         finally:
+            client.__exit__(None, None, None)
             _cleanup(path)
 
     def test_get_after_create_matches_input(self):
@@ -94,6 +99,7 @@ class TestAgentApiE2E:
             assert found["tools"] == ["a", "b"]
             assert found["model_profile"] == "mp1"
         finally:
+            client.__exit__(None, None, None)
             _cleanup(path)
 
     def test_update_echoes_tools_and_model_profile(self):
@@ -109,6 +115,7 @@ class TestAgentApiE2E:
             assert data["tools"] == ["t1", "t2"]
             assert data["model_profile"] == "mp2"
         finally:
+            client.__exit__(None, None, None)
             _cleanup(path)
 
     def test_defaults_when_omitted(self):
@@ -124,4 +131,5 @@ class TestAgentApiE2E:
             assert data["tools"] == []
             assert data["model_profile"] == ""
         finally:
+            client.__exit__(None, None, None)
             _cleanup(path)

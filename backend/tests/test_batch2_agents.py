@@ -111,9 +111,11 @@ class TestDataProvider(IsolatedDBTestCase):
         summary = data_provider.get_rules_hit_summary(ev, rules)
         self.assertIsInstance(summary, str)
         self.assertTrue(len(summary) > 0)
-        # 构造可确定性命中的规则，验证摘要包含规则名
+        # 构造可确定性命中的规则，验证摘要包含规则名。
+        # 根因（A4 ④）：get_rules_hit_summary 按 rule.label 匹配 event_type，
+        # 旧 fake_rules 只提供 category 字段 → 永不命中；label 与事件 event_type 对齐。
         fake_rules = [{"name": "Suspicious Beacon", "severity": "high",
-                       "category": "malware", "description": "beacon"}]
+                       "label": "malware", "description": "beacon"}]
         self.assertIn("Suspicious Beacon",
                       data_provider.get_rules_hit_summary(ev, fake_rules))
         # 无规则 → 空串不报错
@@ -167,7 +169,7 @@ class TestTriageAgent(IsolatedDBTestCase):
         seed_full_incident()
         ctx = {"event_id": "SE-1", "user": {"id": 1}}
         result = asyncio.run(TriageAgent().run(ctx, {"event_id": "SE-1"}))
-        self.assertIn("LLM 摘要不可用", result.output)
+        self.assertIn("当前 LLM 服务不可用", result.output)
         self.assertGreater(len(result.evidence), 0)
         self.assertGreater(result.confidence, 0.0)
 
@@ -201,8 +203,8 @@ class TestInvestigatorAgent(IsolatedDBTestCase):
         a = InvestigatorAgent()
         self.assertEqual(a.name, "investigator_agent")
         self.assertFalse(a.requires_hitl)
-        # RootCauseAgent 本批未实现 → 防御式懒导入回退为 None（设计预期，非 bug）
-        self.assertIsNone(_inv_mod.RootCauseAgent)
+        # RootCauseAgent 已实现（A4 ③：B2 修复后不再为 None），懒导入返回真实类
+        self.assertIsNotNone(_inv_mod.RootCauseAgent)
 
     def test_run_produces_timeline_and_local_root_cause(self):
         seed = seed_full_incident()
@@ -215,8 +217,8 @@ class TestInvestigatorAgent(IsolatedDBTestCase):
         self.assertGreater(len(result.evidence), 0)
         inv = ctx["investigation"]
         self.assertGreater(len(inv["timeline"]), 0)
-        # 本地进程树回溯兜底 + RootCauseAgent 缺失说明
-        self.assertIn("RootCauseAgent 尚未启用", inv["root_cause"])
+        # 本地进程树回溯兜底 + RootCauseAgent 增强说明（现文案）
+        self.assertIn("RootCauseAgent 增强", inv["root_cause"])
         self.assertIn("第一触发点", inv["root_cause"])
 
     def test_llm_unavailable_still_produces_output(self):
@@ -225,7 +227,7 @@ class TestInvestigatorAgent(IsolatedDBTestCase):
         with patch("app.services.agents.data_provider.retrieve_cases",
                    return_value=[]):
             result = asyncio.run(InvestigatorAgent().run(ctx, {}))
-        self.assertIn("LLM 摘要不可用", result.output)
+        self.assertIn("当前 LLM 服务不可用", result.output)
 
 
 # ───────────────────────── ResponderAgent ─────────────────────────
@@ -237,19 +239,20 @@ class TestResponderAgent(IsolatedDBTestCase):
 
     def test_derive_action_block_ip(self):
         logs = [{"severity": "high", "source_ip": "8.8.8.8"}]
-        action, target, rollback = ResponderAgent._derive_action(None, logs, {})
+        # A4 ①：签名现为 _derive_action(host, logs, sec_events, investigation)
+        action, target, rollback = ResponderAgent._derive_action(None, logs, [], {})
         self.assertEqual(action, "block_ip")
         self.assertEqual(target, {"ip": "8.8.8.8"})
         self.assertTrue(rollback.get("reversible"))
 
     def test_derive_action_isolate_host(self):
         host = {"hostname": "H1", "id": 7}
-        action, target, rollback = ResponderAgent._derive_action(host, [], {})
+        action, target, rollback = ResponderAgent._derive_action(host, [], [], {})
         self.assertEqual(action, "isolate_host")
         self.assertEqual(target, {"hostname": "H1", "host_id": 7})
 
     def test_derive_action_export_report_fallback(self):
-        action, target, rollback = ResponderAgent._derive_action(None, [], {})
+        action, target, rollback = ResponderAgent._derive_action(None, [], [], {})
         self.assertEqual(action, "export_report")
         self.assertEqual(target, {"report_type": "incident"})
 
@@ -333,12 +336,17 @@ class TestReporterAgent(IsolatedDBTestCase):
         self.assertEqual(result.stage, "report")
         self.assertIn("安全事件复盘报告", result.output)
         self.assertIn("HITL 审批", result.output)
-        self.assertIn("LLM 摘要不可用", result.output)
+        self.assertIn("当前 LLM 服务不可用", result.output)
         self.assertIsInstance(result.confidence, float)
         self.assertGreater(result.confidence, 0.0)
         self.assertGreater(len(result.evidence), 0)
 
-    def test_sink_case_writes_case_row(self):
+    def test_run_does_not_write_cases(self):
+        """行为契约（A4 ⑤）：reporter_agent.py:71-73 已停用写 cases（避免污染
+        案件管理列表），报告内容存 agent_run_steps.output_json 兜底。
+
+        此用例保护该设计决策：报告不写 cases，cases 计数保持不变。
+        """
         with get_connection() as conn:
             before = conn.execute(
                 "SELECT COUNT(*) FROM cases").fetchone()[0]
@@ -348,12 +356,7 @@ class TestReporterAgent(IsolatedDBTestCase):
             asyncio.run(ReporterAgent().run({}, task))
         with get_connection() as conn:
             after = conn.execute("SELECT COUNT(*) FROM cases").fetchone()[0]
-            name = conn.execute(
-                "SELECT name FROM cases WHERE name LIKE ? ORDER BY id DESC",
-                ("%run_sink1%",)).fetchone()
-        self.assertEqual(after, before + 1)
-        self.assertIsNotNone(name)
-        self.assertIn("run_sink1", name["name"])
+        self.assertEqual(after, before)  # 报告不写 cases
 
     def test_run_reads_stage_outputs_from_db(self):
         """ReporterAgent 能从 agent_run_steps 读取各阶段输出（跨请求鲁棒）。"""

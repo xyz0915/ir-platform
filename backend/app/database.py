@@ -1091,7 +1091,8 @@ DDL_STATEMENTS = [
         category    TEXT DEFAULT 'other',
         tags        TEXT DEFAULT '[]',      -- JSON 数组
         usage_count INTEGER NOT NULL DEFAULT 0,
-        last_used_at TEXT
+        last_used_at TEXT,
+        status      TEXT NOT NULL DEFAULT 'draft'   -- 发布状态：draft / published
     )
     """,
     # ── F8 护栏门禁（§3）──
@@ -1230,7 +1231,11 @@ def get_connection() -> Generator[sqlite3.Connection, None, None]:
     )
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout = 5000")
-    conn.execute("PRAGMA journal_mode = WAL")
+    # journal mode 可配置（A6+A11 环境加固）：生产默认 WAL 不变；
+    # 测试库置 DELETE 后不产生 -wal/-shm 附属文件，Windows 上可正常删除临时库。
+    conn.execute(
+        f"PRAGMA journal_mode = {getattr(settings, 'DB_JOURNAL_MODE', 'WAL')}"
+    )
     conn.execute("PRAGMA foreign_keys = ON")
     try:
         yield conn
@@ -1687,6 +1692,7 @@ def _migrate_pipeline_presets_meta(conn: sqlite3.Connection) -> None:
       - tags          TEXT DEFAULT '[]'     # JSON 数组标签
       - usage_count   INTEGER NOT NULL DEFAULT 0   # 使用次数
       - last_used_at  TEXT                  # 最近使用时间
+      - status        TEXT NOT NULL DEFAULT 'draft'  # 发布状态：draft / published
 
     新库由 DDL_STATEMENTS 的 CREATE TABLE 直接建好；此处仅补齐升级前的旧库。
     使用 PRAGMA table_info 守卫模式（参考 _migrate_source_timestamp），
@@ -1701,6 +1707,7 @@ def _migrate_pipeline_presets_meta(conn: sqlite3.Connection) -> None:
         ("tags", "TEXT DEFAULT '[]'"),
         ("usage_count", "INTEGER NOT NULL DEFAULT 0"),
         ("last_used_at", "TEXT"),
+        ("status", "TEXT NOT NULL DEFAULT 'draft'"),
     ]
 
     for col_name, col_type in new_columns:

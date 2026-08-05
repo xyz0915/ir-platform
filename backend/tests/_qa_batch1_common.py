@@ -21,6 +21,11 @@ def make_isolated_db():
     fd, path = tempfile.mkstemp(suffix=".db", prefix="qa_batch1_")
     os.close(fd)
     config.settings.DB_PATH = path
+    # 关键（A6+A11 环境加固）：测试库强制 DELETE journal mode。
+    # WAL 在 Windows 上依赖 -shm/-wal 文件锁，临时库高频创建/删除时句柄释放
+    # 不及时会导致 cleanup 失败、%TEMP% 泄漏与 WAL 争用挂起；DELETE 模式下
+    # 无附属文件，删除成功率 100%。
+    config.settings.DB_JOURNAL_MODE = "DELETE"
     init_db()
     return path
 

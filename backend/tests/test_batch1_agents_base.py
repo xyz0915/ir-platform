@@ -177,7 +177,12 @@ class TestOrchestrator(IsolatedDBTestCase):
         self.assertEqual(fetched["user_id"], 2)
 
     def test_dispatch_drives_agent_and_writes_step(self):
-        """dispatch 串行执行 Agent 并写 agent_run_steps，run 终态 completed。"""
+        """dispatch 串行执行 Agent 并写 agent_run_steps。
+
+        语义（A3）：dispatch() 默认 is_final=False，仅置 run=running
+        （orchestrator.py:104）；completed 由 _finish_with_reporter(is_final=True)
+        收尾。故此处断言 running，与同文件 HITL/fail 用例对称。
+        """
         orch = Orchestrator()
         run = orch.start_run(title="dispatch")
         rid = run["run_id"]
@@ -187,7 +192,7 @@ class TestOrchestrator(IsolatedDBTestCase):
         self.assertEqual(len(steps), 1)
         self.assertEqual(steps[0]["status"], "success")
         self.assertEqual(steps[0]["agent"], "dummy_agent")
-        self.assertEqual(AgentRun.get_by_run_id(rid)["status"], "completed")
+        self.assertEqual(AgentRun.get_by_run_id(rid)["status"], "running")
 
     def test_dispatch_hitl_agent_triggers_waiting_gateway(self):
         """requires_hitl 且 result.hitl=True → run=waiting_hitl 且写 hitl_approvals(pending)。"""

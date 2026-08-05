@@ -278,10 +278,11 @@ def test_approvals_endpoint_visible_after_dag_run(db_path, engine, run_async, mo
 
     run_id = run_async(scenario())
     client = _build_client()
-    resp = client.get("/api/agents/approvals")
-    assert resp.status_code == 200, resp.text
-    items = resp.json()["data"]["items"]
-    assert any(it["run_id"] == run_id for it in items), items
+    with client:
+        resp = client.get("/api/agents/approvals")
+        assert resp.status_code == 200, resp.text
+        items = resp.json()["data"]["items"]
+        assert any(it["run_id"] == run_id for it in items), items
 
 
 # ──────────────────────────────────────────────────────────────

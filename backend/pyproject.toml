@@ -7,5 +7,8 @@ select = ["E", "F", "W"]
 ignore = ["E501", "F401"]
 
 [tool.pytest.ini_options]
-testpaths = ["app/tests"]
+testpaths = ["tests"]
 python_files = ["*test*.py"]
+addopts = ["-p", "no:cacheprovider", "-ra"]
+# 注（A6+A11）：本地 Windows 全量回归建议按文件分批（pytest tests/test_xxx.py 逐个）；
+# CI 建议 Linux。如需并发，安装 pytest-xdist 后使用 --dist=loadfile 按文件进程隔离。

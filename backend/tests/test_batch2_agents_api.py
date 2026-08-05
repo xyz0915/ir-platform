@@ -66,11 +66,16 @@ def seed_full_incident():
 class TestAgentOrchestrationAPI(IsolatedDBTestCase):
     def setUp(self):
         super().setUp()  # 创建隔离 DB 并 init_db
+        # A6+A11 环境加固：TestClient 用上下文管理器（__enter__/__exit__），
+        # 确保 portal 线程与事件循环随用随关，避免后台 create_task 跨用例泄漏
+        # 导致的 Windows 文件锁 / 进程级崩溃。
         self.client = TestClient(_api_app)
+        self.client.__enter__()
         _api_app.dependency_overrides.clear()
 
     def tearDown(self):
         _api_app.dependency_overrides.clear()
+        self.client.__exit__(None, None, None)
         super().tearDown()
 
     def _auth(self, role="admin"):
@@ -80,6 +85,28 @@ class TestAgentOrchestrationAPI(IsolatedDBTestCase):
             "role": role,
         }
         _api_app.dependency_overrides[get_current_user] = lambda: user
+
+    def _wait_run_status(self, run_id, target, timeout=15.0):
+        """轮询 run 详情直到 status == target（A5：消除后台任务异步竞态）。
+
+        端点 POST /agents/run 硬编码返回 pending，后台经 asyncio.create_task
+        异步推进；同步断言 waiting_hitl 是确定性失败，必须轮询等待。
+        """
+        import time
+
+        deadline = time.time() + timeout
+        last_status = None
+        while time.time() < deadline:
+            det = self.client.get(f"/api/agents/runs/{run_id}")
+            data = det.json().get("data") or {}
+            run = data.get("run") or {}
+            last_status = run.get("status")
+            if last_status == target:
+                return last_status
+            time.sleep(0.1)
+        raise AssertionError(
+            f"run {run_id} 未在 {timeout}s 内达到 {target}（当前 {last_status}）"
+        )
 
     # ── 鉴权闸门 ──
     def test_no_token_returns_401(self):
@@ -115,8 +142,11 @@ class TestAgentOrchestrationAPI(IsolatedDBTestCase):
         resp = self.client.post("/api/agents/run", json={"event_id": "SE-1"})
         self.assertEqual(resp.status_code, 200)
         data = resp.json()["data"]
-        self.assertEqual(data["status"], "waiting_hitl")
+        # A5 异步语义：端点硬编码返回 pending（agents.py:129），先断言 pending
+        self.assertEqual(data["status"], "pending")
         run_id = data["run_id"]
+        # 再轮询至 waiting_hitl（后台任务异步推进）
+        self._wait_run_status(run_id, "waiting_hitl")
         # 列表 + 详情
         lst = self.client.get("/api/agents/runs")
         self.assertEqual(lst.status_code, 200)
@@ -133,7 +163,8 @@ class TestAgentOrchestrationAPI(IsolatedDBTestCase):
         resp = self.client.post("/api/agents/run", json={"event_id": "SE-1"})
         self.assertEqual(resp.status_code, 200)
         run_id = resp.json()["data"]["run_id"]
-        # 2) 提取待审批记录
+        # 2) 等待后台推进到 waiting_hitl 再提取待审批记录（消除同源异步竞态）
+        self._wait_run_status(run_id, "waiting_hitl")
         ap = HitlApproval.list_by_run(run_id)[0]
         approval_id = ap["id"]
         self.assertEqual(ap["status"], "pending")
@@ -167,6 +198,7 @@ class TestAgentOrchestrationAPI(IsolatedDBTestCase):
         seed_full_incident()
         resp = self.client.post("/api/agents/run", json={"event_id": "SE-1"})
         run_id = resp.json()["data"]["run_id"]
+        self._wait_run_status(run_id, "waiting_hitl")
         bad = self.client.post(
             f"/api/agents/runs/{run_id}/approve",
             json={"approval_id": 999999})

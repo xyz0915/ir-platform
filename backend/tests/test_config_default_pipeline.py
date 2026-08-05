@@ -87,7 +87,10 @@ class _Base(IsolatedDBTestCase):
     def setUp(self):
         super().setUp()
         self.svc = DefaultPipelineService()
+        # A6+A11 环境加固：TestClient 用上下文管理器，确保 portal 线程/事件循环
+        # 随用随关，避免后台 create_task 跨用例泄漏导致 Windows 文件锁/挂起。
         self.client = TestClient(_api_app)
+        self.client.__enter__()
         _api_app.dependency_overrides.clear()
         # 隔离库无 agent_definitions 种子数据，mock AgentRegistry.validate_pipeline 返回 []
         # 使 create_rule → validate_default_pipeline 不因 "Agent not found" 阻断
@@ -99,6 +102,7 @@ class _Base(IsolatedDBTestCase):
     def tearDown(self):
         self._reg_patcher.stop()
         _api_app.dependency_overrides.clear()
+        self.client.__exit__(None, None, None)
         super().tearDown()
 
     def _auth(self, role="admin"):
@@ -553,7 +557,8 @@ class TestResumeModeAwareness(_Base):
     def test_resume_dispatches_by_mode(self):
         from app.services.agents.orchestrator import Orchestrator
 
-        # custom 模式 → 调用 _resume_custom，不调用 _finish_with_reporter
+        # custom 模式 → 优先委托 pipeline_engine.resume；引擎无法恢复（返回 False）
+        # 时退回 _resume_custom，不调用 _finish_with_reporter（P0-3 模式感知分流）。
         AgentRun.create(
             run_id="run_disp_c", event_id="SE-1", title="qa",
             stage="response", status="waiting_hitl", priority="P0", user_id=1,
@@ -561,7 +566,9 @@ class TestResumeModeAwareness(_Base):
                                   "event_id": "SE-1"}))
         orch = Orchestrator()
         approval = {"status": "approved", "action": "block_ip", "reason": None}
-        with patch("app.services.agents.responder_agent.ResponderAgent.execute_action",
+        with patch("app.services.agents.pipeline_engine.pipeline_engine.resume",
+                   new=AsyncMock(return_value=False)), \
+                patch("app.services.agents.responder_agent.ResponderAgent.execute_action",
                    new=AsyncMock(return_value=({}, None))), \
                 patch.object(Orchestrator, "_resume_custom",
                              new=AsyncMock(return_value={"status": "completed"})) as m_custom, \
