@@ -54,6 +54,13 @@ COLLECTION_NAMES: dict[str, str] = {
     "seed": "ir_seed",
     "rule": "ir_rules",
     "draft": "ir_draft",
+    # A12 扩展位（本期不实现，仅预留常量，不建库）：
+    # 记忆向量集合（768 维，与 EMBEDDING_MODEL_NAME 同模型避免维度漂移）。
+    # 实现路径见 docs/agent-orchestration-enhance-switches.md：
+    #   ① AgentMemory.create（或 _sediment_memory）写库时同步向量化（fail-safe）；
+    #   ② _enhance_with_memory 改为向量 Top-K 检索 + LIKE 兜底；
+    #   ③ 与 ir_seed/ir_rules 命名隔离、维度一致（768）。
+    "memory": "ir_memory",
 }
 CHROMA_PERSIST_DIR: str = str(settings.DATA_DIR / "chroma")
 
@@ -373,34 +380,14 @@ def _seed_or_draft_exists(collection: Any) -> bool:
         return False
 
 
-def _build_seed_index() -> bool:
-    """将内置种子知识数据 + 已批准草稿索引到 ChromaDB.
-
-    种子条目使用 `seed_` 前缀 ID，已批准草稿使用 `draft_` 前缀 ID（与
-    models.knowledge_draft.get_as_seed_entries 返回的 id 一致）。每条都会
-    打上 source 元数据（seed / draft）以便精确判定是否已索引。
-
-    幂等：仅当集合里确实不存在种子/草稿向量时才 upsert 进去，
-    不再用 collection.count() > 0（规则 rule_* 的存在会误判早退）。
+def _collect_seed_entries() -> tuple[list[str], list[str], list[dict[str, str]]]:
+    """收集种子/草稿向量条目（不含 embedding 编码）.
 
     Returns:
-        True 表示索引成功或已存在，False 表示构建失败。
+        (ids, documents, metadatas)：与 _build_seed_index 相同的条目集合，
+        供 _build_seed_index（幂等 add）与 rebuild_seed_index（upsert-first + 剪枝）共用，
+        保证两条路径的 upsert 数据源一致（A7 加固）。
     """
-    global _SEED_INDEXED
-
-    collection = _get_collection_by_name(COLLECTION_NAMES["seed"])
-    model = _get_embedding_model()
-
-    if collection is None or model is None:
-        logger.info("_build_seed_index: collection or model unavailable, skip")
-        return False
-
-    # 幂等检查：按 source 元数据精确判断种子/草稿是否已写入，
-    # 不再依赖 collection.count() > 0（规则 rule_* 的存在会误判早退）。
-    if _seed_or_draft_exists(collection):
-        _SEED_INDEXED = True
-        return True
-
     ids: list[str] = []
     documents: list[str] = []
     metadatas: list[dict[str, str]] = []
@@ -473,6 +460,39 @@ def _build_seed_index() -> bool:
             "category": category,
             "source": "draft",
         })
+
+    return ids, documents, metadatas
+
+
+def _build_seed_index() -> bool:
+    """将内置种子知识数据 + 已批准草稿索引到 ChromaDB.
+
+    种子条目使用 `seed_` 前缀 ID，已批准草稿使用 `draft_` 前缀 ID（与
+    models.knowledge_draft.get_as_seed_entries 返回的 id 一致）。每条都会
+    打上 source 元数据（seed / draft）以便精确判定是否已索引。
+
+    幂等：仅当集合里确实不存在种子/草稿向量时才 upsert 进去，
+    不再用 collection.count() > 0（规则 rule_* 的存在会误判早退）。
+
+    Returns:
+        True 表示索引成功或已存在，False 表示构建失败。
+    """
+    global _SEED_INDEXED
+
+    collection = _get_collection_by_name(COLLECTION_NAMES["seed"])
+    model = _get_embedding_model()
+
+    if collection is None or model is None:
+        logger.info("_build_seed_index: collection or model unavailable, skip")
+        return False
+
+    # 幂等检查：按 source 元数据精确判断种子/草稿是否已写入，
+    # 不再依赖 collection.count() > 0（规则 rule_* 的存在会误判早退）。
+    if _seed_or_draft_exists(collection):
+        _SEED_INDEXED = True
+        return True
+
+    ids, documents, metadatas = _collect_seed_entries()
 
     if not ids:
         # 没有任何种子/草稿可索引时也视为已完成，避免反复尝试
@@ -973,30 +993,71 @@ class KnowledgeRetriever:
         # 重新加载种子数据
         _load_seed_data()
 
-        # 如果 ChromaDB 可用，删除旧种子条目并重建
+        # 如果 ChromaDB 可用，先 upsert 再剪枝（A7 加固：消除「先删生产库再重建
+        # 失败」的破坏性窗口——upsert 抛异常时不执行任何 delete，索引保持完整）。
         collection = _get_collection_by_name(COLLECTION_NAMES["seed"])
         if collection is not None and _EMBEDDING_AVAILABLE:
-            try:
-                # 删除所有 seed_ 前缀的旧条目
-                existing_ids = collection.get()
-                if existing_ids and existing_ids.get("ids"):
-                    seed_ids = [
-                        rid for rid in existing_ids["ids"]
+            model = _get_embedding_model()
+            if model is None:
+                logger.info("Seed index rebuild skipped (embedding model unavailable)")
+                return False
+            ids, documents, metadatas = _collect_seed_entries()
+            if not ids:
+                # 无种子/草稿可索引：清空旧条目后视为成功（无数据源）
+                try:
+                    existing_ids = (collection.get() or {}).get("ids") or []
+                    stale = [
+                        rid for rid in existing_ids
                         if rid.startswith("seed_") or rid.startswith("draft_")
                     ]
-                    if seed_ids:
-                        collection.delete(ids=seed_ids)
-                        logger.info(
-                            "Deleted %d old seed/draft entries from ChromaDB", len(seed_ids),
-                        )
-            except Exception as exc:
-                logger.warning("Failed to delete old seed entries: %s", exc)
+                    if stale:
+                        collection.delete(ids=stale)
+                        logger.info("Pruned %d stale seed/draft entries (empty source)", len(stale))
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Failed to prune empty seed index: %s", exc)
+                _SEED_INDEXED = True
+                return True
+            try:
+                embeddings = model.encode(
+                    documents,
+                    show_progress_bar=False,
+                    normalize_embeddings=True,
+                ).tolist()
+                # 幂等 upsert：已有 seed_*/draft_* 条目直接覆盖，不重复
+                collection.upsert(
+                    ids=ids,
+                    embeddings=embeddings,
+                    documents=documents,
+                    metadatas=metadatas,
+                )
+                _SEED_INDEXED = True
+                logger.info(
+                    "Upserted %d seed/draft entries into '%s'",
+                    len(ids), COLLECTION_NAMES["seed"],
+                )
+            except Exception as exc:  # noqa: BLE001
+                # upsert 失败（如维度不符）→ 不执行任何 delete，生产索引保持完整
+                logger.error("Seed index upsert failed (no delete performed): %s", exc)
+                return False
 
-            result = _build_seed_index()
-            if result:
-                _touch_index_metadata()  # P1：写时间戳，P0 端点 index_updated_at 自动生效
-            logger.info("Seed index rebuild: %s", "success" if result else "failed")
-            return result
+            # 剪枝：删除不在当前集合中的 seed_*/draft_*（重建失败时不会走到这里）
+            try:
+                existing_ids = (collection.get() or {}).get("ids") or []
+                current_ids = set(ids)
+                stale = [
+                    rid for rid in existing_ids
+                    if (rid.startswith("seed_") or rid.startswith("draft_"))
+                    and rid not in current_ids
+                ]
+                if stale:
+                    collection.delete(ids=stale)
+                    logger.info("Pruned %d stale seed/draft entries", len(stale))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to prune stale seed entries: %s", exc)
+
+            _touch_index_metadata()  # P1：写时间戳，P0 端点 index_updated_at 自动生效
+            logger.info("Seed index rebuild: success")
+            return True
         else:
             logger.info(
                 "Seed index rebuild skipped (collection=%s, embedding=%s)",

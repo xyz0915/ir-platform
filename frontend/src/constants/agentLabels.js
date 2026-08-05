@@ -2,7 +2,7 @@
  * 智能体编排模块统一标签 / 颜色映射常量。
  *
  * 移植自 demo types/common.ts / hitl.ts / pipeline.ts / tool.ts 的 LABELS，
- * 供 StatusBadge / GuardrailChip / StepFlow 等组件复用，避免散落硬编码。
+ * 供 StatusBadge / GuardrailChip 等组件复用，避免散落硬编码。
  */
 
 /** 运行态 RunStatus → 中文标签 */

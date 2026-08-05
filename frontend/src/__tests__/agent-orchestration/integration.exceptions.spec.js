@@ -57,7 +57,7 @@ const agentOrchestration = vi.hoisted(() => ({
 vi.mock('@/api/agentOrchestration', () => agentOrchestration)
 
 import { useAgentOrchestrationStore } from '@/stores/agents'
-import { usePipelineCanvasStore } from '@/stores/pipelineCanvas'
+import { usePipelineEditorStore } from '@/stores/pipelineEditor'
 import { useGuardrailStore } from '@/stores/guardrail'
 
 describe('集成异常场景', () => {
@@ -71,12 +71,15 @@ describe('集成异常场景', () => {
     await expect(store.approve('run-x', 999)).rejects.toThrow('approval not found')
   })
 
-  it('异常②：DAG 有环 → validateGraph 失败，run 不发起', async () => {
-    const store = usePipelineCanvasStore()
-    await store.seedFromSample()
-    store.connect('n-end', 'n-trigger') // 成环
-    const res = await store.run('E-A')
-    expect(res).toBeNull()
+  it('异常②：DAG 有环 → validatePipeline 失败，run 不发起（A8 迁移至 pipelineEditor）', async () => {
+    const store = usePipelineEditorStore()
+    store.loadSample()
+    // pipelineEditor 节点 id 由 createNodeData 自动生成：首节点 trigger、末节点 output
+    const firstId = store.pipelineNodes[0].id
+    const lastId = store.pipelineNodes[store.pipelineNodes.length - 1].id
+    store.startConnect(lastId)
+    store.completeConnect(firstId) // output → trigger 成环
+    await expect(store.runPipeline('E-A')).rejects.toThrow('管道校验未通过')
     expect(agentApi.pipeline.run).not.toHaveBeenCalled()
   })
 

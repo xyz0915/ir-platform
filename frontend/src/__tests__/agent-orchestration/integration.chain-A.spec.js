@@ -112,7 +112,7 @@ const agentOrchestration = vi.hoisted(() => ({
 vi.mock('@/api/agentOrchestration', () => agentOrchestration)
 
 import { useAgentManagementStore } from '@/stores/agentManagement'
-import { usePipelineCanvasStore } from '@/stores/pipelineCanvas'
+import { usePipelineEditorStore } from '@/stores/pipelineEditor'
 import { useAgentOrchestrationStore } from '@/stores/agents'
 import { useObservabilityStore } from '@/stores/observability'
 
@@ -124,7 +124,7 @@ describe('集成链路 A：M2 → M3 → M6 → M8 跨模块协同', () => {
 
   it('全链路贯通：创建 Agent → 编排 run_id → HITL 批准 → 可观测 trace/日志', async () => {
     const m2 = useAgentManagementStore()
-    const m3 = usePipelineCanvasStore()
+    const m3 = usePipelineEditorStore()
     const m6 = useAgentOrchestrationStore()
     const m8 = useObservabilityStore()
 
@@ -133,11 +133,11 @@ describe('集成链路 A：M2 → M3 → M6 → M8 跨模块协同', () => {
     expect(agent.data.agent_id).toBe('a1')
     expect(agentApi.createAgent).toHaveBeenCalled()
 
-    // ② M3 加载种子 DAG 并执行，得到 run_id
-    await m3.seedFromSample()
-    const run = await m3.run('E-A')
+    // ② M3 加载示例 DAG 并执行，得到 run_id（A8：pipelineCanvas → pipelineEditor 迁移）
+    m3.loadSample()
+    const run = await m3.runPipeline('E-A')
     expect(run.run_id).toBe('run-A1')
-    expect(m3.currentRunId).toBe('run-A1')
+    expect(m3.lastRunId).toBe('run-A1')
     expect(agentApi.pipeline.run).toHaveBeenCalled()
 
     // ③ M6 拉取待审队列，任务归属本次 run
@@ -160,14 +160,14 @@ describe('集成链路 A：M2 → M3 → M6 → M8 跨模块协同', () => {
     expect(m8.run.resume_point).toBe('sp-1')
   })
 
-  it('运行态在各 store 间保持不丢（currentRunId / approvals 均有效）', async () => {
-    const m3 = usePipelineCanvasStore()
+  it('运行态在各 store 间保持不丢（lastRunId / approvals 均有效）', async () => {
+    const m3 = usePipelineEditorStore()
     const m6 = useAgentOrchestrationStore()
-    await m3.seedFromSample()
-    await m3.run('E-A')
+    m3.loadSample()
+    await m3.runPipeline('E-A')
     await m6.fetchApprovals()
     // run 态在 M3 留存，HITL 任务在 M6 留存，互相不覆盖
-    expect(m3.currentRunId).toBe('run-A1')
+    expect(m3.lastRunId).toBe('run-A1')
     expect(m6.approvals[0].run_id).toBe('run-A1')
   })
 })

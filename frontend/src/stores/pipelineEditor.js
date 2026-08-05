@@ -55,6 +55,69 @@ export const usePipelineEditorStore = defineStore('pipelineEditor', () => {
   const pipelineName = ref('')
 
   // ==========================================================================
+  // A13 · 撤销/重做历史栈
+  // ==========================================================================
+
+  /** 历史快照栈（[{ nodes, connections }]），undo 弹栈恢复。 */
+  const history = ref([])
+
+  /** redo 栈：undo 时被撤销的快照。 */
+  const future = ref([])
+
+  /** 历史栈上限（超出丢弃最旧）。 */
+  const MAX_HISTORY = 50
+
+  /** 复合操作（loadSample / loadPreset）期间抑制内部动作的重复入栈。 */
+  let historySuppressed = 0
+
+  /** 深拷贝当前画布为快照。 */
+  function _snapshot() {
+    return {
+      nodes: JSON.parse(JSON.stringify(pipelineNodes.value)),
+      connections: JSON.parse(JSON.stringify(connections.value)),
+    }
+  }
+
+  /** 变更型 action 入口调用：记录当前状态 → 新操作清空 redo。 */
+  function _pushHistory() {
+    if (historySuppressed > 0) return
+    history.value.push(_snapshot())
+    if (history.value.length > MAX_HISTORY) history.value.shift()
+    future.value = []
+  }
+
+  /**
+   * 撤销一步（Ctrl+Z）。
+   * @returns {boolean} 是否有可撤销的历史
+   */
+  function undo() {
+    if (!history.value.length) return false
+    future.value.push(_snapshot())
+    const prev = history.value.pop()
+    pipelineNodes.value = prev.nodes
+    connections.value = prev.connections
+    // 撤销后原选中节点 id 可能已失效 → 清空选中态
+    selectedNodeId.value = null
+    configDirty.value = true
+    return true
+  }
+
+  /**
+   * 重做一步（Ctrl+Y / Ctrl+Shift+Z）。
+   * @returns {boolean} 是否有可重做的历史
+   */
+  function redo() {
+    if (!future.value.length) return false
+    history.value.push(_snapshot())
+    const next = future.value.pop()
+    pipelineNodes.value = next.nodes
+    connections.value = next.connections
+    selectedNodeId.value = null
+    configDirty.value = true
+    return true
+  }
+
+  // ==========================================================================
   // Phase 3 · 调试面板状态
   // ==========================================================================
 
@@ -106,6 +169,7 @@ export const usePipelineEditorStore = defineStore('pipelineEditor', () => {
    * @returns {object} 新建的节点数据
    */
   function addNode(type, position, name) {
+    _pushHistory()
     const node = createNodeData(type, position, name)
     node.stepIndex = pipelineNodes.value.length + 1
     pipelineNodes.value.push(node)
@@ -117,6 +181,7 @@ export const usePipelineEditorStore = defineStore('pipelineEditor', () => {
    * @param {string} nodeId — 要移除的节点 ID
    */
   function removeNode(nodeId) {
+    _pushHistory()
     pipelineNodes.value = pipelineNodes.value.filter(n => n.id !== nodeId)
     connections.value = connections.value.filter(
       c => c.sourceId !== nodeId && c.targetId !== nodeId,
@@ -132,6 +197,7 @@ export const usePipelineEditorStore = defineStore('pipelineEditor', () => {
    * @param {{x: number, y: number}} position
    */
   function moveNode(nodeId, position) {
+    _pushHistory()
     const node = pipelineNodes.value.find(n => n.id === nodeId)
     if (node) {
       node.position.x = position.x
@@ -170,6 +236,7 @@ export const usePipelineEditorStore = defineStore('pipelineEditor', () => {
    * @param {string} targetId — 目标节点 ID
    */
   function completeConnect(targetId) {
+    _pushHistory()
     if (!connectSource.value) {
       cancelConnect()
       return
@@ -209,6 +276,7 @@ export const usePipelineEditorStore = defineStore('pipelineEditor', () => {
    * @param {string} targetId
    */
   function removeConnection(sourceId, targetId) {
+    _pushHistory()
     connections.value = connections.value.filter(
       c => !(c.sourceId === sourceId && c.targetId === targetId),
     )
@@ -230,6 +298,7 @@ export const usePipelineEditorStore = defineStore('pipelineEditor', () => {
    * @param {number} index — 连线在 connections 数组中的索引
    */
   function removeConnectionByIndex(index) {
+    _pushHistory()
     connections.value.splice(index, 1)
     selectedConnectionId.value = null
     configDirty.value = true
@@ -465,6 +534,7 @@ export const usePipelineEditorStore = defineStore('pipelineEditor', () => {
    * 清空画布所有节点和连线。
    */
   function clearCanvas() {
+    _pushHistory()
     pipelineNodes.value = []
     connections.value = []
     selectedNodeId.value = null
@@ -476,50 +546,56 @@ export const usePipelineEditorStore = defineStore('pipelineEditor', () => {
   }
 
   /**
-   * 加载示例数据到画布。
+   * 加载示例数据到画布（A13：作为一步可撤销的复合操作）。
    */
   function loadSample() {
-    clearCanvas()
-    const nodes = [
-      addNode('trigger', { x: 100, y: 280 }, '触发器'),
-      addNode('llm', { x: 360, y: 280 }, '初步调查'),
-      addNode('llm', { x: 700, y: 280 }, '根因定位'),
-      addNode('guard', { x: 680, y: 400 }, '护栏校验'),
-      addNode('hitl', { x: 920, y: 400 }, '人工审批'),
-      addNode('action', { x: 1120, y: 280 }, '处置执行'),
-      addNode('output', { x: 1380, y: 280 }, '报告输出'),
-    ]
-    nodes[0].badgeText = '事件驱动'
-    nodes[0].statText = '告警入站 · 1 条规则'
-    nodes[1].badgeText = 'triage_agent'
-    nodes[1].statText = '3 数据源 · 2 工具'
-    nodes[2].badgeText = 'root_cause'
-    nodes[2].statText = '综合分析 4 路 Agent 输出'
-    nodes[3].badgeText = '高危'
-    nodes[3].statText = '5 条策略命中 · 需 HITL'
-    nodes[4].badgeText = '待审批'
-    nodes[4].statText = '超时 24h · 必填意见'
-    nodes[5].badgeText = '隔离主机'
-    nodes[5].statText = '回滚方案: ACL 自动恢复'
-    nodes[6].badgeText = 'Markdown'
-    nodes[6].statText = '存储至案件库'
+    _pushHistory()
+    historySuppressed += 1
+    try {
+      clearCanvas()
+      const nodes = [
+        addNode('trigger', { x: 100, y: 280 }, '触发器'),
+        addNode('llm', { x: 360, y: 280 }, '初步调查'),
+        addNode('llm', { x: 700, y: 280 }, '根因定位'),
+        addNode('guard', { x: 680, y: 400 }, '护栏校验'),
+        addNode('hitl', { x: 920, y: 400 }, '人工审批'),
+        addNode('action', { x: 1120, y: 280 }, '处置执行'),
+        addNode('output', { x: 1380, y: 280 }, '报告输出'),
+      ]
+      nodes[0].badgeText = '事件驱动'
+      nodes[0].statText = '告警入站 · 1 条规则'
+      nodes[1].badgeText = 'triage_agent'
+      nodes[1].statText = '3 数据源 · 2 工具'
+      nodes[2].badgeText = 'root_cause'
+      nodes[2].statText = '综合分析 4 路 Agent 输出'
+      nodes[3].badgeText = '高危'
+      nodes[3].statText = '5 条策略命中 · 需 HITL'
+      nodes[4].badgeText = '待审批'
+      nodes[4].statText = '超时 24h · 必填意见'
+      nodes[5].badgeText = '隔离主机'
+      nodes[5].statText = '回滚方案: ACL 自动恢复'
+      nodes[6].badgeText = 'Markdown'
+      nodes[6].statText = '存储至案件库'
 
-    // 连线
-    const conns = [
-      { source: nodes[0].id, target: nodes[1].id },
-      { source: nodes[1].id, target: nodes[2].id },
-      { source: nodes[2].id, target: nodes[3].id, cross: true },
-      { source: nodes[3].id, target: nodes[4].id },
-      { source: nodes[4].id, target: nodes[5].id, cross: true },
-      { source: nodes[5].id, target: nodes[6].id },
-    ]
-    conns.forEach(c => {
-      connections.value.push({
-        sourceId: c.source,
-        targetId: c.target,
-        isCrossTrack: !!c.cross,
+      // 连线
+      const conns = [
+        { source: nodes[0].id, target: nodes[1].id },
+        { source: nodes[1].id, target: nodes[2].id },
+        { source: nodes[2].id, target: nodes[3].id, cross: true },
+        { source: nodes[3].id, target: nodes[4].id },
+        { source: nodes[4].id, target: nodes[5].id, cross: true },
+        { source: nodes[5].id, target: nodes[6].id },
+      ]
+      conns.forEach(c => {
+        connections.value.push({
+          sourceId: c.source,
+          targetId: c.target,
+          isCrossTrack: !!c.cross,
+        })
       })
-    })
+    } finally {
+      historySuppressed -= 1
+    }
   }
 
   // ==========================================================================
@@ -537,50 +613,56 @@ export const usePipelineEditorStore = defineStore('pipelineEditor', () => {
    * @param {object} preset — 预设数据
    */
   function loadPreset(preset) {
-    clearCanvas()
-    if (preset.nodes && Array.isArray(preset.nodes)) {
-      preset.nodes.forEach(nodeData => {
-        const node = addNode(nodeData.type, nodeData.position, nodeData.name)
-        // 复制额外属性
-        Object.assign(node, nodeData, { id: node.id, stepIndex: node.stepIndex })
-      })
-    } else if (preset.agents && Array.isArray(preset.agents)) {
-      // 兼容后端以 agents 字符串数组存储的预设
-      const validTypes = Object.values(NodeType)
-      const aliasMap = {
-        triage: NodeType.TRIGGER,
-        process: NodeType.PROCESS_ANALYSIS,
-        reporter: NodeType.OUTPUT,
-        responder: NodeType.ACTION,
-        investigator: NodeType.LLM,
+    _pushHistory()
+    historySuppressed += 1
+    try {
+      clearCanvas()
+      if (preset.nodes && Array.isArray(preset.nodes)) {
+        preset.nodes.forEach(nodeData => {
+          const node = addNode(nodeData.type, nodeData.position, nodeData.name)
+          // 复制额外属性
+          Object.assign(node, nodeData, { id: node.id, stepIndex: node.stepIndex })
+        })
+      } else if (preset.agents && Array.isArray(preset.agents)) {
+        // 兼容后端以 agents 字符串数组存储的预设
+        const validTypes = Object.values(NodeType)
+        const aliasMap = {
+          triage: NodeType.TRIGGER,
+          process: NodeType.PROCESS_ANALYSIS,
+          reporter: NodeType.OUTPUT,
+          responder: NodeType.ACTION,
+          investigator: NodeType.LLM,
+        }
+        const nodes = []
+        preset.agents.forEach((agent, idx) => {
+          let type = agent
+          if (!validTypes.includes(type)) {
+            type = aliasMap[agent] || NodeType.LLM
+          }
+          const x = 100 + idx * 260
+          const y = idx % 2 === 0 ? 280 : 360
+          const node = addNode(type, { x, y }, agent)
+          nodes.push(node)
+        })
+        // 自动串联成流水线
+        nodes.forEach((node, idx) => {
+          if (idx > 0) {
+            const prev = nodes[idx - 1]
+            connections.value.push({
+              sourceId: prev.id,
+              targetId: node.id,
+              isCrossTrack: prev.track !== node.track,
+            })
+          }
+        })
       }
-      const nodes = []
-      preset.agents.forEach((agent, idx) => {
-        let type = agent
-        if (!validTypes.includes(type)) {
-          type = aliasMap[agent] || NodeType.LLM
-        }
-        const x = 100 + idx * 260
-        const y = idx % 2 === 0 ? 280 : 360
-        const node = addNode(type, { x, y }, agent)
-        nodes.push(node)
-      })
-      // 自动串联成流水线
-      nodes.forEach((node, idx) => {
-        if (idx > 0) {
-          const prev = nodes[idx - 1]
-          connections.value.push({
-            sourceId: prev.id,
-            targetId: node.id,
-            isCrossTrack: prev.track !== node.track,
-          })
-        }
-      })
+      if (preset.pipelineName || preset.name) {
+        pipelineName.value = preset.pipelineName || preset.name
+      }
+      configDirty.value = false
+    } finally {
+      historySuppressed -= 1
     }
-    if (preset.pipelineName || preset.name) {
-      pipelineName.value = preset.pipelineName || preset.name
-    }
-    configDirty.value = false
   }
 
   // ==========================================================================
@@ -593,6 +675,7 @@ export const usePipelineEditorStore = defineStore('pipelineEditor', () => {
    * @returns {object|null} 复制的节点
    */
   function duplicateNode(nodeId) {
+    _pushHistory()
     const source = pipelineNodes.value.find(n => n.id === nodeId)
     if (!source) return null
     const pos = {
@@ -808,6 +891,9 @@ export const usePipelineEditorStore = defineStore('pipelineEditor', () => {
     removeConnection,
     selectConnection,
     removeConnectionByIndex,
+    // A13 撤销/重做
+    undo,
+    redo,
     getPipelineSnapshot,
     updateSelectedNodeConfig,
     updateNodeConfig,
