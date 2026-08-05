@@ -5,25 +5,26 @@
       <el-button @click="store.fetchKnowledgeBases" :loading="store.loading">刷新</el-button>
     </div>
 
-    <!-- 概览指标 -->
+    <!-- 概览指标：主色 #111827，单色状态点，无 gs-blue 强调 -->
     <div class="mr-stats">
       <div class="mr-stat">
-        <span class="gs-label">知识库</span>
-        <span class="gs-value">{{ store.knowledgeBases.length }}</span>
+        <span class="mr-stat-label">知识库</span>
+        <span class="mr-stat-value">{{ store.knowledgeBases.length.toLocaleString('zh-CN') }}</span>
       </div>
       <div class="mr-stat">
-        <span class="gs-label">向量文档总数</span>
-        <span class="gs-value gs-blue">{{ store.vectorDocCount.toLocaleString('zh-CN') }}</span>
+        <span class="mr-stat-label">向量文档总数</span>
+        <span class="mr-stat-value">{{ store.vectorDocCount.toLocaleString('zh-CN') }}</span>
       </div>
       <div class="mr-stat">
-        <span class="gs-label">已批准草稿</span>
-        <span class="gs-value gs-green">{{ (store.stats.approved_drafts || 0).toLocaleString('zh-CN') }}</span>
+        <span class="mr-stat-label">已批准草稿</span>
+        <span class="mr-stat-value">{{ (store.stats.approved_drafts || 0).toLocaleString('zh-CN') }}</span>
       </div>
       <div class="mr-stat">
-        <span class="gs-label">索引状态</span>
-        <span class="gs-value gs-sm" :class="store.collectionReady ? 'gs-ok' : 'gs-warn'">
-          {{ store.collectionReady ? '就绪' : '未就绪/降级关键词检索' }}
-        </span>
+        <span class="mr-stat-label">索引状态</span>
+        <div class="mr-stat-status" :title="indexStatusTitle">
+          <span class="mr-status-dot" :class="store.collectionReady ? 'ok' : 'off'" />
+          <span class="mr-stat-value">{{ store.collectionReady ? '就绪' : '未就绪' }}</span>
+        </div>
       </div>
     </div>
 
@@ -62,8 +63,8 @@
         <el-option label="全部类型" value="" />
         <el-option v-for="t in MEMORY_TYPES" :key="t" :label="TYPE_LABELS[t]" :value="t" />
       </el-select>
-      <el-button type="primary" :loading="store.memorySearchLoading" @click="onSearch">搜索</el-button>
-      <el-button type="primary" plain @click="openCreate">+ 写入记忆</el-button>
+      <el-button class="mem-btn-dark" :loading="store.memorySearchLoading" @click="onSearch">搜索</el-button>
+      <el-button class="mem-btn-outline" @click="openCreate">+ 写入记忆</el-button>
     </div>
 
     <el-table
@@ -71,13 +72,19 @@
       v-loading="store.memoryLoading || store.memorySearchLoading"
       border
       class="mem-table"
-      empty-text="暂无记忆；流水线关键节点（root_cause/llm/reporter/responder/action）会自动沉淀，也可手动写入"
     >
-      <el-table-column label="类型" width="100">
+      <template #empty>
+        <div class="mem-empty">
+          <p class="mem-empty-text">{{ store.memoryMode === 'search' ? '未匹配记忆' : '暂无记忆' }}</p>
+          <el-button link class="mem-empty-action" @click="openCreate">写入第一条记忆</el-button>
+        </div>
+      </template>
+      <el-table-column label="类型" width="110">
         <template #default="{ row }">
-          <el-tag :type="typeTagType(row.memory_type)" size="small">
-            {{ TYPE_LABELS[row.memory_type] || row.memory_type }}
-          </el-tag>
+          <span class="mem-type-cell">
+            <span class="mem-type-dot" />
+            <span>{{ TYPE_LABELS[row.memory_type] || row.memory_type }}</span>
+          </span>
         </template>
       </el-table-column>
       <el-table-column label="内容" min-width="280" show-overflow-tooltip>
@@ -95,7 +102,7 @@
       </el-table-column>
       <el-table-column label="操作" width="90" fixed="right">
         <template #default="{ row }">
-          <el-button link type="danger" @click="onDelete(row)">删除</el-button>
+          <el-button link class="mem-delete" @click="onDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -145,7 +152,7 @@
       </el-form>
       <template #footer>
         <el-button @click="createVisible = false">取消</el-button>
-        <el-button type="primary" :loading="createSubmitting" @click="onCreate">提交</el-button>
+        <el-button class="mem-btn-dark" :loading="createSubmitting" @click="onCreate">提交</el-button>
       </template>
     </el-dialog>
 
@@ -183,6 +190,13 @@ import KnowledgeBaseCard from '@/components/agents/KnowledgeBaseCard.vue'
 const store = useMemoryStore()
 const vectorStore = computed(() => store.stats.vector_store || 'Chroma')
 
+// 索引状态提示：就绪/未就绪 均用单色状态点，长说明放 title 保持卡片紧凑
+const indexStatusTitle = computed(() =>
+  store.collectionReady
+    ? '向量库集合可用'
+    : '向量库未就绪，当前使用关键词检索降级',
+)
+
 // ── P2 长期记忆 ──
 const MEMORY_TYPES = ['conclusion', 'summary', 'action', 'disposition']
 const TYPE_LABELS = {
@@ -190,12 +204,6 @@ const TYPE_LABELS = {
   summary: '摘要',
   action: '处置动作',
   disposition: '处置记录',
-}
-const TYPE_TAG_MAP = {
-  conclusion: 'danger',
-  summary: 'primary',
-  action: 'warning',
-  disposition: 'success',
 }
 
 const searchQ = ref('')
@@ -217,10 +225,6 @@ onMounted(() => {
   store.fetchKnowledgeBases().catch(() => {})
   store.fetchMemories().catch(() => {})
 })
-
-function typeTagType(t) {
-  return TYPE_TAG_MAP[t] || 'info'
-}
 
 function currentFilters() {
   return { memory_type: typeFilter.value || undefined }
@@ -353,31 +357,121 @@ function fmtTime(iso) {
 .memory-rag-view { padding: 16px; }
 .mr-toolbar { display: flex; align-items: center; justify-content: flex-end; margin-bottom: 12px; }
 
+/* ===== 概览指标（紧凑 4 卡，主色 #111827） ===== */
 .mr-stats { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
 .mr-stat {
-  flex: 1; min-width: 150px; max-width: 240px; background: var(--color-canvas-default);
-  border: 0.5px solid var(--color-border-default); border-radius: 8px;
-  padding: 12px 16px; display: flex; flex-direction: column; gap: 4px;
+  flex: 1; min-width: 150px; max-width: 240px;
+  background: var(--color-canvas-default);
+  border: 0.5px solid var(--color-border-default);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 6px;
+  min-height: 82px;
+  justify-content: center;
 }
-.gs-label { font-size: 12px; color: var(--color-fg-subtle); }
-.gs-value { font-size: 22px; font-weight: 700; color: #111827; font-family: ui-monospace, monospace; }
-.gs-sm { font-size: 15px; line-height: 1.6; }
-.gs-blue { color: #3B82F6; }
-.gs-green { color: #10B981; }
-.gs-ok { color: #10B981; }
-.gs-warn { color: #F59E0B; }
+.mr-stat-label { font-size: 12px; font-weight: 500; color: #6b7280; }
+.mr-stat-value {
+  font-size: 20px; font-weight: 600; color: #111827;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1.2; letter-spacing: -0.3px;
+}
+.mr-stat-status { display: flex; align-items: center; gap: 8px; min-height: 24px; }
+.mr-status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.mr-status-dot.ok { background: #16a34a; }
+.mr-status-dot.off { background: #9ca3af; }
 
-.mr-section { font-size: 14px; font-weight: 500; margin: 0 0 10px; color: #111827; }
+/* ===== 分区标题 ===== */
+.mr-section { font-size: 13px; font-weight: 600; margin: 0 0 10px; color: #111827; }
 .mr-mt { margin-top: 22px; }
 .mr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
 
-/* ── P2 长期记忆区块 ── */
+/* ===== P2 长期记忆：工具栏 ===== */
 .mem-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
-.mem-search { width: 260px; }
+.mem-search { flex: 1; max-width: 360px; }
+.mem-search :deep(.el-input__wrapper) {
+  border-radius: 8px;
+  background: var(--color-canvas-default);
+  box-shadow: 0 0 0 1px var(--color-border-default) inset;
+  transition: box-shadow 0.15s;
+}
+.mem-search :deep(.el-input__wrapper:hover) { box-shadow: 0 0 0 1px #d1d5db inset; }
+.mem-search :deep(.el-input__wrapper.is-focus) { box-shadow: 0 0 0 1px #111827 inset; }
+.mem-search :deep(.el-input__inner) { font-size: 12px; color: var(--color-fg-default); }
+.mem-search :deep(.el-input__inner::placeholder) { color: #9ca3af; }
 .mem-type-select { width: 140px; }
-.mem-table { border-radius: 8px; }
+.mem-type-select :deep(.el-select__wrapper) {
+  border-radius: 8px;
+  font-size: 12px;
+  box-shadow: 0 0 0 1px var(--color-border-default) inset;
+  transition: box-shadow 0.15s;
+}
+.mem-type-select :deep(.el-select__wrapper:hover) { box-shadow: 0 0 0 1px #d1d5db inset; }
+.mem-type-select :deep(.el-select__wrapper.is-focused) { box-shadow: 0 0 0 1px #111827 inset; }
+
+/* 主按钮：黑底白字；次按钮：白底黑边，hover 反色 */
+.mem-btn-dark {
+  --el-button-bg-color: #111827;
+  --el-button-border-color: #111827;
+  --el-button-text-color: #fff;
+  --el-button-hover-bg-color: #1f2937;
+  --el-button-hover-border-color: #1f2937;
+  --el-button-hover-text-color: #fff;
+  --el-button-active-bg-color: #1f2937;
+  --el-button-active-border-color: #1f2937;
+}
+.mem-btn-outline {
+  --el-button-bg-color: #fff;
+  --el-button-border-color: #d1d5db;
+  --el-button-text-color: #111827;
+  --el-button-hover-bg-color: #111827;
+  --el-button-hover-border-color: #111827;
+  --el-button-hover-text-color: #fff;
+  --el-button-active-bg-color: #1f2937;
+  --el-button-active-border-color: #1f2937;
+  --el-button-active-text-color: #fff;
+}
+
+/* ===== P2 长期记忆：表格 ===== */
+.mem-table {
+  border-radius: 10px;
+  --el-table-border-color: var(--color-border-default);
+  --el-table-header-bg-color: var(--color-canvas-subtle);
+  --el-table-header-text-color: #6b7280;
+  --el-table-row-hover-bg-color: var(--color-canvas-subtle);
+}
+.mem-table :deep(th.el-table__cell) {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 8px 10px;
+  height: 36px;
+}
+.mem-table :deep(td.el-table__cell) {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--color-fg-default);
+  height: 38px;
+}
+.mem-type-cell { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--color-fg-default); }
+.mem-type-dot { width: 6px; height: 6px; border-radius: 50%; background: #9ca3af; flex-shrink: 0; }
+
+.mem-delete {
+  --el-button-text-color: #9ca3af;
+  --el-button-hover-text-color: #dc2626;
+  font-size: 12px;
+}
+
+/* 自定义空状态：去大图标，仅居中灰色文字 + 主操作链接 */
+.mem-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 40px 0; }
+.mem-empty-text { font-size: 13px; color: #9ca3af; margin: 0; }
+.mem-empty-action {
+  --el-button-text-color: #111827;
+  --el-button-hover-text-color: #4b5563;
+  font-size: 12px;
+}
+
 .mem-pager { display: flex; justify-content: flex-end; margin-top: 12px; }
 
+/* ===== RAG 示意 ===== */
 .mr-hint-card { border-radius: 10px; border: 1px solid var(--color-border-default); }
 .mr-hint { font-size: 13px; color: var(--color-fg-muted); line-height: 1.7; margin: 0 0 12px; }
 .mr-hint code { background: var(--color-canvas-inset); padding: 1px 5px; border-radius: 4px; font-family: ui-monospace, monospace; }
@@ -386,5 +480,5 @@ function fmtTime(iso) {
   font-size: 12px; padding: 5px 12px; border-radius: 16px;
   background: var(--color-canvas-subtle); color: var(--color-fg-default); border: 0.5px solid var(--color-border-default);
 }
-.mr-node-accent { background: var(--color-accent-subtle); color: var(--color-accent-fg); border-color: var(--color-accent-fg); }
+.mr-node-accent { background: #111827; color: #fff; border-color: #111827; }
 </style>
