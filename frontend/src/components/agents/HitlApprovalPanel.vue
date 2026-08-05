@@ -1,11 +1,9 @@
 <template>
   <div class="hitl-panel">
     <!-- 非管理员：静默隐藏，不渲染任何 UI（HITL 仅管理员可见） -->
-    <el-empty
-      v-if="!isAdmin"
-      :description="'HITL 审批仅限管理员操作'"
-      :image-size="60"
-    />
+    <div v-if="!isAdmin" class="hitl-empty">
+      <p class="hitl-empty-text">HITL 审批仅限管理员操作</p>
+    </div>
 
     <template v-else>
       <!-- 待审批计数 -->
@@ -19,12 +17,17 @@
         </el-button>
       </div>
 
-      <el-empty v-if="pendingList.length === 0" description="暂无待审批处置" :image-size="56" />
+      <div v-if="pendingList.length === 0" class="hitl-empty">
+        <p class="hitl-empty-text">暂无待审批处置</p>
+      </div>
 
       <!-- 审批卡片列表 -->
       <div v-for="item in pendingList" :key="item.id" class="hitl-card">
         <div class="hitl-card-head">
-          <el-tag size="small" type="warning" effect="light">待审批</el-tag>
+          <span class="hitl-status">
+            <span class="hitl-status-dot" />
+            待审批
+          </span>
           <span class="hitl-action">{{ item.action }}</span>
           <span class="hitl-run" @click="openRun(item.run_id)">{{ item.run_id }}</span>
         </div>
@@ -57,7 +60,7 @@
             :disabled="busy"
           />
           <el-button
-            type="success"
+            class="btn-approve"
             size="small"
             :loading="busy"
             @click="onApprove(item)"
@@ -65,7 +68,8 @@
             <el-icon><Select /></el-icon> 批准执行
           </el-button>
           <el-button
-            type="danger"
+            link
+            class="btn-reject"
             size="small"
             :loading="busy"
             @click="onReject(item)"
@@ -217,8 +221,11 @@ const emit = defineEmits(['resolved'])
   gap: 6px;
   font-size: 14px;
   font-weight: 600;
-  color: var(--color-fg-default);
+  color: #111827;
 }
+
+.hitl-empty { display: flex; align-items: center; justify-content: center; padding: 32px 0; }
+.hitl-empty-text { font-size: 13px; color: #9ca3af; margin: 0; }
 
 .hitl-card {
   border: 1px solid var(--color-border-default);
@@ -236,16 +243,20 @@ const emit = defineEmits(['resolved'])
   gap: 8px;
 }
 
+/* 待审批状态：单色灰点 + 文字，去 warning 彩色 tag */
+.hitl-status { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 500; color: #4b5563; }
+.hitl-status-dot { width: 6px; height: 6px; border-radius: 50%; background: #9ca3af; flex-shrink: 0; }
+
 .hitl-action {
   font-weight: 600;
-  color: var(--color-fg-default);
+  color: #111827;
   font-size: 13px;
 }
 
 .hitl-run {
   margin-left: auto;
   font-size: 12px;
-  color: var(--color-accent-fg);
+  color: #111827;
   cursor: pointer;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
@@ -264,7 +275,7 @@ const emit = defineEmits(['resolved'])
 .hitl-label {
   flex-shrink: 0;
   width: 72px;
-  color: var(--color-fg-muted);
+  color: #6b7280;
 }
 
 .hitl-value {
@@ -286,5 +297,24 @@ const emit = defineEmits(['resolved'])
 .hitl-reject-reason {
   flex: 1;
   max-width: 220px;
+}
+
+/* 批准：克制绿（白底绿边，hover 反色） */
+.btn-approve {
+  --el-button-bg-color: #fff;
+  --el-button-border-color: #16a34a;
+  --el-button-text-color: #16a34a;
+  --el-button-hover-bg-color: #16a34a;
+  --el-button-hover-border-color: #16a34a;
+  --el-button-hover-text-color: #fff;
+  --el-button-active-bg-color: #15803d;
+  --el-button-active-border-color: #15803d;
+  --el-button-active-text-color: #fff;
+}
+/* 拒绝：灰 link，hover 红 */
+.btn-reject {
+  --el-button-text-color: #9ca3af;
+  --el-button-hover-text-color: #dc2626;
+  font-size: 12px;
 }
 </style>

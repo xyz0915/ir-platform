@@ -1,6 +1,8 @@
 <template>
   <div class="hitl-context" v-if="isAdmin">
-    <el-empty v-if="!task" description="选择左侧待审任务查看上下文" :image-size="60" />
+    <div v-if="!task" class="hcp-empty">
+      <p class="hcp-empty-text">选择左侧待审任务查看上下文</p>
+    </div>
 
     <template v-else>
       <!-- 头部 -->
@@ -49,10 +51,10 @@
       <!-- 决议操作 -->
       <div class="hcp-actions">
         <el-input v-model="rejectReason" size="small" placeholder="拒绝原因（可选）" class="hcp-reject" :disabled="busy" />
-        <el-button type="success" size="small" :loading="busy" @click="onApprove">
+        <el-button class="btn-approve" size="small" :loading="busy" @click="onApprove">
           <el-icon><Select /></el-icon> 批准执行
         </el-button>
-        <el-button type="danger" size="small" :loading="busy" @click="onReject">
+        <el-button link class="btn-reject" size="small" :loading="busy" @click="onReject">
           <el-icon><CloseBold /></el-icon> 拒绝
         </el-button>
       </div>
@@ -180,17 +182,38 @@ async function onReject() {
 
 <style scoped>
 .hitl-context { padding: 4px; }
+.hcp-empty { display: flex; align-items: center; justify-content: center; padding: 48px 0; }
+.hcp-empty-text { font-size: 13px; color: #9ca3af; margin: 0; }
 .hcp-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.hcp-agent { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; color: var(--color-fg-default); }
-.hcp-action { font-size: 16px; font-weight: 600; color: var(--color-fg-default); padding: 10px 12px; background: var(--color-canvas-subtle); border-radius: 8px; margin-bottom: 12px; border-left: 3px solid var(--color-danger-fg); }
+.hcp-agent { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; color: #111827; }
+.hcp-action { font-size: 16px; font-weight: 600; color: #111827; padding: 10px 12px; background: var(--color-canvas-subtle); border-radius: 8px; margin-bottom: 12px; border-left: 3px solid #111827; }
 .hcp-section { margin-bottom: 14px; }
-.hcp-k { font-size: 11px; color: var(--color-fg-subtle); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+.hcp-k { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
 .hcp-v { font-size: 13px; color: var(--color-fg-default); line-height: 1.6; word-break: break-all; }
 .hcp-reason { white-space: pre-wrap; }
 .hcp-kv { display: flex; gap: 10px; font-size: 12px; padding: 3px 0; }
-.hcp-kv-k { width: 72px; flex-shrink: 0; color: var(--color-fg-subtle); }
+.hcp-kv-k { width: 72px; flex-shrink: 0; color: #6b7280; }
 .hcp-kv-v { color: var(--color-fg-default); word-break: break-all; }
-.hcp-rollback { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--color-warning-fg, #d97706); margin-top: 8px; }
+.hcp-rollback { display: flex; align-items: center; gap: 4px; font-size: 12px; color: #6b7280; margin-top: 8px; }
 .hcp-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .hcp-reject { flex: 1; min-width: 160px; max-width: 240px; }
+
+/* 批准：克制绿（白底绿边，hover 反色） */
+.btn-approve {
+  --el-button-bg-color: #fff;
+  --el-button-border-color: #16a34a;
+  --el-button-text-color: #16a34a;
+  --el-button-hover-bg-color: #16a34a;
+  --el-button-hover-border-color: #16a34a;
+  --el-button-hover-text-color: #fff;
+  --el-button-active-bg-color: #15803d;
+  --el-button-active-border-color: #15803d;
+  --el-button-active-text-color: #fff;
+}
+/* 拒绝：灰 link，hover 红 */
+.btn-reject {
+  --el-button-text-color: #9ca3af;
+  --el-button-hover-text-color: #dc2626;
+  font-size: 12px;
+}
 </style>

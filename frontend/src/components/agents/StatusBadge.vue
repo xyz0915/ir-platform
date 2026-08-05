@@ -1,26 +1,19 @@
 <template>
-  <el-tag
-    v-if="label"
-    :type="tagType"
-    :effect="effect"
-    size="small"
-    :style="color ? { color: color, borderColor: color, backgroundColor: 'transparent' } : undefined"
-    class="status-badge"
-  >
-    <span v-if="dotColor" class="sb-dot" :style="{ background: dotColor }" />
-    {{ label }}
-  </el-tag>
-  <span v-else>—</span>
+  <span v-if="label" class="status-badge">
+    <span class="sb-dot" :style="dotStyle" />
+    <span class="sb-text">{{ label }}</span>
+  </span>
+  <span v-else class="status-badge status-badge-empty">—</span>
 </template>
 
 <script setup>
 import { computed } from 'vue'
 import {
-  RUN_STATUS_LABELS, RUN_STATUS_TAG,
-  SEVERITY_LABELS, SEVERITY_COLOR,
-  ROLE_LABELS, HITL_DECISION_LABELS, HITL_DECISION_COLOR,
-  TOOL_STATUS_LABELS, TOOL_STATUS_COLOR,
-  MCP_STATUS_LABELS, MCP_STATUS_COLOR,
+  RUN_STATUS_LABELS,
+  SEVERITY_LABELS,
+  ROLE_LABELS, HITL_DECISION_LABELS,
+  TOOL_STATUS_LABELS,
+  MCP_STATUS_LABELS,
 } from '@/constants/agentLabels'
 
 const props = defineProps({
@@ -28,8 +21,10 @@ const props = defineProps({
   type: { type: String, default: 'run' },
   /** 状态值 */
   value: { type: [String, Number], default: '' },
-  /** 标签效果：light/plain/dark */
+  /** 标签效果：light/plain/dark（保留兼容，渲染已统一为单色点+文字） */
   effect: { type: String, default: 'light' },
+  /** 自定义圆点颜色（可选，覆盖默认单色语义） */
+  color: { type: String, default: '' },
 })
 
 const label = computed(() => {
@@ -45,26 +40,28 @@ const label = computed(() => {
   }
 })
 
-const tagType = computed(() => {
-  if (props.type === 'run') return RUN_STATUS_TAG[props.value] || 'info'
-  if (props.type === 'hitl') return 'plain'
-  return 'info'
+/** 单色圆点：仅保留必要语义色（绿 #16a34a / 红 #dc2626 克制），其余灰 #9ca3af */
+const dotColor = computed(() => {
+  if (props.color) return props.color
+  const v = props.value
+  if (['approved', 'success', 'online', 'available'].includes(v)) return '#16a34a'
+  if (['failed', 'rejected'].includes(v)) return '#dc2626'
+  return '#9ca3af'
 })
 
-const color = computed(() => {
-  switch (props.type) {
-    case 'severity': return SEVERITY_COLOR[props.value]
-    case 'hitl': return HITL_DECISION_COLOR[props.value]
-    case 'tool': return TOOL_STATUS_COLOR[props.value]
-    case 'mcp': return MCP_STATUS_COLOR[props.value]
-    default: return ''
-  }
-})
-
-const dotColor = computed(() => color.value || '')
+const dotStyle = computed(() => ({ background: dotColor.value }))
 </script>
 
 <style scoped>
-.status-badge { display: inline-flex; align-items: center; gap: 4px; font-weight: 500; }
-.sb-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #4b5563;
+  white-space: nowrap;
+}
+.status-badge-empty { color: #9ca3af; font-weight: 400; }
+.sb-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 </style>

@@ -1,35 +1,24 @@
 <template>
   <div class="guardrail-chip">
-    <!-- 总体结论 -->
-    <el-tag :type="result?.passed ? 'success' : 'danger'" size="small" effect="light" class="gc-main">
+    <!-- 总体结论：单色点 + 文字（通过绿 / 拦截红克制） -->
+    <span class="gc-main" :class="result?.passed ? 'ok' : 'block'">
+      <span class="gc-dot" />
       {{ result?.passed ? '护栏通过' : '护栏拦截' }}
-    </el-tag>
+    </span>
 
-    <!-- 命中策略 -->
-    <el-tag v-if="result?.policy_id" size="small" effect="plain" class="gc-item">
-      策略 {{ result.policy_id }}
-    </el-tag>
+    <!-- 命中策略：中性 chip -->
+    <span v-if="result?.policy_id" class="gc-item gc-mono">策略 {{ result.policy_id }}</span>
 
-    <!-- 白名单命中 -->
-    <el-tag
-      v-if="result?.policy_id"
-      :type="result.whitelist_hit ? 'success' : 'info'"
-      size="small"
-      effect="plain"
-      class="gc-item"
-    >
+    <!-- 白名单命中：中性 chip -->
+    <span v-if="result?.policy_id" class="gc-item">
       白名单{{ result.whitelist_hit ? '命中' : '未命中' }}
-    </el-tag>
+    </span>
 
-    <!-- 强制确认 -->
-    <el-tag v-if="result?.requires_confirm" type="warning" size="small" effect="plain" class="gc-item">
-      需确认
-    </el-tag>
+    <!-- 强制确认：中性 chip -->
+    <span v-if="result?.requires_confirm" class="gc-item">需确认</span>
 
-    <!-- 回滚预案 -->
-    <el-tag v-if="result?.requires_rollback_plan" type="info" size="small" effect="plain" class="gc-item">
-      有回滚预案
-    </el-tag>
+    <!-- 回滚预案：中性 chip -->
+    <span v-if="result?.requires_rollback_plan" class="gc-item">有回滚预案</span>
   </div>
 </template>
 
@@ -49,6 +38,20 @@ const props = defineProps({
 
 <style scoped>
 .guardrail-chip { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.gc-item { font-weight: 500; }
-.gc-main { font-weight: 600; }
+
+/* 总体结论：单色点 + 文字，不再使用 success/danger 彩色 tag */
+.gc-main { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: #111827; }
+.gc-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.gc-main.ok .gc-dot { background: #16a34a; }
+.gc-main.block .gc-dot { background: #dc2626; }
+
+/* 细节项：中性 chip（灰字 + 浅底 + 细边框） */
+.gc-item {
+  font-size: 12px; font-weight: 500; color: #4b5563;
+  background: var(--color-canvas-subtle);
+  border: 0.5px solid var(--color-border-default);
+  border-radius: 6px;
+  padding: 1px 8px;
+}
+.gc-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 </style>

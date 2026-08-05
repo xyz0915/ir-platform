@@ -1,15 +1,17 @@
 <template>
   <div class="hitl-console">
-    <el-empty v-if="!isAdmin" description="HITL 审批仅限管理员操作" :image-size="70" />
+    <div v-if="!isAdmin" class="hc-empty">
+      <p class="hc-empty-text">HITL 审批仅限管理员操作</p>
+    </div>
 
     <template v-else>
       <div class="hc-toolbar">
         <div class="hc-title">
           <el-icon><Stamp /></el-icon>
           待审批处置队列
-          <el-tag type="warning" size="small" effect="light">{{ store.pendingCount }} 条</el-tag>
+          <span class="hc-count">{{ store.pendingCount }} 条</span>
         </div>
-        <el-button size="small" :loading="store.loading" @click="refresh">
+        <el-button size="small" class="hc-btn-outline" :loading="store.loading" @click="refresh">
           <el-icon><Refresh /></el-icon> 刷新
         </el-button>
       </div>
@@ -17,7 +19,9 @@
       <div class="hc-body">
         <!-- 左：队列 -->
         <div class="hc-list" v-loading="store.loading">
-          <el-empty v-if="!store.loading && store.approvals.length === 0" description="暂无待审批处置" :image-size="60" />
+          <div v-if="!store.loading && store.approvals.length === 0" class="hc-empty">
+            <p class="hc-empty-text">暂无待审批处置</p>
+          </div>
 
           <div
             v-for="item in store.approvals"
@@ -105,8 +109,27 @@ function relativeTime(val) {
 <style scoped>
 .hitl-console { display: flex; flex-direction: column; height: 100%; }
 .hc-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.hc-title { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; color: var(--color-fg-default); }
-.hc-title .el-icon { color: var(--color-warning-fg, #d97706); }
+.hc-title { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; color: #111827; }
+.hc-title .el-icon { color: #111827; }
+.hc-count {
+  font-size: 12px; font-weight: 500; color: #6b7280;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--color-canvas-subtle);
+  border: 0.5px solid var(--color-border-default);
+  border-radius: 6px;
+  padding: 1px 8px;
+}
+.hc-btn-outline {
+  --el-button-bg-color: #fff;
+  --el-button-border-color: #d1d5db;
+  --el-button-text-color: #111827;
+  --el-button-hover-bg-color: #111827;
+  --el-button-hover-border-color: #111827;
+  --el-button-hover-text-color: #fff;
+  --el-button-active-bg-color: #1f2937;
+  --el-button-active-border-color: #1f2937;
+  --el-button-active-text-color: #fff;
+}
 .hc-body { flex: 1; display: flex; gap: 16px; min-height: 0; }
 .hc-list {
   flex: 0 0 340px;
@@ -115,8 +138,8 @@ function relativeTime(val) {
   flex-direction: column;
   gap: 8px;
   border: 1px solid var(--color-border-default);
-  border-radius: 12px;
-  padding: 10px;
+  border-radius: 10px;
+  padding: 12px;
   background: var(--color-canvas-default);
 }
 .hc-item {
@@ -127,19 +150,23 @@ function relativeTime(val) {
   background: var(--color-canvas-subtle);
   transition: all 0.15s;
 }
-.hc-item:hover { border-color: var(--color-accent-fg); }
-.hc-item.active { border-color: var(--color-accent-fg); background: var(--color-accent-subtle); }
+.hc-item:hover { border-color: #d1d5db; }
+.hc-item.active { border-color: #111827; background: var(--color-canvas-subtle); }
 .hc-item-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.hc-item-action { font-weight: 600; font-size: 13px; color: var(--color-fg-default); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hc-item-meta { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; font-size: 11px; color: var(--color-fg-subtle); }
+.hc-item-action { font-weight: 600; font-size: 13px; color: #111827; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hc-item-meta { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; font-size: 11px; color: #6b7280; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .hc-detail {
   flex: 1;
   min-width: 0;
   border: 1px solid var(--color-border-default);
-  border-radius: 12px;
+  border-radius: 10px;
   padding: 14px;
   background: var(--color-canvas-default);
   overflow-y: auto;
 }
+
+/* 自定义空状态：去大图标，居中灰字 */
+.hc-empty { display: flex; align-items: center; justify-content: center; padding: 48px 0; }
+.hc-empty-text { font-size: 13px; color: #9ca3af; margin: 0; }
 </style>

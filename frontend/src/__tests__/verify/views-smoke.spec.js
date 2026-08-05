@@ -130,14 +130,15 @@ beforeAll(() => {
 
 // 每个视图：组件 + 期望出现的关键文本
 const VIEWS = [
-  { name: 'M1 DashboardView', loader: () => import('@/views/agent-orchestration/DashboardView.vue'), expect: '编排总览' },
+  // 注：in-view 标题已随去 AI 感改造移除（布局头部为唯一标题源），断言改为仍在页面内的稳定文本
+  { name: 'M1 DashboardView', loader: () => import('@/views/agent-orchestration/DashboardView.vue'), expect: '近期运行' },
   { name: 'M2 AgentsView', loader: () => import('@/views/agent-orchestration/AgentsView.vue'), expect: '智能体' },
   { name: 'M3 PipelineRedesignView', loader: () => import('@/views/agent-orchestration/PipelineRedesignView.vue'), expect: '工作流编排' },
   { name: 'M4 ToolMcpView', loader: () => import('@/views/agent-orchestration/ToolMcpView.vue'), expect: '工具清单' },
   { name: 'M5 MemoryRagView', loader: () => import('@/views/agent-orchestration/MemoryRagView.vue'), expect: '长期记忆' },
   { name: 'M6 HitlConsoleView', loader: () => import('@/views/agent-orchestration/HitlConsoleView.vue'), expect: '待审批处置队列' },
-  { name: 'M7 GuardrailView', loader: () => import('@/views/agent-orchestration/GuardrailView.vue'), expect: '护栏与安全' },
-  { name: 'M9 SettingsView', loader: () => import('@/views/agent-orchestration/SettingsView.vue'), expect: '编排设置' },
+  { name: 'M7 GuardrailView', loader: () => import('@/views/agent-orchestration/GuardrailView.vue'), expect: '护栏策略' },
+  { name: 'M9 SettingsView', loader: () => import('@/views/agent-orchestration/SettingsView.vue'), expect: '多模型 Profile' },
 ]
 
 describe('智能体编排集成视图挂载冒烟', () => {
