@@ -90,7 +90,7 @@ const agentApi = {
     resume: (runId, approved, comment = '') => resumeRun(runId, approved, comment),
     getSSEUrl: (runId) => getPipelineSSEUrl(runId),
     getPresets: () => listPresets(),
-    createPreset: (name, description, agents) => createPreset(name, description, agents),
+    createPreset: (name, description, agents, options) => createPreset(name, description, agents, options),
     deletePreset: (presetId) => deletePreset(presetId),
     updatePreset: (id, data) => updatePreset(id, data),
     recordPresetUse: (presetId) => recordPresetUse(presetId),

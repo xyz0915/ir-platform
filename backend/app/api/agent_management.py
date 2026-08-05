@@ -443,6 +443,8 @@ def create_preset(
     请求体为自由字典，除 name / description / agents 外，支持可选元数据：
       - category: 分类（取证 / 分析 / 处置 / 其他），缺省 'other'
       - tags:     标签数组（list[str]），缺省 []
+      - status:   发布状态（draft / published），缺省 'draft'（A2 发布语义；
+                  发布按钮以 status='published' 创建，非法值回退 draft）
     author 自动取当前登录用户名（未登录则为空字符串）。
     """
     name = data.get("name", "")
@@ -450,6 +452,9 @@ def create_preset(
     agents = data.get("agents", [])
     category = data.get("category", "other")
     tags = data.get("tags", [])
+    status = data.get("status", "draft")
+    if status not in ("draft", "published"):
+        status = "draft"
     author = ""
     if current_user:
         author = current_user.get("username", "") if isinstance(current_user, dict) else str(current_user)
@@ -467,6 +472,7 @@ def create_preset(
             "author": author,
             "category": category,
             "tags": tags,
+            "status": status,
         })
     except Exception as exc:
         # 兜底：极小概率下的竞态（预检通过但并发写入仍冲突），仍给出 409 而非 500

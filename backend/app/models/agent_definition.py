@@ -210,20 +210,25 @@ class PipelinePresetModel:
         Args:
             data: 预设数据。支持字段：
                 name(必填), description, agents(必填, list[str]),
-                author, category, tags(list[str]), usage_count, last_used_at。
+                author, category, tags(list[str]), usage_count, last_used_at,
+                status('draft'/'published'，默认 draft；非法值回退 draft)。
                 缺失的元数据字段使用默认值。
         """
         agents = data.get("agents", [])
         agents_str = json.dumps(agents, ensure_ascii=False) if isinstance(agents, list) else str(agents)
         tags = data.get("tags", [])
         tags_str = json.dumps(tags, ensure_ascii=False) if isinstance(tags, list) else str(tags)
+        # A2 发布语义：status 白名单校验（draft / published），非法回退 draft
+        status = data.get("status", "draft")
+        if status not in ("draft", "published"):
+            status = "draft"
         with get_connection() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO pipeline_presets
                     (name, description, agents, author, category, tags,
-                     usage_count, last_used_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     usage_count, last_used_at, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     data["name"],
@@ -234,6 +239,7 @@ class PipelinePresetModel:
                     tags_str,
                     int(data.get("usage_count", 0) or 0),
                     data.get("last_used_at"),
+                    status,
                 ),
             )
             pid = cursor.lastrowid
@@ -302,7 +308,7 @@ class PipelinePresetModel:
         Returns:
             更新后的完整记录，或 None（记录不存在）。
         """
-        allowed = {"name", "description", "agents"}
+        allowed = {"name", "description", "agents", "status"}
         data: dict[str, Any] = {}
         for k in allowed:
             if k not in updates:
@@ -345,19 +351,20 @@ class PipelinePresetModel:
 
     @staticmethod
     def update_meta(preset_id: int, **kwargs: Any) -> Optional[dict]:
-        """更新预设元数据字段（白名单：category / tags / description）.
+        """更新预设元数据字段（白名单：category / tags / description / status）.
 
         与 update() 不同，该方法仅允许修改展示型元数据，避免误改
         name / agents 等结构性字段；tags 传入 list 时自动序列化为 JSON。
+        status 允许 draft/published 流转（A2 发布语义，非法回退 draft）。
 
         Args:
             preset_id: 预设主键 id。
-            **kwargs: 允许 category / tags / description 三个字段。
+            **kwargs: 允许 category / tags / description / status 四个字段。
 
         Returns:
             更新后的完整记录，或 None（记录不存在）。
         """
-        allowed = {"category", "tags", "description"}
+        allowed = {"category", "tags", "description", "status"}
         data: dict[str, Any] = {}
         for k in allowed:
             if k not in kwargs:

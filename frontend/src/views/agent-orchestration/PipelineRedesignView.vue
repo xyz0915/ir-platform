@@ -252,7 +252,11 @@ function onKeyDown(e) {
     onSaveAs()
   } else if (modKey && e.key === 'z') {
     e.preventDefault()
-    ElMessage.info('撤销功能开发中')
+    if (e.shiftKey) store.redo()
+    else store.undo()
+  } else if (modKey && e.key === 'y') {
+    e.preventDefault()
+    store.redo()
   } else if ((e.key === 'Delete' || e.key === 'Backspace') && store.selectedNodeId) {
     store.removeNode(store.selectedNodeId)
     ElMessage.info('节点已删除')
@@ -297,9 +301,10 @@ async function onPublish() {
     const { value: description } = await ElMessageBox.prompt('输入描述（可选）', '预设描述', {
       inputValue: '',
     })
-    const res = await agentApi.pipeline.createPreset(name, description, snapshot.nodes)
+    // A2 发布语义：发布 = 创建带 status='published' 的预设（后端无 PUT 路由，
+    // 不能走 updatePreset 流转；409 重试逻辑保留在 catch 中）
+    const res = await agentApi.pipeline.createPreset(name, description, snapshot.nodes, { status: 'published' })
     if (res.code === 0 || res.status === 201) {
-      // Plan B：由于后端无 status 字段，发布 = 另存为（前端 UX 区分）
       ElMessage.success('预设已发布')
       store.configDirty = false
     }

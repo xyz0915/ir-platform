@@ -76,9 +76,14 @@ export function listPresets() {
   return request.get('/agent-management/pipeline/presets')
 }
 
-/** 保存管道为预置模板。 */
-export function createPreset(name, description, agents) {
-  return request.post('/agent-management/pipeline/presets', { name, description, agents })
+/** 保存管道为预置模板。
+ * @param {string} name 预设名称
+ * @param {string} description 描述
+ * @param {Array} agents 节点/Agent 列表
+ * @param {object} [options] 附加元数据（A2 发布语义：{ status: 'published' } 等）
+ */
+export function createPreset(name, description, agents, options = {}) {
+  return request.post('/agent-management/pipeline/presets', { name, description, agents, ...options })
 }
 
 /** 删除预置模板。 */

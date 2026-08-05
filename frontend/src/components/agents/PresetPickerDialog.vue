@@ -63,6 +63,11 @@
             <div class="card-main">
               <div class="card-name-row">
                 <h4 class="card-name" :title="preset.name">{{ preset.name }}</h4>
+                <span
+                  v-if="preset.status === 'published'"
+                  class="published-badge"
+                  title="已发布，可用于生产环境"
+                >已发布</span>
                 <span v-if="selectedId === preset.id" class="selected-check">✓</span>
               </div>
               <div class="card-meta">
@@ -438,6 +443,17 @@ function formatDate(dateStr) {
   font-weight: 700;
   font-size: 14px;
   flex-shrink: 0;
+}
+
+.published-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 1;
+  color: #047857;
+  background: #d1fae5;
+  border: 1px solid #a7f3d0;
+  border-radius: 999px;
+  padding: 3px 7px;
 }
 
 .card-meta {
