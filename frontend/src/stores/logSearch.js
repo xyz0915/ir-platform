@@ -3,11 +3,13 @@
 import { defineStore } from 'pinia'
 import { searchLogs, getTrend } from '@/api/logs'
 import request from '@/api/index'
+import { quickRangeValue } from '@/utils/time'
 
 export const useLogSearchStore = defineStore('logSearch', {
   state: () => ({
     // 搜索条件
     keyword: '',
+    dsl: '',                    // P0-1 字段 DSL（非空时优先于 keyword）
     selectedCaseId: null,
     selectedHostId: null,
 
@@ -17,6 +19,11 @@ export const useLogSearchStore = defineStore('logSearch', {
     filterAttackStage: '',
     filterSourceCollector: '',
     filterStatus: '',
+
+    // 时间范围（P1-1）：'' | '5m' | '1h' | '24h' | '7d' | 'custom'
+    quickRange: '24h',
+    startTime: '',
+    endTime: '',
 
     // 搜索范围（P2 统一跨表检索）
     searchScope: 'events',  // events / imports / all
@@ -84,6 +91,26 @@ export const useLogSearchStore = defineStore('logSearch', {
     },
 
     /**
+     * 应用快捷时间范围（P1-1）。
+     * @param {string} key '' | '5m' | '1h' | '24h' | '7d' | 'custom'
+     */
+    applyQuickRange(key) {
+      this.quickRange = key
+      if (key === 'custom') {
+        // 自定义时间保留用户已填值
+        return
+      }
+      if (!key) {
+        this.startTime = ''
+        this.endTime = ''
+        return
+      }
+      const { start, end } = quickRangeValue(key)
+      this.startTime = start
+      this.endTime = end
+    },
+
+    /**
      * 执行搜索
      */
     async search() {
@@ -92,12 +119,16 @@ export const useLogSearchStore = defineStore('logSearch', {
       try {
         const params = {
           keyword: this.keyword,
+          dsl: this.dsl || undefined,
           host_id: this.selectedHostId || undefined,
+          case_id: this.selectedCaseId || undefined,
           event_type: this.filterEventType || undefined,
           severity: this.filterSeverity || undefined,
           attack_stage: this.filterAttackStage || undefined,
           source_collector: this.filterSourceCollector || undefined,
           status: this.filterStatus || undefined,
+          start_time: this.startTime || undefined,
+          end_time: this.endTime || undefined,
           page: this.page,
           page_size: this.pageSize,
         }

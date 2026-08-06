@@ -13,6 +13,10 @@
         </div>
       </div>
       <div class="pg-hdr-actions">
+        <label class="masked-toggle" title="开启后导出时对 IP/用户名/路径等字段脱敏">
+          <input type="checkbox" v-model="exportMasked" />
+          <span>脱敏导出</span>
+        </label>
         <button class="btn btn-default btn-sm" @click="exportResults('json')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           导出 JSON
@@ -88,12 +92,41 @@
       <select class="fi" v-model="store.filterStatus" @change="store.search()" style="width:120px;">
         <option value="">全部状态</option>
         <option value="pending">待处理</option>
+        <option value="triaging">分级中</option>
         <option value="investigating">调查中</option>
         <option value="resolved">已解决</option>
-        <option value="dismissed">已忽略</option>
+        <option value="rejected">已驳回</option>
       </select>
       <button class="btn btn-ghost btn-sm" @click="resetFilters" style="margin-left:8px;">重置筛选</button>
       <span style="flex:1"></span>
+
+      <!-- P1-1 时间范围选择器 -->
+      <span style="font-size:12px;color:var(--color-fg-subtle);margin-right:4px;">时间</span>
+      <select class="fi" v-model="store.quickRange" @change="onQuickRangeChange" style="width:110px;">
+        <option value="">全部</option>
+        <option value="5m">最近 5 分钟</option>
+        <option value="1h">最近 1 小时</option>
+        <option value="24h">最近 24 小时</option>
+        <option value="7d">最近 7 天</option>
+        <option value="custom">自定义</option>
+      </select>
+      <input
+        v-if="store.quickRange === 'custom'"
+        class="fi"
+        type="datetime-local"
+        v-model="customStart"
+        @change="applyCustomRange"
+        style="width:180px;"
+      />
+      <span v-if="store.quickRange === 'custom'" style="color:var(--color-fg-subtle);">至</span>
+      <input
+        v-if="store.quickRange === 'custom'"
+        class="fi"
+        type="datetime-local"
+        v-model="customEnd"
+        @change="applyCustomRange"
+        style="width:180px;"
+      />
       <span style="font-size:12px;color:var(--color-fg-subtle);margin-right:4px;">范围</span>
       <select class="fi" v-model="store.searchScope" @change="store.search()" style="width:100px;">
         <option value="events">安全事件</option>
@@ -155,6 +188,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useLogSearchStore } from '@/stores/logSearch'
 import { exportSearch } from '@/api/logs'
+import { formatLocalTime } from '@/utils/time'
 import CaseHostSelector from '@/components/logs/CaseHostSelector.vue'
 import LogSearchBar from '@/components/logs/LogSearchBar.vue'
 import LogResultList from '@/components/logs/LogResultList.vue'
@@ -171,6 +205,13 @@ const detailRecord = ref(null)
 // 保存搜索条件
 const showSaveDialog = ref(false)
 const saveForm = ref({ name: '', query: '' })
+
+// P0-4 脱敏导出开关
+const exportMasked = ref(false)
+
+// P1-1 自定义时间（datetime-local 输入值）
+const customStart = ref('')
+const customEnd = ref('')
 
 // 当前选中的案件名/主机名
 const currentCaseName = computed(() => {
@@ -211,6 +252,9 @@ onMounted(async () => {
     }
   }
 
+  // P1-1 默认时间范围：最近 24h（修复"检索固定全量"问题）
+  store.applyQuickRange('24h')
+
   // 加载趋势数据
   await store.loadTrendData()
   // 自动搜索
@@ -247,14 +291,23 @@ function onSwitchCase(c) {
   store.page = 1
 }
 
-function onSearch(keyword) {
-  store.keyword = keyword
+// P0-1 doSearch 分流：{dsl} 或 {keyword}
+function onSearch(payload) {
+  if (payload && payload.dsl !== undefined) {
+    store.dsl = payload.dsl
+    store.keyword = ''
+  } else {
+    store.keyword = (payload && payload.keyword) || ''
+    store.dsl = ''
+  }
   store.page = 1
   fetchData()
 }
 
 function onQuickFilter(tag) {
-  store.keyword = tag.query || ''
+  // 快捷筛选为合法 DSL → 走 dsl 路由
+  store.dsl = tag.query || ''
+  store.keyword = ''
   store.page = 1
   fetchData()
 }
@@ -266,6 +319,28 @@ function resetFilters() {
   store.filterSourceCollector = ''
   store.filterStatus = ''
   store.searchScope = 'events'
+  store.page = 1
+  store.search()
+}
+
+// P1-1 时间范围切换
+function onQuickRangeChange() {
+  if (store.quickRange === 'custom') {
+    // 自定义：回填当前值
+    if (!customStart.value && store.startTime) customStart.value = store.startTime
+    if (!customEnd.value && store.endTime) customEnd.value = store.endTime
+    return
+  }
+  store.applyQuickRange(store.quickRange)
+  store.page = 1
+  store.search()
+}
+
+// P1-1 自定义时间应用（datetime-local → 'YYYY-MM-DD HH:mm:ss'）
+function applyCustomRange() {
+  store.quickRange = 'custom'
+  store.startTime = customStart.value ? formatLocalTime(customStart.value) : ''
+  store.endTime = customEnd.value ? formatLocalTime(customEnd.value) : ''
   store.page = 1
   store.search()
 }
@@ -288,10 +363,12 @@ async function onGenerateEvent(item) {
   }
 }
 
+// P0-4 导出：传全量参数（含 case_id/attack_stage/source_collector/status/dsl/时间/masked）
 async function exportResults(format) {
   try {
     const blob = await exportSearch({
       keyword: store.keyword,
+      dsl: store.dsl || undefined,
       case_id: store.selectedCaseId,
       host_id: store.selectedHostId,
       event_type: store.filterEventType || undefined,
@@ -299,6 +376,9 @@ async function exportResults(format) {
       attack_stage: store.filterAttackStage || undefined,
       source_collector: store.filterSourceCollector || undefined,
       status: store.filterStatus || undefined,
+      start_time: store.startTime || undefined,
+      end_time: store.endTime || undefined,
+      masked: exportMasked.value ? 1 : 0,
       format,
     })
     const url = URL.createObjectURL(blob)
@@ -317,7 +397,7 @@ function saveSearchCondition() {
   const saved = JSON.parse(localStorage.getItem('ir_saved_searches') || '[]')
   saved.push({
     name: saveForm.value.name,
-    query: store.keyword,
+    query: store.keyword || store.dsl,
     caseId: store.selectedCaseId,
     hostId: store.selectedHostId,
     savedAt: new Date().toISOString(),
@@ -430,6 +510,23 @@ function saveSearchCondition() {
 .btn:disabled {
   opacity: 0.4;
   pointer-events: none;
+}
+.masked-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 8px;
+  font-size: 11px;
+  color: var(--color-fg-muted);
+  cursor: pointer;
+  user-select: none;
+  border: 0.5px solid var(--color-border-default);
+  border-radius: var(--r-btn, 6px);
+  background: var(--color-canvas-default);
+}
+.masked-toggle input {
+  accent-color: var(--color-accent-fg);
 }
 
 /* ── Filter Bar (P0-2) ── */

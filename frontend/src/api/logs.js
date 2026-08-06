@@ -79,6 +79,11 @@ export async function exportSearch(params) {
   return response
 }
 
+/** 导出审计列表（admin only，P0-4） */
+export function getExportAudits(params) {
+  return request.get(`${BASE_V2}/export-audits`, { params })
+}
+
 /** 一键生成 SecurityEvent */
 export function toEvent(id) {
   return request.post(`${BASE_V2}/imports/${id}/to-event`)

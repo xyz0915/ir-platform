@@ -17,7 +17,7 @@
         </div>
         <el-input
           v-model="inputText"
-          placeholder='输入关键字或高级搜索语法, 如 ip=="1.1.1.1"'
+          :placeholder="placeholder"
           size="small"
           :style="{ border: 'none', boxShadow: 'none' }"
           @focus="inputFocused = true"
@@ -28,7 +28,7 @@
       <el-button type="primary" size="small" @click="doSearch">搜索</el-button>
     </div>
 
-    <!-- 常用字段标签 -->
+    <!-- 语法帮助 + 常用字段标签（P0-1 真实语法提示） -->
     <div class="field-tags">
       <span class="field-label">字段:</span>
       <el-tag
@@ -40,9 +40,24 @@
       >
         [{{ field }}]
       </el-tag>
+      <el-tooltip placement="top" width="320">
+        <template #content>
+          <div class="syntax-help">
+            <p><b>字段语法：</b><code>field op value</code></p>
+            <p>操作符：<code>==</code> <code>!=</code> <code>~</code>(包含)
+              <code>in</code> <code>&gt;=</code> <code>&lt;=</code> <code>between</code></p>
+            <p>组合：<code>and</code> <code>or</code> <code>not</code> <code>( )</code></p>
+            <p>字段：severity / status / source_ip / user_name / process_name /
+              command_line / event_type / source_collector / timestamp / keyword 等</p>
+            <p>示例：<code>severity=="high" or source_ip~"1.1.1.1"</code></p>
+            <p>裸词（如 <code>powershell -enc</code>）按关键字检索</p>
+          </div>
+        </template>
+        <span class="syntax-help-link">语法帮助</span>
+      </el-tooltip>
     </div>
 
-    <!-- 快捷筛选标签 -->
+    <!-- 快捷筛选标签（P0-1 合法 DSL） -->
     <div class="quick-tags">
       <span class="field-label">快捷:</span>
       <el-tag
@@ -88,6 +103,7 @@
 
 <script setup>
 import { ref, computed } from 'vue'
+import { todayStart } from '@/utils/time'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
@@ -104,16 +120,19 @@ const inputText = ref(props.modelValue)
 const inputFocused = ref(false)
 const searchTokens = ref([])
 
-// 常用字段
-const commonFields = ['ip', 'pid', 'name', 'severity', 'process', 'ioc', 'startup']
+// P0-1 真实语法提示占位符
+const placeholder = '支持字段语法: severity=="high" or source_ip~"1.1.1.1"'
 
-// 快捷筛选
+// 常用字段（白名单）
+const commonFields = ['severity', 'status', 'source_ip', 'user_name', 'process_name', 'event_type', 'source_collector', 'timestamp']
+
+// 快捷筛选（P0-1 合法 DSL；今日新增动态生成）
 const quickFilters = [
-  { label: '高危未处理', type: 'danger', query: 'severity=="high" or severity=="critical"' },
-  { label: 'IOC 命中', type: 'danger', query: 'ioc~""' },
-  { label: '今日新增', type: 'warning', query: '' },  // 默认触发搜索
-  { label: '公网连接', type: 'warning', query: 'collector=="network"' },
-  { label: '可疑进程', type: 'info', query: 'process~"svchost" or process~"powershell"' },
+  { label: '高危未处理', type: 'danger', query: 'severity in ("high","critical") and status=="pending"' },
+  { label: 'IOC 命中', type: 'danger', query: 'event_type=="ioc_match"' },
+  { label: '公网连接', type: 'warning', query: 'source_collector~"network" or event_type=="network_outbound"' },
+  { label: '可疑进程', type: 'info', query: 'process_name~"svchost" or process_name~"powershell"' },
+  { label: '今日新增', type: 'warning', query: `timestamp>="${todayStart()}"` },
 ]
 
 // 趋势图最大值
@@ -138,9 +157,7 @@ function insertField(field) {
 
 function applyQuickFilter(tag) {
   emit('quick-filter', tag)
-  if (tag.query) {
-    inputText.value = tag.query
-  }
+  inputText.value = tag.query
   doSearch()
 }
 
@@ -148,9 +165,20 @@ function removeToken(idx) {
   searchTokens.value.splice(idx, 1)
 }
 
+// P0-1 doSearch 分流：含 DSL 操作符 → dsl 参数；否则纯 keyword
+const DSL_RE = /[=~]|\b(in|or|and|not)\b/i
+function isDsl(text) {
+  return DSL_RE.test(text || '')
+}
+
 function doSearch() {
-  emit('update:modelValue', inputText.value)
-  emit('search', inputText.value)
+  const text = inputText.value
+  emit('update:modelValue', text)
+  if (isDsl(text)) {
+    emit('search', { dsl: text })
+  } else {
+    emit('search', { keyword: text })
+  }
 }
 </script>
 
@@ -204,6 +232,26 @@ function doSearch() {
   font-size: 11px;
   color: var(--color-fg-muted);
   flex-shrink: 0;
+}
+
+.syntax-help-link {
+  font-size: 11px;
+  color: var(--color-accent-fg);
+  cursor: pointer;
+  margin-left: 4px;
+  text-decoration: underline dotted;
+}
+.syntax-help {
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--color-fg-default);
+}
+.syntax-help code {
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
 }
 
 /* 趋势图 */
