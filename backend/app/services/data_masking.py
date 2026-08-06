@@ -3,6 +3,7 @@
 提供 IP、路径、用户名、域名的脱敏功能，以及递归字典遍历脱敏.
 """
 
+import json
 import re
 from typing import Any
 
@@ -189,3 +190,28 @@ def _mask_string(text: str) -> str:
     text = _UNIX_PATH_PATTERN.sub(_replace_unix_path, text)
 
     return text
+
+
+def mask_evidence(evidence: Any) -> Any:
+    """对 evidence JSON 脱敏（P0-4 导出用）。
+
+    - dict/list → 递归脱敏后原样返回；
+    - JSON 字符串 → 先解析再脱敏再 dump（保持字符串类型）；
+    - 非 JSON 字符串 → 通用字符串模式脱敏（IP/路径/域名）。
+
+    Args:
+        evidence: evidence 列值（JSON 字符串或已解析对象）。
+
+    Returns:
+        脱敏后的值（类型与输入一致）。
+    """
+    if isinstance(evidence, str):
+        stripped = evidence.strip()
+        if not stripped:
+            return evidence
+        try:
+            parsed = json.loads(stripped)
+            return json.dumps(_mask_dict(parsed), ensure_ascii=False)
+        except json.JSONDecodeError:
+            return _mask_string(evidence)
+    return _mask_dict(evidence)

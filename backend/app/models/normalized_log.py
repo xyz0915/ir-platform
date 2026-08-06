@@ -76,8 +76,15 @@ class NormalizedLog:
                keyword: Optional[str] = None,
                date_from: Optional[str] = None, date_to: Optional[str] = None,
                log_source: Optional[str] = None,
-               sort: str = "timestamp DESC", page: int = 1, page_size: int = 50) -> dict:
-        """多维度检索日志."""
+               sort: str = "timestamp DESC", page: int = 1, page_size: int = 50,
+               allowed_host_ids: Optional[set[int]] = None) -> dict:
+        """多维度检索日志.
+
+        Args:
+            allowed_host_ids: ACL 可见主机集合（None=全量；空集合=WHERE 1=0）.
+        """
+        from app.services.time_utils import parse_client_time
+
         try:
             conditions = []
             params = []
@@ -85,6 +92,13 @@ class NormalizedLog:
             if host_id is not None:
                 conditions.append("host_id=?")
                 params.append(host_id)
+            if allowed_host_ids is not None:
+                if not allowed_host_ids:
+                    conditions.append("1=0")  # 空可见集合 → 无结果
+                else:
+                    placeholders = ",".join("?" for _ in allowed_host_ids)
+                    conditions.append(f"host_id IN ({placeholders})")
+                    params.extend(sorted(allowed_host_ids))
             if hostname:
                 conditions.append("hostname LIKE ?")
                 params.append(f"%{hostname}%")
@@ -125,10 +139,10 @@ class NormalizedLog:
                 params.extend([kw, kw, kw])
             if date_from:
                 conditions.append("timestamp >= ?")
-                params.append(date_from)
+                params.append(parse_client_time(date_from))
             if date_to:
                 conditions.append("timestamp <= ?")
-                params.append(date_to)
+                params.append(parse_client_time(date_to))
 
             where = " WHERE " + " AND ".join(conditions) if conditions else ""
 
@@ -147,11 +161,25 @@ class NormalizedLog:
             return {"items": [], "total": 0, "page": page, "page_size": page_size}
 
     @staticmethod
-    def get_stats(host_id: Optional[int] = None) -> dict:
-        """日志统计."""
+    def get_stats(host_id: Optional[int] = None, allowed_host_ids: Optional[set[int]] = None) -> dict:
+        """日志统计.
+
+        Args:
+            allowed_host_ids: ACL 可见主机集合（None=全量；空集合=返回空统计）.
+        """
         try:
-            where = " WHERE host_id=?" if host_id else ""
-            params = [host_id] if host_id else []
+            where_parts = []
+            params = []
+            if host_id:
+                where_parts.append("host_id=?")
+                params.append(host_id)
+            if allowed_host_ids is not None:
+                if not allowed_host_ids:
+                    return {"total": 0, "by_severity": {}, "by_type": {}, "top_ips": [], "top_users": []}
+                placeholders = ",".join("?" for _ in allowed_host_ids)
+                where_parts.append(f"host_id IN ({placeholders})")
+                params.extend(sorted(allowed_host_ids))
+            where = (" WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
             with get_connection() as conn:
                 total = conn.execute(
@@ -165,11 +193,11 @@ class NormalizedLog:
                     params
                 ).fetchall())
                 top_ips = [{"ip": r[0], "count": r[1]} for r in conn.execute(
-                    f"SELECT source_ip, COUNT(*) FROM normalized_logs WHERE source_ip<>''{(' AND host_id=?' if host_id else '')} GROUP BY source_ip ORDER BY COUNT(*) DESC LIMIT 10",
+                    f"SELECT source_ip, COUNT(*) FROM normalized_logs WHERE source_ip<>''{(' AND ' + ' AND '.join(where_parts)) if where_parts else ''} GROUP BY source_ip ORDER BY COUNT(*) DESC LIMIT 10",
                     params
                 ).fetchall()]
                 top_users = [{"user": r[0], "count": r[1]} for r in conn.execute(
-                    f"SELECT user_name, COUNT(*) FROM normalized_logs WHERE user_name<>''{(' AND host_id=?' if host_id else '')} GROUP BY user_name ORDER BY COUNT(*) DESC LIMIT 10",
+                    f"SELECT user_name, COUNT(*) FROM normalized_logs WHERE user_name<>''{(' AND ' + ' AND '.join(where_parts)) if where_parts else ''} GROUP BY user_name ORDER BY COUNT(*) DESC LIMIT 10",
                     params
                 ).fetchall()]
 
@@ -186,21 +214,34 @@ class NormalizedLog:
 
     @staticmethod
     def get_timeline(host_id: Optional[int] = None, interval: str = "hour",
-                     date_from: Optional[str] = None, date_to: Optional[str] = None) -> list:
-        """时间线聚合（使用 COALESCE 以 created_at 兜底空 timestamp）."""
+                     date_from: Optional[str] = None, date_to: Optional[str] = None,
+                     allowed_host_ids: Optional[set[int]] = None) -> list:
+        """时间线聚合（使用 COALESCE 以 created_at 兜底空 timestamp）.
+
+        Args:
+            allowed_host_ids: ACL 可见主机集合（None=全量；空集合=返回空）.
+        """
+        from app.services.time_utils import parse_client_time
+
         try:
             conditions = []
             params = []
             if host_id is not None:
                 conditions.append("host_id=?")
                 params.append(host_id)
+            if allowed_host_ids is not None:
+                if not allowed_host_ids:
+                    return []
+                placeholders = ",".join("?" for _ in allowed_host_ids)
+                conditions.append(f"host_id IN ({placeholders})")
+                params.extend(sorted(allowed_host_ids))
             time_col = "COALESCE(NULLIF(timestamp,''), created_at)"
             if date_from:
                 conditions.append(f"{time_col} >= ?")
-                params.append(date_from)
+                params.append(parse_client_time(date_from))
             if date_to:
                 conditions.append(f"{time_col} <= ?")
-                params.append(date_to)
+                params.append(parse_client_time(date_to))
 
             where = " AND ".join(conditions)
             where_clause = f" WHERE {where}" if where else ""
@@ -240,18 +281,23 @@ class NormalizedLog:
             return []
 
     @staticmethod
-    def get_session(logon_session: str) -> list:
-        """按 Logon Session 查询所有事件."""
-        return NormalizedLog.search(logon_session=logon_session, sort="timestamp ASC")["items"]
+    def get_session(logon_session: str, allowed_host_ids: Optional[set[int]] = None) -> list:
+        """按 Logon Session 查询所有事件（ACL 注入可选）。"""
+        return NormalizedLog.search(
+            logon_session=logon_session, sort="timestamp ASC",
+            allowed_host_ids=allowed_host_ids,
+        )["items"]
 
     @staticmethod
-    def pivot(field: str, value: str, host_id: Optional[int] = None) -> list:
+    def pivot(field: str, value: str, host_id: Optional[int] = None,
+              allowed_host_ids: Optional[set[int]] = None) -> list:
         """点击跳转聚合.
 
         Args:
             field: source_ip | user_name | process_name | event_type | hostname
             value: 筛选值
             host_id: 可选项，限定主机范围
+            allowed_host_ids: ACL 可见主机集合（None=全量；空集合=返回空）.
         """
         try:
             conditions = [f"{field}=?"]
@@ -259,6 +305,12 @@ class NormalizedLog:
             if host_id is not None:
                 conditions.append("host_id=?")
                 params.append(host_id)
+            if allowed_host_ids is not None:
+                if not allowed_host_ids:
+                    return []
+                placeholders = ",".join("?" for _ in allowed_host_ids)
+                conditions.append(f"host_id IN ({placeholders})")
+                params.extend(sorted(allowed_host_ids))
             where = " AND ".join(conditions)
 
             with get_connection() as conn:
@@ -276,14 +328,25 @@ class NormalizedLog:
 
     @staticmethod
     def get_brute_force(min_attempts: int = 10, window_minutes: int = 5,
-                        host_id: Optional[int] = None) -> list:
-        """暴破攻击检测."""
+                        host_id: Optional[int] = None,
+                        allowed_host_ids: Optional[set[int]] = None) -> list:
+        """暴破攻击检测.
+
+        Args:
+            allowed_host_ids: ACL 可见主机集合（None=全量；空集合=返回空）.
+        """
         try:
             conditions = ["event_id=4625"]
             params = []
             if host_id is not None:
                 conditions.append("host_id=?")
                 params.append(host_id)
+            if allowed_host_ids is not None:
+                if not allowed_host_ids:
+                    return []
+                placeholders = ",".join("?" for _ in allowed_host_ids)
+                conditions.append(f"host_id IN ({placeholders})")
+                params.extend(sorted(allowed_host_ids))
 
             with get_connection() as conn:
                 rows = conn.execute(

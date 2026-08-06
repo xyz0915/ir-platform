@@ -182,6 +182,7 @@ def list_imports(
     end_time: str | None = None,
     page: int = 1,
     page_size: int = 20,
+    allowed_host_ids: set[int] | None = None,
 ) -> dict:
     """分页查询导入记录列表.
 
@@ -189,32 +190,42 @@ def list_imports(
         case_id: 按案件筛选.
         host_id: 按主机筛选.
         collector_type: 按采集器类型筛选.
-        start_time: 起始时间（ISO 格式）.
+        start_time: 起始时间（兼容 T/Z/毫秒格式）.
         end_time: 截止时间（ISO 格式）.
         page: 页码（从 1 开始）.
         page_size: 每页条数.
+        allowed_host_ids: ACL 可见主机集合（None=全量；空集合=WHERE 1=0）.
 
     Returns:
         { total, page, page_size, items }.
     """
+    from app.services.time_utils import parse_client_time
+
     conditions: list[str] = []
     params: list[Any] = []
 
     if case_id is not None:
-        conditions.append("ai.case_id = ?")
+        conditions.append("ai.host_id IN (SELECT id FROM hosts WHERE case_id=?)")
         params.append(case_id)
     if host_id is not None:
         conditions.append("ai.host_id = ?")
         params.append(host_id)
+    if allowed_host_ids is not None:
+        if not allowed_host_ids:
+            conditions.append("1=0")  # 空可见集合 → 无结果
+        else:
+            placeholders = ",".join("?" for _ in allowed_host_ids)
+            conditions.append(f"ai.host_id IN ({placeholders})")
+            params.extend(sorted(allowed_host_ids))
     if collector_type:
         conditions.append("ai.collector_type = ?")
         params.append(collector_type)
     if start_time:
         conditions.append("ai.imported_at >= ?")
-        params.append(start_time)
+        params.append(parse_client_time(start_time))
     if end_time:
         conditions.append("ai.imported_at <= ?")
-        params.append(end_time)
+        params.append(parse_client_time(end_time))
 
     where_clause = " AND ".join(conditions) if conditions else "1=1"
     offset = (page - 1) * page_size
@@ -325,6 +336,7 @@ def search(
     end_time: str | None = None,
     page: int = 1,
     page_size: int = 20,
+    allowed_host_ids: set[int] | None = None,
 ) -> dict:
     """全文检索 + 结构化筛选.
 
@@ -333,14 +345,17 @@ def search(
         case_id: 按案件筛选.
         host_id: 按主机筛选.
         collector_type: 按采集器类型筛选.
-        start_time: 起始时间.
+        start_time: 起始时间（兼容 T/Z/毫秒格式）.
         end_time: 截止时间.
         page: 页码.
         page_size: 每页条数.
+        allowed_host_ids: ACL 可见主机集合（None=全量；空集合=WHERE 1=0）.
 
     Returns:
         { total, page, page_size, elapsed_ms, items }.
     """
+    from app.services.time_utils import parse_client_time
+
     start_ts = time.time()
     conditions: list[str] = []
     params: list[Any] = []
@@ -364,15 +379,22 @@ def search(
     if host_id is not None:
         conditions.append("ai.host_id = ?")
         params.append(host_id)
+    if allowed_host_ids is not None:
+        if not allowed_host_ids:
+            conditions.append("1=0")  # 空可见集合 → 无结果
+        else:
+            placeholders = ",".join("?" for _ in allowed_host_ids)
+            conditions.append(f"ai.host_id IN ({placeholders})")
+            params.extend(sorted(allowed_host_ids))
     if collector_type:
         conditions.append("ai.collector_type = ?")
         params.append(collector_type)
     if start_time:
         conditions.append("ai.imported_at >= ?")
-        params.append(start_time)
+        params.append(parse_client_time(start_time))
     if end_time:
         conditions.append("ai.imported_at <= ?")
-        params.append(end_time)
+        params.append(parse_client_time(end_time))
 
     where_clause = " AND ".join(conditions) if conditions else "1=1"
     offset = (page - 1) * page_size
@@ -404,26 +426,36 @@ def search(
     return {"total": total, "page": page, "page_size": page_size, "elapsed_ms": elapsed_ms, "items": items}
 
 
-def get_trend_data(hours: int = 24) -> list[dict]:
+def get_trend_data(hours: int = 24, allowed_host_ids: set[int] | None = None) -> list[dict]:
     """获取日志量趋势数据（按小时聚合）.
 
     Args:
         hours: 回溯小时数，默认 24.
+        allowed_host_ids: ACL 可见主机集合（None=全量；空集合=返回空）.
 
     Returns:
         每小时日志量列表 [{ hour: "2026-07-14 10:00", count: 5 }].
     """
     start = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+    conditions = ["imported_at >= ?"]
+    params: list[Any] = [start]
+    if allowed_host_ids is not None:
+        if not allowed_host_ids:
+            return []
+        placeholders = ",".join("?" for _ in allowed_host_ids)
+        conditions.append(f"host_id IN ({placeholders})")
+        params.extend(sorted(allowed_host_ids))
+    where_clause = " AND ".join(conditions)
     with get_connection() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT strftime('%Y-%m-%d %H:00', imported_at) as hour,
                    COUNT(*) as count
             FROM agent_imports
-            WHERE imported_at >= ?
+            WHERE {where_clause}
             GROUP BY hour
             ORDER BY hour ASC
             """,
-            (start,),
+            params,
         ).fetchall()
     return [{"hour": r["hour"], "count": r["count"]} for r in rows]
