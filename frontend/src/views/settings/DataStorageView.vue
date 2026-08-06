@@ -6,22 +6,10 @@
 
     <!-- 统计卡片 -->
     <div class="stats-cards">
-      <div class="stat-card">
-        <div class="stat-value">{{ stats.eventCount.toLocaleString() }}</div>
-        <div class="stat-label">事件总数</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value">{{ stats.diskUsage }}</div>
-        <div class="stat-label">磁盘使用</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value">{{ stats.uploadSize }}</div>
-        <div class="stat-label">上传文件大小</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value">{{ stats.retentionDays }}</div>
-        <div class="stat-label">保留天数</div>
-      </div>
+      <SettingsStatCard label="事件总数" :value="stats.eventCount.toLocaleString()" :icon="Document" />
+      <SettingsStatCard label="磁盘使用" :value="stats.diskUsage" :icon="Coin" />
+      <SettingsStatCard label="上传文件大小" :value="stats.uploadSize" :icon="Files" />
+      <SettingsStatCard label="保留天数" :value="stats.retentionDays" unit="天" :icon="Timer" />
     </div>
 
     <!-- 配置项 -->
@@ -64,7 +52,9 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Document, Coin, Files, Timer } from '@element-plus/icons-vue'
 import { getSystemSettings, updateSystemSetting } from '@/api/settings'
+import SettingsStatCard from '@/components/settings/SettingsStatCard.vue'
 
 const saving = ref(false)
 const config = reactive({
@@ -158,34 +148,14 @@ onMounted(() => {
 .page-header h2 {
   margin: 0;
   font-size: 20px;
-  font-weight: 600;
+  font-weight: 500;
+  color: var(--color-fg-default, #111111);
 }
 
 .stats-cards {
   display: flex;
   gap: 16px;
-  margin-bottom: 20px;
-}
-
-.stat-card {
-  flex: 1;
-  padding: 20px;
-  background: var(--color-canvas-default, #fff);
-  border: 1px solid var(--color-border-default, #e5e7eb);
-  border-radius: 8px;
-  text-align: center;
-}
-
-.stat-value {
-  font-size: 24px;
-  font-weight: 700;
-  color: var(--color-fg-default, #111827);
-}
-
-.stat-label {
-  font-size: 13px;
-  color: var(--color-fg-muted, #6b7280);
-  margin-top: 4px;
+  margin-bottom: 24px;
 }
 
 .config-card,
@@ -196,7 +166,8 @@ onMounted(() => {
 .form-hint {
   margin-left: 12px;
   font-size: 12px;
-  color: var(--color-fg-muted, #9ca3af);
+  font-weight: 400;
+  color: var(--color-fg-subtle, #888888);
 }
 
 .config-actions {

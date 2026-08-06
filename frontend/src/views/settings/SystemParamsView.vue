@@ -93,7 +93,7 @@
       :close-on-click-modal="false"
     >
       <el-alert type="error" :closable="false" show-icon style="margin-bottom: 12px">
-        <template #title>⚠ 此操作不可撤销</template>
+        <template #title>此操作不可撤销</template>
         将<strong>永久删除</strong>该案件及其全部主机、日志、告警、安全事件、AI 分析、报告与审计痕迹（清案审计除外），<strong>不可恢复</strong>。请确认已获得合规授权。
       </el-alert>
 
@@ -269,7 +269,8 @@ async function confirmPurge() {
 .page-header h2 {
   margin: 0;
   font-size: 20px;
-  font-weight: 600;
+  font-weight: 500;
+  color: var(--color-fg-default, #111111);
 }
 
 .param-key {
@@ -288,7 +289,8 @@ async function confirmPurge() {
 
 .purge-title {
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 500;
+  color: var(--color-fg-default, #111111);
 }
 
 .purge-row {
@@ -300,27 +302,29 @@ async function confirmPurge() {
 
 .purge-option-sub {
   float: right;
-  color: #999;
+  color: var(--color-fg-subtle, #888888);
   font-size: 12px;
+  font-weight: 400;
 }
 
 .purge-preview {
-  border: 1px solid var(--el-border-color, #ebeef5);
-  border-radius: 6px;
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  border-radius: var(--r-sm, 6px);
   padding: 8px 12px;
   margin-bottom: 4px;
 }
 
 .purge-preview-head {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
+  color: var(--color-fg-default, #111111);
   margin-bottom: 8px;
 }
 
 .purge-preview-total {
   text-align: right;
   font-size: 12px;
-  color: #909399;
+  color: var(--color-fg-subtle, #888888);
   margin-top: 6px;
 }
 </style>

@@ -6,18 +6,9 @@
 
     <!-- 统计卡片 -->
     <div class="stats-cards">
-      <div class="stat-card">
-        <div class="stat-value">{{ stats.total }}</div>
-        <div class="stat-label">Agent 总数</div>
-      </div>
-      <div class="stat-card online">
-        <div class="stat-value">{{ stats.online }}</div>
-        <div class="stat-label">在线</div>
-      </div>
-      <div class="stat-card offline">
-        <div class="stat-value">{{ stats.offline }}</div>
-        <div class="stat-label">离线</div>
-      </div>
+      <SettingsStatCard label="Agent 总数" :value="stats.total" :icon="Monitor" />
+      <SettingsStatCard label="在线" :value="stats.online" :icon="CircleCheck" />
+      <SettingsStatCard label="离线" :value="stats.offline" :icon="CircleClose" />
     </div>
 
     <!-- Agent 列表 -->
@@ -28,7 +19,7 @@
       <el-table-column label="状态" width="100">
         <template #default="{ row }">
           <span :class="['status-dot', row.status === 'online' ? 'online' : 'offline']" />
-          <span :style="{ color: row.status === 'online' ? '#10b981' : '#ef4444' }">
+          <span class="status-text">
             {{ row.status === 'online' ? '在线' : '离线' }}
           </span>
         </template>
@@ -58,7 +49,9 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { Monitor, CircleCheck, CircleClose } from '@element-plus/icons-vue'
 import agentApi from '@/api/agent'
+import SettingsStatCard from '@/components/settings/SettingsStatCard.vue'
 
 const loading = ref(false)
 const agentList = ref([])
@@ -121,58 +114,39 @@ onMounted(() => {
 .page-header h2 {
   margin: 0;
   font-size: 20px;
-  font-weight: 600;
+  font-weight: 500;
+  color: var(--color-fg-default, #111111);
 }
 
 .stats-cards {
   display: flex;
   gap: 16px;
-  margin-bottom: 20px;
+  margin-bottom: 24px;
 }
 
-.stat-card {
-  flex: 1;
-  padding: 20px;
-  background: var(--color-canvas-default, #fff);
-  border: 1px solid var(--color-border-default, #e5e7eb);
-  border-radius: 8px;
-  text-align: center;
-}
-
-.stat-value {
-  font-size: 28px;
-  font-weight: 700;
-  color: var(--color-fg-default, #111827);
-}
-
-.stat-label {
-  font-size: 13px;
-  color: var(--color-fg-muted, #6b7280);
-  margin-top: 4px;
-}
-
-.stat-card.online .stat-value {
-  color: #10b981;
-}
-
-.stat-card.offline .stat-value {
-  color: #ef4444;
-}
-
+/* 状态点：在线使用真实状态色（低饱和），离线使用中性灰，不再使用彩色文字 */
 .status-dot {
   display: inline-block;
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  margin-right: 6px;
+  margin-right: 8px;
+  vertical-align: middle;
 }
 
 .status-dot.online {
-  background: #10b981;
+  background: var(--color-success-fg, #3f8f5b);
 }
 
 .status-dot.offline {
-  background: #ef4444;
+  background: var(--color-fg-light, #b0b0b0);
+}
+
+.status-text {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--color-fg-default, #111111);
+  vertical-align: middle;
 }
 
 .pagination-wrap {

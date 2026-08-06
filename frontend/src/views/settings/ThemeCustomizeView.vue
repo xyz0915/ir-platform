@@ -42,7 +42,7 @@
           <div class="theme-desc">自由调整品牌色、背景、文字、边框等核心颜色</div>
         </div>
         <div v-if="themeStore.themeName === 'custom'" class="theme-checked">
-          <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="8" fill="#d4a54a"/><path d="M5 8l2 2 4-4" stroke="#fff" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="8" :fill="customAccent"/><path d="M5 8l2 2 4-4" stroke="#fff" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </div>
       </div>
 
@@ -65,40 +65,52 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import { useThemeStore } from '@/stores/theme'
 import { THEME_PRESETS, CUSTOMIZABLE_COLORS } from '@/config/themes'
+
 const themeStore = useThemeStore()
+
+/**
+ * 自定义主题选中标记的填充色。
+ * 跟随用户自选的品牌色，而非写死的固定色值，保证主题一致性。
+ * @type {import('vue').ComputedRef<string>}
+ */
+const customAccent = computed(() => {
+  const colors = themeStore.customColors || {}
+  return colors['--color-accent-fg'] || '#2563eb'
+})
 </script>
 
 <style scoped>
 .theme-customize { max-width: 720px; }
-.section-title { font-size: 14px; font-weight: 500; color: var(--color-text-primary, #111); margin-bottom: 14px; }
+.section-title { font-size: 14px; font-weight: 500; color: var(--color-fg-default, #111111); margin-bottom: 16px; }
 .theme-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
 .theme-card {
-  position: relative; border-radius: 10px; border: 1.5px solid var(--color-border-secondary, #e0e0e0);
+  position: relative; border-radius: var(--r-card, 10px); border: 0.5px solid var(--color-border-default, #e5e5e5);
   overflow: hidden; cursor: pointer; transition: border-color 0.15s;
-  background: var(--color-background-primary, #fff);
+  background: var(--color-canvas-default, #ffffff);
 }
-.theme-card:hover { border-color: var(--color-text-info, #409eff); }
+.theme-card:hover { border-color: var(--color-border-strong, #d0d0d0); }
 .theme-card.active { border-color: var(--color-accent-fg, #2563eb); }
 .preview-strip { height: 64px; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
 .preview-nav { height: 16px; border-radius: 4px; display: flex; align-items: center; gap: 6px; padding: 0 6px; }
 .preview-body { flex: 1; display: flex; align-items: center; justify-content: center; }
 .preview-card { width: 60%; height: 20px; border-radius: 4px; }
 .theme-info { padding: 10px 10px 12px; }
-.theme-name { font-size: 13px; font-weight: 500; color: var(--color-text-primary, #111); }
-.theme-name-en { font-size: 11px; color: var(--color-text-tertiary, #888); margin-bottom: 4px; }
-.theme-desc { font-size: 11px; color: var(--color-text-tertiary, #888); line-height: 1.4; }
+.theme-name { font-size: 13px; font-weight: 500; color: var(--color-fg-default, #111111); }
+.theme-name-en { font-size: 11px; color: var(--color-fg-subtle, #888888); margin-bottom: 4px; }
+.theme-desc { font-size: 11px; color: var(--color-fg-subtle, #888888); line-height: 1.4; }
 .theme-checked { position: absolute; top: 8px; right: 8px; }
-.custom-section { border-radius: 10px; border: 1.5px solid var(--color-border-secondary, #e0e0e0); overflow: hidden; }
-.custom-section.expanded { border-color: var(--color-accent-fg, #d4a54a); }
-.custom-trigger { display: flex; align-items: center; gap: 14px; padding: 16px; cursor: pointer; background: var(--color-background-primary, #fff); }
+.custom-section { border-radius: var(--r-card, 10px); border: 0.5px solid var(--color-border-default, #e5e5e5); overflow: hidden; }
+.custom-section.expanded { border-color: var(--color-accent-fg, #2563eb); }
+.custom-trigger { display: flex; align-items: center; gap: 16px; padding: 16px; cursor: pointer; background: var(--color-canvas-default, #ffffff); }
 .custom-preview { display: flex; gap: 4px; }
 .custom-dot { width: 18px; height: 18px; border-radius: 50%; border: 0.5px solid rgba(0,0,0,0.1); }
 .custom-info { flex: 1; }
 .custom-colors { padding: 0 16px 16px; display: flex; flex-direction: column; gap: 10px; }
 .color-row { display: flex; align-items: center; gap: 12px; }
-.color-label { width: 60px; font-size: 12px; color: var(--color-text-secondary, #666); flex-shrink: 0; }
+.color-label { width: 60px; font-size: 12px; color: var(--color-fg-muted, #555555); flex-shrink: 0; }
 .color-controls { display: flex; align-items: center; gap: 8px; }
 .color-picker { width: 32px; height: 32px; border: none; padding: 0; cursor: pointer; border-radius: 4px; }
 .color-input { width: 100px; height: 28px; border: 0.5px solid var(--color-border-default, #ddd); border-radius: 4px; padding: 0 8px; font-size: 12px; font-family: 'JetBrains Mono', monospace; }

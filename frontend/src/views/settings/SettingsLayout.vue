@@ -7,7 +7,7 @@
         :class="['sidebar-item', { active: currentPath === item.path }]"
         @click="navigate(item.path)"
       >
-        <span class="sidebar-emoji">{{ item.emoji }}</span>
+        <el-icon :size="16" class="sidebar-icon"><component :is="item.icon" /></el-icon>
         <span class="sidebar-label">{{ item.label }}</span>
       </div>
     </div>
@@ -20,18 +20,24 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { User, Document, Monitor, Files, Tools, Brush, SetUp } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
 
+/**
+ * 侧边栏菜单项。
+ * icon 存放 @element-plus/icons-vue 的线性图标组件引用（禁止 emoji）。
+ * Agent 管理使用 Monitor（受管终端语义），不用 Cpu，避免与系统资源监控混淆。
+ */
 const menuItems = [
-  { emoji: '👤', label: '用户与权限', path: '/settings/users' },
-  { emoji: '📋', label: '审计日志', path: '/settings/audit-logs' },
-  { emoji: '🤖', label: 'Agent 管理', path: '/settings/agents' },
-  { emoji: '💾', label: '数据与存储', path: '/settings/storage' },
-  { emoji: '🔧', label: '系统参数', path: '/settings/params' },
-  { emoji: '🎨', label: '主题与外观', path: '/settings/theme' },
-  { emoji: '🧩', label: '模型配置与审计', path: '/settings/model-config-audit' },
+  { icon: User, label: '用户与权限', path: '/settings/users' },
+  { icon: Document, label: '审计日志', path: '/settings/audit-logs' },
+  { icon: Monitor, label: 'Agent 管理', path: '/settings/agents' },
+  { icon: Files, label: '数据与存储', path: '/settings/storage' },
+  { icon: Tools, label: '系统参数', path: '/settings/params' },
+  { icon: Brush, label: '主题与外观', path: '/settings/theme' },
+  { icon: SetUp, label: '模型配置与审计', path: '/settings/model-config-audit' },
 ]
 
 const currentPath = computed(() => route.path)
@@ -51,10 +57,10 @@ function navigate(path) {
 }
 
 .settings-sidebar {
-  width: 200px;
-  min-width: 200px;
-  background: var(--color-canvas-default, #fff);
-  border-right: 1px solid var(--color-border-default, #e5e7eb);
+  width: 240px;
+  min-width: 240px;
+  background: var(--color-canvas-default, #ffffff);
+  border-right: 0.5px solid var(--color-border-default, #e5e5e5);
   padding: 16px 0;
 }
 
@@ -62,28 +68,29 @@ function navigate(path) {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 20px;
+  padding: 8px 20px;
   cursor: pointer;
-  font-size: 14px;
-  color: var(--color-fg-muted, #6b7280);
-  transition: all 0.15s;
-  border-left: 3px solid transparent;
+  font-size: 13px;
+  color: var(--color-fg-muted, #555555);
+  transition: background-color 0.15s, color 0.15s;
+  border-left: 2px solid transparent;
 }
 
 .sidebar-item:hover {
-  background: var(--color-canvas-subtle, #f9fafb);
-  color: var(--color-accent-fg, #059669);
+  background: var(--color-canvas-inset, #f5f5f5);
+  color: var(--color-fg-default, #111111);
 }
 
 .sidebar-item.active {
-  background: var(--color-accent-subtle, #ecfdf5);
-  color: var(--color-accent-fg, #059669);
-  font-weight: 600;
-  border-left-color: var(--color-accent-emphasis, #059669);
+  background: var(--color-accent-subtle, #eff6ff);
+  color: var(--color-accent-fg, #2563eb);
+  font-weight: 500;
+  border-left-color: var(--color-accent-fg, #2563eb);
 }
 
-.sidebar-emoji {
-  font-size: 16px;
+/* 图标不单独着色，跟随 .sidebar-item 的文字色（currentColor） */
+.sidebar-icon {
+  flex-shrink: 0;
 }
 
 .sidebar-label {

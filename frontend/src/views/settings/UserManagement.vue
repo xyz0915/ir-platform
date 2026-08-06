@@ -55,10 +55,9 @@
       <el-table-column label="操作" width="280" fixed="right">
         <template #default="{ row }">
           <el-button text type="primary" size="small" @click="openEditDialog(row)">编辑</el-button>
-          <el-button text type="warning" size="small" @click="openResetPasswordDialog(row)">重置密码</el-button>
+          <el-button text size="small" @click="openResetPasswordDialog(row)">重置密码</el-button>
           <el-button
             text
-            :type="row.is_active ? 'warning' : 'success'"
             size="small"
             @click="toggleActive(row)"
           >
@@ -174,9 +173,15 @@ const pwdRules = {
   new_password: [{ required: true, message: '请输入新密码', trigger: 'blur' }],
 }
 
+/**
+ * 角色标签配色。
+ * 角色属于"分类"而非"状态"，红/绿标签会传递错误的告警语义，
+ * 因此统一使用中性灰标签，靠文字（管理员/分析师/只读）区分。
+ * @param {string} role 角色枚举值
+ * @returns {string} Element Plus tag type
+ */
 function roleTagType(role) {
-  if (role === 'admin') return 'danger'
-  if (role === 'analyst') return 'success'
+  void role
   return 'info'
 }
 
@@ -329,7 +334,8 @@ onMounted(() => {
 .page-header h2 {
   margin: 0;
   font-size: 20px;
-  font-weight: 600;
+  font-weight: 500;
+  color: var(--color-fg-default, #111111);
 }
 
 .search-bar {
@@ -349,10 +355,11 @@ onMounted(() => {
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: var(--color-accent-subtle, #ecfdf5);
-  color: var(--color-accent-fg, #059669);
+  /* 头像使用中性底色，避免彩色徽标造成的视觉噪音 */
+  background: var(--color-canvas-inset, #f5f5f5);
+  color: var(--color-fg-muted, #555555);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 500;
   flex-shrink: 0;
 }
 

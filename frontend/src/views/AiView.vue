@@ -2,7 +2,7 @@
   <div class="page-container">
     <h2 class="page-title mb-20">
       <span>模型配置与审计</span>
-      <span class="page-subtitle">配置 AI 供应商、模型与提示词</span>
+      <span class="page-subtitle">配置模型供应商、参数与提示词</span>
     </h2>
 
     <el-tabs v-model="activeTab" class="ai-tabs">
@@ -16,7 +16,7 @@
             <span class="profile-label">当前配置：</span>
             <el-select
               v-model="selectedProfileId"
-              placeholder="选择 AI 配置"
+              placeholder="选择配置"
               class="profile-select"
               @change="onProfileSelect"
               :loading="profileLoading"
@@ -62,15 +62,14 @@
           </div>
         </div>
 
-        <!-- AI 功能开关 -->
+        <!-- 分析功能开关（C4：开关标签保留「AI 分析功能」，语义需明确） -->
         <div class="switch-row card-box mb-20">
           <div class="switch-left">
             <span class="switch-label">AI 分析功能</span>
             <el-switch
               v-model="aiSwitchOn"
               @change="handleToggleAi"
-              active-color="#13ce66"
-              inactive-color="#909399"
+              class="neutral-switch"
               :loading="toggleLoading"
               :disabled="!canToggleAi"
             />
@@ -105,8 +104,8 @@
 
             <!-- 右侧列 -->
             <div class="config-col">
-              <el-form-item label="AI 提供商">
-                <el-select v-model="configForm.provider" size="small" style="width:100%" filterable allow-create placeholder="选择或输入提供商">
+              <el-form-item label="模型供应商">
+                <el-select v-model="configForm.provider" size="small" style="width:100%" filterable allow-create placeholder="选择或输入供应商">
                   <el-option label="OpenAI" value="openai" />
                   <el-option label="DeepSeek" value="deepseek" />
                   <el-option label="通义千问" value="qwen" />
@@ -170,7 +169,7 @@
 
         <!-- 无 Profile 时的空状态 -->
         <div v-if="store.profiles.length === 0 && !profileLoading" class="card-box mb-20 empty-state">
-          <el-empty description="尚未创建 AI 配置">
+          <el-empty description="尚未创建模型配置">
             <el-button type="primary" @click="openAddDialog">创建第一个配置</el-button>
           </el-empty>
         </div>
@@ -179,53 +178,13 @@
         <div class="card-box stats-section">
           <h3 class="section-title">使用统计</h3>
 
-          <!-- 汇总卡片 -->
-          <el-row :gutter="20" class="stats-cards mb-20">
-            <el-col :span="6">
-              <div class="stat-card">
-                <div class="stat-card-icon stat-icon-tokens">
-                  <el-icon :size="24"><Coin /></el-icon>
-                </div>
-                <div class="stat-card-info">
-                  <div class="stat-card-value">{{ formatNumber(stats.totalTokens) }}</div>
-                  <div class="stat-card-label">本月总 Token</div>
-                </div>
-              </div>
-            </el-col>
-            <el-col :span="6">
-              <div class="stat-card">
-                <div class="stat-card-icon stat-icon-calls">
-                  <el-icon :size="24"><TrendCharts /></el-icon>
-                </div>
-                <div class="stat-card-info">
-                  <div class="stat-card-value">{{ formatNumber(stats.totalCalls) }}</div>
-                  <div class="stat-card-label">总调用次数</div>
-                </div>
-              </div>
-            </el-col>
-            <el-col :span="6">
-              <div class="stat-card">
-                <div class="stat-card-icon stat-icon-latency">
-                  <el-icon :size="24"><Timer /></el-icon>
-                </div>
-                <div class="stat-card-info">
-                  <div class="stat-card-value">{{ stats.avgLatency }}<small>ms</small></div>
-                  <div class="stat-card-label">平均延迟</div>
-                </div>
-              </div>
-            </el-col>
-            <el-col :span="6">
-              <div class="stat-card">
-                <div class="stat-card-icon stat-icon-rate">
-                  <el-icon :size="24"><DataAnalysis /></el-icon>
-                </div>
-                <div class="stat-card-info">
-                  <div class="stat-card-value">{{ stats.successRate }}<small>%</small></div>
-                  <div class="stat-card-label">成功率</div>
-                </div>
-              </div>
-            </el-col>
-          </el-row>
+          <!-- 汇总卡片：统一走 SettingsStatCard（扁平描边、线性图标、四卡同色） -->
+          <div class="stats-cards">
+            <SettingsStatCard label="本月总 Token" :value="formatNumber(stats.totalTokens)" :icon="Coin" />
+            <SettingsStatCard label="总调用次数" :value="formatNumber(stats.totalCalls)" :icon="TrendCharts" />
+            <SettingsStatCard label="平均延迟" :value="stats.avgLatency" unit="ms" :icon="Timer" />
+            <SettingsStatCard label="成功率" :value="stats.successRate" unit="%" :icon="DataAnalysis" />
+          </div>
 
           <!-- 折线图控制 -->
           <div class="chart-controls mb-10">
@@ -250,7 +209,7 @@
       <!-- ============================================================ -->
       <el-tab-pane label="审计日志" name="audit">
         <div class="card-box">
-          <h3 class="section-title mb-20">AI 调用审计日志</h3>
+          <h3 class="section-title mb-20">调用审计日志</h3>
           <el-table
             :data="auditLogs"
             v-loading="auditLoading"
@@ -305,7 +264,7 @@
     <!-- ============================================================ -->
     <el-dialog
       v-model="profileDialogVisible"
-      :title="profileDialogMode === 'add' ? '新增 AI 配置' : '编辑 AI 配置'"
+      :title="profileDialogMode === 'add' ? '新增模型配置' : '编辑模型配置'"
       width="600px"
       :close-on-click-modal="false"
       destroy-on-close
@@ -321,8 +280,8 @@
         <el-form-item label="配置名称" prop="profile_name">
           <el-input v-model="profileForm.profile_name" placeholder="例如：生产环境 GPT-4o" clearable />
         </el-form-item>
-        <el-form-item label="AI 提供商" prop="provider">
-          <el-select v-model="profileForm.provider" filterable allow-create placeholder="选择提供商">
+        <el-form-item label="模型供应商" prop="provider">
+          <el-select v-model="profileForm.provider" filterable allow-create placeholder="选择供应商">
             <el-option label="OpenAI" value="openai" />
             <el-option label="DeepSeek" value="deepseek" />
             <el-option label="通义千问" value="qwen" />
@@ -383,10 +342,9 @@
               placeholder="自定义系统提示词（可选）"
               class="prompt-textarea"
             />
-            <!-- P2-06: 提示词优化按钮 -->
+            <!-- P2-06: 提示词优化按钮（中性描边，不与主操作抢层级） -->
             <el-button
               class="prompt-optimize-btn"
-              type="warning"
               size="small"
               :disabled="!selectedProfileId && profileDialogMode === 'edit'"
               @click="openPromptOptimize"
@@ -402,7 +360,7 @@
             active-text="允许其他用户使用此配置"
             inactive-text="仅自己可见"
           />
-          <div class="form-tip">开启后，其他用户可以查看和使用此配置进行 AI 分析</div>
+          <div class="form-tip">开启后，其他用户可以查看和使用此配置进行分析</div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -431,7 +389,7 @@
       <!-- 步骤 1：输入反馈 -->
       <div v-if="promptOptStep === 'input'" class="prompt-opt-input">
         <el-alert type="info" :closable="false" class="mb-15" show-icon>
-          描述你希望 AI 如何改进提示词，系统将根据你的反馈自动优化
+          描述期望的改写方向，系统将据此生成优化后的提示词
         </el-alert>
 
         <div class="mb-10">
@@ -465,7 +423,8 @@
 
       <!-- 步骤 2：预览对比 -->
       <div v-else-if="promptOptStep === 'preview'" class="prompt-opt-preview">
-        <el-alert type="success" :closable="false" class="mb-15" show-icon>
+        <!-- 引导性说明而非告警状态，使用中性 info 而非绿色 success -->
+        <el-alert type="info" :closable="false" class="mb-15" show-icon>
           优化完成，请对比下方结果
         </el-alert>
 
@@ -555,7 +514,7 @@
         </div>
 
         <div class="audit-section">
-          <h4>AI 回复</h4>
+          <h4>模型响应</h4>
           <div class="audit-content" :class="{ collapsed: !responseExpanded }">
             <pre>{{ auditDetail.response || '(无)' }}</pre>
           </div>
@@ -582,7 +541,7 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
-import { CircleCheck, CircleClose, Coin, TrendCharts, Timer, DataAnalysis } from '@element-plus/icons-vue'
+import { Coin, TrendCharts, Timer, DataAnalysis } from '@element-plus/icons-vue'
 import VChart from 'vue-echarts'
 import 'echarts'
 import dayjs from 'dayjs'
@@ -596,8 +555,12 @@ import {
   getPromptVersions,
 } from '@/api/ai'
 import { useAiStore } from '@/stores/ai'
+import { useThemeStore } from '@/stores/theme'
+import { chartPalette } from '@/utils/themeColor'
+import SettingsStatCard from '@/components/settings/SettingsStatCard.vue'
 
 const store = useAiStore()
+const themeStore = useThemeStore()
 
 // ============================================================
 // Tab & Profile 状态
@@ -647,6 +610,8 @@ const currentProfileData = computed(() => {
 const chartPeriod = ref('daily')
 const chartLoading = ref(false)
 const chartOption = ref(null)
+// 缓存最近一次图表原始数据，供主题切换时重建 option（ECharts 不会自动响应 CSS 变量变化）
+const lastChartData = ref([])
 
 const stats = reactive({
   totalTokens: 0,
@@ -782,7 +747,7 @@ async function handleToggleAi(val) {
       toggleLoading.value = true
       try {
         await store.setActiveProfile(selectedProfileId.value)
-        ElMessage.success('AI 分析功能已开启')
+        ElMessage.success('模型分析功能已开启')
       } catch (e) {
         ElMessage.error(e?.response?.data?.message || '开启失败')
         aiSwitchOn.value = false
@@ -792,7 +757,7 @@ async function handleToggleAi(val) {
     }
   } else {
     // 关闭：清除活跃状态（UI 层面）
-    ElMessage.info('AI 分析功能已关闭，可通过"设为活跃"重新开启')
+    ElMessage.info('模型分析功能已关闭，可通过"设为活跃"重新开启')
   }
 }
 
@@ -991,33 +956,49 @@ async function loadChartData() {
     const res = await getAiTokenStats({ days })
     const raw = res.data || {}
     const data = raw?.items || raw?.list || []
-    buildChartOption(data)
+    lastChartData.value = Array.isArray(data) ? data : []
+    buildChartOption(lastChartData.value)
   } catch {
+    lastChartData.value = []
     chartOption.value = null
   } finally {
     chartLoading.value = false
   }
 }
 
+/**
+ * 构建 Token 趋势图 option。
+ *
+ * 配色全部来自 chartPalette()（读取 --color-* 设计令牌），
+ * 不含渐变 areaStyle、不含硬编码色值；主线为强调色，副线为中性灰虚线。
+ *
+ * @param {Array<Object>} data 形如 [{ period: '2024-01-01', tokens: 1000, calls: 5 }, ...]
+ */
 function buildChartOption(data) {
-  // 数据格式: [{ period: '2024-01-01', tokens: 1000, calls: 5 }, ...]
   if (!Array.isArray(data) || data.length === 0) {
     chartOption.value = null
     return
   }
 
+  const p = chartPalette()
   const xData = data.map((d) => d.period || d.date || '')
   const tokenData = data.map((d) => d.tokens || d.total_tokens || 0)
   const callData = data.map((d) => d.calls || d.total_calls || d.call_count || d.count || 0)
+  // 数据点较多时隐藏数据点标记，保持折线干净
+  const symbol = xData.length > 10 ? 'none' : 'circle'
 
   chartOption.value = {
     tooltip: {
       trigger: 'axis',
-      axisPointer: { type: 'cross' },
+      axisPointer: { type: 'cross', lineStyle: { color: p.split, type: 'dashed' } },
     },
     legend: {
       data: ['Token 消耗', '调用次数'],
       bottom: 0,
+      icon: 'rect',
+      itemWidth: 12,
+      itemHeight: 2,
+      textStyle: { color: p.text, fontSize: 11 },
     },
     grid: {
       left: '3%',
@@ -1030,24 +1011,41 @@ function buildChartOption(data) {
       type: 'category',
       data: xData,
       boundaryGap: false,
+      axisLine: { lineStyle: { color: p.split } },
+      axisTick: { show: false },
       axisLabel: {
+        color: p.text,
+        fontSize: 11,
         rotate: xData.length > 10 ? 45 : 0,
       },
+      splitLine: { show: false },
     },
     yAxis: [
       {
         type: 'value',
         name: 'Token',
+        nameTextStyle: { color: p.text, fontSize: 11 },
+        axisLine: { show: false },
+        axisTick: { show: false },
         axisLabel: {
+          color: p.text,
+          fontSize: 11,
           formatter: (v) => formatLargeNumber(v),
         },
+        splitLine: { lineStyle: { color: p.split, type: 'dashed' } },
       },
       {
         type: 'value',
         name: '次数',
+        nameTextStyle: { color: p.text, fontSize: 11 },
+        axisLine: { show: false },
+        axisTick: { show: false },
         axisLabel: {
+          color: p.text,
+          fontSize: 11,
           formatter: '{value}',
         },
+        splitLine: { show: false },
       },
     ],
     series: [
@@ -1055,36 +1053,38 @@ function buildChartOption(data) {
         name: 'Token 消耗',
         type: 'line',
         data: tokenData,
-        smooth: true,
-        symbol: 'circle',
-        symbolSize: 6,
-        lineStyle: { color: '#409eff', width: 2 },
-        itemStyle: { color: '#409eff' },
-        areaStyle: {
-          color: {
-            type: 'linear',
-            x: 0, y: 0, x2: 0, y2: 1,
-            colorStops: [
-              { offset: 0, color: 'rgba(64,158,255,0.3)' },
-              { offset: 1, color: 'rgba(64,158,255,0.05)' },
-            ],
-          },
-        },
+        smooth: false,
+        symbol,
+        symbolSize: 4,
+        lineStyle: { color: p.primary, width: 2 },
+        itemStyle: { color: p.primary },
       },
       {
         name: '调用次数',
         type: 'line',
         yAxisIndex: 1,
         data: callData,
-        smooth: true,
-        symbol: 'diamond',
-        symbolSize: 6,
-        lineStyle: { color: '#67c23a', width: 2 },
-        itemStyle: { color: '#67c23a' },
+        smooth: false,
+        symbol,
+        symbolSize: 4,
+        lineStyle: { color: p.secondary, width: 1.5, type: 'dashed' },
+        itemStyle: { color: p.secondary },
       },
     ],
   }
 }
+
+// 主题切换后 CSS 变量已更新，但已生成的 ECharts option 不会自动跟随，需重建
+watch(() => themeStore.themeName, () => {
+  if (lastChartData.value.length > 0) buildChartOption(lastChartData.value)
+})
+
+// 自定义主题下逐项调色也需同步图表
+watch(() => themeStore.customColors, () => {
+  if (themeStore.themeName === 'custom' && lastChartData.value.length > 0) {
+    buildChartOption(lastChartData.value)
+  }
+}, { deep: true })
 
 // ============================================================
 // 审计日志
@@ -1268,7 +1268,7 @@ function isTextLong(text) {
 }
 .profile-label {
   font-size: 13px;
-  color: var(--color-text-secondary, #555);
+  color: var(--color-fg-muted, #555555);
   white-space: nowrap;
 }
 .profile-select {
@@ -1276,7 +1276,7 @@ function isTextLong(text) {
 }
 .profile-detail {
   font-size: 12px;
-  color: var(--color-fg-subtle, #888);
+  color: var(--color-fg-subtle, #888888);
   white-space: nowrap;
 }
 .status-dot {
@@ -1284,20 +1284,21 @@ function isTextLong(text) {
   align-items: center;
   gap: 5px;
   font-size: 12px;
-  color: var(--color-text-tertiary, #888);
+  color: var(--color-fg-subtle, #888888);
 }
 .status-dot .dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--color-text-tertiary, #888);
+  background: var(--color-fg-subtle, #888888);
   flex-shrink: 0;
 }
+/* 「活跃中」是真实运行状态，允许语义色，且只染文字与 7px 小圆点 */
 .status-dot.active .dot {
-  background: var(--color-text-success, #16a34a);
+  background: var(--color-success-fg, #16a34a);
 }
 .status-dot.active {
-  color: var(--color-text-success, #16a34a);
+  color: var(--color-success-fg, #16a34a);
 }
 .switch-row {
   display: flex;
@@ -1312,16 +1313,21 @@ function isTextLong(text) {
 .switch-label {
   font-size: 14px;
   font-weight: 500;
-  color: var(--color-text-primary, #111);
+  color: var(--color-fg-default, #111111);
+}
+/* 开关走设计令牌，不接受组件级 active-color/inactive-color 硬编码 */
+.neutral-switch {
+  --el-switch-on-color: var(--color-accent-fg, #2563eb);
+  --el-switch-off-color: var(--color-fg-light, #a3a3a3);
 }
 .switch-hint {
   font-size: 12px;
-  color: var(--color-text-tertiary, #888);
+  color: var(--color-fg-subtle, #888888);
 }
 .section-title {
   font-size: 14px;
   font-weight: 500;
-  color: var(--color-text-primary, #111);
+  color: var(--color-fg-default, #111111);
   margin-bottom: 14px;
   padding-bottom: 8px;
   border-bottom: 0.5px solid var(--color-border-default, #e5e5e5);
@@ -1334,18 +1340,18 @@ function isTextLong(text) {
 .config-col { min-width: 0; }
 .config-col :deep(.el-form-item) { margin-bottom: 14px; }
 .config-col :deep(.el-form-item__label) {
-  font-size: 12px; color: var(--color-fg-subtle, #888);
+  font-size: 12px; color: var(--color-fg-subtle, #888888);
   font-weight: 400; padding-bottom: 2px;
   line-height: 1.4;
 }
 .config-col :deep(.el-form-item__content) { line-height: 1; }
 .config-col :deep(.el-input__wrapper) { border-radius: 4px; }
 .config-col :deep(.el-slider__runway) { margin: 8px 0; }
-.config-col :deep(.el-slider__bar) { background: var(--color-accent-emphasis, #185FA5); }
-.config-col :deep(.el-slider__button) { border-color: var(--color-accent-emphasis, #185FA5); }
+.config-col :deep(.el-slider__bar) { background: var(--color-accent-emphasis, #2563eb); }
+.config-col :deep(.el-slider__button) { border-color: var(--color-accent-emphasis, #2563eb); }
 
 .subsection-hint {
-  font-size: 12px; color: var(--color-fg-subtle, #888);
+  font-size: 12px; color: var(--color-fg-subtle, #888888);
   font-weight: 400; margin-left: 8px;
 }
 .config-actions {
@@ -1359,68 +1365,23 @@ function isTextLong(text) {
 
 .form-tip {
   font-size: 12px;
-  color: var(--color-text-tertiary, #888);
+  color: var(--color-fg-subtle, #888888);
   margin-top: 4px;
 }
 .form-tip code {
-  color: var(--color-text-warning, #d97706);
-  background: var(--color-warning-subtle, #fffbeb);
+  color: var(--color-fg-default, #111111);
+  background: var(--color-canvas-inset, #f5f5f5);
   padding: 2px 6px;
   border-radius: 3px;
 }
 .stats-section {
   margin-top: 20px;
 }
-.stat-card {
+/* 统计卡容器；卡片本身由 SettingsStatCard 统一实现 */
+.stats-cards {
   display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 16px;
-  background: var(--color-canvas-default, #fff);
-  border-radius: var(--r-card, 10px);
-  border: 0.5px solid var(--color-border-default, #e5e5e5);
-}
-.stat-card-icon {
-  width: 44px;
-  height: 44px;
-  border-radius: var(--r-btn, 6px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  color: var(--color-fg-on-emphasis, #fff);
-}
-.stat-icon-tokens {
-  background: var(--color-accent-fg, #2563eb);
-}
-.stat-icon-calls {
-  background: var(--color-text-success, #16a34a);
-}
-.stat-icon-latency {
-  background: var(--color-text-warning, #d97706);
-}
-.stat-icon-rate {
-  background: var(--color-text-info, #378ADD);
-}
-.stat-card-info {
-  flex: 1;
-  min-width: 0;
-}
-.stat-card-value {
-  font-size: 22px;
-  font-weight: 500;
-  color: var(--color-text-primary, #111);
-  line-height: 1.2;
-}
-.stat-card-value small {
-  font-size: 13px;
-  font-weight: 400;
-  color: var(--color-text-tertiary, #888);
-}
-.stat-card-label {
-  font-size: 12px;
-  color: var(--color-text-secondary, #555);
-  margin-top: 2px;
+  gap: 16px;
+  margin-bottom: 20px;
 }
 .chart-controls {
   display: flex;
@@ -1429,7 +1390,7 @@ function isTextLong(text) {
 }
 .chart-label {
   font-size: 13px;
-  color: var(--color-text-secondary, #555);
+  color: var(--color-fg-muted, #555555);
 }
 .chart-container {
   min-height: 300px;
@@ -1448,7 +1409,7 @@ function isTextLong(text) {
 .audit-section h4 {
   font-size: 13px;
   font-weight: 500;
-  color: var(--color-text-primary, #111);
+  color: var(--color-fg-default, #111111);
   margin-bottom: 8px;
 }
 .audit-content {
@@ -1469,7 +1430,7 @@ function isTextLong(text) {
   word-wrap: break-word;
   font-size: 12px;
   line-height: 1.6;
-  color: var(--color-text-primary, #111);
+  color: var(--color-fg-default, #111111);
   font-family: var(--font-mono, Consolas, monospace);
 }
 .empty-state {
@@ -1477,16 +1438,16 @@ function isTextLong(text) {
   padding: 40px 0;
 }
 .page-title {
-  font-size: 16px;
+  font-size: 20px;
   font-weight: 500;
-  color: var(--color-text-primary, #111);
+  color: var(--color-fg-default, #111111);
   display: flex;
   align-items: center;
   gap: 8px;
 }
 .page-subtitle {
   font-size: 12px;
-  color: var(--color-fg-subtle, #888);
+  color: var(--color-fg-subtle, #888888);
   margin-left: 8px;
   font-weight: 400;
 }
@@ -1498,7 +1459,7 @@ function isTextLong(text) {
   padding: 2px 6px;
   border-radius: 3px;
   font-size: 12px;
-  color: var(--color-text-primary, #111);
+  color: var(--color-fg-default, #111111);
   font-family: var(--font-mono, Consolas, monospace);
 }
 .prompt-row {
@@ -1516,7 +1477,7 @@ function isTextLong(text) {
 .opt-label {
   font-size: 13px;
   font-weight: 500;
-  color: var(--color-text-primary, #111);
+  color: var(--color-fg-default, #111111);
 }
 .opt-current-prompt {
   background: var(--color-canvas-subtle, #fafafa);
@@ -1530,7 +1491,7 @@ function isTextLong(text) {
   margin: 0;
   font-size: 12px;
   line-height: 1.6;
-  color: var(--color-text-secondary, #555);
+  color: var(--color-fg-muted, #555555);
   white-space: pre-wrap;
   word-break: break-word;
   font-family: var(--font-mono, Consolas, monospace);
@@ -1545,30 +1506,28 @@ function isTextLong(text) {
   border-radius: var(--r-card, 10px);
   overflow: hidden;
 }
+/* 「原始 / 优化后」是内容分栏标识，不是状态，故一律中性 */
 .opt-compare-header {
   padding: 8px 12px;
   font-size: 13px;
   font-weight: 500;
-}
-.opt-compare-header.old {
   background: var(--color-canvas-subtle, #fafafa);
-  color: var(--color-text-secondary, #555);
+  color: var(--color-fg-muted, #555555);
 }
 .opt-compare-header.new {
-  background: var(--color-success-subtle, #f0fdf4);
-  color: var(--color-text-success, #16a34a);
+  color: var(--color-fg-default, #111111);
 }
 .opt-compare-content {
   padding: 10px 12px;
   max-height: 250px;
   overflow-y: auto;
-  background: var(--color-canvas-default, #fff);
+  background: var(--color-canvas-default, #ffffff);
 }
 .opt-compare-content pre {
   margin: 0;
   font-size: 12px;
   line-height: 1.6;
-  color: var(--color-text-primary, #111);
+  color: var(--color-fg-default, #111111);
   white-space: pre-wrap;
   word-break: break-word;
   font-family: var(--font-mono, Consolas, monospace);
@@ -1604,6 +1563,6 @@ function isTextLong(text) {
 }
 .text-gray {
   font-size: 12px;
-  color: var(--color-text-tertiary, #888);
+  color: var(--color-fg-subtle, #888888);
 }
 </style>

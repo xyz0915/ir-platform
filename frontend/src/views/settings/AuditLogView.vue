@@ -108,17 +108,17 @@ function actionLabel(action) {
   return map[action] || action
 }
 
+/**
+ * 操作类型标签配色。
+ * 审计日志仅承载"记录"语义，不承载状态语义，因此所有操作类型统一使用
+ * 中性灰标签（info），避免彩色标签造成的视觉噪音与语义误导。
+ * 注意：仅改变配色，标签文字（含"AI 分析"）保持原样，与后端枚举一致。
+ * @param {string} action 操作类型枚举值
+ * @returns {string} Element Plus tag type
+ */
 function actionColor(action) {
-  const map = {
-    login: '',
-    logout: 'info',
-    rule_change: 'warning',
-    event_dispose: 'primary',
-    ai_analysis: 'success',
-    settings_change: 'danger',
-    user_manage: '',
-  }
-  return map[action] || ''
+  void action
+  return 'info'
 }
 
 function formatTime(val) {
@@ -206,7 +206,8 @@ onMounted(async () => {
 .page-header h2 {
   margin: 0;
   font-size: 20px;
-  font-weight: 600;
+  font-weight: 500;
+  color: var(--color-fg-default, #111111);
 }
 
 .filter-bar {
