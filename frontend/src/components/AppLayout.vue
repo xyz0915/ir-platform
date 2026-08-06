@@ -4,7 +4,7 @@
     <div class="top-nav" @mouseleave="hoverGroup = ''">
       <div class="nav-left">
         <div class="logo">
-          <el-icon :size="20"><Lock /></el-icon>
+          <PlatformLogo variant="dark" :size="20" />
           <span>应急平台</span>
         </div>
 
@@ -70,8 +70,9 @@ import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
+import PlatformLogo from '@/components/brand/PlatformLogo.vue'
 import {
-  Lock, Sunny, Moon, User, ArrowDown,
+  Sunny, Moon, User, ArrowDown,
   DataAnalysis, Folder, Document, MagicStick, Setting, Tools,
   Monitor, Bell, FolderOpened, Cpu, Tickets,
   Aim, Search, Reading,

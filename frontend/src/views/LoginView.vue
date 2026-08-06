@@ -17,14 +17,7 @@
         <div class="login-card">
           <div class="card-head">
             <span class="card-logo" aria-hidden="true">
-              <svg viewBox="0 0 24 16" fill="none">
-                <g fill="#ffffff">
-                  <circle cx="8" cy="10" r="5"/>
-                  <circle cx="16" cy="10" r="4.2"/>
-                  <circle cx="12" cy="6.5" r="4.6"/>
-                  <rect x="4" y="9.5" width="16" height="4.5" rx="2.2"/>
-                </g>
-              </svg>
+              <PlatformLogo variant="light" :size="22" />
             </span>
             <h2>应急运营门户</h2>
           </div>
@@ -99,6 +92,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import BrandArt from '@/components/login/BrandArt.vue'
+import PlatformLogo from '@/components/brand/PlatformLogo.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -260,16 +254,16 @@ async function handleLogin() {
   height: 36px;
   border-radius: 10px;
   flex: none;
-  background: linear-gradient(135deg, #57c266, #2f8f3d);
+  /* 更克制的实色品牌绿（原渐变 + 云朵图形已随去 AI 味改造移除） */
+  background: #3fa84b;
   display: flex;
   align-items: center;
   justify-content: center;
   box-shadow: 0 4px 10px rgba(63, 168, 75, 0.28);
 }
 
-.card-logo svg {
-  width: 22px;
-  height: 22px;
+.card-logo .platform-logo {
+  display: block;
 }
 
 .card-head h2 {
