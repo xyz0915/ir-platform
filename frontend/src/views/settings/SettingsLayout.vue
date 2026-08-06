@@ -28,12 +28,12 @@ const router = useRouter()
 /**
  * 侧边栏菜单项。
  * icon 存放 @element-plus/icons-vue 的线性图标组件引用（禁止 emoji）。
- * Agent 管理使用 Monitor（受管终端语义），不用 Cpu，避免与系统资源监控混淆。
+ * 「主机 Agent」使用 Monitor（受管终端语义），不用 Cpu，避免与系统资源监控混淆。
  */
 const menuItems = [
   { icon: User, label: '用户与权限', path: '/settings/users' },
   { icon: Document, label: '审计日志', path: '/settings/audit-logs' },
-  { icon: Monitor, label: 'Agent 管理', path: '/settings/agents' },
+  { icon: Monitor, label: '主机 Agent', path: '/settings/agents' },
   { icon: Files, label: '数据与存储', path: '/settings/storage' },
   { icon: Tools, label: '系统参数', path: '/settings/params' },
   { icon: Brush, label: '主题与外观', path: '/settings/theme' },

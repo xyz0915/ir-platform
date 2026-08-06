@@ -1,7 +1,7 @@
 <template>
   <div class="agent-management">
     <div class="page-header">
-      <h2>Agent 管理</h2>
+      <h2>主机 Agent</h2>
     </div>
 
     <!-- 统计卡片 -->
@@ -135,11 +135,11 @@ onMounted(() => {
 }
 
 .status-dot.online {
-  background: var(--color-success-fg, #3f8f5b);
+  background: var(--color-success-fg, #16a34a);
 }
 
 .status-dot.offline {
-  background: var(--color-fg-light, #b0b0b0);
+  background: var(--color-fg-light, #a3a3a3);
 }
 
 .status-text {

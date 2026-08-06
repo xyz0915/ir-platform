@@ -1431,7 +1431,7 @@ function isTextLong(text) {
   font-size: 12px;
   line-height: 1.6;
   color: var(--color-fg-default, #111111);
-  font-family: var(--font-mono, Consolas, monospace);
+  font-family: 'JetBrains Mono', Consolas, monospace;
 }
 .empty-state {
   text-align: center;
@@ -1460,7 +1460,7 @@ function isTextLong(text) {
   border-radius: 3px;
   font-size: 12px;
   color: var(--color-fg-default, #111111);
-  font-family: var(--font-mono, Consolas, monospace);
+  font-family: 'JetBrains Mono', Consolas, monospace;
 }
 .prompt-row {
   display: flex;
@@ -1494,7 +1494,7 @@ function isTextLong(text) {
   color: var(--color-fg-muted, #555555);
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: var(--font-mono, Consolas, monospace);
+  font-family: 'JetBrains Mono', Consolas, monospace;
 }
 .opt-compare-grid {
   display: grid;
@@ -1530,7 +1530,7 @@ function isTextLong(text) {
   color: var(--color-fg-default, #111111);
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: var(--font-mono, Consolas, monospace);
+  font-family: 'JetBrains Mono', Consolas, monospace;
 }
 .opt-history-bar {
   display: flex;

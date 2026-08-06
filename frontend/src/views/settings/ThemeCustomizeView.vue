@@ -91,7 +91,9 @@ const customAccent = computed(() => {
   overflow: hidden; cursor: pointer; transition: border-color 0.15s;
   background: var(--color-canvas-default, #ffffff);
 }
-.theme-card:hover { border-color: var(--color-border-strong, #d0d0d0); }
+/* hover 用 fg-light 而非 border-default，使 hover 态比默认边框更明显、层次可辨；
+   该令牌在 theme.css :root 与 html.dark 均有定义 */
+.theme-card:hover { border-color: var(--color-fg-light, #a3a3a3); }
 .theme-card.active { border-color: var(--color-accent-fg, #2563eb); }
 .preview-strip { height: 64px; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
 .preview-nav { height: 16px; border-radius: 4px; display: flex; align-items: center; gap: 6px; padding: 0 6px; }

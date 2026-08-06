@@ -309,7 +309,8 @@ async function confirmPurge() {
 
 .purge-preview {
   border: 0.5px solid var(--color-border-default, #e5e5e5);
-  border-radius: var(--r-sm, 6px);
+  /* 6px 圆角档位复用已定义的 --r-btn（theme.css 仅定义 6/10/12 三档） */
+  border-radius: var(--r-btn, 6px);
   padding: 8px 12px;
   margin-bottom: 4px;
 }
