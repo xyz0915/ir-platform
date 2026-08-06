@@ -74,10 +74,10 @@ import PlatformLogo from '@/components/brand/PlatformLogo.vue'
 import {
   Sunny, Moon, User, ArrowDown,
   DataAnalysis, Folder, Document, MagicStick, Setting, Tools,
-  Monitor, Bell, FolderOpened, Cpu, Tickets,
+  Monitor, Bell, FolderOpened, Cpu, Files, Tickets,
   Aim, Search, Reading,
   Collection, List, CircleCheck, Notification, Connection,
-  Avatar, Coin,
+  Brush, SetUp,
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
@@ -154,12 +154,12 @@ const navGroups = [
     path: '/settings',
     children: [
       { icon: User, label: '用户与权限', path: '/settings/users' },
-      { icon: Tickets, label: '审计日志', path: '/settings/audit-logs' },
-      { icon: Avatar, label: '主机 Agent', path: '/settings/agents' },
-      { icon: Coin, label: '数据与存储', path: '/settings/storage' },
+      { icon: Document, label: '审计日志', path: '/settings/audit-logs' },
+      { icon: Monitor, label: '主机 Agent', path: '/settings/agents' },
+      { icon: Files, label: '数据与存储', path: '/settings/storage' },
       { icon: Tools, label: '系统参数', path: '/settings/params' },
-      { icon: MagicStick, label: '主题与外观', path: '/settings/theme' },
-      { icon: MagicStick, label: '模型配置与审计', path: '/settings/model-config-audit' },
+      { icon: Brush, label: '主题与外观', path: '/settings/theme' },
+      { icon: SetUp, label: '模型配置与审计', path: '/settings/model-config-audit' },
     ],
   },
 ]
