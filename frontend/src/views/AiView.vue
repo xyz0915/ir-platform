@@ -65,7 +65,7 @@
         <!-- AI 功能开关 -->
         <div class="switch-row card-box mb-20">
           <div class="switch-left">
-            <span class="switch-label">模型配置与审计功能</span>
+            <span class="switch-label">AI 分析功能</span>
             <el-switch
               v-model="aiSwitchOn"
               @change="handleToggleAi"
@@ -402,7 +402,7 @@
             active-text="允许其他用户使用此配置"
             inactive-text="仅自己可见"
           />
-          <div class="form-tip">开启后，其他用户可以查看和使用此配置进行模型配置与审计</div>
+          <div class="form-tip">开启后，其他用户可以查看和使用此配置进行 AI 分析</div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -782,7 +782,7 @@ async function handleToggleAi(val) {
       toggleLoading.value = true
       try {
         await store.setActiveProfile(selectedProfileId.value)
-        ElMessage.success('模型配置与审计功能已开启')
+        ElMessage.success('AI 分析功能已开启')
       } catch (e) {
         ElMessage.error(e?.response?.data?.message || '开启失败')
         aiSwitchOn.value = false
@@ -792,7 +792,7 @@ async function handleToggleAi(val) {
     }
   } else {
     // 关闭：清除活跃状态（UI 层面）
-    ElMessage.info('模型配置与审计功能已关闭，可通过"设为活跃"重新开启')
+    ElMessage.info('AI 分析功能已关闭，可通过"设为活跃"重新开启')
   }
 }
 
