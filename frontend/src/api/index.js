@@ -51,6 +51,11 @@ request.interceptors.response.use(
       const detail = error.response.data?.detail || ''
 
       if (status === 401) {
+        // 登录失败特例：展示后端 detail，登录页本就在 /login，无需踢回（R7）
+        if (url === '/auth/login') {
+          ElMessage.error(detail || '用户名或密码错误')
+          return Promise.reject(error)
+        }
         localStorage.removeItem('ir_token')
         localStorage.removeItem('ir_user')
         ElMessage.error('登录已过期，请重新登录')
