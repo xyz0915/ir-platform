@@ -15,30 +15,12 @@ export const RUN_STATUS_LABELS = {
   cancelled: '已取消',
 }
 
-/** 运行态 RunStatus → Element Plus tag 颜色 */
-export const RUN_STATUS_TAG = {
-  pending: 'info',
-  running: 'primary',
-  success: 'success',
-  failed: 'danger',
-  waiting_hitl: 'warning',
-  cancelled: 'info',
-}
-
 /** 严重级别 Severity → 中文标签 */
 export const SEVERITY_LABELS = {
   low: '低',
   medium: '中',
   high: '高',
   critical: '严重',
-}
-
-/** 严重级别 Severity → 颜色 */
-export const SEVERITY_COLOR = {
-  low: '#22C55E',
-  medium: '#3B82F6',
-  high: '#F59E0B',
-  critical: '#EF4444',
 }
 
 /** 角色 Role → 中文标签 */
