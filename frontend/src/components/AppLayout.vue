@@ -155,7 +155,7 @@ const navGroups = [
     children: [
       { icon: User, label: '用户与权限', path: '/settings/users' },
       { icon: Tickets, label: '审计日志', path: '/settings/audit-logs' },
-      { icon: Avatar, label: 'Agent 管理', path: '/settings/agents' },
+      { icon: Avatar, label: '主机 Agent', path: '/settings/agents' },
       { icon: Coin, label: '数据与存储', path: '/settings/storage' },
       { icon: Tools, label: '系统参数', path: '/settings/params' },
       { icon: MagicStick, label: '主题与外观', path: '/settings/theme' },
@@ -202,7 +202,7 @@ const routeMeta = computed(() => {
     'KbFeedback': { title: '知识自进化', subtitle: '误报 → 抑制 → 沉淀 · 知识库自进化闭环' },
     'UserManagement': { title: '用户与权限', subtitle: '平台用户管理与权限分配' },
     'AuditLogs': { title: '审计日志', subtitle: '平台操作审计与追踪' },
-    'AgentManagement': { title: 'Agent 管理', subtitle: 'Agent 客户端管理与监控' },
+    'AgentManagement': { title: '主机 Agent', subtitle: '主机 Agent 客户端管理与监控' },
     'DataStorage': { title: '数据与存储', subtitle: '数据存储与清理管理' },
     'SystemParams': { title: '系统参数', subtitle: '平台系统参数配置' },
     'ThemeCustomize': { title: '主题与外观', subtitle: '自定义平台主题与外观颜色' },
