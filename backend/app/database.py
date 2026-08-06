@@ -1211,6 +1211,46 @@ DDL_STATEMENTS = [
     """
     CREATE INDEX IF NOT EXISTS idx_agent_memories_created ON agent_memories(created_at)
     """,
+    # ── P0-2 ACL：用户→案件授权表 ──────────────────────────────
+    """
+    CREATE TABLE IF NOT EXISTS user_case_access (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        case_id       INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+        role_in_case  TEXT    NOT NULL DEFAULT 'viewer',   -- owner | analyst | viewer
+        granted_by    INTEGER REFERENCES users(id),        -- 授权操作人
+        granted_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(user_id, case_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_user_case_access_user ON user_case_access(user_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_user_case_access_case ON user_case_access(case_id)
+    """,
+    # ── P0-4 导出审计表 ────────────────────────────────────────
+    """
+    CREATE TABLE IF NOT EXISTS export_audit_log (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id      INTEGER REFERENCES users(id),
+        username     TEXT NOT NULL,
+        case_id      INTEGER,
+        host_ids     TEXT,            -- JSON 数组（实际生效的可见主机）
+        query_params TEXT,            -- JSON 快照（导出参数 + dsl）
+        row_count    INTEGER,
+        format       TEXT NOT NULL,   -- json | csv
+        masked       INTEGER DEFAULT 0,
+        ip_address   TEXT,
+        created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_export_audit_user ON export_audit_log(user_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_export_audit_created ON export_audit_log(created_at)
+    """,
 ]
 
 
@@ -2287,12 +2327,98 @@ def _seed_system_settings(conn: sqlite3.Connection) -> None:
         ("max_upload_file_mb", "500", "手工上传日志单文件大小上限", "int"),
         ("log_retention_days", "90", "安全事件保留天数", "int"),
         ("upload_file_retention_days", "7", "上传日志文件保留天数", "int"),
+        # P0-2 ACL 设置（默认最小权限：非 admin 需显式授权）
+        ("acl_strict_mode", "on", "ACL 严格模式（on=非 admin 仅可见授权案件主机）", "bool"),
+        ("acl_initial_grant_all", "false", "首次启动为存量非 admin 用户授予全部案件 viewer 权限", "bool"),
     ]
     for key, value, desc, vtype in defaults:
         conn.execute(
             "INSERT OR IGNORE INTO system_settings (key, value, description, value_type) VALUES (?, ?, ?, ?)",
             (key, value, desc, vtype),
         )
+
+
+def _normalize_event_timestamps(conn: sqlite3.Connection) -> None:
+    """存量时间回填（P1-1，幂等）：三表 timestamp/imported_at 的 'T'→空格、剥离 'Z'、截断毫秒。
+
+    再次执行时无 ``%T%`` 命中行，天然幂等；回填后字符串字典序=时间序。
+    """
+    updates = [
+        (
+            "security_events",
+            "timestamp",
+            "UPDATE security_events SET timestamp = ? WHERE timestamp LIKE '%T%'",
+        ),
+        (
+            "normalized_logs",
+            "timestamp",
+            "UPDATE normalized_logs SET timestamp = ? WHERE timestamp LIKE '%T%'",
+        ),
+        (
+            "agent_imports",
+            "imported_at",
+            "UPDATE agent_imports SET imported_at = ? WHERE imported_at LIKE '%T%'",
+        ),
+    ]
+    for table, col, sql in updates:
+        try:
+            # 先 PRAGMA 校验列存在，避免老库缺列时报错
+            cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+            if col not in cols:
+                continue
+            rows = conn.execute(
+                f"SELECT id, {col} FROM {table} WHERE {col} LIKE '%T%' LIMIT 5000"
+            ).fetchall()
+            changed = 0
+            for row in rows:
+                from app.services.time_utils import normalize_db_ts
+
+                new_val = normalize_db_ts(row[col])
+                if new_val != row[col]:
+                    conn.execute(sql, (new_val,))
+                    changed += 1
+            if changed:
+                logger.info("Time backfill: %s.%s updated %d rows", table, col, changed)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Time backfill skipped for %s.%s: %s", table, col, exc)
+
+
+def _seed_initial_case_access(conn: sqlite3.Connection) -> None:
+    """首次启动（可选）：为所有存量非 admin 用户对全部现有案件插入 viewer 授权（幂等）。
+
+    仅在 ``acl_initial_grant_all`` 为 true 时执行；``INSERT OR IGNORE`` +
+    UNIQUE(user_id, case_id) 约束保证天然幂等。
+    """
+    try:
+        row = conn.execute(
+            "SELECT value FROM system_settings WHERE key = 'acl_initial_grant_all'"
+        ).fetchone()
+        enabled = bool(row and str(row["value"]).strip().lower() in ("1", "true", "yes", "on"))
+        if not enabled:
+            return
+        case_ids = [r["id"] for r in conn.execute("SELECT id FROM cases").fetchall()]
+        if not case_ids:
+            return
+        users = conn.execute(
+            "SELECT id FROM users WHERE role IS NULL OR role != 'admin'"
+        ).fetchall()
+        if not users:
+            return
+        inserted = 0
+        for u in users:
+            for cid in case_ids:
+                cur = conn.execute(
+                    """
+                    INSERT OR IGNORE INTO user_case_access (user_id, case_id, role_in_case, granted_by)
+                    VALUES (?, ?, 'viewer', NULL)
+                    """,
+                    (u["id"], cid),
+                )
+                inserted += cur.rowcount
+        if inserted:
+            logger.info("ACL initial grant: inserted %d viewer grants (non-admin users)", inserted)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ACL initial grant skipped: %s", exc)
 
 
 def _migrate_import_records() -> None:
@@ -2533,6 +2659,10 @@ def init_db() -> None:
         # 系统设置一期：users 表迁移 + 预置系统参数
         _migrate_users_table(conn)
         _seed_system_settings(conn)
+        # P1-1：存量时间回填（三表 T/Z/毫秒 → 本地空格格式，幂等）
+        _normalize_event_timestamps(conn)
+        # P0-2：首次启动（可选）为存量非 admin 用户授予全部案件 viewer 权限（幂等）
+        _seed_initial_case_access(conn)
         conn.commit()
         # v3.1: ai_feedback / playbook_presets 表 + ai_audit_log 扩展列
         conn.execute("CREATE TABLE IF NOT EXISTS ai_feedback (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, query TEXT, reply TEXT, rating INTEGER, comment TEXT, created_at TEXT DEFAULT (datetime('now')))")

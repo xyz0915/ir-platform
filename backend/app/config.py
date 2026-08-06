@@ -170,6 +170,14 @@ class Settings:
     DEFAULT_CACHE_TTL_UNKNOWN_DAYS: int = 3
 
 
+    # ── ACL 权限模型（P0-2）────────────────────────────────────
+    # 严格模式开关：on 时非 admin 用户仅可见被授权案件的主机；
+    # off 时保留旧行为（非 admin 全量可见），仅用于临时兼容。
+    ACL_STRICT_MODE: bool = _env_flag("IR_ACL_STRICT_MODE", True)
+    # 首次启动时为所有存量非 admin 用户对全部现有案件插入 viewer 授权
+    # （供希望保留旧行为的部署选择；默认 false 最小权限）。
+    ACL_INITIAL_GRANT_ALL: bool = _env_flag("IR_ACL_INITIAL_GRANT_ALL", False)
+
     # ── 手工日志导入（Manual Log Import）────────────────────
     LOG_FILE_RETENTION_DAYS: int = 7       # 上传日志文件保留天数
     MAX_LOG_FILE_SIZE_MB: int = 500        # 单文件大小上限（MB）
