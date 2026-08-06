@@ -1,27 +1,29 @@
 <template>
   <div class="dashboard-view">
-    <!-- 顶部 -->
+    <!-- 顶部工具栏：更新时间 + 刷新（页面标题由 AgentOrchestrationLayout 提供） -->
     <div class="dv-toolbar">
-      <div class="dv-title">
-        <h2>编排总览</h2>
-        <span class="dv-sub">前端组合聚合 · 真实运行数据 + Mock 趋势/护栏拦截</span>
-      </div>
-      <div class="dv-actions">
-        <span v-if="store.lastUpdated" class="dv-updated">
-          更新于 {{ fmtTime(store.lastUpdated) }}
-        </span>
-        <el-button :loading="store.loading" @click="store.fetchStats()">
-          <el-icon><Refresh /></el-icon> 刷新
-        </el-button>
-      </div>
+      <span v-if="store.lastUpdated" class="dv-updated">更新于 {{ relativeTime(store.lastUpdated) }}</span>
+      <el-button :loading="store.loading" @click="store.fetchStats()">刷新</el-button>
     </div>
 
-    <!-- 指标卡 -->
+    <!-- 指标卡：主色 #111827，单色等宽数值，无彩色强调 -->
     <div class="dv-stats">
-      <StatCard title="运行中智能体" :value="store.stats.running_agents" :icon="Cpu" color="#3B82F6" />
-      <StatCard title="成功率" :value="store.stats.success_rate + '%'" :icon="CircleCheck" color="#22C55E" />
-      <StatCard title="待审 HITL" :value="store.stats.pending_hitl" :icon="Stamp" color="#F59E0B" />
-      <StatCard title="护栏拦截" :value="store.stats.guardrail_blocks" :icon="Lock" color="#EF4444" />
+      <div class="dv-stat">
+        <span class="dv-stat-label">运行中智能体</span>
+        <span class="dv-stat-value">{{ store.stats.running_agents }}</span>
+      </div>
+      <div class="dv-stat">
+        <span class="dv-stat-label">成功率</span>
+        <span class="dv-stat-value">{{ store.stats.success_rate }}%</span>
+      </div>
+      <div class="dv-stat">
+        <span class="dv-stat-label">待审 HITL</span>
+        <span class="dv-stat-value">{{ store.stats.pending_hitl }}</span>
+      </div>
+      <div class="dv-stat">
+        <span class="dv-stat-label">护栏拦截</span>
+        <span class="dv-stat-value">{{ store.stats.guardrail_blocks }}</span>
+      </div>
     </div>
 
     <div class="dv-body">
@@ -43,15 +45,16 @@
             <el-table-column prop="run_id" label="Run ID" min-width="130">
               <template #default="{ row }"><span class="dv-mono">{{ row.run_id }}</span></template>
             </el-table-column>
-            <el-table-column prop="status" label="状态" width="96">
+            <el-table-column prop="status" label="状态" width="110">
               <template #default="{ row }">
-                <el-tag :type="statusTag(row.status)" size="small" effect="light">
-                  {{ statusLabel(row.status) }}
-                </el-tag>
+                <span class="dv-status">
+                  <span class="dv-status-dot" :class="statusClass(row.status)" />
+                  <span>{{ statusLabel(row.status) }}</span>
+                </span>
               </template>
             </el-table-column>
-            <el-table-column prop="created_at" label="时间" min-width="150">
-              <template #default="{ row }">{{ fmtTime(row.created_at) }}</template>
+            <el-table-column prop="created_at" label="时间" min-width="110">
+              <template #default="{ row }">{{ relativeTime(row.created_at) }}</template>
             </el-table-column>
           </el-table>
         </el-card>
@@ -64,9 +67,7 @@
 import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
-import { Cpu, CircleCheck, Stamp, Lock, Refresh } from '@element-plus/icons-vue'
 import { useAgentDashboardStore } from '@/stores/agentDashboard'
-import StatCard from '@/components/agents/StatCard.vue'
 
 const router = useRouter()
 const store = useAgentDashboardStore()
@@ -75,7 +76,7 @@ const trendChartRef = ref(null)
 let trendChart = null
 let pollTimer = null
 
-// ===== 趋势图 =====
+// ===== 趋势图（近黑配色，去彩色强调） =====
 function renderChart() {
   if (!trendChartRef.value) return
   if (!trendChart) {
@@ -88,15 +89,15 @@ function renderChart() {
     xAxis: {
       type: 'category',
       data: data.map((d) => d.ts),
-      axisLabel: { formatter: (v) => fmtDay(v), color: '#94A3B8', fontSize: 11 },
-      axisLine: { lineStyle: { color: '#334155' } },
+      axisLabel: { formatter: (v) => fmtDay(v), color: '#9ca3af', fontSize: 11 },
+      axisLine: { lineStyle: { color: '#d1d5db' } },
     },
     yAxis: {
       type: 'value',
       min: 70,
       max: 100,
-      axisLabel: { formatter: '{value}%', color: '#94A3B8', fontSize: 11 },
-      splitLine: { lineStyle: { color: 'rgba(51,65,85,0.4)' } },
+      axisLabel: { formatter: '{value}%', color: '#9ca3af', fontSize: 11 },
+      splitLine: { lineStyle: { color: 'rgba(17,24,39,0.08)' } },
     },
     series: [
       {
@@ -105,12 +106,12 @@ function renderChart() {
         data: data.map((d) => d.success_rate),
         symbol: 'circle',
         symbolSize: 7,
-        lineStyle: { width: 2, color: '#3B82F6' },
-        itemStyle: { color: '#3B82F6' },
+        lineStyle: { width: 2, color: '#111827' },
+        itemStyle: { color: '#111827' },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(59,130,246,0.35)' },
-            { offset: 1, color: 'rgba(59,130,246,0.02)' },
+            { offset: 0, color: 'rgba(17,24,39,0.25)' },
+            { offset: 1, color: 'rgba(17,24,39,0.02)' },
           ]),
         },
       },
@@ -136,26 +137,28 @@ function statusLabel(status) {
     }[status] || status || '-'
   )
 }
-function statusTag(status) {
-  return (
-    {
-      pending: 'info',
-      running: 'primary',
-      waiting_hitl: 'warning',
-      completed: 'success',
-      failed: 'danger',
-      cancelled: 'info',
-    }[status] || 'info'
-  )
+
+/** 状态点仅两色：运行/完成（绿 #16a34a）/ 其他（灰 #9ca3af） */
+function statusClass(status) {
+  return status === 'running' || status === 'completed' ? 'ok' : 'off'
 }
-function fmtTime(iso) {
+
+/** 相对时间：刚刚 / X 分钟前 / X 小时前 / X 天前 */
+function relativeTime(iso) {
   if (!iso) return '—'
-  try {
-    return new Date(iso).toLocaleString('zh-CN', { hour12: false })
-  } catch {
-    return iso
-  }
+  const t = new Date(iso)
+  if (Number.isNaN(t.getTime())) return String(iso)
+  const diffMs = Date.now() - t.getTime()
+  const sec = Math.floor(diffMs / 1000)
+  if (sec < 60) return '刚刚'
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `${min} 分钟前`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr} 小时前`
+  const day = Math.floor(hr / 24)
+  return `${day} 天前`
 }
+
 function fmtDay(iso) {
   if (!iso) return ''
   try {
@@ -165,6 +168,7 @@ function fmtDay(iso) {
     return iso
   }
 }
+
 function goRun(row) {
   if (row && row.run_id) router.push(`/agent-orchestration/runs/${row.run_id}`)
 }
@@ -199,23 +203,61 @@ onUnmounted(() => {
 
 <style scoped>
 .dashboard-view { padding: 16px; }
-.dv-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.dv-title h2 { margin: 0; font-size: 18px; font-weight: 600; }
-.dv-sub { display: block; font-size: 12px; color: var(--color-fg-subtle); margin-top: 2px; }
-.dv-actions { display: flex; align-items: center; gap: 12px; }
+
+/* ===== 顶部工具栏 ===== */
+.dv-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-bottom: 12px; }
 .dv-updated { font-size: 12px; color: var(--color-fg-subtle); }
 
-.dv-stats { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+/* ===== 指标卡（紧凑 4 卡，主色 #111827） ===== */
+.dv-stats { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.dv-stat {
+  flex: 1; min-width: 150px; max-width: 240px;
+  background: var(--color-canvas-default);
+  border: 0.5px solid var(--color-border-default);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 6px;
+  min-height: 82px; justify-content: center;
+  transition: box-shadow 0.15s, border-color 0.15s;
+}
+.dv-stat:hover { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05); border-color: #d1d5db; }
+.dv-stat-label { font-size: 12px; font-weight: 500; color: #6b7280; }
+.dv-stat-value {
+  font-size: 20px; font-weight: 600; color: #111827;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1.2; letter-spacing: -0.3px;
+}
 
+/* ===== 主体布局 ===== */
 .dv-body { display: flex; gap: 16px; align-items: flex-start; }
 .dv-main { flex: 1; min-width: 0; }
 .dv-side { width: 380px; flex-shrink: 0; }
 
-.dv-card { border-radius: 10px; border: 1px solid var(--color-border-default); }
-.dv-h { font-size: 14px; font-weight: 500; }
+/* ===== 卡片 ===== */
+.dv-card { border-radius: 10px; border: 0.5px solid var(--color-border-default); }
+.dv-card :deep(.el-card__header) {
+  padding: 10px 14px;
+  border-bottom: 0.5px solid var(--color-border-default);
+}
+.dv-card :deep(.el-card__body) { padding: 14px; }
+.dv-h { font-size: 13px; font-weight: 600; color: #111827; }
 .dv-chart { width: 100%; height: 280px; }
-.dv-runs { cursor: pointer; }
+
+/* ===== 近期运行表格 ===== */
+.dv-runs { cursor: pointer; border-radius: 10px; }
+.dv-runs :deep(th.el-table__cell) {
+  font-size: 12px; font-weight: 500; color: #6b7280;
+  background: var(--color-canvas-subtle);
+  padding: 8px 10px; height: 36px;
+}
+.dv-runs :deep(td.el-table__cell) {
+  padding: 8px 10px; font-size: 12px; color: var(--color-fg-default); height: 38px;
+}
 .dv-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.dv-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--color-fg-default); }
+.dv-status-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.dv-status-dot.ok { background: #16a34a; }
+.dv-status-dot.off { background: #9ca3af; }
 
 @media (max-width: 1100px) {
   .dv-body { flex-direction: column; }
