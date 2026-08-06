@@ -40,6 +40,13 @@ const SCAN_EXTS = new Set(['.css', '.scss', '.vue', '.js', '.ts'])
 const EXTERNAL_PREFIXES = ['--el-']
 
 /**
+ * JS 侧「读取令牌」的调用形态。这类调用与 CSS 的 `var(--x)` 等价，
+ * 同属**引用**，必须纳入校验；同时必须从「定义」采集中排除，
+ * 否则 `cssVar('--ghost')` 会被形态 2 误判为定义而自我豁免。
+ */
+const READ_CALL_RE = /(?:cssVar|getPropertyValue)\(\s*['"](--[A-Za-z0-9_-]+)['"]/g
+
+/**
  * 递归收集目录下所有待扫描文件的绝对路径。
  * @param {string} dir 起始目录
  * @param {string[]} acc 累加器
@@ -84,12 +91,15 @@ function collectDefined() {
     } catch (e) {
       continue
     }
+    // 读取型调用是「引用」而非「定义」，必须先剔除，否则 cssVar('--ghost')
+    // 会把自己声明为已定义，形成自证回路（QA 第 2 轮变异测试发现）。
+    const withoutReads = text.replace(READ_CALL_RE, ' ')
     // 形态 1：CSS 声明 `--x: value`
-    for (const m of text.matchAll(/(--[A-Za-z0-9_-]+)\s*:/g)) {
+    for (const m of withoutReads.matchAll(/(--[A-Za-z0-9_-]+)\s*:/g)) {
       defined.add(m[1])
     }
     // 形态 2：JS 字符串键 '--x' / "--x"（预设色板、setProperty 调用）
-    for (const m of text.matchAll(/['"](--[A-Za-z0-9_-]+)['"]/g)) {
+    for (const m of withoutReads.matchAll(/['"](--[A-Za-z0-9_-]+)['"]/g)) {
       defined.add(m[1])
     }
   }
@@ -128,7 +138,12 @@ function collectReferences() {
     }
     const lines = stripComments(text).split(/\r?\n/)
     lines.forEach((line, idx) => {
+      // 形态 1：CSS 的 var(--x)
       for (const m of line.matchAll(/var\(\s*(--[A-Za-z0-9_-]+)/g)) {
+        refs.push({ token: m[1], file, line: idx + 1 })
+      }
+      // 形态 2：JS 的 cssVar('--x') / getPropertyValue('--x')
+      for (const m of line.matchAll(READ_CALL_RE)) {
         refs.push({ token: m[1], file, line: idx + 1 })
       }
     })
