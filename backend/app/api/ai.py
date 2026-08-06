@@ -1222,25 +1222,43 @@ async def nl_log_search_endpoint(data: dict, user: dict = Depends(get_current_us
 
     Body:
         {
-            "nl_text": "查一下昨天来自 1.2.3.4 的高危登录失败",
-            "host_id": 1,            # 可选，限定主机
-            "time_range": {"from": "...", "to": "..."}  # 可选
+            "nl_text": "查一下昨天来自 1.2.3.4 的高危登录失败",   # ≤200 字
+            "host_id": 1,            # 可选，限定主机（越权 403）
+            "time_range": {"from": "...", "to": "..."},  # 可选
+            "preview_only": false    # 可选：true=仅查询计划预览（不查库）
         }
 
     返回：
-        {code:0, data:{columns, rows(脱敏), summary, audit_id, total}, message}
+        {code:0, data:{columns, rows(脱敏), summary, audit_id, total, query_plan}, message}
     拒绝的越权/非法查询返回 {code:1, message:"..."}.
     """
     nl_text = (data or {}).get("nl_text", "")
     if not nl_text or not str(nl_text).strip():
         return _fail("nl_text 不能为空")
+    if len(str(nl_text)) > 200:
+        return _fail("nl_text 长度不能超过 200 字")
     host_id = (data or {}).get("host_id")
     time_range = (data or {}).get("time_range")
+    preview_only = bool((data or {}).get("preview_only", False))
     try:
+        from app.services.access_control import (
+            is_admin,
+            require_host_access,
+            resolve_allowed_host_ids,
+        )
+
+        # P0-2 ACL：host_id 越权 → 403
+        if host_id is not None and not is_admin(user):
+            require_host_access(user, int(host_id))
+        allowed_host_ids = resolve_allowed_host_ids(user, host_id if host_id is not None else None)
         result = await nl_log_search(
-            nl_text=str(nl_text), user=user, host_id=host_id, time_range=time_range
+            nl_text=str(nl_text), user=user, host_id=host_id,
+            time_range=time_range, preview_only=preview_only,
+            allowed_host_ids=allowed_host_ids,
         )
         return _ok(result)
+    except HTTPException:
+        raise
     except ValueError as e:
         return _fail(str(e))
     except Exception as e:

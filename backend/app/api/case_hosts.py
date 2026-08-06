@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter, Depends
 from app.database import get_connection
 from app.services.auth_service import get_current_user
+from app.services.access_control import get_visible_case_ids, get_visible_host_ids
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -10,25 +11,52 @@ router = APIRouter()
 
 @router.get("/cases/with-hosts")
 def list_cases_with_hosts(current_user: dict = Depends(get_current_user)):
-    """返回案件及下属主机列表（含统计数据），用于级联选择器."""
+    """返回案件及下属主机列表（含统计数据），用于级联选择器.
+
+    【P0-2 ACL】admin 全量；非 admin 仅返回被授权案件及其主机。
+    """
     try:
+        visible_cases = get_visible_case_ids(current_user)
+        visible_hosts = get_visible_host_ids(current_user)
+
         with get_connection() as conn:
-            # 1. 查所有案件
-            cases = conn.execute(
-                "SELECT id, name, case_number FROM cases ORDER BY created_at DESC"
-            ).fetchall()
+            # 1. 查案件（ACL 过滤）
+            if visible_cases is None:
+                cases = conn.execute(
+                    "SELECT id, name, case_number FROM cases ORDER BY created_at DESC"
+                ).fetchall()
+            else:
+                if not visible_cases:
+                    return {"success": True, "data": []}
+                placeholders = ",".join("?" for _ in visible_cases)
+                cases = conn.execute(
+                    f"SELECT id, name, case_number FROM cases WHERE id IN ({placeholders}) "
+                    "ORDER BY created_at DESC",
+                    sorted(visible_cases),
+                ).fetchall()
             if not cases:
                 return {"success": True, "data": []}
 
             case_ids = [c["id"] for c in cases]
 
-            # 2. 查所有主机（按 case 分组）
-            placeholders = ",".join("?" for _ in case_ids)
-            hosts = conn.execute(
-                f"SELECT id, hostname, ip_address, case_id FROM hosts "
-                f"WHERE case_id IN ({placeholders}) ORDER BY hostname",
-                case_ids
-            ).fetchall()
+            # 2. 查主机（按 case 分组；ACL 再按可见主机过滤）
+            case_placeholders = ",".join("?" for _ in case_ids)
+            if visible_hosts is None:
+                hosts = conn.execute(
+                    f"SELECT id, hostname, ip_address, case_id FROM hosts "
+                    f"WHERE case_id IN ({case_placeholders}) ORDER BY hostname",
+                    case_ids
+                ).fetchall()
+            else:
+                if not visible_hosts:
+                    return {"success": True, "data": []}
+                host_placeholders = ",".join("?" for _ in visible_hosts)
+                hosts = conn.execute(
+                    f"SELECT id, hostname, ip_address, case_id FROM hosts "
+                    f"WHERE case_id IN ({case_placeholders}) "
+                    f"AND id IN ({host_placeholders}) ORDER BY hostname",
+                    case_ids + sorted(visible_hosts),
+                ).fetchall()
 
             # 3. 单次聚合：每个 case 的 log_count（agent_imports）
             case_log_counts = dict(
@@ -36,7 +64,7 @@ def list_cases_with_hosts(current_user: dict = Depends(get_current_user)):
                     SELECT h.case_id, COALESCE(SUM(ai.item_count), 0) AS cnt
                     FROM agent_imports ai
                     JOIN hosts h ON ai.host_id = h.id
-                    WHERE h.case_id IN ({placeholders})
+                    WHERE h.case_id IN ({case_placeholders})
                     GROUP BY h.case_id
                 """, case_ids).fetchall()
             )
@@ -47,7 +75,7 @@ def list_cases_with_hosts(current_user: dict = Depends(get_current_user)):
                     SELECT h.case_id, COUNT(se.id) AS cnt
                     FROM security_events se
                     JOIN hosts h ON se.host_id = h.id
-                    WHERE h.case_id IN ({placeholders})
+                    WHERE h.case_id IN ({case_placeholders})
                     GROUP BY h.case_id
                 """, case_ids).fetchall()
             )

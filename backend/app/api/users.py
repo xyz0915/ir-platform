@@ -9,6 +9,11 @@ from pydantic import BaseModel
 from app.database import get_connection
 from app.services.auth_service import get_current_user, hash_password
 from app.services.audit_service import create_audit_log
+from app.services.access_control import (
+    grant_case_access,
+    revoke_case_access,
+    list_user_grants,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -32,6 +37,11 @@ class UpdateUserRequest(BaseModel):
 
 class ResetPasswordRequest(BaseModel):
     new_password: str
+
+
+class GrantAccessRequest(BaseModel):
+    case_id: int
+    role_in_case: str = "viewer"
 
 
 # ─── API 端点 ─────────────────────────────────────────────────
@@ -239,3 +249,56 @@ def toggle_user_active(
         target_id=str(user_id),
     )
     return {"code": 0, "data": {"id": user_id, "is_active": new_active}, "message": "success"}
+
+
+# ─── P0-2 ACL 授权管理（admin only）────────────────────────────
+
+
+@router.get("/users/{user_id}/access")
+def list_user_case_access(
+    user_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """列出用户的案件授权（仅 admin）。"""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="仅管理员可管理授权")
+    with get_connection() as conn:
+        user = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="用户不存在")
+    grants = list_user_grants(user_id)
+    return {"code": 0, "data": {"user_id": user_id, "items": grants}, "message": "success"}
+
+
+@router.post("/users/{user_id}/access")
+def grant_user_case_access(
+    user_id: int,
+    data: GrantAccessRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """授权用户访问案件（仅 admin）。
+
+    Body: {"case_id": 1, "role_in_case": "viewer|analyst|owner"}
+    """
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="仅管理员可管理授权")
+    result = grant_case_access(
+        operator=current_user,
+        user_id=user_id,
+        case_id=data.case_id,
+        role_in_case=data.role_in_case,
+    )
+    return {"code": 0, "data": result, "message": "success"}
+
+
+@router.delete("/users/{user_id}/access/{case_id}")
+def revoke_user_case_access(
+    user_id: int,
+    case_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """撤销用户对案件的访问授权（仅 admin）。"""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="仅管理员可管理授权")
+    revoke_case_access(operator=current_user, user_id=user_id, case_id=case_id)
+    return {"code": 0, "data": {"user_id": user_id, "case_id": case_id}, "message": "success"}

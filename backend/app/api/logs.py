@@ -1,12 +1,17 @@
-"""日志分析 API."""
+"""日志分析 API.
+
+【P0-2 ACL】5 个端点统一注入可见主机集合；显式 host_id 越权 403。
+【P1-1 时间】date_from/date_to 兼容 T/Z/毫秒格式（服务层 parse_client_time）。
+"""
 
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.models.normalized_log import NormalizedLog
 from app.services.auth_service import get_current_user
+from app.services.access_control import is_admin, resolve_allowed_host_ids, require_host_access
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -33,6 +38,7 @@ def search_logs(
     page_size: int = Query(50, ge=1, le=200),
     current_user: dict = Depends(get_current_user),
 ):
+    allowed = resolve_allowed_host_ids(current_user, host_id)
     return {"success": True, "data": NormalizedLog.search(
         host_id=host_id, hostname=hostname,
         event_id=event_id, event_type=event_type, severity=severity,
@@ -41,6 +47,7 @@ def search_logs(
         tag=tag, keyword=keyword,
         date_from=date_from, date_to=date_to, log_source=log_source,
         sort=sort, page=page, page_size=page_size,
+        allowed_host_ids=allowed,
     )}
 
 
@@ -49,7 +56,8 @@ def log_stats(
     host_id: Optional[int] = Query(None),
     current_user: dict = Depends(get_current_user),
 ):
-    return {"success": True, "data": NormalizedLog.get_stats(host_id=host_id)}
+    allowed = resolve_allowed_host_ids(current_user, host_id)
+    return {"success": True, "data": NormalizedLog.get_stats(host_id=host_id, allowed_host_ids=allowed)}
 
 
 @router.get("/logs/stats/timeline")
@@ -60,8 +68,10 @@ def log_timeline(
     date_to: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user),
 ):
+    allowed = resolve_allowed_host_ids(current_user, host_id)
     return {"success": True, "data": NormalizedLog.get_timeline(
         host_id=host_id, interval=interval, date_from=date_from, date_to=date_to,
+        allowed_host_ids=allowed,
     )}
 
 
@@ -70,7 +80,8 @@ def log_session(
     logon_session: str,
     current_user: dict = Depends(get_current_user),
 ):
-    return {"success": True, "data": NormalizedLog.get_session(logon_session)}
+    allowed = resolve_allowed_host_ids(current_user, None)
+    return {"success": True, "data": NormalizedLog.get_session(logon_session, allowed_host_ids=allowed)}
 
 
 @router.get("/logs/pivot")
@@ -80,7 +91,8 @@ def log_pivot(
     host_id: Optional[int] = Query(None),
     current_user: dict = Depends(get_current_user),
 ):
-    return {"success": True, "data": NormalizedLog.pivot(field=field, value=value, host_id=host_id)}
+    allowed = resolve_allowed_host_ids(current_user, host_id)
+    return {"success": True, "data": NormalizedLog.pivot(field=field, value=value, host_id=host_id, allowed_host_ids=allowed)}
 
 
 @router.get("/logs/patterns/brute-force")
@@ -90,6 +102,8 @@ def brute_force_patterns(
     host_id: Optional[int] = Query(None),
     current_user: dict = Depends(get_current_user),
 ):
+    allowed = resolve_allowed_host_ids(current_user, host_id)
     return {"success": True, "data": NormalizedLog.get_brute_force(
         min_attempts=min_attempts, window_minutes=window_minutes, host_id=host_id,
+        allowed_host_ids=allowed,
     )}
