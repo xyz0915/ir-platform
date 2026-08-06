@@ -52,12 +52,17 @@ def db_path():
     """
     from app.config import settings
     original = settings.DB_PATH
+    original_journal_mode = getattr(settings, "DB_JOURNAL_MODE", "WAL")
     data_dir = BACKEND_DIR / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     path = str(data_dir / f"test_dag_fix_{uuid.uuid4().hex[:8]}.db")
     _init_test_db(path)
     yield path
+    # A6+A11：恢复 DB_PATH 同时恢复 DB_JOURNAL_MODE，避免 teardown 阶段
+    # 后续 autouse fixture（如 test_preset_meta._cleanup）连到生产库时仍用
+    # DELETE 模式执行 PRAGMA journal_mode 触发 Windows WAL 锁 disk I/O error。
     settings.DB_PATH = original
+    settings.DB_JOURNAL_MODE = original_journal_mode
     # 尽力清理临时库及其 WAL/SHM 附属文件
     for suffix in ("", "-wal", "-shm"):
         try:
