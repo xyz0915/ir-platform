@@ -31,6 +31,7 @@ const menuItems = [
   { emoji: '💾', label: '数据与存储', path: '/settings/storage' },
   { emoji: '🔧', label: '系统参数', path: '/settings/params' },
   { emoji: '🎨', label: '主题与外观', path: '/settings/theme' },
+  { emoji: '🧩', label: '模型配置与审计', path: '/settings/model-config-audit' },
 ]
 
 const currentPath = computed(() => route.path)

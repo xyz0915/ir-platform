@@ -124,7 +124,6 @@ const navGroups = [
     label: '智能分析',
     path: '',
     children: [
-      { icon: MagicStick, label: 'AI 分析', path: '/ai' },
       { icon: Aim, label: 'AI 实验室', path: '/ai-advanced', activeMatch: '/ai-advanced' },
       { icon: DataAnalysis, label: '分析中心', path: '/analysis-center', activeMatch: '/analysis-center' },
       { icon: Search, label: '日志检索', path: '/log-search', activeMatch: '/log-search' },
@@ -160,6 +159,7 @@ const navGroups = [
       { icon: Coin, label: '数据与存储', path: '/settings/storage' },
       { icon: Tools, label: '系统参数', path: '/settings/params' },
       { icon: MagicStick, label: '主题与外观', path: '/settings/theme' },
+      { icon: MagicStick, label: '模型配置与审计', path: '/settings/model-config-audit' },
     ],
   },
 ]
@@ -190,7 +190,7 @@ const routeMeta = computed(() => {
     'RuleDrafts': { title: '规则草稿', subtitle: 'AI 自生成检测规则 · 影子运行与人审启用' },
     'Whitelist': { title: '白名单配置', subtitle: '管理信任名单与豁免规则' },
     'Iocs': { title: 'IOC 指标管理', subtitle: '威胁情报指标库维护' },
-    'AiConfig': { title: 'AI 分析', subtitle: '智能辅助分析与研判' },
+    'ModelConfigAudit': { title: '模型配置与审计', subtitle: '大模型配置与调用审计' },
     'ThreatIntelConfig': { title: '威胁情报外联配置', subtitle: '外部情报源接入管理' },
     'Knowledge': { title: '知识库管理', subtitle: '安全知识沉淀与检索' },
     'PolicyConfig': { title: '策略配置', subtitle: '检测策略管理与规则选择' },

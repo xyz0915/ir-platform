@@ -61,8 +61,7 @@ const routes = [
       },
       {
         path: 'ai',
-        name: 'AiConfig',
-        component: () => import('@/views/AiView.vue')
+        redirect: '/settings/model-config-audit'
       },
       {
         path: 'threat-intel-config',
@@ -257,6 +256,12 @@ const routes = [
             path: 'theme',
             name: 'ThemeCustomize',
             component: () => import('@/views/settings/ThemeCustomizeView.vue'),
+          },
+          {
+            path: 'model-config-audit',
+            name: 'ModelConfigAudit',
+            component: () => import('@/views/AiView.vue'),
+            meta: { title: '模型配置与审计' }
           },
         ]
       }
