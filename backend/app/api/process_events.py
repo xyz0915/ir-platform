@@ -9,12 +9,14 @@
 import asyncio
 from typing import Any, List, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
 from pydantic import BaseModel, ConfigDict
 
 from app.analysis.process_event_consumer import ProcessEventConsumer
 from app.services.alert_engine import AlertEngine
 from app.services.alert_ws import alert_ws_manager
+from app.services.agent_auth import assert_host_binding, get_current_agent
 
 logger = __import__("logging").getLogger(__name__)
 
@@ -47,16 +49,19 @@ class ProcessEventItem(BaseModel):
 
 
 @router.post("/hosts/{host_id}/process-events")
-def ingest_process_events(host_id: int, events: List[ProcessEventItem]) -> dict:
+def ingest_process_events(host_id: int, events: List[ProcessEventItem],
+                          agent: dict = Depends(get_current_agent)) -> dict:
     """摄取并落库主机推送的进程事件列表，同时触发实时告警评估.
 
     Args:
         host_id: 主机 ID（路径参数）.
         events: 进程事件列表（list[dict]，字段对齐 ProcessEvent.create）.
+        agent: ``get_current_agent`` 依赖解析出的 agent token 认证信息.
 
     Returns:
         ``{"written": int, "alerts": int}`` —— 写入条数和新告警数.
     """
+    assert_host_binding(agent, host_id)
     payload = [ev.model_dump(exclude_none=True) for ev in events]
     written = ProcessEventConsumer.ingest(host_id, payload)
 

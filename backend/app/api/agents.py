@@ -1,6 +1,7 @@
 """Agent 注册/心跳/断开 API + 主机在线状态."""
 import asyncio
 import logging
+import uuid
 from dataclasses import asdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -11,6 +12,8 @@ from pydantic import BaseModel
 from app.database import get_connection
 from app.models.agent_model import AgentModel
 from app.services.auth_service import get_current_user
+from app.services.agent_auth import assert_host_binding, get_current_agent
+from app.services.audit_service import create_audit_log
 # ── 多智能体编排 + HITL 审批（P0-A）──
 from app.services.agents.orchestrator import Orchestrator
 from app.models.agent_run import AgentRun, AgentRunStep
@@ -372,6 +375,16 @@ class HeartbeatRequest(BaseModel):
     memory: Optional[float] = None
 
 
+class AgentBootstrapRequest(BaseModel):
+    """Agent 自举注册请求体（除 hostname 外全可选）. """
+
+    hostname: Optional[str] = None
+    ip_address: Optional[str] = None
+    os_type: Optional[str] = None
+    agent_version: Optional[str] = None
+    collectors: Optional[list] = None
+
+
 @router.post("/agents/register")
 def register_agent(data: AgentRegisterRequest, current_user: dict = Depends(get_current_user)):
     """注册 Agent."""
@@ -387,17 +400,138 @@ def register_agent(data: AgentRegisterRequest, current_user: dict = Depends(get_
     return {"success": True, "data": result}
 
 
+@router.post("/agents/{host_id}/token")
+def generate_agent_token(host_id: int, current_user: dict = Depends(get_current_user)):
+    """生成/重置 Agent 专属 token（幂等：POST 即生成/重置，旧 token 立即失效）.
+
+    - 明文 token 仅本次响应返回一次，响应后不可再查（前端短暂持有用于复制部署命令）；
+    - host 不存在 → 404；host 存在但 agents 无记录时自动补齐一行再写入 token_hash；
+    - 操作写入通用操作日志表 audit_logs（不含 token 明文）。
+    """
+    with get_connection() as conn:
+        host = conn.execute("SELECT id FROM hosts WHERE id=?", [host_id]).fetchone()
+    if not host:
+        raise HTTPException(status_code=404, detail=f"host {host_id} 不存在")
+
+    # host 存在但 agents 行缺失时自动补齐（沿用 register() 的 INSERT 逻辑）
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT agent_id FROM agents WHERE host_id=?", [host_id]
+        ).fetchone()
+        if not row:
+            conn.execute(
+                "INSERT OR IGNORE INTO agents (host_id, agent_id) VALUES (?, ?)",
+                [host_id, f"agent-{uuid.uuid4().hex[:12]}"],
+            )
+
+    result = AgentModel.generate_token(host_id)
+    if not result:
+        raise HTTPException(status_code=500, detail="token 生成失败")
+
+    try:
+        create_audit_log(
+            user_id=current_user.get("id"),
+            username=current_user.get("username") or "",
+            action_type="agent_token_generate",
+            detail=f"生成/重置 Agent token host_id={host_id} agent_id={result['agent_id']}",
+            target_type="agent",
+            target_id=str(host_id),
+        )
+    except Exception as exc:
+        logger.warning("写入 agent token 审计日志失败: %s", exc)
+
+    return {
+        "code": 0,
+        "data": {
+            "host_id": result["host_id"],
+            "agent_id": result["agent_id"],
+            "token": result["token"],
+            "token_created_at": result.get("token_created_at"),
+            "token_set": True,
+        },
+        "message": "success",
+    }
+
+
+@router.post("/agents/bootstrap")
+def agent_bootstrap(data: AgentBootstrapRequest, agent: dict = Depends(get_current_agent)):
+    """Agent 自举注册：凭 token 认领 host_id 并刷新主机元数据.
+
+    - token 命中 agents 行 → 取 host_id → 刷新 agents 元数据（ip/os/version/collectors/心跳）
+      与 hosts 元数据（hostname/ip/os_type）；
+    - 刷新元数据让「先建主机后部署 agent」流程下平台信息保持最新。
+    """
+    host_id = int(agent["host_id"])
+    with get_connection() as conn:
+        exists = conn.execute(
+            "SELECT 1 FROM agents WHERE host_id=?", [host_id]
+        ).fetchone()
+        if not exists:
+            raise HTTPException(status_code=404, detail="agent 绑定主机不存在")
+
+        agent_fields: List[str] = []
+        agent_values: List[Any] = []
+        if data.ip_address is not None:
+            agent_fields.append("ip_address=?")
+            agent_values.append(data.ip_address)
+        if data.os_type is not None:
+            agent_fields.append("os_type=?")
+            agent_values.append(data.os_type)
+        if data.agent_version is not None:
+            agent_fields.append("agent_version=?")
+            agent_values.append(data.agent_version)
+        if data.collectors is not None:
+            agent_fields.append("collectors=?")
+            agent_values.append(",".join(data.collectors))
+        agent_fields.append("status='online'")
+        agent_fields.append("last_heartbeat=datetime('now')")
+        if agent_fields:
+            conn.execute(
+                f"UPDATE agents SET {', '.join(agent_fields)} WHERE host_id=?",
+                agent_values + [host_id],
+            )
+
+        host_fields: List[str] = []
+        host_values: List[Any] = []
+        if data.hostname is not None:
+            host_fields.append("hostname=?")
+            host_values.append(data.hostname)
+        if data.ip_address is not None:
+            host_fields.append("ip_address=?")
+            host_values.append(data.ip_address)
+        if data.os_type is not None:
+            host_fields.append("os_type=?")
+            host_values.append(data.os_type)
+        if host_fields:
+            conn.execute(
+                f"UPDATE hosts SET {', '.join(host_fields)}, updated_at=datetime('now') WHERE id=?",
+                host_values + [host_id],
+            )
+
+    return {
+        "code": 0,
+        "data": {
+            "host_id": host_id,
+            "agent_id": agent["agent_id"],
+            "token_valid": True,
+        },
+        "message": "success",
+    }
+
+
 @router.post("/hosts/{host_id}/heartbeat")
 def agent_heartbeat(host_id: int, data: HeartbeatRequest = None,
-                    current_user: dict = Depends(get_current_user)):
-    """Agent 心跳."""
+                    agent: dict = Depends(get_current_agent)):
+    """Agent 心跳（agent token 认证 + host_id 绑定校验）."""
+    assert_host_binding(agent, host_id)
     ok = AgentModel.heartbeat(host_id)
     return {"success": ok, "status": "ok"}
 
 
 @router.post("/hosts/{host_id}/disconnect")
-def agent_disconnect(host_id: int, current_user: dict = Depends(get_current_user)):
-    """Agent 断开."""
+def agent_disconnect(host_id: int, agent: dict = Depends(get_current_agent)):
+    """Agent 断开（agent token 认证 + host_id 绑定校验）."""
+    assert_host_binding(agent, host_id)
     ok = AgentModel.disconnect(host_id)
     return {"success": ok}
 
@@ -416,13 +550,36 @@ def all_hosts_status(timeout: int = Query(90), current_user: dict = Depends(get_
     return {"success": True, "data": hosts}
 
 
+_ONLINE_WINDOW_SECONDS = 90  # 心跳窗口：last_heartbeat 距今 ≤90s 视为在线（惰性折算）
+
+
+def _derive_online_status(last_heartbeat: Optional[str]) -> str:
+    """按 90s 心跳窗口惰性折算在线状态（与 get_agent_stats 口径一致）."""
+    if not last_heartbeat:
+        return "offline"
+    try:
+        hb = datetime.strptime(str(last_heartbeat), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        try:
+            hb = datetime.fromisoformat(str(last_heartbeat))
+        except ValueError:
+            return "offline"
+    if (datetime.now() - hb).total_seconds() <= _ONLINE_WINDOW_SECONDS:
+        return "online"
+    return "offline"
+
+
 @router.get("/agents")
 def list_agents(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     current_user: dict = Depends(get_current_user),
 ):
-    """获取 Agent 列表（关联 hosts 表返回主机名）."""
+    """获取 Agent 列表（关联 hosts 表返回主机名）.
+
+    在线状态按 last_heartbeat 90s 窗口惰性折算；附带 token_set/token_created_at，
+    不返回 token_hash / token 明文。
+    """
     offset = (page - 1) * page_size
     with get_connection() as conn:
         count_row = conn.execute("SELECT COUNT(*) as cnt FROM agents").fetchone()
@@ -435,7 +592,14 @@ def list_agents(
             (page_size, offset),
         ).fetchall()
 
-    items = [dict(r) for r in rows]
+    items = []
+    for r in rows:
+        item = dict(r)
+        item["status"] = _derive_online_status(item.get("last_heartbeat"))
+        item["token_set"] = bool(item.get("token_hash"))
+        item["token_created_at"] = item.get("token_created_at")
+        item.pop("token_hash", None)  # 禁止返回 token_hash
+        items.append(item)
     return {"code": 0, "data": {"total": total, "items": items}, "message": "success"}
 
 
@@ -443,14 +607,18 @@ def list_agents(
 def get_agent_stats(
     current_user: dict = Depends(get_current_user),
 ):
-    """获取 Agent 统计（总数/在线/离线）."""
+    """获取 Agent 统计（总数/在线/离线）.
+
+    online/offline 按 last_heartbeat 90s 窗口惰性折算，与列表口径一致。
+    """
     with get_connection() as conn:
         row = conn.execute(
             "SELECT "
             "  COUNT(*) as total, "
-            "  SUM(CASE WHEN status='online' THEN 1 ELSE 0 END) as online, "
-            "  SUM(CASE WHEN status='offline' OR status IS NULL THEN 1 ELSE 0 END) as offline "
-            "FROM agents"
+            "  SUM(CASE WHEN last_heartbeat > datetime('now', ?) THEN 1 ELSE 0 END) as online, "
+            "  SUM(CASE WHEN last_heartbeat IS NULL OR last_heartbeat <= datetime('now', ?) THEN 1 ELSE 0 END) as offline "
+            "FROM agents",
+            (f'-{_ONLINE_WINDOW_SECONDS} seconds', f'-{_ONLINE_WINDOW_SECONDS} seconds'),
         ).fetchone()
 
     data = {

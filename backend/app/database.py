@@ -1328,6 +1328,33 @@ def _alter_rules_table(conn: sqlite3.Connection) -> None:
             logger.info("Added column '%s' to rules table", col_name)
 
 
+def _alter_agents_token_table(conn: sqlite3.Connection) -> None:
+    """检测并添加 agents 表 token 认证列：token_hash / token_created_at（agent token 认证）.
+
+    使用 PRAGMA table_info 检测列是否已存在，不存在才 ALTER ADD COLUMN，
+    保证旧行不被破坏、可重复执行。SQLite 的 ALTER TABLE ADD COLUMN 不允许
+    UNIQUE 约束，故 token_hash 的唯一性用独立索引实现（多行 NULL 互不冲突）。
+    """
+    cursor = conn.execute("PRAGMA table_info(agents)")
+    existing_columns: set[str] = {row["name"] for row in cursor.fetchall()}
+
+    new_columns: list[tuple[str, str]] = [
+        ("token_hash", "TEXT"),          # sha256(f"{token}:{SECRET_KEY}") hex，NULL 表示从未生成
+        ("token_created_at", "TEXT"),    # 生成时间，datetime('now') 格式，仅展示用
+    ]
+
+    for col_name, col_type in new_columns:
+        if col_name not in existing_columns:
+            conn.execute(
+                f"ALTER TABLE agents ADD COLUMN {col_name} {col_type}"
+            )
+            logger.info("Added column '%s' to agents table", col_name)
+
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_token_hash ON agents(token_hash)"
+    )
+
+
 def _import_default_rules(conn: sqlite3.Connection) -> dict:
     """导入默认规则集（source 隔离 upsert by name）.
 
@@ -2681,6 +2708,8 @@ def init_db() -> None:
         _ensure_index("alerts", "idx_alerts_last_seen", "last_seen_at")
         _ensure_index("agents", "idx_agents_host", "host_id")
         _ensure_index("agents", "idx_agents_agent_id", "agent_id")
+        # agent token 认证：agents 表加 token_hash/token_created_at 列 + 唯一索引
+        _alter_agents_token_table(conn)
         # source_timestamp 迁移：CM 分析表追加列
         _migrate_source_timestamp(conn)
         # F7/F8 护栏与 MCP 表索引（DDL 已建表，此处补索引）

@@ -1,9 +1,12 @@
 """Agent 注册与心跳模型."""
+import hashlib
 import logging
+import secrets
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
+from app.config import settings
 from app.database import get_connection
 
 logger = logging.getLogger(__name__)
@@ -30,6 +33,93 @@ class AgentModel:
         except Exception as e:
             logger.error("Agent register failed: %s", e)
             return None
+
+    @staticmethod
+    def generate_token(host_id: int) -> Optional[dict]:
+        """生成/重置 Agent 专属 token，明文仅此一次返回，库中仅存哈希.
+
+        Args:
+            host_id: 主机 ID（agents.host_id 唯一绑定 hosts.id）.
+
+        Returns:
+            ``{"token", "token_hash", "host_id", "agent_id"}``（token 为明文，仅本次返回）；
+            失败返回 None.
+        """
+        try:
+            token = "atk_" + secrets.token_urlsafe(32)
+            token_hash = hashlib.sha256(
+                f"{token}:{settings.SECRET_KEY}".encode("utf-8")
+            ).hexdigest()
+            with get_connection() as conn:
+                conn.execute(
+                    "UPDATE agents SET token_hash=?, token_created_at=datetime('now') WHERE host_id=?",
+                    [token_hash, host_id],
+                )
+                row = conn.execute(
+                    "SELECT agent_id, token_created_at FROM agents WHERE host_id=?",
+                    [host_id],
+                ).fetchone()
+            if not row:
+                logger.warning("Agent generate_token: host_id=%d has no agents row", host_id)
+                return None
+            return {
+                "token": token,
+                "token_hash": token_hash,
+                "host_id": host_id,
+                "agent_id": row["agent_id"],
+                "token_created_at": row["token_created_at"],
+            }
+        except Exception as e:
+            logger.error("Agent generate_token failed: %s", e)
+            return None
+
+    @staticmethod
+    def get_by_token_hash(token_hash: str) -> Optional[dict]:
+        """按 token 哈希查询 agent（认证用）.
+
+        Args:
+            token_hash: sha256(f"{token}:{SECRET_KEY}") hex 串.
+
+        Returns:
+            ``{"host_id", "agent_id", "token_hash"}`` 或 None.
+        """
+        try:
+            with get_connection() as conn:
+                row = conn.execute(
+                    "SELECT host_id, agent_id, token_hash FROM agents WHERE token_hash=?",
+                    [token_hash],
+                ).fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error("Agent get_by_token_hash failed: %s", e)
+            return None
+
+    @staticmethod
+    def get_token_status(host_id: int) -> dict:
+        """查询 agent 行 token 状态（供列表/详情展示，不含明文）.
+
+        Args:
+            host_id: 主机 ID.
+
+        Returns:
+            ``{"token_set": bool, "token_created_at": str|None}``；agents 行不存在时
+            ``{"token_set": False, "token_created_at": None}``.
+        """
+        try:
+            with get_connection() as conn:
+                row = conn.execute(
+                    "SELECT token_hash, token_created_at FROM agents WHERE host_id=?",
+                    [host_id],
+                ).fetchone()
+            if not row:
+                return {"token_set": False, "token_created_at": None}
+            return {
+                "token_set": bool(row["token_hash"]),
+                "token_created_at": row["token_created_at"],
+            }
+        except Exception as e:
+            logger.error("Agent get_token_status failed: %s", e)
+            return {"token_set": False, "token_created_at": None}
 
     @staticmethod
     def heartbeat(host_id: int) -> bool:
