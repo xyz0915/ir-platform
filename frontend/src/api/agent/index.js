@@ -43,7 +43,7 @@ import {
   rejectAgentRun,
   listPendingApprovals,
 } from '@/api/agentOrchestration'
-import { getAgents, getAgentStats } from '@/api/agents'
+import { getAgents, getAgentStats, generateAgentToken } from '@/api/agents'
 import {
   listDefaultRules,
   createDefaultRule,
@@ -120,6 +120,7 @@ const agentApi = {
   // ── 设置页智能体列表（真实，带分页，区别于 M2 的 listAgents(enabledOnly)） ──
   agents: {
     list: (params = {}) => getAgents(params),
+    generateToken: (hostId) => generateAgentToken(hostId),
   },
 
   // ── M6 人工审核台（真实） ──

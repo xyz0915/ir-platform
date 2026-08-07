@@ -7,3 +7,7 @@ export function getAgents(params) {
 export function getAgentStats() {
   return request.get('/agents/stats')
 }
+
+export function generateAgentToken(hostId) {
+  return request.post(`/agents/${hostId}/token`)
+}
