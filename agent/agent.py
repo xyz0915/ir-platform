@@ -20,6 +20,7 @@ import urllib.request
 import urllib.error
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from collectors.base_collector import BaseCollector
 from utils.platform import get_timestamp, is_windows, is_linux
@@ -132,6 +133,46 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+class _TokenInvalidError(Exception):
+    """agent token 无效或已重置（平台返回 401/403）."""
+
+
+def _bootstrap(server: str, token: str, metadata: dict) -> Optional[int]:
+    """Agent 自举注册：用 token 向平台换取 host_id.
+
+    POST {server}/api/agents/bootstrap，Authorization: Bearer <token>，
+    请求体含 hostname/os_type/agent_version 等元数据，15s 超时（与 _push_events 同风格）。
+
+    Returns:
+        host_id（int）.
+
+    Raises:
+        _TokenInvalidError: 平台返回 401/403（token 无效或已重置）.
+        Exception: 网络/服务端其它失败.
+    """
+    url = f"{server.rstrip('/')}/api/agents/bootstrap"
+    payload = {
+        "hostname": metadata.get("hostname"),
+        "os_type": metadata.get("platform"),
+        "agent_version": metadata.get("agent_version"),
+        "collectors": [],
+    }
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data,
+                                  headers={"Content-Type": "application/json"})
+    req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            body = json.loads(resp.read().decode())
+            host_id = (body or {}).get("data", {}).get("host_id")
+            return int(host_id) if host_id else None
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            raise _TokenInvalidError(e.code)
+        logger.error("Bootstrap HTTP %d: %s", e.code, e.read().decode()[:200])
+        raise
+
+
 def _push_events(server: str, token: str, host_id: int, events: list,
                  endpoint: str = "/api/hosts/{host_id}/process-events") -> bool:
     """推送事件列表到平台."""
@@ -149,9 +190,12 @@ def _push_events(server: str, token: str, host_id: int, events: list,
             logger.debug("Pushed %d events, response: %s", len(events), body.get("written", 0))
             return True
     except urllib.error.HTTPError as e:
-        logger.warning("Push events HTTP %d: %s", e.code, e.read().decode()[:200])
+        if e.code in (401, 403):
+            logger.error("token 无效或已重置，请在前端主机 Agent 页重新生成 Token (HTTP %d)", e.code)
+        else:
+            logger.warning("Push events HTTP %d: %s", e.code, e.read().decode()[:200])
     except Exception as e:
-        logger.warning("Push events failed: %s", e)
+        logger.warning("Push events failed (network): %s", e)
     return False
 
 
@@ -166,8 +210,14 @@ def _send_heartbeat(server: str, token: str, host_id: int) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             return resp.status == 200
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            logger.error("token 无效或已重置，请在前端主机 Agent 页重新生成 Token (HTTP %d)", e.code)
+        else:
+            logger.warning("Heartbeat HTTP %d: %s", e.code, e.read().decode()[:200])
+        return False
     except Exception as e:
-        logger.warning("Heartbeat failed: %s", e)
+        logger.warning("Heartbeat failed (network): %s", e)
         return False
 
 
@@ -227,10 +277,25 @@ def run_daemon(args: argparse.Namespace) -> None:
     write_output(output_data, snapshot_path)
     logger.info("Snapshot saved: %s", snapshot_path)
 
-    # 4. 取 host_id（从平台注册获取或从参数读）
+    # 4. 取 host_id：显式 --daemon-id 直接使用；否则有 --token 时自举认领
     host_id = int(args.daemon_id) if args.daemon_id and args.daemon_id.isdigit() else 0
     if host_id == 0:
-        logger.info("host_id not provided, snapshot only mode (no push)")
+        if args.token:
+            logger.info("host_id not provided, bootstrapping with token...")
+            try:
+                host_id = _bootstrap(server, args.token, metadata)
+            except _TokenInvalidError:
+                logger.error("token 无效或已重置，请在前端主机 Agent 页重新生成 Token")
+                sys.exit(2)
+            except Exception:
+                logger.error("Bootstrap failed: 无法连接平台 %s，fail-fast 退出", server)
+                sys.exit(1)
+            if not host_id:
+                logger.error("Bootstrap failed: 平台未返回有效 host_id")
+                sys.exit(1)
+            logger.info("Daemon running with host_id=%d, pushing to %s", host_id, server)
+        else:
+            logger.info("缺少 --token 或 --daemon-id，无法接入平台，进入 snapshot-only 模式 (no push)")
     else:
         logger.info("Daemon running with host_id=%d, pushing to %s", host_id, server)
 
