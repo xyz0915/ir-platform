@@ -3,7 +3,7 @@ import asyncio
 import logging
 import uuid
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -554,7 +554,11 @@ _ONLINE_WINDOW_SECONDS = 90  # 心跳窗口：last_heartbeat 距今 ≤90s 视�
 
 
 def _derive_online_status(last_heartbeat: Optional[str]) -> str:
-    """按 90s 心跳窗口惰性折算在线状态（与 get_agent_stats 口径一致）."""
+    """按 90s 心跳窗口惰性折算在线状态（与 get_agent_stats 口径一致）.
+
+    last_heartbeat 由 SQLite ``datetime('now')``（UTC）写入，比较必须统一 UTC 基准，
+    否则 UTC+8 环境下刚心跳的主机会被误判为 offline（曾见 D-1）。
+    """
     if not last_heartbeat:
         return "offline"
     try:
@@ -564,7 +568,10 @@ def _derive_online_status(last_heartbeat: Optional[str]) -> str:
             hb = datetime.fromisoformat(str(last_heartbeat))
         except ValueError:
             return "offline"
-    if (datetime.now() - hb).total_seconds() <= _ONLINE_WINDOW_SECONDS:
+    # 统一 UTC 基准：naive 一律视为 UTC；aware 先转 UTC 再剥去 tzinfo，避免类型冲突
+    if hb.tzinfo is not None:
+        hb = hb.astimezone(timezone.utc).replace(tzinfo=None)
+    if (datetime.now(timezone.utc).replace(tzinfo=None) - hb).total_seconds() <= _ONLINE_WINDOW_SECONDS:
         return "online"
     return "offline"
 
