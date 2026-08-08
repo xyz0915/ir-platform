@@ -2,6 +2,7 @@
   <div class="agent-management">
     <div class="page-header">
       <h2>主机 Agent</h2>
+      <el-tag type="success" size="small" style="margin-left:12px">v1.1-token-2026-08-08</el-tag>
     </div>
 
     <!-- 统计卡片 -->
@@ -30,7 +31,7 @@
         </template>
       </el-table-column>
       <el-table-column prop="ip_address" label="IP 地址" width="140" />
-      <el-table-column label="操作" width="150" fixed="right">
+      <el-table-column label="操作" width="140" align="center">
         <template #default="{ row }">
           <el-button type="primary" link size="small" @click="handleGenerateToken(row)">
             {{ row.token_set ? '重置 Token' : '生成 Token' }}
