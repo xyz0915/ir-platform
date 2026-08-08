@@ -2,7 +2,6 @@
   <div class="agent-management">
     <div class="page-header">
       <h2>主机 Agent</h2>
-      <el-tag type="success" size="small" style="margin-left:12px">v1.1-token-2026-08-08</el-tag>
     </div>
 
     <!-- 统计卡片 -->
@@ -87,6 +86,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { parseServerTime } from '@/utils/time'
 import { Monitor, CircleCheck, CircleClose } from '@element-plus/icons-vue'
 import agentApi from '@/api/agent'
 import SettingsStatCard from '@/components/settings/SettingsStatCard.vue'
@@ -106,7 +106,9 @@ const deployCommand = ref('')
 function relativeTime(val) {
   if (!val) return '—'
   const now = Date.now()
-  const t = new Date(val).getTime()
+  // 后端时间字段为 UTC 纯字符串（如 "2026-08-08 00:30:00"），必须用 parseServerTime 按 UTC 解析
+  // 否则会被浏览器当本地时间渲染，UTC+8 下恒差 8 小时
+  const t = parseServerTime(val).getTime()
   const diff = Math.floor((now - t) / 1000)
   if (diff < 60) return '刚刚'
   if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`
