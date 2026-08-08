@@ -14,28 +14,6 @@ from app.schemas.agent_data import AgentData
 logger = logging.getLogger(__name__)
 
 
-def _is_valid_fallback_ts(ts) -> bool:
-    """校验兜底时间戳有效性：可解析且不早于 2000 年.
-
-    拒绝 1970-01-01 / 1601-01-01 等脏默认值（曾因 metadata.collection_time
-    为 1970-01-01T00:00:00+00:00 导致 security_events 全量写入 1970 时间戳）。
-    """
-    if not ts:
-        return False
-    s = str(ts).strip()
-    # 纯数字：Unix 秒或毫秒
-    if s.replace(".", "", 1).lstrip("-").isdigit():
-        ms = float(s)
-        if ms < 10000000000:
-            ms *= 1000
-        return ms >= 946684800000  # 2000-01-01T00:00:00Z
-    try:
-        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-        return dt.year >= 2000
-    except ValueError:
-        return False
-
-
 class ImportService:
     """JSON 导入业务逻辑层."""
 
@@ -311,7 +289,7 @@ class ImportService:
                             # 服务事件注入 persistence 路径映射
                             if event_type == "service_operation" and persist_map:
                                 item["_persist_path"] = persist_map.get(item.get("name"))
-                            if fallback_ts and "timestamp" not in item and _is_valid_fallback_ts(fallback_ts):
+                            if fallback_ts and "timestamp" not in item:
                                 item["_fallback_ts"] = fallback_ts
                             raw_events.append(item)
             if raw_events:
