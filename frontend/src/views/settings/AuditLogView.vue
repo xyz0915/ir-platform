@@ -80,6 +80,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getAuditLogs, cleanupAuditLogs, getAuditLogActionTypes } from '@/api/auditLogs'
+import { formatServerTime } from '@/utils/time'
 
 const loading = ref(false)
 const logList = ref([])
@@ -123,9 +124,7 @@ function actionColor(action) {
 
 function formatTime(val) {
   if (!val) return ''
-  const d = new Date(val)
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  return formatServerTime(val)
 }
 
 async function fetchLogs() {

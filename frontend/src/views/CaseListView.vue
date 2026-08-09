@@ -136,7 +136,7 @@
                   <span class="badge-dot"></span>{{ statusLabel(item.status) }}
                 </span>
               </td>
-              <td class="td-mono">{{ item.created_at || '—' }}</td>
+              <td class="td-mono">{{ item.created_at ? formatServerTime(item.created_at) : '—' }}</td>
               <td>
                 <div class="row-actions">
                   <button class="icon-btn" title="查看" @click="goToDetail(item.id)">
@@ -229,6 +229,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import casesApi from '@/api/cases'
+import { formatServerTime, parseServerTime } from '@/utils/time'
 
 const router = useRouter()
 
@@ -268,9 +269,8 @@ const weekNewCount = computed(() => {
   const now = new Date()
   const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
   return cases.value.filter(c => {
-    if (!c.created_at) return false
-    const d = new Date(c.created_at)
-    return d >= weekAgo && d <= now
+    const d = parseServerTime(c.created_at)
+    return d ? d >= weekAgo && d <= now : false
   }).length
 })
 

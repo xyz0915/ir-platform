@@ -580,6 +580,7 @@ def _derive_online_status(last_heartbeat: Optional[str]) -> str:
 def list_agents(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    case_id: Optional[int] = Query(None, description="按案件过滤；不传则返回全平台"),
     current_user: dict = Depends(get_current_user),
 ):
     """获取 Agent 列表（hosts 为主表，关联 agents 返回 agent 状态）.
@@ -590,21 +591,37 @@ def list_agents(
 
     在线状态按 last_heartbeat 90s 窗口惰性折算；附带 token_set/token_created_at，
     不返回 token_hash / token 明文。
+
+    case_id 用于「案件维度」收敛：传入时仅返回该案件下的主机 agent，
+    不传则保持全平台视角（兼容既有调用）。
     """
     offset = (page - 1) * page_size
     with get_connection() as conn:
-        count_row = conn.execute("SELECT COUNT(*) as cnt FROM hosts").fetchone()
-        total = count_row["cnt"] if count_row else 0
+        if case_id is not None:
+            count_row = conn.execute(
+                "SELECT COUNT(*) as cnt FROM hosts WHERE case_id=?", (case_id,)
+            ).fetchone()
+            rows = conn.execute(
+                "SELECT h.id AS host_id, h.hostname, h.case_id, h.ip_address, h.os_type, "
+                "       a.agent_id, a.agent_version, a.last_heartbeat, a.token_hash, a.token_created_at "
+                "FROM hosts h LEFT JOIN agents a ON h.id = a.host_id "
+                "WHERE h.case_id = ? "
+                "ORDER BY COALESCE(a.last_heartbeat, '') DESC, h.id DESC "
+                "LIMIT ? OFFSET ?",
+                (case_id, page_size, offset),
+            ).fetchall()
+        else:
+            count_row = conn.execute("SELECT COUNT(*) as cnt FROM hosts").fetchone()
+            rows = conn.execute(
+                "SELECT h.id AS host_id, h.hostname, h.case_id, h.ip_address, h.os_type, "
+                "       a.agent_id, a.agent_version, a.last_heartbeat, a.token_hash, a.token_created_at "
+                "FROM hosts h LEFT JOIN agents a ON h.id = a.host_id "
+                "ORDER BY COALESCE(a.last_heartbeat, '') DESC, h.id DESC "
+                "LIMIT ? OFFSET ?",
+                (page_size, offset),
+            ).fetchall()
 
-        rows = conn.execute(
-            "SELECT h.id AS host_id, h.hostname, h.case_id, h.ip_address, h.os_type, "
-            "       a.agent_id, a.agent_version, a.last_heartbeat, a.token_hash, a.token_created_at "
-            "FROM hosts h LEFT JOIN agents a ON h.id = a.host_id "
-            "ORDER BY COALESCE(a.last_heartbeat, '') DESC, h.id DESC "
-            "LIMIT ? OFFSET ?",
-            (page_size, offset),
-        ).fetchall()
-
+    total = count_row["cnt"] if count_row else 0
     items = []
     for r in rows:
         item = dict(r)
@@ -618,23 +635,38 @@ def list_agents(
 
 @router.get("/agents/stats")
 def get_agent_stats(
+    case_id: Optional[int] = Query(None, description="按案件过滤；不传则返回全平台"),
     current_user: dict = Depends(get_current_user),
 ):
     """获取 Agent 统计（总数/在线/离线）.
 
     与列表同口径：以 hosts 表为总数基准，online/offline 按 last_heartbeat
     90s 窗口惰性折算（未注册 agent 的主机计入 offline）。
+
+    case_id 用于「案件维度」收敛：传入时仅统计该案件下的主机（兼容既有全量调用）。
     """
     with get_connection() as conn:
-        row = conn.execute(
-            "SELECT "
-            "  (SELECT COUNT(*) FROM hosts) as total, "
-            "  (SELECT COUNT(*) FROM hosts h LEFT JOIN agents a ON h.id = a.host_id "
-            "    WHERE a.last_heartbeat > datetime('now', ?)) as online, "
-            "  (SELECT COUNT(*) FROM hosts h LEFT JOIN agents a ON h.id = a.host_id "
-            "    WHERE a.last_heartbeat IS NULL OR a.last_heartbeat <= datetime('now', ?)) as offline ",
-            (f'-{_ONLINE_WINDOW_SECONDS} seconds', f'-{_ONLINE_WINDOW_SECONDS} seconds'),
-        ).fetchone()
+        if case_id is not None:
+            row = conn.execute(
+                "SELECT "
+                "  (SELECT COUNT(*) FROM hosts WHERE case_id=?) as total, "
+                "  (SELECT COUNT(*) FROM hosts h LEFT JOIN agents a ON h.id = a.host_id "
+                "    WHERE h.case_id=? AND a.last_heartbeat > datetime('now', ?)) as online, "
+                "  (SELECT COUNT(*) FROM hosts h LEFT JOIN agents a ON h.id = a.host_id "
+                "    WHERE h.case_id=? AND (a.last_heartbeat IS NULL OR a.last_heartbeat <= datetime('now', ?))) as offline ",
+                (case_id, case_id, f'-{_ONLINE_WINDOW_SECONDS} seconds',
+                 case_id, f'-{_ONLINE_WINDOW_SECONDS} seconds'),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT "
+                "  (SELECT COUNT(*) FROM hosts) as total, "
+                "  (SELECT COUNT(*) FROM hosts h LEFT JOIN agents a ON h.id = a.host_id "
+                "    WHERE a.last_heartbeat > datetime('now', ?)) as online, "
+                "  (SELECT COUNT(*) FROM hosts h LEFT JOIN agents a ON h.id = a.host_id "
+                "    WHERE a.last_heartbeat IS NULL OR a.last_heartbeat <= datetime('now', ?)) as offline ",
+                (f'-{_ONLINE_WINDOW_SECONDS} seconds', f'-{_ONLINE_WINDOW_SECONDS} seconds'),
+            ).fetchone()
 
     data = {
         "total": int(row["total"]) if row and row["total"] else 0,

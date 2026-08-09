@@ -207,6 +207,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus as PlusIcon, WarningFilled } from '@element-plus/icons-vue'
 import { useGuardrailStore } from '@/stores/guardrail'
 import GuardrailChip from '@/components/agents/GuardrailChip.vue'
+import { parseServerTime } from '@/utils/time'
 
 const store = useGuardrailStore()
 
@@ -316,8 +317,8 @@ async function remove(row) {
 /** 命中记录相对时间：刚刚 / X 分钟前 / X 小时前 / X 天前 */
 function relativeTime(iso) {
   if (!iso) return '—'
-  const t = new Date(iso)
-  if (Number.isNaN(t.getTime())) return iso
+  const t = parseServerTime(iso)
+  if (!t) return iso
   const diffMs = Date.now() - t.getTime()
   const sec = Math.floor(diffMs / 1000)
   if (sec < 60) return '刚刚'

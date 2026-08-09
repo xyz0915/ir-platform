@@ -71,6 +71,7 @@ _DAEMON_COLLECT_INTERVALS = {
 
 _DAEMON_HEARTBEAT_INTERVAL = 30  # 心跳间隔（秒）
 _DAEMON_PUSH_BATCH_SIZE = 50      # 批量推送条数上限
+_DAEMON_TRIAGE_POLL_INTERVAL = 30  # 动态取证任务轮询间隔（秒，命令通道方案 A）
 _daemon_running = True
 
 
@@ -221,6 +222,78 @@ def _send_heartbeat(server: str, token: str, host_id: int) -> bool:
         return False
 
 
+def _fetch_triage_task(server: str, token: str, host_id: int) -> Optional[dict]:
+    """轮询平台待执行的动态取证任务（命令通道方案 A）."""
+    url = f"{server.rstrip('/')}/api/hosts/{host_id}/triage-tasks/pending"
+    req = urllib.request.Request(url)
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            body = json.loads(resp.read().decode())
+            data = (body or {}).get("data")
+            return data if isinstance(data, dict) else None
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            logger.error("token 无效或已重置，请在前端主机 Agent 页重新生成 Token (HTTP %d)", e.code)
+        else:
+            logger.debug("Fetch triage task HTTP %d", e.code)
+    except Exception as e:
+        logger.debug("Fetch triage task failed (network): %s", e)
+    return None
+
+
+def _report_triage_result(server: str, token: str, host_id: int, task_id: int,
+                           result: dict, summary: dict, error: str = None) -> bool:
+    """回传动态取证结果到平台（落库到专用表，source='triage'）."""
+    url = f"{server.rstrip('/')}/api/hosts/{host_id}/triage-tasks/{task_id}/result"
+    payload = {
+        "file_hashes": result.get("file_hashes", []),
+        "network_connections": result.get("network_connections", []),
+        "process_events": result.get("process_events", []),
+        "summary": summary,
+        "error": error,
+    }
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data,
+                                 headers={"Content-Type": "application/json"})
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.status == 200
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            logger.error("token 无效或已重置，请在前端主机 Agent 页重新生成 Token (HTTP %d)", e.code)
+        else:
+            logger.warning("Report triage result HTTP %d: %s", e.code, e.read().decode()[:200])
+    except Exception as e:
+        logger.warning("Report triage result failed (network): %s", e)
+    return False
+
+
+def _maybe_run_triage(server: str, token: str, host_id: int) -> None:
+    """拉取并执行一条待处理动态取证任务."""
+    task = _fetch_triage_task(server, token, host_id)
+    if not task:
+        return
+    task_id = task.get("id")
+    try:
+        from collectors.triage import TriageCollector
+        result = TriageCollector.collect_triage(task.get("scope") or [])
+        summary = {k: len(v) for k, v in result.items() if isinstance(v, list)}
+        ok = _report_triage_result(server, token, host_id, task_id, result, summary)
+        if ok:
+            logger.info("动态取证完成 task=%d summary=%s", task_id, summary)
+        else:
+            logger.warning("动态取证结果回传失败 task=%d", task_id)
+    except Exception as exc:
+        logger.warning("动态取证执行失败 task=%d: %s", task_id, exc)
+        _report_triage_result(server, token, host_id, task_id,
+                               {"file_hashes": [], "network_connections": [], "process_events": []},
+                               None, error=str(exc))
+
+
 def _collect_incremental(collect_names: list, last_results: dict) -> list:
     """增量采集，返回新增事件列表."""
     events = []
@@ -240,7 +313,9 @@ def _collect_incremental(collect_names: list, last_results: dict) -> list:
                     if isinstance(item, dict):
                         key = (item.get("pid"), item.get("process_name", ""))
                         if key not in old_ids:
-                            item["event_type"] = name
+                            # 保留原始 event_type（如 process_start），仅用 source 记录采集器名，
+                            # 避免覆盖后 process_events 表失去 process_start 类型导致归一化/根因捞不到
+                            item["source"] = name
                             events.append(item)
                 last_results[name] = result
         except Exception as exc:
@@ -311,6 +386,7 @@ def run_daemon(args: argparse.Namespace) -> None:
     # 6. 增量采集循环
     last_collect_time = {name: 0 for name in _DAEMON_COLLECT_INTERVALS}
     last_heartbeat_time = time.time()
+    last_triage_poll_time = 0  # 立即首轮即尝试拉取待执行取证任务
     last_results = snapshot
     event_buffer = []
 
@@ -341,6 +417,11 @@ def run_daemon(args: argparse.Namespace) -> None:
         if host_id > 0 and now - last_heartbeat_time >= _DAEMON_HEARTBEAT_INTERVAL:
             _send_heartbeat(server, args.token, host_id)
             last_heartbeat_time = now
+
+        # 动态取证任务轮询（命令通道方案 A：每 30s 拉取 pending 任务并执行）
+        if host_id > 0 and now - last_triage_poll_time >= _DAEMON_TRIAGE_POLL_INTERVAL:
+            _maybe_run_triage(server, args.token, host_id)
+            last_triage_poll_time = now
 
         time.sleep(1)
 

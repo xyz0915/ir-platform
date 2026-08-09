@@ -30,6 +30,12 @@ const routes = [
         component: () => import('@/views/CaseDetailView.vue')
       },
       {
+        path: 'case-agents',
+        name: 'CaseAgentView',
+        component: () => import('@/views/CaseAgentView.vue'),
+        meta: { title: '案件主机 Agent' }
+      },
+      {
         path: 'hosts/:id',
         name: 'HostDetail',
         component: () => import('@/views/HostDetailView.vue')
@@ -236,11 +242,6 @@ const routes = [
             path: 'audit-logs',
             name: 'AuditLogs',
             component: () => import('@/views/settings/AuditLogView.vue')
-          },
-          {
-            path: 'agents',
-            name: 'AgentManagement',
-            component: () => import('@/views/settings/AgentManagement.vue')
           },
           {
             path: 'storage',

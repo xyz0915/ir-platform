@@ -41,15 +41,19 @@ class _FakeProfile:
 
 
 class TestAgentLLM(IsolatedDBTestCase):
-    def test_no_profile_returns_degraded_no_500(self):
-        """未配置 Profile → degraded=True，返回错误文案，不抛异常（安全降级）。"""
+    def test_no_profile_returns_degraded_and_writes_failed_audit(self):
+        """未配置 Profile → degraded=True + 落一条 failed 审计（P1-3）。"""
         res = asyncio.run(AgentLLM().call("任何 prompt", {"id": 9}))
         self.assertTrue(res["degraded"])
-        # 未配置 Profile 时仍给出可读的错误文案（源码 agent_llm.py:58）
+        # 未配置 Profile 时仍给出可读的错误文案（源码 agent_llm.py:93-99）
         self.assertIsNotNone(res["error"])
         self.assertIn("Profile", res["error"])
-        # 未配置 Profile 时不写失败审计（_degraded 仅在 profile 非 None 时落审计）
-        self.assertEqual(AiAuditLog.list_all()["total"], 0)
+        # P1-3: 无 profile 也必须落审计，杜绝"查 failed 永远空"
+        self.assertEqual(AiAuditLog.list_all()["total"], 1)
+        item = AiAuditLog.list_all()["items"][0]
+        self.assertEqual(item["status"], "failed")
+        self.assertIn("Profile", item["error_message"])
+        self.assertEqual(item["user_id"], 9)
 
     def test_normal_path_writes_success_audit(self):
         """正常路径：mock AiService.call_llm 返回内容，写 ai_audit_log(status=success, user_id)。"""

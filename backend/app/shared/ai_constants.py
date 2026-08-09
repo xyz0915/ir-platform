@@ -5,6 +5,7 @@
 
 import re
 from enum import Enum
+from typing import Optional
 
 
 class TaskStatus(str, Enum):
@@ -116,10 +117,27 @@ RARE_HIGH_SIGNALS: list[str] = [
 AUDIENCE_DEFAULT: str = "both"  # both | technical | executive
 
 
-# ---- 降级消息模板 — 当 LLM 不可用时各 Agent 统一使用此文案 ----
+# ---- 降级消息模板 — 当 AI 摘要未生成时各 Agent 统一使用此文案（P1-5）----
+# 注意：模板含 {reason} 占位符，禁止直接做 f-string 插值，
+# 必须经 build_degraded_message() 格式化，否则页面会出现 "{reason}" 字面量。
+DEGRADED_REASON_UNKNOWN: str = "未知原因"
+
 DEGRADED_MESSAGE_TEMPLATE = (
-    "当前 LLM 服务不可用，以上结论基于真实数据自动生成"
+    "AI 摘要未生成（原因：{reason}），以上结论基于真实数据自动生成"
 )
+
+
+def build_degraded_message(reason: Optional[str] = None) -> str:
+    """格式化降级横幅，reason 为空时回退到默认文案（P1-5）。
+
+    Args:
+        reason: 降级原因（来自 ``AgentLLM._degraded`` 的 error，或 agent 捕获的异常摘要）。
+
+    Returns:
+        可直接拼入 Agent 正文的横幅文本。
+    """
+    text = (reason or "").strip() or DEGRADED_REASON_UNKNOWN
+    return DEGRADED_MESSAGE_TEMPLATE.format(reason=text[:120])
 
 
 # ---- 脱敏规则 ----

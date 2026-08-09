@@ -47,12 +47,19 @@ class TestRulesImportFix(unittest.TestCase):
     # 动态推导：所有随 loader 自动注入的规则文件条数之和
     # （default_rules + default_attack_chain + 进程检测加强规则 + seed 进程规则），
     # 避免与硬编码值漂移（T-P0-1）
-    EXPECTED_RULE_COUNT = (
-        len(json.load(open(DEFAULT_RULES_PATH, "r", encoding="utf-8")))
-        + len(json.load(open(DEFAULT_ATTACK_CHAIN_PATH, "r", encoding="utf-8")))
-        + len(json.load(open(PROCESS_ENHANCEMENT_PATH, "r", encoding="utf-8")))
-        + len(json.load(open(SEED_RULES_PROCESS_PATH, "r", encoding="utf-8")))
-    )
+    # 动态推导：与 loader.load_default_rules() 行为一致——聚合 app/rules/ 下所有
+    # 顶层为数组的 *.json 规则文件条数之和（避免硬编码 4 文件名漂移，T-P0-1 / P1 修复）。
+    # 注意：loader 会 glob 全部 *.json（如 event_log_rules.json），旧公式只统计 4 个文件，
+    # 导致 141 vs 147 的偏差；此处改为全量聚合以保持与产品行为一致。
+    RULES_DIR = DEFAULT_RULES_PATH.parent
+    EXPECTED_RULE_COUNT = 0
+    for _rp in sorted(RULES_DIR.glob("*.json")):
+        try:
+            _data = json.load(open(_rp, "r", encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if isinstance(_data, list):
+            EXPECTED_RULE_COUNT += len(_data)
     EXPECTED_CATEGORIES = {
         "process", "network", "startup", "persistence", "ioc",
         "behavior", "execution", "credential", "defense_evasion",
@@ -296,43 +303,55 @@ class TestRulesImportFix(unittest.TestCase):
     # ── 测试 7: 规则更新验证 ──────────────────────────────────
 
     def test_07_rule_severity_update(self):
-        """修改 default_rules.json 中某条规则的 severity，重新 init_db() 后 DB 中的值应更新."""
+        """修改某条规则源 JSON 的 severity，重新 init_db() 后 DB 中的值应更新.
+
+        规则可能分布在任意 app/rules/*.json（如 advanced_detections.json），
+        故按规则名定位其真实源文件并就地修改，避免假设全在 default_rules.json。
+        """
+        import glob as _glob
         from app.config import settings
         from app.database import init_db
 
-        # 找到一条 severity 不是 'critical' 的规则用于测试
-        rules = self._get_rules_from_db()
+        rules_dir = Path(settings.BACKEND_DIR) / "app" / "rules"
+
+        # 收集所有 JSON 文件中 规则名 -> 源文件 的映射
+        name_to_file = {}
+        for fp in _glob.glob(str(rules_dir / "*.json")):
+            try:
+                data = json.loads(Path(fp).read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(data, list):
+                continue
+            for r in data:
+                if r.get("name"):
+                    name_to_file[r["name"]] = fp
+
+        # 从 DB 选一条：非 critical 且能在某 JSON 中找到源文件
+        db_rules = self._get_rules_from_db()
         target_rule = None
-        for r in rules:
-            if r.get("severity") != "critical" and r.get("name"):
+        for r in db_rules:
+            if r.get("severity") != "critical" and r.get("name") in name_to_file:
                 target_rule = r
                 break
 
         self.assertIsNotNone(target_rule, "找不到可用于测试更新的规则")
 
         rule_name = target_rule["name"]
-        original_severity = target_rule.get("severity", "medium")
+        src_file = name_to_file[rule_name]
 
-        # 读取并修改 default_rules.json
-        rules_path = Path(settings.BACKEND_DIR) / "app" / "rules" / "default_rules.json"
-        with open(rules_path, "r", encoding="utf-8") as f:
-            original_json = f.read()
-            rules_data = json.loads(original_json)
-
-        # 找到对应规则并修改 severity 为 'critical'
-        found = False
+        # 读取源文件原文（用于 finally 恢复）
+        original_src = Path(src_file).read_text(encoding="utf-8")
+        rules_data = json.loads(original_src)
         for rule in rules_data:
             if rule.get("name") == rule_name:
                 rule["severity"] = "critical"
-                found = True
                 break
 
-        self.assertTrue(found, f"在 default_rules.json 中找不到规则 '{rule_name}'")
-
-        # 写回修改后的 JSON
         try:
-            with open(rules_path, "w", encoding="utf-8") as f:
-                json.dump(rules_data, f, ensure_ascii=False, indent=2)
+            Path(src_file).write_text(
+                json.dumps(rules_data, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
 
             # 重新 init_db
             settings.DB_PATH = TEST_DB_PATH
@@ -352,9 +371,8 @@ class TestRulesImportFix(unittest.TestCase):
                 f"规则 '{rule_name}' 的 severity 未更新: 期望 'critical', 实际 '{row['severity']}'"
             )
         finally:
-            # 恢复原始 default_rules.json
-            with open(rules_path, "w", encoding="utf-8") as f:
-                f.write(original_json)
+            # 恢复原始源文件
+            Path(src_file).write_text(original_src, encoding="utf-8")
 
     # ── 测试 8: 规则数据完整性 ────────────────────────────────
 
@@ -393,20 +411,29 @@ class TestRulesImportFix(unittest.TestCase):
                 )
 
     def test_10_disabled_rules_match_json(self):
-        """验证默认规则中 disabled 状态与 JSON 一致（dns_c2_beaconing 和 domain_fronting_detection 默认禁用）."""
+        """验证默认规则中 disabled 状态与 JSON 一致。
+
+        P1-1-B/C 在 process_enhancement_rules.json 下线了 5 条规则（无采集器字段支撑），
+        因此「禁用集合」必须聚合 app/rules/ 下全部 *.json（与 loader 行为一致），
+        而非仅 default_rules.json。dns_c2_beaconing / domain_fronting_detection 仍来自 default_rules.json。
+        """
         import json as json_mod
 
         from app.config import settings
 
-        # 读取 JSON 中标记为禁用的规则
-        rules_path = Path(settings.BACKEND_DIR) / "app" / "rules" / "default_rules.json"
-        with open(rules_path, "r", encoding="utf-8") as f:
-            json_rules = json_mod.load(f)
-
-        expected_disabled = {
-            r["name"] for r in json_rules
-            if r.get("enabled") is False or r.get("enabled") == 0
-        }
+        # 聚合全部规则 JSON 中标记为禁用的规则（与 loader.load_default_rules() 一致）
+        rules_dir = Path(settings.BACKEND_DIR) / "app" / "rules"
+        expected_disabled = set()
+        for _rp in sorted(rules_dir.glob("*.json")):
+            try:
+                _data = json_mod.load(open(_rp, "r", encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if isinstance(_data, list):
+                expected_disabled |= {
+                    r["name"] for r in _data
+                    if r.get("enabled") is False or r.get("enabled") == 0
+                }
 
         # 从 DB 读取实际禁用的规则
         rules = self._get_rules_from_db()

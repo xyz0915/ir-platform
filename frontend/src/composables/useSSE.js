@@ -323,6 +323,7 @@ export function useSSE() {
    *   @param {string} [step.stage] - 阶段
    *   @param {string} [step.status] - 状态
    *   @param {string} [step.output] - 输出文本
+   *   @param {string} [step.degraded_reason] - 降级原因（P2-13，无则为空串）
    *   @param {Object|Array} [step.evidence] - 证据数据
    *   @param {Object|Array} [step.evidence_json] - 证据数据（后备）
    *   @param {string} [step.started_at] - 开始时间
@@ -340,6 +341,8 @@ export function useSSE() {
         stage: step.stage || '',
         status: step.status === 'success' ? 'completed' : (step.status || 'completed'),
         output: step.output || '',
+        // P2-13: 白名单必须显式列出，否则 degraded_reason 会被静默丢弃、el-alert 永不显示
+        degraded_reason: step.degraded_reason || '',
         evidence_json: step.evidence || step.evidence_json || { data_sources: [], evidence: [] },
         elapsed_seconds: 0,
         started_at: step.started_at,

@@ -1,10 +1,12 @@
 """检测策略模型 (DetectionPolicy)."""
 
+import json
 import logging
 from datetime import datetime
 from typing import Optional
 
 from app.database import get_connection
+from app.models.rule import Rule
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +64,11 @@ class DetectionPolicy:
                        WHERE pr.policy_id=? ORDER BY r.category, r.name""",
                     [policy_id]
                 ).fetchall()
-                result["rules"] = [dict(r) for r in rules]
+                rule_list = [dict(r) for r in rules]
+                # 本策略详情：effective = enabled AND (本策略是否激活)
+                is_active = bool(result.get("is_active"))
+                Rule.annotate_effective(rule_list, {r["id"] for r in rule_list}, is_active)
+                result["rules"] = rule_list
                 return result
         except Exception as e:
             logger.error("Policy.get_by_id failed: %s", e)
@@ -104,17 +110,127 @@ class DetectionPolicy:
 
     @staticmethod
     def activate(policy_id: int) -> bool:
-        """激活策略（自动反激活其他）. """
+        """激活策略 = 受控「部署事务」.
+
+        1) 反激活其他策略，本策略 is_active=1；
+        2) 以本策略选中集为准对账 rules.enabled（选中→1，未选→0，
+           deprecated 规则不改动，安全护栏）；
+        3) 对每条被改写的规则写 rule_audit_log，含变更前后 effective_active。
+        """
         try:
+            from app.models.rule import Rule
             with get_connection() as conn:
+                # 部署前：记录原激活策略，用于计算 effective_active 之前态
+                prev = conn.execute(
+                    "SELECT id FROM detection_policies WHERE is_active=1 LIMIT 1"
+                ).fetchone()
+                prev_ids: set[int] = set()
+                if prev:
+                    prev_ids = {
+                        r["rule_id"] for r in conn.execute(
+                            "SELECT rule_id FROM policy_rules WHERE policy_id=?", [prev["id"]]
+                        ).fetchall()
+                    }
+                # 本策略选中集
+                selected = {
+                    r["rule_id"] for r in conn.execute(
+                        "SELECT rule_id FROM policy_rules WHERE policy_id=?", [policy_id]
+                    ).fetchall()
+                }
+                # 反激活其他 + 激活本策略
                 conn.execute("UPDATE detection_policies SET is_active=0 WHERE is_active=1")
-                conn.execute("UPDATE detection_policies SET is_active=1, updated_at=? WHERE id=?",
-                             [datetime.now().isoformat(), policy_id])
+                conn.execute(
+                    "UPDATE detection_policies SET is_active=1, updated_at=? WHERE id=?",
+                    [datetime.now().isoformat(), policy_id],
+                )
                 conn.commit()
-                return True
-        except Exception as e:
+
+            # 对账写入 rules.enabled（部署）
+            all_rules = Rule.list()
+            before_active = bool(prev)
+            changed = 0
+            for r in all_rules:
+                rid = r["id"]
+                status = r.get("status", "active")
+                if status == "deprecated":
+                    continue  # 安全护栏：deprecated 永不被部署改写
+                should_enable = rid in selected
+                currently = bool(r.get("enabled"))
+                if should_enable == currently:
+                    continue
+                # 计算 effective_active 前后态
+                eff_before = Rule.effective_active_of(r, prev_ids, before_active)[0]
+                eff_after = should_enable  # 部署后：policy_active=True, in_active_policy=should_enable
+                try:
+                    with get_connection() as wconn:
+                        wconn.execute(
+                            "UPDATE rules SET enabled=?, version=version+1, updated_at=datetime('now') WHERE id=?",
+                            (1 if should_enable else 0, rid),
+                        )
+                except Exception as wexc:  # noqa: BLE001
+                    logger.warning("部署写 enabled 失败 rule=%s: %s", rid, wexc)
+                    continue
+                Rule._write_audit(
+                    rid, "policy_deploy", f"policy#{policy_id}",
+                    old_val=json.dumps({"effective_active": eff_before}, ensure_ascii=False, default=str),
+                    new_val=json.dumps(
+                        {"effective_active": eff_after, "enabled": should_enable, "policy_id": policy_id},
+                        ensure_ascii=False, default=str,
+                    ),
+                )
+                changed += 1
+            logger.info("Policy %d 部署完成: 改写 %d 条 enabled（选中 %d）", policy_id, changed, len(selected))
+            return True
+        except Exception as e:  # noqa: BLE001
             logger.error("Policy.activate failed: %s", e)
             return False
+
+    @staticmethod
+    def get_active_rule_ids() -> set[int]:
+        """返回当前激活策略选中规则 id 集合；无激活策略返回空集合."""
+        try:
+            with get_connection() as conn:
+                row = conn.execute(
+                    "SELECT id FROM detection_policies WHERE is_active=1 LIMIT 1"
+                ).fetchone()
+                if not row:
+                    return set()
+                ids = conn.execute(
+                    "SELECT rule_id FROM policy_rules WHERE policy_id=?", [row["id"]]
+                ).fetchall()
+                return {r["rule_id"] for r in ids}
+        except Exception as e:  # noqa: BLE001
+            logger.error("Policy.get_active_rule_ids failed: %s", e)
+            return set()
+
+    @staticmethod
+    def ensure_active_policy() -> Optional[dict]:
+        """保证恰好一个激活策略.
+
+        已存在激活策略 → 直接返回（不做部署，保留手工 override）。
+        不存在 → 自动激活基线（默认策略 / id 最小），并告警。
+        """
+        active = DetectionPolicy.get_active()
+        if active:
+            return active
+        try:
+            policies = DetectionPolicy.get_all()
+            baseline = next(
+                (p for p in policies if "默认" in p.get("name", "") and "副本" not in p.get("name", "")),
+                None,
+            )
+            if not baseline and policies:
+                baseline = min(policies, key=lambda p: p["id"])
+            if baseline:
+                DetectionPolicy.activate(baseline["id"])
+                logger.warning(
+                    "ensure_active_policy: 无激活策略，已自动激活基线策略 '%s'(id=%d)",
+                    baseline.get("name"), baseline["id"],
+                )
+                return DetectionPolicy.get_active()
+        except Exception as e:  # noqa: BLE001
+            logger.error("ensure_active_policy failed: %s", e)
+        return None
 
     @staticmethod
     def deactivate(policy_id: int) -> bool:

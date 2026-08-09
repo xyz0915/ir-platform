@@ -137,8 +137,8 @@
 
 <script setup>
 import { ref } from 'vue'
-import dayjs from 'dayjs'
 import { getAiReportVersions, getAiReportByVersion } from '@/api/ai'
+import { formatServerTime } from '@/utils/time'
 
 // ============================================================
 // Props & Emits
@@ -256,7 +256,7 @@ async function onVersion2Change(ver) {
 /** 格式化版本标签 */
 function versionLabel(v) {
   const ver = v.version || v.id
-  const time = v.created_at ? dayjs(v.created_at).format('MM-DD HH:mm') : ''
+  const time = v.created_at ? formatServerTime(v.created_at, 'MM-DD HH:mm') : ''
   let label = `v${ver}`
   if (time) label += ` - ${time}`
   if (v.model_used) label += ` (${v.model_used})`

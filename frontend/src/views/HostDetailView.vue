@@ -12,6 +12,13 @@
           </el-button>
           <el-button type="primary" :loading="analyzing" @click="handleAnalyze">分析</el-button>
           <el-button
+            :icon="Search"
+            :loading="triageSubmitting"
+            @click="openTriageDialog"
+          >
+            发起取证
+          </el-button>
+          <el-button
             v-if="aiEnabled !== null"
             :disabled="!aiEnabled"
             @click="handleAiAnalyze"
@@ -45,20 +52,26 @@
 
     <!-- 分析摘要 -->
     <div v-if="analysis" class="card-box">
-      <h3 class="mb-10">分析摘要</h3>
-      <el-alert :type="alertType" :closable="false">
+      <div class="section-header" @click="summaryCollapsed = !summaryCollapsed">
+        <h3 class="mb-0">分析摘要</h3>
+        <el-button link type="primary" size="small">{{ summaryCollapsed ? '展开' : '收起' }}</el-button>
+      </div>
+      <el-alert v-show="!summaryCollapsed" :type="alertType" :closable="false" class="mt-8">
         {{ analysis.summary }}
       </el-alert>
     </div>
 
     <!-- 知识匹配（RAG 语义检索结果） -->
     <div v-if="knowledgeHits.length" class="card-box">
-      <h3 class="mb-10" style="display:flex;align-items:center;gap:8px">
-        知识匹配
-        <el-tag size="small" effect="plain" class="status-tag">RAG 语义检索</el-tag>
-        <span class="kh-subtle-hint">共 {{ knowledgeHits.length }} 条语义命中</span>
-      </h3>
-      <div class="kh-grid">
+      <div class="section-header" @click="knowledgeCollapsed = !knowledgeCollapsed">
+        <h3 class="mb-0" style="display:flex;align-items:center;gap:8px">
+          知识匹配
+          <el-tag size="small" effect="plain" class="status-tag">RAG 语义检索</el-tag>
+          <span class="kh-subtle-hint">共 {{ knowledgeHits.length }} 条语义命中</span>
+        </h3>
+        <el-button link type="primary" size="small">{{ knowledgeCollapsed ? '展开' : '收起' }}</el-button>
+      </div>
+      <div v-show="!knowledgeCollapsed" class="kh-grid mt-8">
         <div
           v-for="(kh, i) in knowledgeHits"
           :key="i"
@@ -420,6 +433,51 @@
         <el-tab-pane label="导入记录" name="import-logs">
           <ImportHistoryTab v-if="activeTab === 'import-logs'" :host-id="Number(hostId)" />
         </el-tab-pane>
+        <el-tab-pane label="动态取证" name="triage">
+          <div class="tab-toolbar">
+            <span class="tab-hint">
+              动态取证任务（方案 A：daemon 轮询执行）
+              <el-tag v-if="triageActiveCount" size="small" type="warning" effect="plain" class="status-tag" style="margin-left:8px">
+                {{ triageActiveCount }} 个任务进行中
+              </el-tag>
+            </span>
+            <div class="flex-center" style="gap:8px">
+              <el-button size="small" :loading="triageLoading" @click="loadTriageTasks">刷新</el-button>
+              <el-button size="small" type="primary" :loading="triageSubmitting" @click="openTriageDialog">发起取证</el-button>
+            </div>
+          </div>
+          <el-empty v-if="!triageTasks.length" description="暂无动态取证任务，点击「发起取证」向常驻 daemon 下发定向取证指令" :image-size="56" />
+          <el-table v-else :data="triageTasks" size="small" stripe>
+            <el-table-column prop="id" label="任务ID" width="80" />
+            <el-table-column label="取证范围" min-width="200">
+              <template #default="{ row }">
+                <el-tag v-for="s in (row.scope || [])" :key="s" size="small" effect="plain" class="status-tag" style="margin-right:4px">
+                  {{ triageScopeLabel(s) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="110">
+              <template #default="{ row }">
+                <el-tag :type="triageStatusType(row.status)" size="small" effect="plain">
+                  {{ triageStatusLabel(row.status) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="created_at" label="下发时间" width="170">
+              <template #default="{ row }">{{ row.created_at || '—' }}</template>
+            </el-table-column>
+            <el-table-column prop="finished_at" label="完成时间" width="170">
+              <template #default="{ row }">{{ row.finished_at || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="取证汇总" min-width="200" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span v-if="row.error" style="color:var(--color-danger-fg)">{{ row.error }}</span>
+                <span v-else-if="row.summary">{{ triageSummaryText(row.summary) }}</span>
+                <span v-else>—</span>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-tab-pane>
       </el-tabs>
     </div>
 
@@ -435,16 +493,37 @@
     <AgentDownloadDialog ref="agentDialogRef" />
     <AiAnalysisDialog ref="aiDialogRef" />
     <KnowledgeDetailPopup v-model:visible="knowledgePopupVisible" :entry-ref="knowledgePopupRef" :hit-meta="knowledgePopupMeta" />
+
+    <!-- 动态取证：范围选择 -->
+    <el-dialog v-model="triageDialogVisible" title="发起动态取证" width="520px" :close-on-click-modal="false">
+      <div class="triage-tip">
+        向该主机的常驻 daemon 下发定向取证指令，daemon 将在下次轮询（≤30s）时执行并回传结果。
+        取证结果以 <code>source='triage'</code> 追加写入，不会覆盖既有快照数据。
+      </div>
+      <el-checkbox-group v-model="triageScopeForm">
+        <div v-for="opt in triageScopeOptions" :key="opt.value" class="triage-opt">
+          <el-checkbox :value="opt.value">
+            <span class="triage-opt-label">{{ opt.label }}</span>
+            <span class="triage-opt-desc">{{ opt.desc }}</span>
+          </el-checkbox>
+        </div>
+      </el-checkbox-group>
+      <template #footer>
+        <el-button @click="triageDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="triageSubmitting" @click="submitTriage">确认下发</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch, nextTick, defineAsyncComponent } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick, defineAsyncComponent } from 'vue'
 import { Search, Upload } from '@element-plus/icons-vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import hostsApi from '@/api/hosts'
 import analysisApi from '@/api/analysis'
+import triageApi, { TRIAGE_SCOPE_OPTIONS, DEFAULT_TRIAGE_SCOPE } from '@/api/triage'
 import RiskBadge from '@/components/RiskBadge.vue'
 import ProfileCard from '@/components/ProfileCard.vue'
 import AbnormalProcessTable from '@/components/AbnormalProcessTable.vue'
@@ -494,6 +573,16 @@ const loading = ref(false)
 const analyzing = ref(false)
 const enriching = ref(false)
 const activeTab = ref('profile')
+const summaryCollapsed = ref(false)
+const knowledgeCollapsed = ref(false)
+
+// 切换到「时间线」Tab 时自动收起分析摘要和知识匹配，给图表腾出首屏空间
+watch(activeTab, (tab) => {
+  if (tab === 'timeline') {
+    summaryCollapsed.value = true
+    knowledgeCollapsed.value = true
+  }
+}, { immediate: true })
 
 const abnormalProcesses = ref([])
 const suspiciousConnections = ref([])
@@ -532,6 +621,15 @@ const showImportLog = ref(false)
 const agentDialogRef = ref(null)
 const aiDialogRef = ref(null)
 const aiEnabled = ref(null) // null=未加载, true=开启, false=关闭
+
+// ── 动态取证（Phase 2 / 方案 A 轮询） ──
+const triageScopeOptions = TRIAGE_SCOPE_OPTIONS
+const triageTasks = ref([])
+const triageLoading = ref(false)
+const triageSubmitting = ref(false)
+const triageDialogVisible = ref(false)
+const triageScopeForm = ref([...DEFAULT_TRIAGE_SCOPE])
+let triagePollTimer = null
 
 // ── 知识详情弹窗 ──
 const knowledgePopupVisible = ref(false)
@@ -604,6 +702,11 @@ onMounted(() => {
   loadHost()
   loadAnalysis()
   loadAiStatus()
+  loadTriageTasks()
+})
+
+onUnmounted(() => {
+  stopTriagePolling()
 })
 
 async function loadHost() {
@@ -807,6 +910,97 @@ function onLogImported(data) {
       activeTab.value = 'import-logs'
     })
   }
+}
+
+// ── 动态取证（Phase 2 / 方案 A 轮询） ──
+function openTriageDialog() {
+  triageScopeForm.value = [...DEFAULT_TRIAGE_SCOPE]
+  triageDialogVisible.value = true
+}
+
+async function loadTriageTasks() {
+  triageLoading.value = true
+  try {
+    const res = await triageApi.list(hostId)
+    triageTasks.value = res.data || []
+    // 仍有进行中任务则继续保持轮询
+    if (triageActiveCount.value > 0) {
+      ensureTriagePolling()
+    } else {
+      stopTriagePolling()
+    }
+  } catch (e) {
+    triageTasks.value = []
+  } finally {
+    triageLoading.value = false
+  }
+}
+
+async function submitTriage() {
+  const scope = (triageScopeForm.value || []).filter(s => DEFAULT_TRIAGE_SCOPE.includes(s))
+  if (!scope.length) {
+    ElMessage.warning('请至少选择一个取证范围')
+    return
+  }
+  triageSubmitting.value = true
+  try {
+    await triageApi.create(hostId, scope)
+    ElMessage.success('取证任务已下发，daemon 将在 ≤30s 内执行')
+    triageDialogVisible.value = false
+    await loadTriageTasks()
+    activeTab.value = 'triage'
+    ensureTriagePolling()
+  } catch (e) {
+    // 由 axios 拦截器统一提示
+  } finally {
+    triageSubmitting.value = false
+  }
+}
+
+function ensureTriagePolling() {
+  if (triagePollTimer) return
+  triagePollTimer = setInterval(() => {
+    if (triageActiveCount.value === 0) {
+      stopTriagePolling()
+      return
+    }
+    loadTriageTasks()
+  }, 5000)
+}
+
+function stopTriagePolling() {
+  if (triagePollTimer) {
+    clearInterval(triagePollTimer)
+    triagePollTimer = null
+  }
+}
+
+const triageActiveCount = computed(() =>
+  triageTasks.value.filter(t => t.status === 'pending' || t.status === 'running').length
+)
+
+function triageScopeLabel(s) {
+  const map = { file_hashes: '文件哈希', network: '实时网络连接', process_subtree: '进程子树' }
+  return map[s] || s
+}
+
+function triageStatusType(status) {
+  const map = { pending: 'info', running: 'warning', done: 'success', failed: 'danger' }
+  return map[status] || 'info'
+}
+
+function triageStatusLabel(status) {
+  const map = { pending: '待执行', running: '执行中', done: '已完成', failed: '失败' }
+  return map[status] || status
+}
+
+function triageSummaryText(summary) {
+  if (!summary || typeof summary !== 'object') return '—'
+  const parts = []
+  if (summary.file_hashes != null) parts.push(`文件哈希 ${summary.file_hashes}`)
+  if (summary.network_connections != null) parts.push(`网络连接 ${summary.network_connections}`)
+  if (summary.process_events != null) parts.push(`进程事件 ${summary.process_events}`)
+  return parts.length ? parts.join('，') : '已回传'
 }
 
 /** 异常进程表格查看详情事件（进程树改用 ProcessTreeView 内部详情面板，不再联动此处） */
@@ -1027,12 +1221,22 @@ function statusLabel(status) {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
-  padding: 8px 12px;
+  margin-bottom: 8px;
+  padding: 6px 10px;
   background: var(--color-canvas-subtle);
   border-radius: 6px;
   border: 0.5px solid var(--color-border-default);
 }
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+}
+.section-header:hover { opacity: 0.8; }
+.mt-8 { margin-top: 8px; }
+.mb-0 { margin-bottom: 0; }
 .tab-hint {
   font-size: 13px;
   color: var(--color-fg-muted);
@@ -1104,7 +1308,7 @@ function statusLabel(status) {
 
 /* ===== HostDetail IR 设计规范覆盖 ===== */
 .page-container {
-  padding: 24px;
+  padding: 16px;
   background: var(--color-canvas-subtle, #fafafa);
   min-height: calc(100vh - 56px);
 }
@@ -1112,8 +1316,8 @@ function statusLabel(status) {
   background: var(--color-canvas-default, #fff);
   border: 0.5px solid var(--color-border-default, #e5e5e5);
   border-radius: 10px;
-  padding: 20px;
-  margin-bottom: 16px;
+  padding: 16px;
+  margin-bottom: 12px;
 }
 .page-title {
   font-size: 16px;
@@ -1155,7 +1359,9 @@ function statusLabel(status) {
   border-bottom: 0.5px solid var(--color-border-default);
   padding: 14px 20px;
 }
-.card-box :deep(.el-card__body) {
+/* 仅作用于 .card-box 直接子级的 el-card，避免穿透到 SummaryStatsBar
+   等子组件内部的统计卡，把统计卡撑高 */
+.card-box > :deep(.el-card > .el-card__body) {
   padding: 16px 20px;
 }
 
@@ -1163,5 +1369,42 @@ function statusLabel(status) {
 .el-button {
   border-radius: 6px;
   font-weight: 500;
+}
+
+/* ── 动态取证弹窗 ── */
+.triage-tip {
+  font-size: 12px;
+  color: var(--color-fg-muted, #666);
+  background: var(--color-canvas-subtle, #f6f8fa);
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  line-height: 1.6;
+}
+.triage-tip code {
+  background: rgba(110, 119, 129, 0.12);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.triage-opt {
+  margin-bottom: 10px;
+}
+.triage-opt :deep(.el-checkbox) {
+  align-items: flex-start;
+  height: auto;
+}
+.triage-opt-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-fg-default, #111);
+}
+.triage-opt-desc {
+  display: block;
+  font-size: 12px;
+  color: var(--color-fg-muted, #666);
+  margin-top: 2px;
+  line-height: 1.5;
 }
 </style>

@@ -68,6 +68,7 @@ import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import { useAgentDashboardStore } from '@/stores/agentDashboard'
+import { formatServerTime, parseServerTime } from '@/utils/time'
 
 const router = useRouter()
 const store = useAgentDashboardStore()
@@ -146,8 +147,8 @@ function statusClass(status) {
 /** 相对时间：刚刚 / X 分钟前 / X 小时前 / X 天前 */
 function relativeTime(iso) {
   if (!iso) return '—'
-  const t = new Date(iso)
-  if (Number.isNaN(t.getTime())) return String(iso)
+  const t = parseServerTime(iso)
+  if (!t) return String(iso)
   const diffMs = Date.now() - t.getTime()
   const sec = Math.floor(diffMs / 1000)
   if (sec < 60) return '刚刚'
@@ -161,12 +162,7 @@ function relativeTime(iso) {
 
 function fmtDay(iso) {
   if (!iso) return ''
-  try {
-    const d = new Date(iso)
-    return `${d.getMonth() + 1}/${d.getDate()}`
-  } catch {
-    return iso
-  }
+  return formatServerTime(iso, 'M/D') || iso
 }
 
 function goRun(row) {

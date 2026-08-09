@@ -186,6 +186,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Right } from '@element-plus/icons-vue'
 import { useMemoryStore } from '@/stores/memory'
 import KnowledgeBaseCard from '@/components/agents/KnowledgeBaseCard.vue'
+import { formatServerTime } from '@/utils/time'
 
 const store = useMemoryStore()
 const vectorStore = computed(() => store.stats.vector_store || 'Chroma')
@@ -345,11 +346,7 @@ async function onDelete(row) {
 
 function fmtTime(iso) {
   if (!iso) return '—'
-  try {
-    return new Date(iso).toLocaleString('zh-CN', { hour12: false })
-  } catch {
-    return iso
-  }
+  return formatServerTime(iso) || iso
 }
 </script>
 

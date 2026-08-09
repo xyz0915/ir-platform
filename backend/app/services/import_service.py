@@ -224,6 +224,26 @@ class ImportService:
         except Exception as exc:
             logger.warning("agent_imports write failed (non-blocking): %s", exc)
 
+        # ── ★ P0-2：Windows 安全事件日志 → 规则引擎 → 告警 ──
+        # agent security 采集器产出的 event_ids_summary 此前只落 agent_imports.raw_json，
+        # 无任何规则消费，导致 4625/4648/4662/4769/4672/4624 等核心审计事件全部漏报。
+        # 此处补上桥接：非阻塞，异常只记日志，不影响导入主流程。
+        try:
+            from app.services.security_event_rules import evaluate_and_alert
+            security_payload = data.get("security")
+            if security_payload:
+                host_case_id = host_info.get("case_id") if host_info else None
+                alerts_made = evaluate_and_alert(
+                    host_id, security_payload, case_id=host_case_id
+                )
+                if alerts_made:
+                    logger.info(
+                        "Security event log rules produced %d alert(s) for host %d",
+                        len(alerts_made), host_id,
+                    )
+        except Exception as exc:
+            logger.warning("security event log rule eval failed (non-blocking): %s", exc)
+
         # ── ★ 新增：触发事件归一化 → 写入 security_events（分析中心模块）──
         try:
             from app.services.event_normalizer import normalize_batch, bulk_insert

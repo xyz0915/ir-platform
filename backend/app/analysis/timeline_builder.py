@@ -10,6 +10,9 @@ logger = logging.getLogger(__name__)
 class TimelineBuilder:
     """时间线构建器."""
 
+    # 最小有效年份：早于该年份的时间戳视为脏数据（如 1601/1970 默认值）
+    MIN_VALID_YEAR = 2000
+
     @staticmethod
     def build(raw_data: dict, ioc_hits: Optional[list] = None) -> list:
         """从采集数据构建时间线.
@@ -107,7 +110,7 @@ class TimelineBuilder:
 
         Returns:
             标准化后的 ISO 8601 时间戳 (YYYY-MM-DDTHH:mm:ss),
-            如果无法解析则返回空字符串.
+            如果无法解析或年份早于 MIN_VALID_YEAR 则返回空字符串.
         """
         if not ts or not isinstance(ts, str):
             return ""
@@ -134,6 +137,12 @@ class TimelineBuilder:
         for fmt in formats:
             try:
                 dt = datetime.strptime(ts, fmt)
+                if dt.year < TimelineBuilder.MIN_VALID_YEAR:
+                    logger.warning(
+                        "丢弃早于 %d 年的异常时间戳: %s",
+                        TimelineBuilder.MIN_VALID_YEAR, ts,
+                    )
+                    return ""
                 return dt.strftime("%Y-%m-%dT%H:%M:%S")
             except ValueError:
                 continue
@@ -481,7 +490,7 @@ class MitreTacticMapper:
           3. event_type 仅匹配（兜底）
 
         Args:
-            event: 时间线事件字典，含 event_type / source / description.
+            event: 时间线事件字典，含 event_type / source / description / details.
 
         Returns:
             含 kill_chain_stage 和 mitre_technique_id 的字典，
@@ -490,6 +499,16 @@ class MitreTacticMapper:
         evt_type = (event.get("event_type") or "").lower()
         evt_source = (event.get("source") or "").lower()
         evt_desc = (event.get("description") or "").lower()
+        details = event.get("details") or {}
+        evt_path = (details.get("path") or "") if isinstance(details, dict) else ""
+        evt_cmdline = (details.get("command_line") or "") if isinstance(details, dict) else ""
+
+        # 合并语料：source / description / details.path / details.command_line
+        # 进程类事件的 source 恒为 "processes"，关键字只可能出现在描述或命令行中，
+        # 因此关键字匹配必须在合并语料上进行，否则 process 类规则永不命中.
+        haystack = " ".join([
+            evt_source, evt_desc, str(evt_path), str(evt_cmdline),
+        ]).lower()
 
         # 规则按优先级匹配
         for rule in MitreTacticMapper.RULES:
@@ -501,8 +520,8 @@ class MitreTacticMapper:
             desc_kw = (rule.get("description_kw") or "").lower()
 
             # 三重匹配
-            source_match = (not source_kw) or (source_kw in evt_source)
-            desc_match = (not desc_kw) or (desc_kw in evt_desc)
+            source_match = (not source_kw) or (source_kw in haystack)
+            desc_match = (not desc_kw) or (desc_kw in haystack)
 
             if source_match and desc_match:
                 return {

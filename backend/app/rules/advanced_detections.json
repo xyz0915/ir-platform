@@ -1,0 +1,363 @@
+[
+  {
+    "name": "adv_shadow_copy_delete",
+    "description": "检测到卷影副本删除命令（vssadmin/wbadmin/wmic shadowcopy delete），是勒索加密前的典型反取证前置动作。",
+    "category": "impact",
+    "rule_type": "composite",
+    "condition": {
+      "logic": "AND",
+      "sub_rules": [
+        {
+          "type": "regex",
+          "field": "command_line",
+          "pattern": "(vssadmin|wbadmin|wmic).*(shadow|catalog)",
+          "flags": "ignorecase"
+        },
+        {
+          "type": "regex",
+          "field": "command_line",
+          "pattern": "delete",
+          "flags": "ignorecase"
+        }
+      ],
+      "_meta": {
+        "mitre_attack": "T1490",
+        "severity_note": "勒索前置"
+      }
+    },
+    "severity": "high",
+    "enabled": true,
+    "label": "卷影副本删除（疑似勒索前置）"
+  },
+  {
+    "name": "adv_rmm_tool_abuse",
+    "description": "检测到远程管理/监控工具进程，常被攻击者在受控环境外用作 C2 或持久化。",
+    "category": "lateral",
+    "rule_type": "regex",
+    "condition": {
+      "field": "name",
+      "pattern": "(anydesk|teamviewer|tacticalrmm|meshagent|screenconnect|hiren)",
+      "flags": "ignorecase",
+      "_meta": {
+        "mitre_attack": "T1219"
+      }
+    },
+    "severity": "medium",
+    "enabled": true,
+    "label": "RMM 工具滥用"
+  },
+  {
+    "name": "adv_lolbin_certutil_download",
+    "description": "certutil 经 -urlcache 下载远程内容，常被用于无文件落地载荷。",
+    "category": "exfiltration",
+    "rule_type": "regex",
+    "condition": {
+      "field": "command_line",
+      "pattern": "certutil.*(-urlcache|-f).*http",
+      "flags": "ignorecase",
+      "_meta": {
+        "mitre_attack": "T1105"
+      }
+    },
+    "severity": "medium",
+    "enabled": true,
+    "label": "certutil 远程下载"
+  },
+  {
+    "name": "adv_lolbin_bitsadmin_transfer",
+    "description": "bitsadmin /transfer 用于后台下载，常被滥用为落地下载器。",
+    "category": "exfiltration",
+    "rule_type": "regex",
+    "condition": {
+      "field": "command_line",
+      "pattern": "bitsadmin.*/transfer",
+      "flags": "ignorecase",
+      "_meta": {
+        "mitre_attack": "T1105"
+      }
+    },
+    "severity": "medium",
+    "enabled": true,
+    "label": "bitsadmin 传输"
+  },
+  {
+    "name": "adv_powershell_obfuscated",
+    "description": "PowerShell 使用编码命令(-enc/-encodedcommand)或隐藏窗口(-w hidden)执行，常见于混淆绕过。",
+    "category": "execution",
+    "rule_type": "regex",
+    "condition": {
+      "field": "command_line",
+      "pattern": "(powershell|pwsh).*(-enc|-encodedcommand|-w\\s*hidden|-windowstyle\\s+hidden)",
+      "flags": "ignorecase",
+      "_meta": {
+        "mitre_attack": "T1059.001"
+      }
+    },
+    "severity": "high",
+    "enabled": true,
+    "label": "PowerShell 混淆执行"
+  },
+  {
+    "name": "adv_local_account_create",
+    "description": "net user /add 新建本地账户，常用于维持访问或影子账户。",
+    "category": "persistence",
+    "rule_type": "regex",
+    "condition": {
+      "field": "command_line",
+      "pattern": "net\\s+user\\s+(\\S+)\\s+/add",
+      "flags": "ignorecase",
+      "_meta": {
+        "mitre_attack": "T1136.001"
+      }
+    },
+    "severity": "high",
+    "enabled": true,
+    "label": "本地账户创建"
+  },
+  {
+    "name": "adv_eventlog_clear",
+    "description": "清除 Windows 事件日志（wevtutil cl / Clear-EventLog），反取证。",
+    "category": "defense_evasion",
+    "rule_type": "regex",
+    "condition": {
+      "field": "command_line",
+      "pattern": "(wevtutil.*\\bcl\\b|Clear-EventLog)",
+      "flags": "ignorecase",
+      "_meta": {
+        "mitre_attack": "T1070.001"
+      }
+    },
+    "severity": "high",
+    "enabled": true,
+    "label": "事件日志清除"
+  },
+  {
+    "name": "adv_ntds_dit_access",
+    "description": "直接访问或卷影复制 ntds.dit（域控凭据库），域凭据窃取关键指征。",
+    "category": "credential",
+    "rule_type": "regex",
+    "condition": {
+      "field": "command_line",
+      "pattern": "(ntds\\.dit|vssadmin.*create.*shadow.*copy.*ntds)",
+      "flags": "ignorecase",
+      "_meta": {
+        "mitre_attack": "T1003.003",
+        "requires_hitl": true
+      }
+    },
+    "severity": "critical",
+    "enabled": true,
+    "label": "NTDS.dit 凭据库访问"
+  },
+  {
+    "name": "adv_schtasks_persistence",
+    "description": "schtasks /create 创建计划任务，常见持久化。",
+    "category": "persistence",
+    "rule_type": "regex",
+    "condition": {
+      "field": "command_line",
+      "pattern": "schtasks.*/create.*/sc",
+      "flags": "ignorecase",
+      "_meta": {
+        "mitre_attack": "T1053.005"
+      }
+    },
+    "severity": "medium",
+    "enabled": true,
+    "label": "计划任务持久化"
+  },
+  {
+    "name": "adv_registry_run_persistence",
+    "description": "向注册表 Run 键写入启动项（reg add ...\\Run 或 Set-ItemProperty Run），持久化。",
+    "category": "persistence",
+    "rule_type": "regex",
+    "condition": {
+      "field": "command_line",
+      "pattern": "(reg\\s+add.*\\\\Run|Set-ItemProperty.*Run)",
+      "flags": "ignorecase",
+      "_meta": {
+        "mitre_attack": "T1547.001"
+      }
+    },
+    "severity": "high",
+    "enabled": true,
+    "label": "注册表 Run 键持久化"
+  },
+  {
+    "name": "adv_wmi_persistence",
+    "description": "WMI 事件订阅持久化（wmic /namespace /subscription、Register-WmiEvent、__EventFilter）。",
+    "category": "persistence",
+    "rule_type": "regex",
+    "condition": {
+      "field": "command_line",
+      "pattern": "(wmic.*(/namespace|/subscription)|Register-WmiEvent|__EventFilter)",
+      "flags": "ignorecase",
+      "_meta": {
+        "mitre_attack": "T1546.003"
+      }
+    },
+    "severity": "high",
+    "enabled": true,
+    "label": "WMI 持久化"
+  },
+  {
+    "name": "adv_cloud_exfil_domain",
+    "description": "外联至常见云存储域名，疑似数据外发。",
+    "category": "exfiltration",
+    "rule_type": "list",
+    "condition": {
+      "field": "domain",
+      "values": [
+        "drive.google.com",
+        "dropbox.com",
+        "mega.nz",
+        "1fichier.com",
+        "box.com",
+        "onedrive.live.com"
+      ],
+      "match_mode": "exact",
+      "_meta": {
+        "mitre_attack": "T1567.002"
+      }
+    },
+    "severity": "medium",
+    "enabled": true,
+    "label": "云存储数据外发"
+  },
+  {
+    "name": "adv_reverse_shell_listen",
+    "description": "反向 Shell / 可疑监听（nc -e/-l、ncat、PowerShell System.Net.Sockets、bash /dev/tcp）。",
+    "category": "lateral",
+    "rule_type": "regex",
+    "condition": {
+      "field": "command_line",
+      "pattern": "(nc\\s+-[el]|ncat(\\.exe)?|powershell.*System\\.Net\\.Sockets|bash\\s+-i\\s+.*/dev/(tcp|udp))",
+      "flags": "ignorecase",
+      "_meta": {
+        "mitre_attack": "T1571"
+      }
+    },
+    "severity": "high",
+    "enabled": true,
+    "label": "反向 Shell / 可疑监听"
+  },
+  {
+    "name": "adv_lolbin_script_host",
+    "description": "脚本宿主从远程加载（mshta http / regsvr32 /i:http / rundll32 http），Living-off-the-Land。",
+    "category": "defense_evasion",
+    "rule_type": "regex",
+    "condition": {
+      "field": "command_line",
+      "pattern": "(mshta.*http|regsvr32.*/i:?http|rundll32.*http)",
+      "flags": "ignorecase",
+      "_meta": {
+        "mitre_attack": "T1218"
+      }
+    },
+    "severity": "medium",
+    "enabled": true,
+    "label": "脚本宿主远程加载"
+  },
+  {
+    "name": "adv_suspicious_service_create",
+    "description": "创建新服务（sc create / New-Service），常用于恶意驱动或持久化。",
+    "category": "persistence",
+    "rule_type": "regex",
+    "condition": {
+      "field": "command_line",
+      "pattern": "(sc\\s+create|New-Service\\s+-Name)",
+      "flags": "ignorecase",
+      "_meta": {
+        "mitre_attack": "T1543.003"
+      }
+    },
+    "severity": "medium",
+    "enabled": true,
+    "label": "可疑服务创建"
+  },
+  {
+    "name": "adv_webshell_drop",
+    "description": "Web 目录落地脚本文件（aspx/php/jsp 等），疑似 WebShell 投放。",
+    "category": "webshell",
+    "rule_type": "regex",
+    "condition": {
+      "field": "path",
+      "pattern": "(wwwroot|webapps|htdocs|html|public).*\\.(aspx?|php|jsp|jspx|war)",
+      "flags": "ignorecase",
+      "_meta": {
+        "mitre_attack": "T1505.003"
+      }
+    },
+    "severity": "high",
+    "enabled": true,
+    "label": "WebShell 落地"
+  },
+  {
+    "name": "pki_wmi_subscription_exists",
+    "description": "持久化兜底：检测 wmi_subscription_name 字段出现。后端暂未产出该字段，置 disabled；采集器（wmi_subscribe）接线后改 enabled=true 即生效。",
+    "category": "persistence",
+    "rule_type": "exists",
+    "condition": {
+      "field": "wmi_subscription_name",
+      "_meta": {
+        "pending_collector": "wmi_subscribe",
+        "mitre_attack": "T1546.003",
+        "note": "后端暂未产出该字段，置 disabled；采集器接线后改 enabled=true 即生效"
+      }
+    },
+    "severity": "high",
+    "enabled": false,
+    "label": "持久化兜底-wmi_subscription_name"
+  },
+  {
+    "name": "pki_scheduled_task_exists",
+    "description": "持久化兜底：检测 scheduled_task_name 字段出现。后端暂未产出该字段，置 disabled；采集器（scheduled_task）接线后改 enabled=true 即生效。",
+    "category": "persistence",
+    "rule_type": "exists",
+    "condition": {
+      "field": "scheduled_task_name",
+      "_meta": {
+        "pending_collector": "scheduled_task",
+        "mitre_attack": "T1053.005",
+        "note": "后端暂未产出该字段，置 disabled；采集器接线后改 enabled=true 即生效"
+      }
+    },
+    "severity": "high",
+    "enabled": false,
+    "label": "持久化兜底-scheduled_task_name"
+  },
+  {
+    "name": "pki_service_image_path_exists",
+    "description": "持久化兜底：检测 service_image_path 字段出现。后端暂未产出该字段，置 disabled；采集器（service_operation）接线后改 enabled=true 即生效。",
+    "category": "persistence",
+    "rule_type": "exists",
+    "condition": {
+      "field": "service_image_path",
+      "_meta": {
+        "pending_collector": "service_operation",
+        "mitre_attack": "T1543.003",
+        "note": "后端暂未产出该字段，置 disabled；采集器接线后改 enabled=true 即生效"
+      }
+    },
+    "severity": "high",
+    "enabled": false,
+    "label": "持久化兜底-service_image_path"
+  },
+  {
+    "name": "pki_registry_run_exists",
+    "description": "持久化兜底：检测 registry_key_path 字段出现。后端暂未产出该字段，置 disabled；采集器（registry_modify）接线后改 enabled=true 即生效。",
+    "category": "persistence",
+    "rule_type": "exists",
+    "condition": {
+      "field": "registry_key_path",
+      "_meta": {
+        "pending_collector": "registry_modify",
+        "mitre_attack": "T1547.001",
+        "note": "后端暂未产出该字段，置 disabled；采集器接线后改 enabled=true 即生效"
+      }
+    },
+    "severity": "high",
+    "enabled": false,
+    "label": "持久化兜底-registry_key_path"
+  }
+]

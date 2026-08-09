@@ -103,10 +103,10 @@ function resetFilter() {
 
 <style scoped>
 .timeline-filter-bar {
-  margin-bottom: 16px;
-  padding: 12px;
-  background: var(--color-canvas-subtle, #f5f7fa);
-  border-radius: 6px;
-  border: 0.5px solid var(--color-border-default, #e4e7ed);
+  margin-bottom: 6px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
 }
 </style>

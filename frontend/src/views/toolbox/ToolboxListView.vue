@@ -158,6 +158,7 @@ import { Search } from '@element-plus/icons-vue'
 import { getToolList, getToolStats, getToolCategories, downloadTool } from '@/api/toolbox'
 import ToolboxDetailDrawer from './ToolboxDetailDrawer.vue'
 import ToolboxUploadDrawer from './ToolboxUploadDrawer.vue'
+import { formatServerTime } from '@/utils/time'
 
 // ── Data ──
 const tools = ref([])
@@ -193,11 +194,7 @@ function getIconBg(name) {
 
 function formatDate(dateStr) {
   if (!dateStr) return ''
-  const d = new Date(dateStr)
-  if (Number.isNaN(d.getTime())) return ''
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${m}-${day}`
+  return formatServerTime(dateStr, 'MM-DD')
 }
 
 const paginationRange = computed(() => {

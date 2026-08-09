@@ -215,7 +215,7 @@ class TestChainLevelScoring(DBTestBase):
     def test_chain_risk_accumulates_across_nodes(self):
         from app.analysis.anomaly_detector import AnomalyDetector
 
-        # 父(100) → 子(200)：同链，各自命中 unsigned_executable（high=20）
+        # 父(100) → 子(200)：同链，各自命中 unsigned_executable（P1-1-A 后 severity=medium，权重 10）
         raw = {
             "processes": [
                 {"pid": 100, "ppid": 4, "name": "a.exe", "path": "C:\\Temp\\a.exe",
@@ -227,9 +227,9 @@ class TestChainLevelScoring(DBTestBase):
         rules = [_load_rule("unsigned_executable")]
         result = AnomalyDetector.detect_processes(raw, rules)
         by_pid = {r["pid"]: r for r in result}
-        # 两节点同链，链路级累加 risk_score = 20+20 = 40
-        self.assertEqual(by_pid[100]["risk_score"], 40)
-        self.assertEqual(by_pid[200]["risk_score"], 40)
+        # 两节点同链，链路级累加 risk_score = 10+10 = 20（medium 权重 10）
+        self.assertEqual(by_pid[100]["risk_score"], 20)
+        self.assertEqual(by_pid[200]["risk_score"], 20)
         # 链路 attack_path 应体现祖先链（a.exe → b.exe）
         self.assertIn("→", by_pid[200]["attack_path"])
 

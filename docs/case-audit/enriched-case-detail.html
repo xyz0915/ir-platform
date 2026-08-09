@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>案件详情 · 数据扩充预览（应急专家视角）</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --panel-2: #fafbfc;
+    --border: #e6e8eb; --border-strong: #d6d9de;
+    --fg: #1f2329; --fg-sub: #646a73; --fg-muted: #8f959e;
+    --accent: #2f6bff; --accent-sub: #eaf1ff;
+    --crit: #f5222d; --high: #fa8c16; --med: #faad14; --low: #52c41a;
+    --crit-bg: #fff1f0; --high-bg: #fff7e6; --med-bg: #fffbe6; --low-bg: #f6ffed;
+    --shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+    --radius: 12px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181d; --panel: #1f222a; --panel-2: #23262f;
+      --border: #2c3038; --border-strong: #3a3f49;
+      --fg: #e6e8eb; --fg-sub: #a9afb8; --fg-muted: #757b85;
+      --accent: #5b8bff; --accent-sub: #1d2a44;
+      --crit-bg: #2a1818; --high-bg: #2a2113; --med-bg: #2a2613; --low-bg: #16241a;
+      --shadow: 0 1px 3px rgba(0,0,0,.4);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 13px; line-height: 1.6; padding: 24px;
+  }
+  .wrap { max-width: 1280px; margin: 0 auto; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .topbar h1 { font-size: 18px; font-weight: 600; margin: 0; display: flex; align-items: center; gap: 10px; }
+  .pill { font-size: 11px; color: var(--fg-muted); background: var(--panel); border: 1px solid var(--border); padding: 3px 10px; border-radius: 999px; }
+  .btn { border: 1px solid var(--border-strong); background: var(--panel); color: var(--fg); border-radius: 8px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px 20px; margin-bottom: 16px; }
+  .card h2 { font-size: 14px; font-weight: 600; margin: 0 0 14px; display: flex; align-items: center; gap: 8px; }
+  .card h2 .tag-min { font-size: 10px; font-weight: 500; color: var(--accent); background: var(--accent-sub); padding: 1px 7px; border-radius: 6px; }
+
+  .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; }
+  .col-8 { grid-column: span 8; } .col-7 { grid-column: span 7; }
+  .col-6 { grid-column: span 6; } .col-5 { grid-column: span 5; }
+  .col-4 { grid-column: span 4; } .col-12 { grid-column: span 12; }
+  @media (max-width: 1000px){ .col-8,.col-7,.col-6,.col-5,.col-4 { grid-column: span 12; } }
+
+  /* case header */
+  .hd { display: flex; flex-wrap: wrap; gap: 26px; }
+  .hd .name { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+  .hd .desc { color: var(--fg-sub); max-width: 720px; margin: 6px 0 0; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 12.5px; }
+  .kv dt { color: var(--fg-muted); white-space: nowrap; }
+  .kv dd { margin: 0; color: var(--fg); }
+
+  .tag { display: inline-flex; align-items: center; font-size: 11px; font-weight: 500; padding: 2px 9px; border-radius: 6px; border: 1px solid transparent; }
+  .t-open { background: var(--low-bg); color: var(--low); }
+  .t-closed { background: var(--panel-2); color: var(--fg-muted); }
+  .sev { font-weight: 600; }
+  .sev-critical { background: var(--crit-bg); color: var(--crit); }
+  .sev-high { background: var(--high-bg); color: var(--high); }
+  .sev-medium { background: var(--med-bg); color: var(--med); }
+  .sev-low { background: var(--low-bg); color: var(--low); }
+
+  /* stat chips */
+  .chips { display: flex; flex-wrap: wrap; gap: 10px; }
+  .chip { flex: 1 1 90px; min-width: 84px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+  .chip .n { font-size: 20px; font-weight: 700; line-height: 1.1; }
+  .chip .l { font-size: 11px; color: var(--fg-muted); margin-top: 2px; }
+  .chip.c-critical .n { color: var(--crit); } .chip.c-high .n { color: var(--high); }
+  .chip.c-medium .n { color: var(--med); } .chip.c-low .n { color: var(--low); }
+
+  /* bars */
+  .bar { height: 8px; border-radius: 99px; background: var(--panel-2); overflow: hidden; margin-top: 4px; }
+  .bar > i { display: block; height: 100%; border-radius: 99px; }
+  .barcell { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; font-size: 12px; }
+  .barcell .lab { width: 64px; color: var(--fg-sub); }
+  .barcell .val { width: 34px; text-align: right; color: var(--fg-muted); }
+
+  /* tables */
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--fg-muted); font-weight: 500; background: var(--panel-2); }
+  tr:last-child td { border-bottom: none; }
+  .mini { display: inline-block; padding: 1px 7px; border-radius: 5px; font-size: 10.5px; font-weight: 500; }
+  .m-crit { background: var(--crit-bg); color: var(--crit); }
+  .m-high { background: var(--high-bg); color: var(--high); }
+  .m-med  { background: var(--med-bg); color: var(--med); }
+  .m-low  { background: var(--low-bg); color: var(--low); }
+  .st-open { color: var(--high); } .st-resolved { color: var(--low); } .st-ack { color: var(--accent); } .st-dismiss { color: var(--fg-muted); }
+
+  /* timeline */
+  .tl { position: relative; padding-left: 18px; }
+  .tl::before { content: ""; position: absolute; left: 5px; top: 4px; bottom: 4px; width: 2px; background: var(--border-strong); }
+  .tl .it { position: relative; margin-bottom: 14px; }
+  .tl .it::before { content: ""; position: absolute; left: -15px; top: 4px; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px var(--accent-sub); }
+  .tl .it .t { font-size: 11px; color: var(--fg-muted); }
+  .tl .it .x { font-size: 12.5px; }
+
+  /* progress */
+  .prog { height: 10px; border-radius: 99px; background: var(--panel-2); overflow: hidden; }
+  .prog > i { display: block; height: 100%; background: var(--accent); border-radius: 99px; }
+
+  /* ioc / ttp lists */
+  .ioc { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .ioc:last-child { border-bottom: none; }
+  .ioc .ty { font-size: 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; color: var(--fg-sub); }
+  .ioc .vv { font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--fg); }
+  .ioc .hit { margin-left: auto; color: var(--crit); font-weight: 600; font-size: 11px; }
+  .ttp { display: flex; flex-wrap: wrap; gap: 8px; }
+  .ttp .k { font-size: 11.5px; background: var(--accent-sub); color: var(--accent); border-radius: 7px; padding: 4px 10px; }
+  .chain { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 12px; }
+  .chain .ph { font-size: 11px; padding: 3px 9px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--border); color: var(--fg-sub); }
+  .chain .ar { color: var(--fg-muted); }
+
+  .note { font-size: 11.5px; color: var(--fg-muted); background: var(--panel-2); border: 1px dashed var(--border-strong); border-radius: 8px; padding: 8px 12px; margin-top: 6px; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 760px){ .row2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <h1>🛡️ 案件详情 <span class="pill">数据扩充预览 · 应急专家视角</span></h1>
+    <button class="btn" onclick="history.back()">← 返回</button>
+  </div>
+
+  <!-- 基础信息卡（扩充） -->
+  <div class="card">
+    <div class="hd">
+      <div style="flex:1 1 420px">
+        <p class="name" id="c-name"></p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
+          <span class="tag t-open" id="c-status"></span>
+          <span class="tag sev sev-critical" id="c-sev"></span>
+          <span class="tag" style="background:var(--accent-sub);color:var(--accent)" id="c-prio"></span>
+        </div>
+        <p class="desc" id="c-desc"></p>
+      </div>
+      <dl class="kv" style="flex:1 1 360px">
+        <dt>案件编号</dt><dd id="c-num"></dd>
+        <dt>负责人</dt><dd id="c-owner"></dd>
+        <dt>创建时间</dt><dd id="c-created"></dd>
+        <dt>更新时间</dt><dd id="c-updated"></dd>
+        <dt>响应时限(SLA)</dt><dd id="c-sla"></dd>
+        <dt>关联主机</dt><dd id="c-hosts"></dd>
+      </dl>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- 告警态势（P0） -->
+    <div class="card col-7">
+      <h2>告警态势 <span class="tag-min">P0 · 现有接口可直取</span></h2>
+      <div class="chips" id="alert-chips"></div>
+      <div style="margin-top:14px" id="alert-bars"></div>
+      <h2 style="margin-top:18px">Top 告警</h2>
+      <table id="alert-table"><thead><tr>
+        <th>规则</th><th>严重度</th><th>状态</th><th>来源进程</th><th>源IP</th><th>首次</th><th>次数</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+
+    <!-- 受影响资产态势（P1） -->
+    <div class="card col-5">
+      <h2>受影响资产态势 <span class="tag-min">P1</span></h2>
+      <div class="chips" id="host-chips"></div>
+      <h2 style="margin-top:16px">风险 Top 主机</h2>
+      <table id="host-table"><thead><tr><th>主机</th><th>IP</th><th>风险</th></tr></thead><tbody></tbody></table>
+    </div>
+
+    <!-- 响应时间线（P0） -->
+    <div class="card col-7">
+      <h2>响应时间线 <span class="tag-min">P0 · 复用 timeline_builder</span></h2>
+      <div class="tl" id="timeline"></div>
+    </div>
+
+    <!-- 处置闭环进度（P1） -->
+    <div class="card col-5">
+      <h2>处置闭环进度 <span class="tag-min">P1</span></h2>
+      <div style="font-size:12.5px;color:var(--fg-sub);margin-bottom:4px" id="rem-text"></div>
+      <div class="prog"><i id="rem-bar"></i></div>
+      <div style="margin-top:16px" id="triage-bars"></div>
+    </div>
+
+    <!-- 威胁指标 IOC（P1） -->
+    <div class="card col-5">
+      <h2>威胁指标 IOC <span class="tag-min">P1</span></h2>
+      <div id="ioc-list"></div>
+    </div>
+
+    <!-- TTP / 攻击链（P1） -->
+    <div class="card col-7">
+      <h2>攻击链 / TTP 映射 <span class="tag-min">P1</span></h2>
+      <div class="chain" id="killchain"></div>
+      <div class="ttp" id="ttp"></div>
+    </div>
+
+    <!-- AI 分析结论（P2） -->
+    <div class="card col-7">
+      <h2>AI 分析结论摘要 <span class="tag-min">P2</span></h2>
+      <div class="row2">
+        <div>
+          <div style="font-size:11px;color:var(--fg-muted)">综合风险评分</div>
+          <div style="font-size:30px;font-weight:700;color:var(--high)" id="ai-score"></div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--fg-muted)">推断攻击链</div>
+          <div style="font-size:13px;margin-top:6px" id="ai-chain"></div>
+        </div>
+      </div>
+      <div style="margin-top:12px;font-size:12.5px;color:var(--fg-sub)"><b>处置建议：</b><span id="ai-rec"></span></div>
+    </div>
+
+    <!-- 关联案件（P2） -->
+    <div class="card col-5">
+      <h2>关联 / 同类案件 <span class="tag-min">P2</span></h2>
+      <table id="rel-table"><thead><tr><th>案件</th><th>相似度</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+
+  <div class="note">
+    预览说明：本页为「案件详情数据扩充方案」的高保真原型，数据来自一组拟真的 <code>GET /api/cases/{id}/summary</code> 聚合响应（派生严重度 / 告警统计 / Top 告警 / 资产态势 / 处置进度 / IOC / TTP / AI 结论 / 关联案件）。
+    其中告警态势与资产态势可零后端改动用现有 <code>/api/alerts?case_id=</code> 与 <code>/api/alerts/stats/summary</code> 直取；其余需新增聚合接口或补列。
+  </div>
+</div>
+
+<script>
+// —— 拟真的 summary 数据契约（演示聚合接口返回结构）——
+const S = {
+  case: {
+    name: "主机 10.20.3.15 疑似 Cobalt Strike 横向移动",
+    number: "IR-2026-0810-007",
+    status: "open",
+    severity: "critical",          // derived_severity：由关联告警最高严重度派生
+    priority: "P1",
+    owner: "张应急（L2 分析师）",
+    created_at: "2026-08-10 00:42",
+    updated_at: "2026-08-10 01:31",
+    sla: "4h 内遏制（剩余 2h11m）",
+    host_count: 8,
+    description: "EDR 检测到内网主机 10.20.3.15 与已知 C2 域名通信，并伴随 PowerShell 无文件执行与 WMI 持久化迹象，疑似 Cobalt Strike  beacon 横向扩散。"
+  },
+  alertStats: { critical: 3, high: 7, medium: 12, low: 4,
+                open: 9, acknowledged: 5, resolved: 10, dismissed: 2 },
+  topAlerts: [
+    { rule: "C2 域名外联", sev: "critical", status: "open", proc: "powershell.exe", ip: "185.220.101.1", first: "00:43", count: 18 },
+    { rule: "WMI 事件订阅持久化", sev: "critical", status: "open", proc: "wmiprvse.exe", ip: "-", first: "00:51", count: 2 },
+    { rule: "可疑 LOLBin 执行", sev: "high", status: "ack", proc: "rundll32.exe", ip: "-", first: "00:46", count: 6 },
+    { rule: "SMB 暴力破解", sev: "high", status: "open", proc: "svchost.exe", ip: "10.20.3.9", first: "00:48", count: 41 },
+    { rule: "新服务创建", sev: "medium", status: "resolved", proc: "services.exe", ip: "-", first: "00:55", count: 1 }
+  ],
+  hostStats: { total: 8, pending: 1, imported: 2, analyzed: 5, onlineAgents: 6 },
+  topRiskHosts: [
+    { host: "WIN-3F12 (10.20.3.15)", ip: "10.20.3.15", level: "critical", score: 94 },
+    { host: "WIN-9A04 (10.20.3.9)", ip: "10.20.3.9", level: "high", score: 78 },
+    { host: "LNX-DB01 (10.20.5.2)", ip: "10.20.5.2", level: "medium", score: 55 }
+  ],
+  timeline: [
+    { t: "08-10 00:42", x: "案件创建（自动开案，来源：EDR 实时告警）" },
+    { t: "00:43", x: "主机 10.20.3.15 接入，Agent 在线" },
+    { t: "00:43", x: "触发 critical 告警：C2 域名外联 ×18" },
+    { t: "00:51", x: "触发 critical 告警：WMI 事件订阅持久化" },
+    { t: "00:58", x: "动态取证任务启动（scope: process_subtree / network）" },
+    { t: "01:20", x: "生成处置清单（9 项），已开始执行" },
+    { t: "01:31", x: "更新：已确认 5 条告警，隔离 1 台主机" }
+  ],
+  remediation: { done: 6, total: 9, triage: { pending: 0, running: 1, done: 3, failed: 0 } },
+  iocs: [
+    { ty: "domain", v: "malware-c2.example.com", hit: "命中情报" },
+    { ty: "ip", v: "185.220.101.1", hit: "18 次" },
+    { ty: "url", v: "http://185.220.101.1/loader", hit: "命中情报" },
+    { ty: "hash", v: "a1b2c3…e9f0 (beacon.dll)", hit: "2 次" }
+  ],
+  ttp: {
+    chain: ["初始访问", "执行", "持久化", "C2", "横向移动", "影响"],
+    techniques: ["T1059 命令与脚本解释器", "T1053 计划任务", "T1546 事件触发执行", "T1071 应用层协议", "T1021 远程服务", "T1490 数据破坏"]
+  },
+  ai: { score: 91, chain: "Phishing → PowerShell 无文件 → WMI 持久化 → C2 回连 → SMB 横向",
+        rec: "1) 立即隔离 10.20.3.15/3.9；2) 阻断 C2 域名与 IP；3) 清除 WMI 订阅与计划任务；4) 重置受波及账户凭据；5) 全流量回溯确认外泄范围。" },
+  related: [
+    { num: "IR-2026-0728-013", sim: "82%" },
+    { num: "IR-2026-0630-005", sim: "67%" },
+    { num: "IR-2026-0511-021", sim: "59%" }
+  ]
+};
+
+// —— 渲染 ——
+const $ = id => document.getElementById(id);
+const sevTxt = { critical: "严重", high: "高", medium: "中", low: "低" };
+
+$("c-name").textContent = S.case.name;
+$("c-status").textContent = S.case.status === "open" ? "进行中" : "已关闭";
+$("c-status").className = "tag " + (S.case.status === "open" ? "t-open" : "t-closed");
+$("c-sev").textContent = "严重度 " + sevTxt[S.case.severity];
+$("c-sev").className = "tag sev sev-" + S.case.severity;
+$("c-prio").textContent = "优先级 " + S.case.priority;
+$("c-desc").textContent = S.case.description;
+$("c-num").textContent = S.case.number;
+$("c-owner").textContent = S.case.owner;
+$("c-created").textContent = S.case.created_at;
+$("c-updated").textContent = S.case.updated_at;
+$("c-sla").textContent = S.case.sla;
+$("c-hosts").textContent = S.case.host_count + " 台";
+
+// 告警 chips
+const ac = S.alertStats;
+$("alert-chips").innerHTML = [
+  ["critical", ac.critical, "严重"], ["high", ac.high, "高"],
+  ["medium", ac.medium, "中"], ["low", ac.low, "低"]
+].map(([c, n, l]) => `<div class="chip c-${c}"><div class="n">${n}</div><div class="l">${l}危</div></div>`).join("");
+
+// 告警 bars (status distribution)
+const maxSt = Math.max(ac.open, ac.acknowledged, ac.resolved, ac.dismissed);
+const stColor = { open: "var(--high)", acknowledged: "var(--accent)", resolved: "var(--low)", dismissed: "var(--fg-muted)" };
+$("alert-bars").innerHTML = [
+  ["未处置", ac.open], ["已确认", ac.acknowledged], ["已解决", ac.resolved], ["已忽略", ac.dismissed]
+].map(([l, v]) => `<div class="barcell"><span class="lab">${l}</span><span style="flex:1"><span class="bar"><i style="width:${v/maxSt*100}%;background:${stColor[l==='未处置'?'open':l==='已确认'?'acknowledged':l==='已解决'?'resolved':'dismissed']}"></i></span></span><span class="val">${v}</span></div>`).join("");
+
+// Top 告警表
+$("alert-table").querySelector("tbody").innerHTML = S.topAlerts.map(a => `
+  <tr><td>${a.rule}</td>
+    <td><span class="mini m-${a.sev}">${sevTxt[a.sev]}</span></td>
+    <td class="st-${a.status==='open'?'open':a.status==='resolved'?'resolved':a.status==='ack'?'ack':'dismiss'}">${a.status==='open'?'未处置':a.status==='ack'?'已确认':a.status==='resolved'?'已解决':'已忽略'}</td>
+    <td>${a.proc}</td><td>${a.ip}</td><td>${a.first}</td><td>${a.count}</td></tr>`).join("");
+
+// 资产 chips
+const hs = S.hostStats;
+$("host-chips").innerHTML = [
+  ["", hs.total, "主机总数"], ["", hs.analyzed, "已分析"],
+  ["", hs.imported, "已导入"], ["", hs.pending, "待采集"], ["", hs.onlineAgents, "在线Agent"]
+].map(([c, n, l]) => `<div class="chip"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
+
+// Top 风险主机
+$("host-table").querySelector("tbody").innerHTML = S.topRiskHosts.map(h => `
+  <tr><td>${h.host}</td><td>${h.ip}</td>
+    <td><span class="mini m-${h.level}">${sevTxt[h.level]} ${h.score}</span></td></tr>`).join("");
+
+// 时间线
+$("timeline").innerHTML = S.timeline.map(i => `<div class="it"><div class="t">${i.t}</div><div class="x">${i.x}</div></div>`).join("");
+
+// 处置进度
+$("rem-text").textContent = `处置清单完成 ${S.remediation.done}/${S.remediation.total} 项`;
+$("rem-bar").style.width = (S.remediation.done / S.remediation.total * 100) + "%";
+const tg = S.remediation.triage, maxTg = Math.max(1, tg.pending, tg.running, tg.done, tg.failed);
+const tgColor = { pending: "var(--fg-muted)", running: "var(--high)", done: "var(--low)", failed: "var(--crit)" };
+$("triage-bars").innerHTML = [
+  ["取证待运行", tg.pending], ["取证进行中", tg.running], ["取证完成", tg.done], ["取证失败", tg.failed]
+].map(([l, v]) => {
+  const k = l === "取证待运行" ? "pending" : l === "取证进行中" ? "running" : l === "取证完成" ? "done" : "failed";
+  return `<div class="barcell"><span class="lab">${l}</span><span style="flex:1"><span class="bar"><i style="width:${v/maxTg*100}%;background:${tgColor[k]}"></i></span></span><span class="val">${v}</span></div>`;
+}).join("");
+
+// IOC
+$("ioc-list").innerHTML = S.iocs.map(o => `<div class="ioc"><span class="ty">${o.ty}</span><span class="vv">${o.v}</span><span class="hit">${o.hit}</span></div>`).join("");
+
+// TTP
+$("killchain").innerHTML = S.ttp.chain.map((p, i) => (i ? `<span class="ar">→</span>` : "") + `<span class="ph">${p}</span>`).join("");
+$("ttp").innerHTML = S.ttp.techniques.map(t => `<span class="k">${t}</span>`).join("");
+
+// AI
+$("ai-score").textContent = S.ai.score;
+$("ai-chain").textContent = S.ai.chain;
+$("ai-rec").textContent = S.ai.rec;
+
+// 关联案件
+$("rel-table").querySelector("tbody").innerHTML = S.related.map(r => `<tr><td>${r.num}</td><td><span class="mini m-high">${r.sim}</span></td></tr>`).join("");
+</script>
+</body>
+</html>

@@ -57,6 +57,42 @@
 
     <!-- Main Card -->
     <div class="card">
+      <!-- Quick Stats Chips -->
+      <div class="quick-stats">
+        <div class="qs-chip" :class="{ active: filterEnabled === '1' }" @click="setEnabledFilter(true)">
+          <span class="qs-dot green"></span>
+          <span>已启用 {{ enabledStats.enabled }}</span>
+        </div>
+        <div class="qs-chip" :class="{ active: filterEnabled === '0' }" @click="setEnabledFilter(false)">
+          <span class="qs-dot gray"></span>
+          <span>未启用 {{ enabledStats.disabled }}</span>
+        </div>
+        <div class="qs-chip" :class="{ active: filterSeverity === 'critical' }" @click="setSeverityFilter('critical')">
+          <span class="qs-dot critical"></span>
+          <span>严重 {{ severityStats.critical }}</span>
+        </div>
+        <div class="qs-chip" :class="{ active: filterSeverity === 'high' }" @click="setSeverityFilter('high')">
+          <span class="qs-dot high"></span>
+          <span>高危 {{ severityStats.high }}</span>
+        </div>
+        <div class="qs-chip" :class="{ active: filterHitl }" @click="setHitlFilter">
+          <span class="qs-dot purple"></span>
+          <span>需审批 {{ hitlRuleCount }}</span>
+        </div>
+        <div class="qs-chip" :class="{ active: filterDead }" @click="setDeadFilter">
+          <span class="qs-dot dead"></span>
+          <span>待激活死规则 {{ deadRuleCount }}</span>
+        </div>
+        <div class="qs-chip" :class="{ active: filterEffective === '1' }" @click="setEffectiveFilter(true)">
+          <span class="qs-dot green"></span>
+          <span>真实生效中 {{ effectiveStats.active }}</span>
+        </div>
+        <div class="qs-chip" :class="{ active: filterEffective === '0' }" @click="setEffectiveFilter(false)">
+          <span class="qs-dot red"></span>
+          <span>未生效 {{ effectiveStats.inactive }}</span>
+        </div>
+      </div>
+
       <!-- Toolbar -->
       <div class="toolbar">
         <div class="search-bar">
@@ -65,28 +101,60 @@
         </div>
         <select v-model="filterCategory" class="select" style="width:130px;" @change="loadRules">
           <option value="">全部类别</option>
-          <option value="process">进程</option>
-          <option value="execution">执行</option>
-          <option value="network">网络</option>
-          <option value="startup">启动项</option>
-          <option value="persistence">持久化</option>
-          <option value="ioc">IOC</option>
-          <option value="behavior">行为</option>
-          <option value="credential">凭据</option>
-          <option value="lateral">横向移动</option>
-          <option value="exfiltration">数据窃取</option>
-          <option value="discovery">发现</option>
-          <option value="defense_evasion">防御规避</option>
-          <option value="privilege_escalation">权限提升</option>
-          <option value="impact">影响</option>
+          <option v-for="c in dynamicCategories" :key="c" :value="c">{{ c }}</option>
         </select>
-        <select v-model="filterEngineType" class="select" style="width:130px;margin-left:8px;" @change="loadRules">
+        <select v-model="filterEngineType" class="select" style="width:110px;" @change="loadRules">
           <option value="">全部引擎</option>
           <option value="rule_engine">规则引擎</option>
           <option value="behavior_engine">行为引擎</option>
         </select>
+        <select v-model="filterSeverity" class="select" style="width:100px;" @change="loadRules">
+          <option value="">全部严重度</option>
+          <option value="critical">严重</option>
+          <option value="high">高危</option>
+          <option value="medium">中危</option>
+          <option value="low">低危</option>
+        </select>
+        <select v-model="filterRuleType" class="select" style="width:120px;" @change="loadRules">
+          <option value="">全部类型</option>
+          <option value="regex">正则匹配</option>
+          <option value="list">列表匹配</option>
+          <option value="threshold">阈值检测</option>
+          <option value="behavior">行为分析</option>
+          <option value="composite">复合规则</option>
+          <option value="exists">存在性检测</option>
+          <option value="attack_chain">攻击链</option>
+          <option value="event_log_summary">事件日志聚合</option>
+        </select>
+        <select v-model="filterEnabled" class="select" style="width:100px;" @change="loadRules">
+          <option value="">全部状态</option>
+          <option value="1">已启用</option>
+          <option value="0">未启用</option>
+        </select>
+        <select v-model="filterEffective" class="select" style="width:120px;" @change="loadRules">
+          <option value="">全部生效态</option>
+          <option value="1">真实生效中</option>
+          <option value="0">未生效</option>
+        </select>
+        <select v-model="filterSource" class="select" style="width:100px;" @change="loadRules">
+          <option value="">全部来源</option>
+          <option value="default">内置</option>
+          <option value="user">用户</option>
+          <option value="ai">AI生成</option>
+          <option value="import">导入</option>
+        </select>
+        <select v-model="filterStatus" class="select" style="width:110px;" @change="loadRules">
+          <option value="">全部生命周期</option>
+          <option value="active">生效中</option>
+          <option value="pending_approval">待审批</option>
+          <option value="deprecated">已废弃</option>
+        </select>
         <div class="toolbar-spacer"></div>
-        <button class="btn btn-default btn-sm" @click="loadRules">
+        <button class="btn btn-default btn-sm" @click="resetFilters">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+          重置
+        </button>
+        <button class="btn btn-primary btn-sm" @click="loadRules">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           搜索
         </button>
@@ -171,6 +239,7 @@
                   <input type="checkbox" :checked="row.enabled" @change="(val) => handleToggle(row, $event.target.checked)" />
                   <div class="toggle-slider"></div>
                 </label>
+                <span :class="['badge', row.effective_active ? 'badge-success' : 'badge-low']" :title="row.effective_reason" style="margin-top:4px;display:inline-block;">{{ row.effective_active ? '生效中' : (row.effective_reason || '未生效') }}</span>
               </td>
               <td>
                 <div class="row-actions">
@@ -221,12 +290,20 @@
               <div class="detail-item-value">{{ currentRule.label }}</div>
             </div>
             <div class="detail-item">
-              <div class="detail-item-label">类别</div>
-              <div class="detail-item-value"><span class="badge badge-info">{{ currentRule.category }}</span></div>
+              <div class="detail-item-label">类别 / 类型</div>
+              <div class="detail-item-value">
+                <span class="badge badge-info" style="margin-right:6px;">{{ currentRule.category }}</span>
+                <span class="badge badge-rule">{{ ruleTypeLabel(currentRule.rule_type) }}</span>
+              </div>
             </div>
             <div class="detail-item">
-              <div class="detail-item-label">规则类型</div>
-              <div class="detail-item-value td-mono">{{ currentRule.rule_type }}</div>
+              <div class="detail-item-label">引擎 / 来源</div>
+              <div class="detail-item-value">
+                <span :class="['badge', currentRule.engine_type === 'behavior_engine' ? 'badge-behavior' : 'badge-rule']" style="margin-right:6px;">
+                  {{ currentRule.engine_type === 'behavior_engine' ? '行为引擎' : '规则引擎' }}
+                </span>
+                <span :class="['badge', currentRule.source === 'default' ? 'badge-builtin' : 'badge-user']">{{ sourceLabel(currentRule.source) }}</span>
+              </div>
             </div>
             <div class="detail-item">
               <div class="detail-item-label">严重程度</div>
@@ -242,17 +319,30 @@
               <div class="detail-item-value td-mono">{{ getMitreAttack(currentRule) }}</div>
             </div>
             <div class="detail-item">
-              <div class="detail-item-label">来源</div>
+              <div class="detail-item-label">启用 / 生命周期</div>
               <div class="detail-item-value">
-                <span :class="['badge', currentRule.source === 'default' ? 'badge-builtin' : 'badge-user']">{{ currentRule.source === 'default' ? '内置默认' : '用户规则' }}</span>
+                <span :class="['badge', currentRule.enabled ? 'badge-success' : 'badge-low']" style="margin-right:6px;">{{ currentRule.enabled ? '已启用' : '未启用' }}</span>
+                <span :class="['badge', currentRule.effective_active ? 'badge-success' : 'badge-low']" style="margin-right:6px;">{{ currentRule.effective_active ? '真实生效' : ('未生效·' + (currentRule.effective_reason || '')) }}</span>
+                <span class="badge badge-info">{{ statusLabel(currentRule.status) }}</span>
               </div>
             </div>
-            <div class="detail-item">
-              <div class="detail-item-label">描述</div>
-              <div class="detail-item-value" style="color:var(--color-fg-subtle);">{{ currentRule.description }}</div>
+            <div class="detail-item" v-if="isDeadRule(currentRule) || isHitlRule(currentRule)">
+              <div class="detail-item-label">运营标记</div>
+              <div class="detail-item-value">
+                <span v-if="isDeadRule(currentRule)" class="badge badge-low" style="margin-right:6px;">死规则（待采集器）</span>
+                <span v-if="isHitlRule(currentRule)" class="badge badge-warning">需人工审批</span>
+              </div>
             </div>
             <div class="detail-item full">
-              <div class="detail-item-label">条件</div>
+              <div class="detail-item-label">描述</div>
+              <div class="detail-item-value" style="color:var(--color-fg-subtle);line-height:1.6;">{{ currentRule.description || '—' }}</div>
+            </div>
+            <div class="detail-item full">
+              <div class="detail-item-label">条件（可读化）</div>
+              <div class="cond-readable" v-html="renderCondition(currentRule)"></div>
+            </div>
+            <div class="detail-item full">
+              <div class="detail-item-label">原始条件 JSON</div>
               <div class="cond-block">{{ JSON.stringify(currentRule.condition, null, 2) }}</div>
             </div>
           </div>
@@ -375,6 +465,14 @@ async function loadStats() {
 }
 const filterCategory = ref('')
 const filterEngineType = ref('')
+const filterSeverity = ref('')
+const filterRuleType = ref('')
+const filterEnabled = ref('')
+const filterSource = ref('')
+const filterStatus = ref('')
+const filterEffective = ref('')
+const filterDead = ref(false)
+const filterHitl = ref(false)
 const searchKeyword = ref('')
 const selectedRows = ref([])
 const tableRef = ref(null)
@@ -419,9 +517,23 @@ async function loadRules() {
     const params = {}
     if (filterCategory.value) params.category = filterCategory.value
     if (filterEngineType.value) params.engine_type = filterEngineType.value
+    if (filterSeverity.value) params.severity = filterSeverity.value
+    if (filterRuleType.value) params.rule_type = filterRuleType.value
+    if (filterEnabled.value) params.enabled = filterEnabled.value === '1'
+    if (filterSource.value) params.source = filterSource.value
+    if (filterStatus.value) params.status = filterStatus.value
     if (searchKeyword.value.trim()) params.q = searchKeyword.value.trim()
     const res = await request.get('/rules', { params })
-    rules.value = res.data
+    let list = res.data || []
+    // HITL / 死规则 为客户端语义筛选（condition._meta 不落在 DB 列）
+    if (filterHitl.value) list = list.filter(isHitlRule)
+    if (filterDead.value) list = list.filter(isDeadRule)
+    // 生效态（effective_active）客户端筛选：单一真值展示
+    if (filterEffective.value) {
+      const want = filterEffective.value === '1'
+      list = list.filter(r => Boolean(r.effective_active) === want)
+    }
+    rules.value = list
   } catch (error) {
     // handled by interceptor
   } finally {
@@ -572,6 +684,153 @@ function severityLabel(severity) {
     low: '低危'
   }
   return map[severity] || severity
+}
+
+// ── 应急运营筛选辅助 ──
+const RULE_TYPE_LABELS = {
+  regex: '正则匹配',
+  list: '列表匹配',
+  threshold: '阈值检测',
+  behavior: '行为分析',
+  composite: '复合规则',
+  exists: '存在性检测',
+  attack_chain: '攻击链',
+  event_log_summary: '事件日志聚合'
+}
+const SOURCE_LABELS = { default: '内置', user: '用户', ai: 'AI生成', import: '导入' }
+const STATUS_LABELS = { active: '生效中', pending_approval: '待审批', deprecated: '已废弃' }
+function ruleTypeLabel(t) { return RULE_TYPE_LABELS[t] || t || '-' }
+function sourceLabel(s) { return SOURCE_LABELS[s] || s || '-' }
+function statusLabel(s) { return STATUS_LABELS[s] || s || '-' }
+
+function isDeadRule(rule) {
+  // 后端暂无对应采集器产出的 exists 规则（P3-2 兜底策略）
+  if (rule.rule_type !== 'exists') return false
+  const meta = rule.condition?._meta || {}
+  return rule.enabled === false && !!meta.pending_collector
+}
+function isHitlRule(rule) {
+  return rule.condition?._meta?.requires_hitl === true || rule.status === 'pending_approval'
+}
+
+const dynamicCategories = computed(() => {
+  const set = new Set(rules.value.map(r => r.category).filter(Boolean))
+  return Array.from(set).sort()
+})
+
+const severityStats = computed(() => {
+  const stats = { critical: 0, high: 0, medium: 0, low: 0 }
+  rules.value.forEach(r => { if (stats[r.severity] !== undefined) stats[r.severity]++ })
+  return stats
+})
+const enabledStats = computed(() => ({
+  enabled: rules.value.filter(r => r.enabled).length,
+  disabled: rules.value.filter(r => !r.enabled).length
+}))
+const deadRuleCount = computed(() => rules.value.filter(isDeadRule).length)
+const hitlRuleCount = computed(() => rules.value.filter(isHitlRule).length)
+const effectiveStats = computed(() => {
+  const active = rules.value.filter(r => r.effective_active).length
+  return { active, inactive: rules.value.length - active }
+})
+
+function setSeverityFilter(sev) {
+  filterSeverity.value = filterSeverity.value === sev ? '' : sev
+  loadRules()
+}
+function setEnabledFilter(enabled) {
+  const val = enabled ? '1' : '0'
+  filterEnabled.value = filterEnabled.value === val ? '' : val
+  loadRules()
+}
+function setEffectiveFilter(active) {
+  const val = active ? '1' : '0'
+  filterEffective.value = filterEffective.value === val ? '' : val
+  loadRules()
+}
+function setDeadFilter() {
+  filterDead.value = !filterDead.value
+  if (filterDead.value) {
+    filterRuleType.value = 'exists'
+    filterEnabled.value = '0'
+  } else {
+    filterRuleType.value = ''
+    filterEnabled.value = ''
+  }
+  loadRules()
+}
+function setHitlFilter() {
+  filterHitl.value = !filterHitl.value
+  loadRules()
+}
+function resetFilters() {
+  filterCategory.value = ''
+  filterEngineType.value = ''
+  filterSeverity.value = ''
+  filterRuleType.value = ''
+  filterEnabled.value = ''
+  filterSource.value = ''
+  filterStatus.value = ''
+  filterEffective.value = ''
+  filterDead.value = false
+  filterHitl.value = false
+  searchKeyword.value = ''
+  loadRules()
+}
+
+function renderCondition(rule) {
+  const cond = rule?.condition || {}
+  const type = rule?.rule_type
+  const rows = []
+  const meta = cond._meta || {}
+
+  // 通用元信息
+  if (meta.mitre_attack) rows.push(['MITRE ATT&CK', meta.mitre_attack])
+  if (meta.requires_hitl) rows.push(['人审标记', '是（高危/默认规则变更需审批）'])
+  if (meta.pending_collector) rows.push(['待接采集器', meta.pending_collector])
+  if (meta.severity_note) rows.push(['严重度说明', meta.severity_note])
+
+  // 按规则类型渲染
+  if (type === 'regex') {
+    rows.push(['匹配字段', cond.field])
+    rows.push(['正则模式', cond.pattern])
+    if (cond.flags) rows.push(['模式标志', cond.flags])
+  } else if (type === 'list') {
+    rows.push(['匹配字段', cond.field])
+    rows.push(['匹配方式', cond.match_mode])
+    rows.push(['候选值', Array.isArray(cond.values) ? cond.values.join('、') : cond.values])
+  } else if (type === 'threshold') {
+    rows.push(['检测字段', cond.field])
+    rows.push(['阈值条件', `${cond.operator || ''} ${cond.value !== undefined ? cond.value : ''}`])
+    if (cond.window) rows.push(['时间窗口', cond.window])
+  } else if (type === 'behavior') {
+    rows.push(['行为模式', cond.pattern])
+    if (cond.baseline) rows.push(['基线', JSON.stringify(cond.baseline)])
+  } else if (type === 'composite') {
+    rows.push(['逻辑组合', cond.logic])
+    rows.push(['子规则数', cond.sub_rules?.length || 0])
+  } else if (type === 'exists') {
+    rows.push(['存在性字段', cond.field])
+  } else if (type === 'attack_chain') {
+    rows.push(['链阶段数', cond.chain?.length || 0])
+    rows.push(['窗口', cond.window || '—'])
+  } else if (type === 'event_log_summary') {
+    rows.push(['事件 ID', cond.event_ids?.join('、') || cond.event_id])
+    rows.push(['操作符', cond.operator])
+    rows.push(['阈值', cond.count])
+    if (cond.window) rows.push(['时间窗口', cond.window])
+  }
+
+  let html = '<table class="cond-table">'
+  rows.forEach(([k, v]) => {
+    html += `<tr><td class="cond-k">${k}</td><td class="cond-v">${escapeHtml(String(v ?? '—'))}</td></tr>`
+  })
+  html += '</table>'
+  return html
+}
+
+function escapeHtml(text) {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 </script>
 
@@ -1343,6 +1602,99 @@ tr:hover td {
 /* ── Spinner ── */
 .spin {
   animation: spin 0.6s linear infinite;
+}
+
+/* ── Quick Stats Chips ── */
+.quick-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 20px 0;
+  border-bottom: 0.5px solid var(--color-border-default);
+}
+.qs-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--color-canvas-subtle);
+  border: 0.5px solid var(--color-border-default);
+  font-size: 11px;
+  color: var(--color-fg-default);
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.12s;
+}
+.qs-chip:hover {
+  border-color: var(--color-fg-light);
+  background: var(--color-canvas-inset);
+}
+.qs-chip.active {
+  border-color: var(--color-accent-fg);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent-fg);
+}
+.qs-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.qs-dot.green { background: var(--color-success-fg); }
+.qs-dot.gray { background: var(--color-fg-light); }
+.qs-dot.critical { background: #dc2626; }
+.qs-dot.high { background: #ef4444; }
+.qs-dot.purple { background: #7c3aed; }
+.qs-dot.dead { background: var(--color-fg-muted); }
+
+/* ── Condition Readable Table ── */
+.cond-readable {
+  background: var(--color-canvas-inset);
+  border: 0.5px solid var(--color-border-default);
+  border-radius: 4px;
+  padding: 0;
+  overflow: hidden;
+}
+.cond-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.cond-table td {
+  padding: 8px 12px;
+  border-bottom: 0.5px solid var(--color-border-default);
+  vertical-align: top;
+}
+.cond-table tr:last-child td {
+  border-bottom: none;
+}
+.cond-k {
+  width: 120px;
+  color: var(--color-fg-subtle);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.cond-v {
+  color: var(--color-fg-default);
+  font-family: var(--font-mono, 'SF Mono', 'Fira Code', 'Consolas', monospace);
+  word-break: break-all;
+}
+
+/* ── Badges extras ── */
+.badge-success {
+  background: var(--color-success-subtle);
+  color: var(--color-success-fg);
+}
+.badge-low {
+  background: var(--color-canvas-inset);
+  color: var(--color-fg-subtle);
+}
+.badge-warning {
+  background: var(--color-warning-subtle);
+  color: var(--color-warning-fg);
 }
 
 /* ── Responsive ── */

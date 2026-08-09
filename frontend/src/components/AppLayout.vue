@@ -108,6 +108,7 @@ const navGroups = [
     children: [
       { icon: FolderOpened, label: '案件列表', path: '/cases', activeMatch: '/cases' },
       { icon: Cpu, label: '主机详情', path: '/hosts/:id', activeMatch: '/hosts' },
+      { icon: Monitor, label: '主机 Agent', path: '/case-agents', activeMatch: '/case-agents' },
     ],
   },
   {
@@ -155,7 +156,6 @@ const navGroups = [
     children: [
       { icon: User, label: '用户与权限', path: '/settings/users' },
       { icon: Document, label: '审计日志', path: '/settings/audit-logs' },
-      { icon: Monitor, label: '主机 Agent', path: '/settings/agents' },
       { icon: Files, label: '数据与存储', path: '/settings/storage' },
       { icon: Tools, label: '系统参数', path: '/settings/params' },
       { icon: Brush, label: '主题与外观', path: '/settings/theme' },
@@ -203,6 +203,7 @@ const routeMeta = computed(() => {
     'UserManagement': { title: '用户与权限', subtitle: '平台用户管理与权限分配' },
     'AuditLogs': { title: '审计日志', subtitle: '平台操作审计与追踪' },
     'AgentManagement': { title: '主机 Agent', subtitle: '主机 Agent 客户端管理与监控' },
+    'CaseAgentView': { title: '案件主机 Agent', subtitle: '案件维度主机 Agent 客户端管理与监控' },
     'DataStorage': { title: '数据与存储', subtitle: '数据存储与清理管理' },
     'SystemParams': { title: '系统参数', subtitle: '平台系统参数配置' },
     'ThemeCustomize': { title: '主题与外观', subtitle: '自定义平台主题与外观颜色' },

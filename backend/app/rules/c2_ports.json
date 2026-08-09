@@ -1,0 +1,42 @@
+{
+  "_comment": "C2/代理/反弹端口单一事实来源（SSOT，P2-1）。引擎 _C2_PORTS 与规则 c2_suspicious_port_* 均从此文件取值，杜绝双清单割裂。本文件不是规则数组，已登记在 loader.DATA_FILES 白名单中。",
+  "_schema_version": 1,
+  "high_confidence": {
+    "severity": "high",
+    "rationale": "无公认合法服务占用，出现即高度可疑",
+    "ports": [
+      1337,
+      4443,
+      4444,
+      5555,
+      6667,
+      8888,
+      31337
+    ],
+    "notes": {
+      "1337": "leet，常见后门/反弹壳默认端口",
+      "4443": "常见 HTTPS 型 C2 备用监听端口",
+      "4444": "Metasploit meterpreter 默认监听端口",
+      "5555": "Android ADB / 多种 RAT 默认端口",
+      "6667": "IRC，经典僵尸网络 C2 通道",
+      "8888": "常见 HTTP 型 C2 / 代理监听端口",
+      "31337": "elite，Back Orifice 等经典后门端口"
+    }
+  },
+  "low_confidence": {
+    "severity": "medium",
+    "rationale": "存在合法用途，单看端口不足以定性，需结合进程名与路径判定",
+    "ports": [
+      1080,
+      5900,
+      8443,
+      9999
+    ],
+    "notes": {
+      "1080": "SOCKS 代理标准端口，企业内可能有合法代理",
+      "5900": "VNC，IT 远程支持常用",
+      "8443": "HTTPS 备用端口，Tomcat/管理控制台常用",
+      "9999": "多种应用的备用端口，亦被 C2 使用"
+    }
+  }
+}

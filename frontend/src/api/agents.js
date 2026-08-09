@@ -4,8 +4,8 @@ export function getAgents(params) {
   return request.get('/agents', { params })
 }
 
-export function getAgentStats() {
-  return request.get('/agents/stats')
+export function getAgentStats(params) {
+  return request.get('/agents/stats', { params })
 }
 
 export function generateAgentToken(hostId) {

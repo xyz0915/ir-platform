@@ -165,11 +165,17 @@ class TestTriageAgent(IsolatedDBTestCase):
         self.assertEqual(ctx["triage"]["confidence"], result.confidence)
 
     def test_llm_unavailable_annotates_marker(self):
-        """默认无 AI Profile → AgentLLM degraded → 仍基于真实数据并标注降级。"""
+        """默认无 AI Profile → AgentLLM degraded → 仍基于真实数据并标注降级。
+
+        P1-5 同步：横幅文案由"当前 LLM 服务不可用"改为带真实原因的
+        "AI 摘要未生成（原因：…）"，并以 degraded_reason 结构化透出。
+        """
         seed_full_incident()
         ctx = {"event_id": "SE-1", "user": {"id": 1}}
         result = asyncio.run(TriageAgent().run(ctx, {"event_id": "SE-1"}))
-        self.assertIn("当前 LLM 服务不可用", result.output)
+        self.assertIn("AI 摘要未生成（原因：", result.output)
+        self.assertNotIn("{reason}", result.output)   # 防 R-3 占位符泄漏
+        self.assertTrue(result.degraded_reason)       # P1-5 意图：原因可结构化读取
         self.assertGreater(len(result.evidence), 0)
         self.assertGreater(result.confidence, 0.0)
 
@@ -222,12 +228,15 @@ class TestInvestigatorAgent(IsolatedDBTestCase):
         self.assertIn("第一触发点", inv["root_cause"])
 
     def test_llm_unavailable_still_produces_output(self):
+        """P1-5 同步：断言新横幅文案 + degraded_reason 非空（替代旧文案断言）。"""
         seed = seed_full_incident()
         ctx = {"host_id": seed["host_id"], "user": {"id": 1}}
         with patch("app.services.agents.data_provider.retrieve_cases",
                    return_value=[]):
             result = asyncio.run(InvestigatorAgent().run(ctx, {}))
-        self.assertIn("当前 LLM 服务不可用", result.output)
+        self.assertIn("AI 摘要未生成（原因：", result.output)
+        self.assertNotIn("{reason}", result.output)
+        self.assertTrue(result.degraded_reason)
 
 
 # ───────────────────────── ResponderAgent ─────────────────────────
@@ -336,7 +345,10 @@ class TestReporterAgent(IsolatedDBTestCase):
         self.assertEqual(result.stage, "report")
         self.assertIn("安全事件复盘报告", result.output)
         self.assertIn("HITL 审批", result.output)
-        self.assertIn("当前 LLM 服务不可用", result.output)
+        # P1-5 同步：新横幅文案 + 结构化原因
+        self.assertIn("AI 摘要未生成（原因：", result.output)
+        self.assertNotIn("{reason}", result.output)
+        self.assertTrue(result.degraded_reason)
         self.assertIsInstance(result.confidence, float)
         self.assertGreater(result.confidence, 0.0)
         self.assertGreater(len(result.evidence), 0)

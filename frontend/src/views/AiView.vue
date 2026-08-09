@@ -544,7 +544,7 @@ import { ElMessage } from 'element-plus'
 import { Coin, TrendCharts, Timer, DataAnalysis } from '@element-plus/icons-vue'
 import VChart from 'vue-echarts'
 import 'echarts'
-import dayjs from 'dayjs'
+import { formatServerTime } from '@/utils/time'
 import {
   getAiTokenStats,
   getAiTokenSummary,
@@ -1164,7 +1164,7 @@ async function loadPromptVersions() {
     const data = res.data || []
     promptVersions.value = (Array.isArray(data) ? data : data.items || []).map((v) => ({
       ...v,
-      label: `${v.version || v.id} - ${v.created_at ? dayjs(v.created_at).format('MM-DD HH:mm') : ''}`,
+      label: `${v.version || v.id} - ${v.created_at ? formatServerTime(v.created_at, 'MM-DD HH:mm') : ''}`,
     }))
   } catch {
     promptVersions.value = []
@@ -1234,7 +1234,7 @@ function formatLargeNumber(n) {
 
 function formatTime(t) {
   if (!t) return '-'
-  return dayjs(t).format('YYYY-MM-DD HH:mm:ss')
+  return formatServerTime(t)
 }
 
 function statusTagType(status) {

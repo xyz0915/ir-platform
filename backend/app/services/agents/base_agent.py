@@ -25,6 +25,7 @@ class AgentResult:
         usage: Token 用量。
         error: 异常信息。
         data_sources: 数据源引用列表。
+        degraded_reason: 降级原因（P2-13，供前端结构化展示；正常路径为 None）。
     """
 
     stage: str = "triage"
@@ -38,6 +39,7 @@ class AgentResult:
     usage: dict = field(default_factory=dict)
     error: Optional[str] = None
     data_sources: list = field(default_factory=list)
+    degraded_reason: Optional[str] = None  # P2-13：带默认值置于末尾，不破坏位置参数构造
 
     def to_dict(self) -> dict:
         """序列化为 dict（写入 agent_run_steps.output_json / result_json）。"""
@@ -52,6 +54,7 @@ class AgentResult:
             "usage": self.usage,
             "error": self.error,
             "data_sources": self.data_sources,
+            "degraded_reason": self.degraded_reason,  # P2-13
         }
 
     @classmethod
@@ -68,6 +71,7 @@ class AgentResult:
             usage=data.get("usage", {}) or {},
             error=data.get("error"),
             data_sources=data.get("data_sources", []) or [],
+            degraded_reason=data.get("degraded_reason"),  # P2-13：.get() 兼容历史 output_json
         )
 
 

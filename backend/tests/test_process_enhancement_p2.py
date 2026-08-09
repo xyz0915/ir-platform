@@ -332,7 +332,14 @@ class TestProcessEventPipeline(DBTestBase):
         self.assertEqual(normalized[0]["memory_sections"], [{"pe_in_memory": True}])
 
     def test_evaluate_runs_and_detects(self):
+        """P1-1-A 三态语义验证：事件无签名信息（无 exe_is_signed 且 file_hashes 无覆盖）时，
+        unsigned_executable 不得误报（unknown ≠ guilty）；三态命中逻辑在 matcher 层直接校验。
+
+        注：unsigned_executable 的 exe_is_signed 依赖 file_hashes JOIN 注入，该能力在 P2-3 落地前
+        规则处于静默状态（见规则 _meta.coverage_note），故管线层对「未知」事件必须返回 0（不误报）。
+        """
         from app.analysis.process_event_consumer import ProcessEventConsumer
+        from app.rules.rule_engine import RuleEngine
 
         ProcessEventConsumer.ingest(3, [
             {"event_type": "process_start", "pid": 30, "ppid": 4,
@@ -340,10 +347,28 @@ class TestProcessEventPipeline(DBTestBase):
              "command_line": "weird.exe", "start_time": "2026-01-01 00:00:00"},
         ])
         rules = [_load_rule("unsigned_executable")]
+        cond = rules[0]["condition"]
         result = ProcessEventConsumer.evaluate(3, rules)
-        # 事件进程无签名信息（exe_is_signed 缺失）→ 视为无签名 → 命中
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["pid"], 30)
+        # 无签名信息：管线层不得误报（P1-1-A 修正前此处会因「缺数据=未签名」误报）
+        self.assertEqual(len(result), 0)
+
+        # 三态语义在 matcher 层直接验证
+        item_unsigned = {"path": "C:\\Temp\\weird.exe", "exe_is_signed": 0}
+        item_unknown = {"path": "C:\\Temp\\weird.exe"}  # 无任何签名信息
+        item_signed = {"path": "C:\\Temp\\weird.exe", "exe_is_signed": 1,
+                       "exe_signer": "Microsoft Windows Publisher"}
+        self.assertTrue(
+            RuleEngine._match_unsigned_exe(item_unsigned, cond),
+            "明确未签名(exe_is_signed=0)应命中",
+        )
+        self.assertFalse(
+            RuleEngine._match_unsigned_exe(item_unknown, cond),
+            "未知态(None)不应命中（unknown≠guilty）",
+        )
+        self.assertFalse(
+            RuleEngine._match_unsigned_exe(item_signed, cond),
+            "已签名且 signer 非空不应命中",
+        )
 
     def test_evaluate_graceful_no_events(self):
         from app.analysis.process_event_consumer import ProcessEventConsumer

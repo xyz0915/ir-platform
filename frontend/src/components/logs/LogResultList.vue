@@ -92,6 +92,7 @@
 <script setup>
 import { ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { formatServerTime } from '@/utils/time'
 
 const props = defineProps({
   items: { type: Array, default: () => [] },
@@ -124,9 +125,7 @@ function severityCardClass(severity) {
 
 function formatTime(ts) {
   if (!ts) return ''
-  const d = new Date(ts)
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  return formatServerTime(ts, 'MM-DD HH:mm:ss')
 }
 
 function formatEvidence(evidence, source) {

@@ -49,7 +49,15 @@ class ServiceRiskAnalyzer:
         if now - _behavior_rules_cache_ts < _BEHAVIOR_CACHE_TTL and _behavior_rules_cache:
             return _behavior_rules_cache
         from app.models.rule import Rule
-        rules = Rule.list(engine_type="behavior_engine", enabled=True)
+        from app.models.policy import DetectionPolicy
+        # 行为引擎规则同样受激活策略门控（与主流分析一致）：
+        # 存在激活策略时仅加载被选中且启用的行为规则，否则加载全部已启用行为规则。
+        active_ids = DetectionPolicy.get_active_rule_ids()
+        if active_ids:
+            rules = Rule.list_by_ids(list(active_ids))
+            rules = [r for r in rules if r.get("engine_type") == "behavior_engine"]
+        else:
+            rules = Rule.list(engine_type="behavior_engine", enabled=True)
         _behavior_rules_cache = rules
         _behavior_rules_cache_ts = now
         return rules

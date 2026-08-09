@@ -12,7 +12,7 @@
 import logging
 from typing import Any, Optional
 
-from app.shared.ai_constants import DEGRADED_MESSAGE_TEMPLATE
+from app.shared.ai_constants import build_degraded_message
 from app.services.agents.base_agent import BaseAgent, AgentResult
 from app.services.agents import prompts
 from app.services.agents import data_provider
@@ -90,6 +90,7 @@ class InvestigatorAgent(BaseAgent):
         sec_events = data_provider.get_security_events_by_host(host_id) if host_id else []
 
         llm_unavailable = False
+        degraded_reason: Optional[str] = None  # P1-5：降级真实原因
         try:
             resp = await self._llm.call(
                 prompts.build_investigator_prompt(
@@ -103,16 +104,20 @@ class InvestigatorAgent(BaseAgent):
             )
             if resp.get("degraded") or not resp.get("content"):
                 llm_unavailable = True
+                # 优先用 LLM 层给出的精确原因（AgentLLM._degraded 的 error）
+                degraded_reason = resp.get("error") or "AI 服务返回空内容"
             else:
                 output = resp["content"]
         except Exception as exc:  # noqa: BLE001
-            logger.warning("InvestigatorAgent LLM 调用异常（降级）: %s", exc)
+            # P1-4：用 exception 保留 traceback，避免把编程错误伪装成"LLM 不可用"
+            logger.exception("InvestigatorAgent LLM 调用异常（降级）: %s", exc)
             llm_unavailable = True
+            degraded_reason = f"{type(exc).__name__}: {exc}"[:200]
 
         if llm_unavailable:
             output = (
                 f"{data_summary}\n\n"
-                f"{DEGRADED_MESSAGE_TEMPLATE}"
+                f"{build_degraded_message(degraded_reason)}"
             )
 
         ctx["investigation"] = {
@@ -137,6 +142,8 @@ class InvestigatorAgent(BaseAgent):
             output=output,
             confidence=confidence,
             evidence=evidence,
+            error=degraded_reason,              # P1-4：错误透出
+            degraded_reason=degraded_reason,    # P2-13：结构化字段
         )
         self._apply_masking(result)
         return result

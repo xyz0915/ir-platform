@@ -31,6 +31,9 @@ _CONFIDENCE_DEFAULT: dict = {
     "composite": 0.85,
     "exists": 0.7,
     "attack_chain": 0.95,
+    # P0-2：Windows 安全事件日志计数型规则。基于审计事件计数聚合，
+    # 证据强度高于泛化行为规则，但低于精确 IOC 命中。
+    "event_log_summary": 0.8,
 }
 
 # 行为模式置信度（兼容旧 rule_matcher 语义，保证实时=分析置信一致）
@@ -180,8 +183,86 @@ _BUSINESS_PORTS = {
     80, 443, 53, 22, 3389, 445, 8080, 25, 587, 993, 143, 110, 21, 23,
     3306, 5432, 6379, 27017,
 }
-# 常见 C2/代理/反弹端口（文档 §3.4；8443 同列于业务与 C2 清单，优先按 C2 判定）
-_C2_PORTS = {4444, 8443, 1337, 31337, 6667, 9999, 1080, 5900}
+# ── C2/代理/反弹端口（P2-1 单一事实来源）────────────────────────────
+# 端口清单统一由同目录 c2_ports.json 提供，引擎与规则 c2_suspicious_port_*
+# 共用同一份数据，杜绝"引擎常量与规则 JSON 各存一份且内容不一致"的割裂
+# （P2 前实测：两侧交集仅 {1337,4444,6667}，各有 3 个 / 5 个端口对方不认）。
+#
+# 分层语义：
+#   high_confidence —— 无公认合法服务占用，出现即高度可疑
+#   low_confidence  —— 存在合法用途（SOCKS/VNC/HTTPS-alt），需结合进程判定
+#
+# 文件缺失或损坏时回落到下方内置默认全集，绝不抛异常、绝不使检测能力归零
+# （与 revoked_ca.json 同策略）。
+_C2_PORTS_FALLBACK_HIGH = {1337, 4443, 4444, 5555, 6667, 8888, 31337}
+_C2_PORTS_FALLBACK_LOW = {1080, 5900, 8443, 9999}
+_C2_PORTS_CACHE: Optional[dict] = None
+
+
+def _load_c2_ports() -> dict:
+    """加载 C2 端口分层清单（P2-1 SSOT）.
+
+    从 ``backend/app/rules/c2_ports.json`` 读取 ``high_confidence.ports`` 与
+    ``low_confidence.ports``。任何异常（文件缺失/格式错误/端口非整数）均降级
+    为内置默认全集，保证引擎在缺数据环境下检测能力不下降。
+
+    Returns:
+        ``{"high": set[int], "low": set[int], "all": set[int]}``。
+    """
+    global _C2_PORTS_CACHE
+    if _C2_PORTS_CACHE is not None:
+        return _C2_PORTS_CACHE
+
+    def _coerce(raw) -> set:
+        out = set()
+        for p in (raw or []):
+            try:
+                out.add(int(p))
+            except (TypeError, ValueError):
+                logger.debug("c2_ports.json 忽略非法端口值: %r", p)
+        return out
+
+    high, low = set(), set()
+    try:
+        cfg_path = Path(__file__).resolve().parent / "c2_ports.json"
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            high = _coerce((data.get("high_confidence") or {}).get("ports"))
+            low = _coerce((data.get("low_confidence") or {}).get("ports"))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("c2_ports.json 加载失败，回落内置默认端口集: %s", exc)
+        high, low = set(), set()
+
+    if not high and not low:
+        high = set(_C2_PORTS_FALLBACK_HIGH)
+        low = set(_C2_PORTS_FALLBACK_LOW)
+
+    _C2_PORTS_CACHE = {"high": high, "low": low, "all": high | low}
+    return _C2_PORTS_CACHE
+
+
+def _reset_c2_ports_cache() -> None:
+    """清空 C2 端口缓存（仅供测试重新加载/降级验证使用）."""
+    global _C2_PORTS_CACHE
+    _C2_PORTS_CACHE = None
+
+
+def _refresh_c2_ports() -> frozenset:
+    """重新从 SSOT 文件求值模块级 ``_C2_PORTS``（供测试与热更新使用）.
+
+    Returns:
+        刷新后的端口全集。
+    """
+    global _C2_PORTS
+    _reset_c2_ports_cache()
+    _C2_PORTS = frozenset(_load_c2_ports()["all"])
+    return _C2_PORTS
+
+
+# 模块级常量：保持 ``remote_port in _C2_PORTS`` 等既有写法与全部集合运算语义。
+# 数据来自 c2_ports.json（SSOT），求值时机为模块导入。
+_C2_PORTS = frozenset(_load_c2_ports()["all"])
 
 # ── 可疑祖父/父 默认清单（ancestry_chain；T07）────────────────────
 # 当进程（脚本解释器/LOLBin）的祖父（或更早祖先）为下列服务进程时，判定链路异常。
@@ -348,12 +429,18 @@ _TC_SORTED_CACHE: dict = {}
 # ── field → ioc_type 映射（动态 IOC 引用）────────────────────────────
 # list 类规则 condition.field 若为下列网络/主机标识字段，则额外把 iocs 表中
 # 对应 ioc_type 且 enabled=1 的指标并入待匹配集合；映射不到的 field 仅匹配自身 values。
-# 说明：remote_address 既可能承载 IP 也可能承载域名（如 suspicious_c2_domain 规则），
-# 此处按"最贴近威胁语义"的口径映射为 ip（IP 类 IOC 命中更精确），域名类 IOC 由
-# domain/host/url 字段各自的规则覆盖，互不干扰。
+#
+# 值可以是单个字符串，也可以是字符串列表（P0-1）：
+#   remote_address 字段在真实数据中既可能承载 IP（"185.1.2.3"），也可能承载域名
+#   （"malware-c2.example.com" 这类 C2 域名规则用的就是该字段）。此前只映射到 ip，
+#   导致 domain 类 IOC 导入后 suspicious_c2_domain 仍然取不到值、规则形同虚设。
+#   现改为 ["ip", "domain"] 双类型合并，两种形态都能命中。
+#
+# 规则作者亦可在 condition 中显式声明 ioc_types 覆盖本表推导，见 _resolve_ioc_types。
 FIELD_TO_IOC_TYPE: dict = {
-    # IP 类
-    "remote_address": "ip",
+    # IP / 域名混合类（出站连接目标既可能是 IP 也可能是域名）
+    "remote_address": ["ip", "domain"],
+    # 纯 IP 类
     "remote_ip": "ip",
     "src_ip": "ip",
     "dst_ip": "ip",
@@ -374,6 +461,44 @@ FIELD_TO_IOC_TYPE: dict = {
 }
 
 
+def resolve_ioc_types(field: str, condition: Optional[dict] = None) -> list:
+    """解析某个 list 规则应引用的动态 IOC 类型列表（P0-1）.
+
+    优先级：
+      1. condition["ioc_types"]  —— 规则作者显式声明，最高优先级；
+      2. FIELD_TO_IOC_TYPE[field] —— 按字段名推导，值可为 str 或 list[str]；
+      3. 都没有 → 空列表，表示该规则不引用动态 IOC，仅匹配自身 values。
+
+    Args:
+        field: condition.field 字段名。
+        condition: 规则条件字典（可为 None）。
+
+    Returns:
+        去重且保序的 ioc_type 字符串列表。
+    """
+    raw = None
+    if isinstance(condition, dict) and condition.get("ioc_types") is not None:
+        raw = condition.get("ioc_types")
+    else:
+        raw = FIELD_TO_IOC_TYPE.get(field)
+
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple, set)):
+        return []
+
+    seen: set = set()
+    result: list = []
+    for t in raw:
+        if not isinstance(t, str) or not t or t in seen:
+            continue
+        seen.add(t)
+        result.append(t)
+    return result
+
+
 def validate_behavior_pattern(pattern: str) -> bool:
     """校验行为模式是否属于引擎支持的 20 种白名单.
 
@@ -389,8 +514,30 @@ def validate_behavior_pattern(pattern: str) -> bool:
 class RuleEngine:
     """规则引擎.
 
-    支持六种规则类型：regex、list、threshold、behavior、composite、exists.
+    支持八种规则类型：regex、list、threshold、behavior、composite、exists、
+    attack_chain、event_log_summary.
     """
+
+    # 微软/系统签名可执行文件所在目录（P1-1-A 扩充）。
+    # 路径以小写、反斜杠归一后做 substring 匹配。
+    # 修正前仅含 system32/syswow64/program files 三类，导致 WinSxS、servicing、
+    # Microsoft.NET 下的微软签名组件（TiWorker.exe / TrustedInstaller.exe 等）
+    # 被 unsigned_exe 误判为可疑无签名程序。
+    _SIGNED_SYSTEM_DIRS: tuple = (
+        "c:\\windows\\system32",
+        "c:\\windows\\syswow64",
+        "c:\\windows\\winsxs",           # 组件存储，微软签名
+        "c:\\windows\\servicing",        # TrustedInstaller 等维护组件
+        "c:\\windows\\microsoft.net",    # .NET Framework 运行时
+        "c:\\windows\\assembly",         # GAC
+        "c:\\program files",
+        "c:\\program files (x86)",
+        "/usr/bin",
+        "/usr/sbin",
+        "/usr/lib",
+        "/bin",
+        "/sbin",
+    )
 
     @staticmethod
     def load_rules(category: Optional[str] = None) -> list:
@@ -1040,10 +1187,14 @@ class RuleEngine:
 
         Condition 格式: {"field": "remote_address", "values": ["1.2.3.4", "5.6.7.8"], "match_mode": "exact"}
 
-        动态 IOC 引用：若 condition.field 命中 FIELD_TO_IOC_TYPE 映射，则额外把
-        global_context["iocs_by_type"][对应类型] 中 enabled=1 的指标并入待匹配集合
+        动态 IOC 引用：按 resolve_ioc_types(field, condition) 解析出该规则依赖的
+        ioc_type 列表（支持 condition.ioc_types 显式声明 / FIELD_TO_IOC_TYPE 多类型映射），
+        再把 global_context["iocs_by_type"][各类型] 中 enabled=1 的指标并入待匹配集合
         （与 rule.condition.values 取并集）。iocs 表为空或该类型无数据时仅匹配 values，
         完全向后兼容。不修改原始 condition.values。
+
+        P0-1：values 允许为空列表，此时规则完全由动态情报驱动 —— 情报库为空则零命中
+        （不误报），导入情报后立即生效（每次 evaluate 实时读取 iocs 表，无需重启）。
         """
         field = condition.get("field", "")
         base_values = condition.get("values") or []
@@ -1051,16 +1202,15 @@ class RuleEngine:
             base_values = [base_values]
         match_mode = condition.get("match_mode", "exact")
 
-        # ── 合并 iocs 表动态指标（与 values 取并集）─────────────────
+        # ── 合并 iocs 表动态指标（与 values 取并集，支持多 ioc_type）──
         merged_values: list = list(base_values)
         if global_context:
             iocs_by_type = global_context.get("iocs_by_type") or {}
             if iocs_by_type:
-                ioc_type = FIELD_TO_IOC_TYPE.get(field)
-                if ioc_type and ioc_type in iocs_by_type:
-                    dyn = iocs_by_type[ioc_type]
+                for ioc_type in resolve_ioc_types(field, condition):
+                    dyn = iocs_by_type.get(ioc_type)
                     if dyn:
-                        merged_values = merged_values + list(dyn)
+                        merged_values.extend(dyn)
 
         value = data_item.get(field, "")
         if not value or not merged_values:
@@ -1082,6 +1232,129 @@ class RuleEngine:
                     RuleEngine._record_ti_hit(global_context, v_str, data_item)
                     return True
         return False
+
+    # ── Windows 安全事件计数匹配（P0-2）─────────────────────────────────
+
+    # 允许的比较运算符（与 schemas.analysis.EVENT_LOG_OPERATORS 保持一致）
+    _EVT_OPERATORS = (">=", ">", "==", "<=", "<")
+
+    @staticmethod
+    def _extract_event_summary(data_item: dict) -> dict:
+        """从数据项中抽取 event_ids_summary 计数字典，并把键归一为字符串.
+
+        兼容三种输入形态：
+          1. {"event_ids_summary": {"4625": 37}, ...}   ← agent security 采集器原始形态
+          2. {"4625": 37, "4624": 12}                   ← 已剥离外层的裸计数字典
+          3. 其它 / 缺失                                 ← 返回空字典
+
+        Args:
+            data_item: 待匹配的数据项。
+
+        Returns:
+            {"4625": 37, ...} 形态的字典；无法解析时返回空字典。
+        """
+        if not isinstance(data_item, dict):
+            return {}
+
+        summary = data_item.get("event_ids_summary")
+        if summary is None:
+            # 形态 2：裸计数字典（所有值均为数字才认定，避免误吞普通业务字典）
+            if data_item and all(
+                isinstance(v, (int, float)) and not isinstance(v, bool)
+                for v in data_item.values()
+            ):
+                summary = data_item
+            else:
+                return {}
+
+        if not isinstance(summary, dict):
+            return {}
+
+        normalized: dict = {}
+        for k, v in summary.items():
+            try:
+                normalized[str(k).strip()] = int(v)
+            except (TypeError, ValueError):
+                continue
+        return normalized
+
+    @staticmethod
+    def _match_event_log_summary(data_item: dict, condition: dict,
+                                 global_context: Optional[dict] = None) -> bool:
+        """Windows 安全事件日志计数匹配（P0-2）.
+
+        Condition 格式::
+
+            {"event_id": "4625", "operator": ">=", "count": 10}
+            {"event_ids": ["4648", "4624"], "aggregate": "sum",
+             "operator": ">=", "count": 20}
+
+        语义：
+          - 单 event_id：取 summary[event_id] 的计数（缺失记为 0）；
+          - 多 event_ids + aggregate：
+              sum → 各 ID 计数之和；
+              max → 各 ID 计数最大值；
+              any → 只要任一 ID 单独满足比较条件即命中。
+          - 再用 operator 与 count 比较。
+
+        缺省值：aggregate=sum，operator=">="，count=1。
+
+        Args:
+            data_item: 含 event_ids_summary 的数据项。
+            condition: 规则条件。
+            global_context: 全局上下文（当前未使用，保留签名一致性）。
+
+        Returns:
+            是否命中。
+        """
+        summary = RuleEngine._extract_event_summary(data_item)
+        if not summary:
+            return False
+
+        # ── 解析目标事件 ID 列表 ──────────────────────────────
+        raw_ids = condition.get("event_ids")
+        if raw_ids is None:
+            single = condition.get("event_id")
+            if single is None:
+                return False
+            raw_ids = [single]
+        if not isinstance(raw_ids, (list, tuple)):
+            raw_ids = [raw_ids]
+        target_ids = [str(i).strip() for i in raw_ids if str(i).strip()]
+        if not target_ids:
+            return False
+
+        # ── 解析阈值与运算符 ─────────────────────────────────
+        operator = condition.get("operator", ">=")
+        if operator not in RuleEngine._EVT_OPERATORS:
+            logger.warning("event_log_summary 未知 operator: %s", operator)
+            return False
+        try:
+            threshold = int(condition.get("count", 1))
+        except (TypeError, ValueError):
+            logger.warning("event_log_summary count 非法: %r", condition.get("count"))
+            return False
+
+        def _cmp(actual: int) -> bool:
+            if operator == ">=":
+                return actual >= threshold
+            if operator == ">":
+                return actual > threshold
+            if operator == "==":
+                return actual == threshold
+            if operator == "<=":
+                return actual <= threshold
+            return actual < threshold
+
+        counts = [summary.get(eid, 0) for eid in target_ids]
+        aggregate = condition.get("aggregate", "sum")
+
+        if aggregate == "any":
+            return any(_cmp(c) for c in counts)
+        if aggregate == "max":
+            return _cmp(max(counts) if counts else 0)
+        # 默认 sum
+        return _cmp(sum(counts))
 
     # ── 阈值匹配 ────────────────────────────────────────────────────────
 
@@ -1117,18 +1390,55 @@ class RuleEngine:
 
     # ── 存在性检查 ──────────────────────────────────────────────────────
 
+    # P1-1-C: 布尔字段的规范化真值表。
+    # 用 regex 匹配布尔字段是类型误用（`(true|1)` 会命中 "score:10"），
+    # 故在 exists 语义上扩展显式的值比较。
+    _BOOL_TRUE_TOKENS: frozenset = frozenset({"true", "1", "yes", "y", "on", "t"})
+    _BOOL_FALSE_TOKENS: frozenset = frozenset({"false", "0", "no", "n", "off", "f", "none", "null"})
+
+    @staticmethod
+    def _coerce_bool(value: Any) -> Optional[bool]:
+        """将任意值规范化为三态布尔.
+
+        Returns:
+            True / False；无法判定时返回 None（**未知，不等于 False**）。
+        """
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return None
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return bool(value)
+        if isinstance(value, str):
+            token = value.strip().lower()
+            if token in RuleEngine._BOOL_TRUE_TOKENS:
+                return True
+            if token in RuleEngine._BOOL_FALSE_TOKENS:
+                return False
+            return None
+        return None
+
     @staticmethod
     def _match_exists(data_item: dict, condition: dict) -> bool:
-        """检查字段是否存在且非空.
+        """检查字段是否存在且非空；可选地比较字段值.
 
-        Condition 格式: {"field": "remote_address"}
+        Condition 格式::
+
+            {"field": "remote_address"}                              # 仅存在性
+            {"field": "flag", "expected_value": true,
+             "value_type": "bool"}                                   # 布尔值比较
+            {"field": "state", "expected_value": "ESTABLISHED"}       # 字面量比较
+
+        ``expected_value`` 缺省时保持原有"存在且非空"语义，向后兼容。
+        ``value_type: "bool"`` 时走三态规范化——字段值无法判定为布尔（如
+        任意文本）视为 **不匹配**，而非真。
 
         Args:
             data_item: 数据项字典.
             condition: 条件字典，必须包含 field 字段.
 
         Returns:
-            字段存在且非空返回 True.
+            匹配返回 True.
         """
         field = condition.get("field", "")
         if not field:
@@ -1140,7 +1450,26 @@ class RuleEngine:
             return False
         if isinstance(value, (list, dict)) and len(value) == 0:
             return False
-        return True
+
+        # 未声明期望值 → 保持原"存在即真"语义
+        if "expected_value" not in condition:
+            return True
+
+        expected = condition.get("expected_value")
+        value_type = str(condition.get("value_type", "")).lower()
+
+        if value_type == "bool" or isinstance(expected, bool):
+            actual_bool = RuleEngine._coerce_bool(value)
+            if actual_bool is None:
+                # 无法判定 → 不命中（与 P1-1-A 的"未知不等于有罪"原则一致）
+                return False
+            expected_bool = RuleEngine._coerce_bool(expected)
+            return expected_bool is not None and actual_bool is expected_bool
+
+        # 字面量比较：字符串大小写不敏感，其余按值相等
+        if isinstance(expected, str) and isinstance(value, str):
+            return value.strip().lower() == expected.strip().lower()
+        return value == expected
 
     # ── 组合条件匹配 ──────────────────────────────────────────────────────
 
@@ -2221,32 +2550,47 @@ class RuleEngine:
     def _match_unsigned_exe(data_item: dict, condition: dict) -> bool:
         """无数字签名的非系统目录 exe（JOIN file_hashes 注入 exe_is_signed/exe_signer）.
 
-        触发：exe_is_signed 为 0/空/缺失（或 exe_signer 空而标记为已签名），
-        且进程路径不在系统目录（视为无签名的可疑 exe）。
+        **三态语义（P1-1-A 修正）**：``exe_is_signed`` 有三种状态，必须区分——
+
+        =============  ==================================  ==========
+        值             含义                                 判定
+        =============  ==================================  ==========
+        ``0``/``False``  已查询，确认**未签名**              命中
+        ``1``/``True``   已查询，确认**已签名**              不命中
+        ``None``/缺失    **未查询**（无 file_hashes 记录）   不命中
+        =============  ==================================  ==========
+
+        修正前 ``None`` 与 ``0`` 被同等处理，而真实库中 ``file_hashes`` 与
+        ``process_events.process_path`` 交集为 0，导致 541/541（100%）的非系统
+        目录进程被误判为"无签名"并产生 high 级告警。
+
+        原则：**未知不等于有罪**。缺数据时静默降级，由 P2-3 可观测性机制向运维
+        暴露"该规则因缺 file_hashes 覆盖而静默"，而非用误报填补数据缺口。
         """
-        path = str(data_item.get("path", "")).lower()
+        path = str(data_item.get("path", "")).lower().replace("/", "\\")
         if not path:
             # 无路径进程（fileless）由 fileless_residency 评估，此处不误报
             return False
-        system_dirs = [
-            "c:\\windows\\system32",
-            "c:\\windows\\syswow64",
-            "c:\\program files",
-            "c:\\program files (x86)",
-            "/usr/bin",
-            "/usr/sbin",
-            "/bin",
-            "/sbin",
-        ]
-        if any(d in path for d in system_dirs):
+        if any(d in path for d in RuleEngine._SIGNED_SYSTEM_DIRS):
             return False
+
         exe_is_signed = data_item.get("exe_is_signed")
-        exe_signer = data_item.get("exe_signer")
-        if exe_is_signed in (0, None, "", False):
+
+        # 未知态：无 file_hashes 记录 → 不判定（避免"缺数据即告警"）
+        if exe_is_signed is None:
+            return False
+        # 明确未签名
+        if exe_is_signed in (0, False, "", "0", "false", "False"):
             return True
-        # 标记为已签名但签名为空 → 异常，按无签名处理
-        if exe_is_signed == 1 and exe_signer in (None, ""):
-            return True
+        # 已签名。仅当采集器**显式回填了空的签名主体**时才视为数据异常
+        # （签名有效却查不到 subject，可能是伪造/自签）。
+        # 注意：`exe_signer` 键缺失或为 None 表示"采集器没取这个字段"，
+        # 属未知态，同样不判定——否则会重新引入本次修复的那类误报。
+        if exe_is_signed in (1, True, "1", "true", "True"):
+            if "exe_signer" in data_item:
+                signer = data_item.get("exe_signer")
+                if isinstance(signer, str) and signer.strip() == "":
+                    return True
         return False
 
     # ── 白名单派生链（whitelist_derived_chain，T04 根因修复）────────────
@@ -2633,29 +2977,42 @@ class RuleEngine:
         try:
             # 进程（无可靠时间戳）
             for r in AbnormalProcess.list_by_host(host_id):
-                events.append({"dimension": "process", "timestamp": None, "data": dict(r)})
+                events.append({"dimension": "process", "timestamp": None,
+                               "ordered": False, "data": dict(r)})
             # 可疑外连（无可靠时间戳；兼容 network_connections 的 remote_addr 别名）
             for r in SuspiciousConnection.list_by_host(host_id):
                 d = dict(r)
                 if "remote_address" not in d and d.get("remote_addr") is not None:
                     d["remote_address"] = d["remote_addr"]
-                events.append({"dimension": "connection", "timestamp": None, "data": d})
+                events.append({"dimension": "connection", "timestamp": None,
+                               "ordered": False, "data": d})
             # 持久化痕迹（无可靠时间戳）
             for r in PersistenceItem.list_by_host(host_id):
-                events.append({"dimension": "persistence", "timestamp": None, "data": dict(r)})
+                events.append({"dimension": "persistence", "timestamp": None,
+                               "ordered": False, "data": dict(r)})
             # IOC 命中（无可靠时间戳）
             for r in IocHit.list_by_host(host_id):
-                events.append({"dimension": "ioc", "timestamp": None, "data": dict(r)})
-            # 注册表（last_write_time 退化到 collected_at）
+                events.append({"dimension": "ioc", "timestamp": None,
+                               "ordered": False, "data": dict(r)})
+            # 注册表：仅 last_write_time 可作为可信时序；退化到 collected_at 时
+            # 只是「采集时刻」，不代表事件发生时刻 → ordered=False（P1-3）
             for r in RegistryKey.list_by_host(host_id):
                 d = dict(r)
-                ts = _parse_ts(d.get("last_write_time")) or _parse_ts(d.get("collected_at"))
-                events.append({"dimension": "registry", "timestamp": ts, "data": d})
+                real_ts = _parse_ts(d.get("last_write_time"))
+                ts = real_ts or _parse_ts(d.get("collected_at"))
+                events.append({
+                    "dimension": "registry",
+                    "timestamp": ts,
+                    "ordered": real_ts is not None,
+                    "data": d,
+                })
             # 时间线（timestamp 可信）
             for r in TimelineEvent.list_by_host(host_id):
+                ts = _parse_ts(r.get("timestamp"))
                 events.append({
                     "dimension": "timeline",
-                    "timestamp": _parse_ts(r.get("timestamp")),
+                    "timestamp": ts,
+                    "ordered": ts is not None,
                     "data": dict(r),
                 })
         except Exception as exc:  # noqa: BLE001
@@ -2710,12 +3067,24 @@ class RuleEngine:
                             host_events: Optional[list] = None) -> Optional[dict]:
         """主机级攻击链贪心顺序匹配 + 时间窗判定.
 
-        算法：
-          1. 按 ordered_steps 顺序，在「按时间升序」的统一事件列表中贪心选取：
-             每步须找到 dimension 匹配且 _match_attack_chain_step 命中、且位于上一步
-             索引之后（保证顺序）的首个事件。
-          2. 所有步骤命中后，对「具有时间戳的步骤事件」计算首末跨度 span；
-             若 span > window_minutes，则视为超窗不命中（无时间戳步骤不参与时间约束）。
+        算法（P1-3 修正后）：
+          1. 按 ordered_steps 顺序，在「按时间升序」的统一事件列表中贪心选取，
+             每步须找到 dimension 匹配且 _match_attack_chain_step 命中的事件。
+          2. **索引约束按事件时序可信度分级**：
+             - ``ordered=True``（时间戳可信，如 timeline / 有 last_write_time 的
+               registry）的事件之间维持严格索引递增，保证真实先后关系；
+             - ``ordered=False``（无可信时序，如 process/connection/persistence/ioc，
+               以及仅有 collected_at 的 registry）的事件**不参与索引约束**，
+               可在任意位置被选中，但每个事件仅能被消费一次。
+          3. 所有步骤命中后，对「``ordered=True`` 的步骤事件」计算首末跨度 span；
+             若 span > window_minutes 则超窗不命中（无序步骤不参与时间约束）。
+
+        为何需要分级（真实缺陷背景）：排序键把「有时间戳」事件排在「无时间戳」
+        事件之前。而 process/connection 恒无时间戳、registry 却因退化到
+        ``collected_at`` 而恒有时间戳，导致 ``process → connection → registry``
+        形态的链中，registry 永远排在前两步之前，第 3 步索引约束永远不可满足
+        —— 2 条默认攻击链因此结构性永不可达。分级后，不可信时序不再产生虚假的
+        顺序约束；未来采集器补齐 ``last_write_time`` 时自动升级为真实时序校验。
 
         Args:
             rule: attack_chain 规则字典（condition 含 ordered_steps / window_minutes）。
@@ -2747,38 +3116,57 @@ class RuleEngine:
 
         matched_times: list = []
         matched_steps: list = []
-        pointer = 0
+        # ordered_pointer 仅约束「时序可信」事件；consumed 保证任一事件不被复用
+        ordered_pointer = 0
+        consumed: set = set()
         for idx, step in enumerate(steps):
             dim = step.get("dimension")
             found = False
-            for j in range(pointer, len(host_events)):
+            for j in range(len(host_events)):
+                if j in consumed:
+                    continue
                 ev = host_events[j]
                 if ev.get("dimension") != dim:
+                    continue
+                # 向后兼容：未显式声明 ordered 时，按「有时间戳即有序」推断
+                is_ordered = ev.get("ordered")
+                if is_ordered is None:
+                    is_ordered = ev.get("timestamp") is not None
+                # 时序可信事件必须位于上一个时序可信事件之后
+                if is_ordered and j < ordered_pointer:
                     continue
                 if not RuleEngine._match_attack_chain_step(step, ev.get("data", {}), global_context):
                     continue
                 # 命中：记录
-                ts = ev.get("timestamp")
-                if ts is not None:
-                    matched_times.append(ts)
+                if is_ordered:
+                    ts = ev.get("timestamp")
+                    if ts is not None:
+                        matched_times.append(ts)
+                    ordered_pointer = j + 1
+                consumed.add(j)
                 matched_steps.append({
                     "step": idx + 1,
                     "dimension": dim,
                     "match": step.get("match"),
                     "summary": RuleEngine._summarize_event(ev),
+                    # 该步是否具备可信时序（决定"顺序"结论是否经过验证）
+                    "time_verified": bool(is_ordered),
                 })
-                pointer = j + 1
                 found = True
                 break
             if not found:
                 return None
 
-        # 时间窗判定：仅在「有 ≥1 个带时间戳步骤」时生效
+        # 时间窗判定：仅在「有 ≥2 个时序可信步骤」时生效
         if len(matched_times) >= 2:
             from datetime import timedelta
             span = (max(matched_times) - min(matched_times)).total_seconds() / 60.0
             if span > window_minutes:
                 return None
+
+        # 顺序可验证性：仅当全部步骤均有可信时序时，"按此顺序发生"才是被验证过的结论
+        verified_count = sum(1 for s in matched_steps if s.get("time_verified"))
+        order_verified = verified_count == len(matched_steps)
 
         reason = (
             f"规则 '{rule.get('name', '')}' 命中攻击链关联："
@@ -2786,7 +3174,18 @@ class RuleEngine:
                 f"[步骤{s['step']}:{s['dimension']}] {s['summary']}" for s in matched_steps
             )
         )
-        return {"steps": matched_steps, "reason": reason}
+        if not order_verified:
+            # 不可验证时如实标注，避免把"共现"包装成"时序因果"
+            reason += (
+                f"（注：{len(matched_steps) - verified_count}/{len(matched_steps)} 个步骤"
+                f"缺少可信时间戳，各步骤为同主机共现，先后顺序未经时序验证）"
+            )
+        return {
+            "steps": matched_steps,
+            "reason": reason,
+            "order_verified": order_verified,
+            "time_verified_steps": verified_count,
+        }
 
     @staticmethod
     def _summarize_event(ev: dict) -> str:
@@ -2868,8 +3267,10 @@ class RuleEngine:
             return []
 
 
-# ── 注册 7 类 matcher 到 MatcherRegistry（P0-1 适配层）────────
-# P0 期注册表直接委派 RuleEngine 既有静态方法；P2 期改为动态加载模块。
+# ── 注册 8 类 matcher 到 MatcherRegistry（适配层）──────────────
+# 注册表直接委派 RuleEngine 既有静态方法。
+# 注：attack_chain 走主机级关联通道 _match_attack_chain（需要跨事件序列上下文），
+# 无法在"逐条数据项 dispatch"语义下求值，故此处注册为恒 False 的占位实现。
 from app.rules.matchers.registry import MatcherRegistry  # noqa: E402
 
 MatcherRegistry.register("regex", lambda item, cond, ctx=None: RuleEngine._match_regex(item, cond))
@@ -2879,3 +3280,7 @@ MatcherRegistry.register("behavior", lambda item, cond, ctx=None: RuleEngine._ma
 MatcherRegistry.register("composite", lambda item, cond, ctx=None: RuleEngine._match_composite(item, cond, global_context=ctx))
 MatcherRegistry.register("exists", lambda item, cond, ctx=None: RuleEngine._match_exists(item, cond))
 MatcherRegistry.register("attack_chain", lambda item, cond, ctx=None: False)
+MatcherRegistry.register(
+    "event_log_summary",
+    lambda item, cond, ctx=None: RuleEngine._match_event_log_summary(item, cond, global_context=ctx),
+)

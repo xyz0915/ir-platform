@@ -100,3 +100,40 @@ analysis-center-*-preview.html
 analysis-center-rules-preview*.html
 report-output.html
 process_tree_view_v3.html
+
+# ===== 提交清理：QA/调试产物与垃圾文件（2026-08-10） =====
+# 后端临时探针/QA 脚本与日志
+backend/_*.py
+backend/qa_*.py
+backend/qa_*.txt
+backend/*.log
+backend/.audit_tmp/
+backend/_agent_llm_c1.bak
+backend/app/data/tools/
+
+# 前端构建/验证临时产物
+frontend/dist_*
+frontend/build_check*/
+frontend/drilldown-verify/
+frontend/agent-nav-build/
+frontend/qa_*.mjs
+
+# 根目录 QA 产物与预览
+_selftest_*.png
+qa_*.txt
+probe_test.txt
+state_probe.txt
+verify_probe.txt
+login_preview*.html
+brandart_preview_v2.html
+qa_login_*.png
+qa_login_dom.html
+
+# Agent 运行快照（含主机数据，非源码）
+agent/DESKTOP-*.json
+
+# 测试 scratch 脚本
+backend/tests/_*.py
+
+# 临时 QA 目录
+qa_tmp/

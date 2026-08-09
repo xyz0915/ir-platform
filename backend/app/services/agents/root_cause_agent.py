@@ -128,7 +128,7 @@ class RootCauseAgent(BaseAgent):
         root_node, causal_chain = self._trace_root(process_events, abnormal_pids, pid_to_info)
         evidence = self._build_evidence(causal_chain)
         confidence = self._confidence(process_events, root_node, causal_chain)
-        summary, llm_explanation = await self._explain(root_node, causal_chain, user)
+        summary, llm_explanation = await self._explain(root_node, causal_chain, user, ctx)
 
         return {
             "host_id": host_id,
@@ -138,6 +138,9 @@ class RootCauseAgent(BaseAgent):
             "confidence": confidence,
             "evidence": evidence,
             "summary": summary,
+            # llm_explanation：LLM 原文（不可用时为 None），对齐 POST /analysis/root-cause
+            # 文档化的返回契约；explanation 保留"LLM 原文 or 结构化 summary"的兜底语义。
+            "llm_explanation": llm_explanation,
             "explanation": llm_explanation or summary,
             "degraded": llm_explanation is None,
             "process_tree": process_tree,
@@ -302,7 +305,7 @@ class RootCauseAgent(BaseAgent):
     # ────────────────────────────────────────────────────────────────
     # 自然语言解释（LLM 增强，降级不阻断）
     # ────────────────────────────────────────────────────────────────
-    async def _explain(self, root_node: Optional[dict], causal_chain: list[dict], user: Optional[dict]) -> tuple:
+    async def _explain(self, root_node: Optional[dict], causal_chain: list[dict], user: Optional[dict], ctx: Optional[dict] = None) -> tuple:
         """构造数据驱动摘要；并尝试 LLM 自然语言解释。
 
         Returns:
@@ -333,11 +336,13 @@ class RootCauseAgent(BaseAgent):
         llm_explanation: Optional[str] = None
         try:
             prompt = self._build_llm_prompt(root_node, causal_chain)
-            resp = await self._llm.call(prompt, user=user, trace_id=ctx.get("trace_id"))
+            resp = await self._llm.call(prompt, user=user, trace_id=ctx.get("trace_id") if ctx else None)
             if not resp.get("degraded") and resp.get("content"):
                 llm_explanation = resp["content"]
         except Exception as exc:  # noqa: BLE001
-            logger.debug("RootCauseAgent LLM 解释失败（跳过）: %s", exc)
+            # P1-4：debug → exception。该点不拼横幅，DEBUG 级别在生产（INFO）下完全不可见，
+            # 属可观测性缺陷（本次排查中几乎无法通过日志发现）。
+            logger.exception("RootCauseAgent LLM 解释失败（跳过）: %s", exc)
         return summary, llm_explanation
 
     @staticmethod

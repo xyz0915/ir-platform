@@ -32,16 +32,18 @@ def _build_rules_db(path: str) -> None:
     conn = sqlite3.connect(path)
     conn.execute(
         "CREATE TABLE rules (id INTEGER PRIMARY KEY, name TEXT, rule_type TEXT, "
-        "category TEXT, severity TEXT, condition TEXT, enabled INTEGER)"
+        "category TEXT, severity TEXT, condition TEXT, enabled INTEGER, "
+        "engine_type TEXT)"
     )
     behavior_rules = [
-        (11, "orphan_process", "behavior", "behavior", "high", json.dumps({"pattern": "orphan_process"}), 1),
-        (12, "suspicious_parent_child", "behavior", "behavior", "medium", json.dumps({"pattern": "child_of_office"}), 1),
-        (13, "unsigned_process", "behavior", "behavior", "medium", json.dumps({"pattern": "child_of_browser"}), 1),
-        (95, "process_chain_attack", "behavior", "behavior", "critical", json.dumps({"pattern": "process_chain_attack"}), 1),
+        (11, "orphan_process", "behavior", "behavior", "high", json.dumps({"pattern": "orphan_process"}), 1, None),
+        (12, "suspicious_parent_child", "behavior", "behavior", "medium", json.dumps({"pattern": "child_of_office"}), 1, None),
+        (13, "unsigned_process", "behavior", "behavior", "medium", json.dumps({"pattern": "child_of_browser"}), 1, None),
+        (95, "process_chain_attack", "behavior", "behavior", "critical", json.dumps({"pattern": "process_chain_attack"}), 1, None),
     ]
     conn.executemany(
-        "INSERT INTO rules VALUES (?,?,?,?,?,?,?)", behavior_rules
+        "INSERT INTO rules (id, name, rule_type, category, severity, condition, enabled, engine_type) "
+        "VALUES (?,?,?,?,?,?,?,?)", behavior_rules
     )
     conn.commit()
     conn.close()

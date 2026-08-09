@@ -18,17 +18,25 @@
   },
   {
     "name": "unsigned_executable",
-    "description": "非系统目录 exe 且无数字签名（JOIN file_hashes 注入的 exe_is_signed==0 / exe_signer 空）",
+    "description": "非系统目录 exe 且【明确】无数字签名（JOIN file_hashes 注入的 exe_is_signed==0）。【P1-1-A】原实现将 exe_is_signed=None（未知，无 file_hashes 记录）等同于未签名，导致 541/541 非系统目录进程 100% 误报；现改为三态语义：仅 0/False 判定成立，None 不判定。",
     "category": "behavior",
     "rule_type": "behavior",
-    "severity": "high",
+    "severity": "medium",
     "enabled": true,
     "label": "进程 exe 无数字签名",
     "source": "default",
     "condition": {
       "pattern": "unsigned_exe",
-      "description": "非系统目录且无签名的 exe（exe_is_signed==0 或 exe_signer 空）",
-      "_meta": { "mitre_attack": "T1059" }
+      "description": "非系统目录且【明确】无签名的 exe（exe_is_signed 明确为 0/False；None=未知不判定）",
+      "_meta": {
+        "mitre_attack": "T1059",
+        "requires_field": "exe_is_signed",
+        "requires_source": "file_hashes（按 process_path JOIN 注入）",
+        "coverage_note": "file_hashes 当前与 process_events.process_path 交集为 0，该规则实际处于静默状态；纳入 P2-3 可观测清单",
+        "severity_changed_at": "P1-1-A",
+        "severity_changed_from": "high",
+        "severity_change_reason": "无签名本身是弱信号，需与路径/行为组合才有定性价值"
+      }
     }
   },
   {
@@ -127,47 +135,65 @@
   },
   {
     "name": "fileless_reflective_injection",
-    "description": "无文件内存注入（reflective/hollowing/远线程）：进程 memory_sections 含内存中 PE 镜像/非映像基址注入痕迹（缺内存采集时优雅降级）",
+    "description": "无文件内存注入（reflective/hollowing/远线程）：进程 memory_sections 含内存中 PE 镜像/非映像基址注入痕迹。【P1-1-B 已下线】实测 process_events.detail 中 memory_sections 出现 0/2199 次，无任何采集器产出该字段，规则恒不命中，属虚假覆盖。",
     "category": "behavior",
     "rule_type": "behavior",
     "severity": "critical",
-    "enabled": true,
-    "label": "无文件内存注入（reflective/hollowing/远线程）",
+    "enabled": false,
+    "label": "无文件内存注入（reflective/hollowing/远线程）（已下线·待采集器补齐）",
     "source": "default",
     "condition": {
       "pattern": "memory_injection",
       "description": "内存区段含 PE 镜像/远线程注入痕迹（需 memory_sections）",
-      "_meta": { "mitre_attack": "T1055/012" }
+      "_meta": {
+        "mitre_attack": "T1055/012",
+        "disabled_reason": "no_producer_field",
+        "disabled_detail": "memory_sections 字段在 2199 条 process_events.detail 中出现 0 次，采集链路无产出",
+        "depends_on": "P3-2：Agent 侧新增内存区段采集器（memory_sections）后可复活",
+        "disabled_at": "P1-1-B"
+      }
     }
   },
   {
     "name": "script_interpreter_memory_pe",
-    "description": "脚本解释器（powershell/python）在内存加载异常 PE 且无磁盘文件（缺 ETW ImageLoad/内存采集时优雅降级）",
+    "description": "脚本解释器（powershell/python）在内存加载异常 PE 且无磁盘文件。【P1-1-B 已下线】依赖 memory_sections / ETW ImageLoad，二者均无采集器产出，规则恒不命中。",
     "category": "behavior",
     "rule_type": "behavior",
     "severity": "high",
-    "enabled": true,
-    "label": "脚本解释器内存加载异常PE",
+    "enabled": false,
+    "label": "脚本解释器内存加载异常PE（已下线·待采集器补齐）",
     "source": "default",
     "condition": {
       "pattern": "interpreter_mem_pe",
       "description": "解释器内存加载 PE（需 memory_sections / ETW 事件）",
-      "_meta": { "mitre_attack": "T1055" }
+      "_meta": {
+        "mitre_attack": "T1055",
+        "disabled_reason": "no_producer_field",
+        "disabled_detail": "memory_sections 出现 0/2199；ETW ImageLoad 事件流未接入",
+        "depends_on": "P3-2：内存区段采集器 + ETW ImageLoad 事件流接入后可复活",
+        "disabled_at": "P1-1-B"
+      }
     }
   },
   {
     "name": "amsi_etw_tamper",
-    "description": "ETW/AMSI 旁路（事件级）：订阅 ETW provider 禁用或 amsi.dll 内存修补事件（缺事件流时优雅降级）",
+    "description": "ETW/AMSI 旁路（事件级）：订阅 ETW provider 禁用或 amsi.dll 内存修补事件。【P1-1-B 已下线】依赖 ETW 实时事件流，当前采集为快照式，无事件流接入，规则恒不命中。",
     "category": "behavior",
     "rule_type": "behavior",
     "severity": "high",
-    "enabled": true,
-    "label": "ETW/AMSI 旁路",
+    "enabled": false,
+    "label": "ETW/AMSI 旁路（已下线·待采集器补齐）",
     "source": "default",
     "condition": {
       "pattern": "etw_amsi_tamper",
       "description": "ETW provider 禁用 / AMSI 内存修补（需事件流）",
-      "_meta": { "mitre_attack": "T1562/001" }
+      "_meta": {
+        "mitre_attack": "T1562/001",
+        "disabled_reason": "no_event_stream",
+        "disabled_detail": "当前采集为周期性快照，无 ETW provider 状态与 AMSI 内存修补事件源",
+        "depends_on": "P3-2：ETW 实时事件流接入后可复活",
+        "disabled_at": "P1-1-B"
+      }
     }
   },
   {
@@ -187,18 +213,24 @@
   },
   {
     "name": "injection_window_anomaly",
-    "description": "注入行为窗口异常：进程启动后极短时间（<2s）向其它进程建远线程（需事件流，缺失时优雅降级）",
+    "description": "注入行为窗口异常：进程启动后极短时间（<2s）向其它进程建远线程。【P1-1-B 已下线】依赖秒级远线程创建事件时序，快照采集无法提供，规则恒不命中。",
     "category": "behavior",
     "rule_type": "behavior",
     "severity": "critical",
-    "enabled": true,
-    "label": "注入行为窗口异常",
+    "enabled": false,
+    "label": "注入行为窗口异常（已下线·待采集器补齐）",
     "source": "default",
     "condition": {
       "pattern": "injection_window",
       "max_alive_seconds": 2,
       "description": "启动后极短窗口内建远线程（需事件流）",
-      "_meta": { "mitre_attack": "T1055" }
+      "_meta": {
+        "mitre_attack": "T1055",
+        "disabled_reason": "no_event_stream",
+        "disabled_detail": "需要 CreateRemoteThread 事件与进程启动时刻的秒级时序，快照采集不具备",
+        "depends_on": "P3-2：远线程创建事件流（ETW / Sysmon EID 8）接入后可复活",
+        "disabled_at": "P1-1-B"
+      }
     }
   },
   {
@@ -218,50 +250,84 @@
   },
   {
     "name": "ws_file_name",
-    "description": "WebShell 文件名特征检测（shell/cmd/c99/godzilla/behinder 等常见 WebShell 文件名）",
+    "description": "WebShell 专有文件名特征检测。【P1-4】原或组含通用词 shell/cmd，正常业务文件 cmd.php / shell.jsp（路由或运维脚本）会误报；已移除该两项，仅保留专有工具名。severity high→medium：文件名是弱证据，需结合内容特征定性。",
     "category": "webshell",
     "rule_type": "regex",
     "condition": {
       "field": "name",
-      "pattern": "(shell|cmd|uploader|b374k|c99|r57|weevely|chopper|antsword|godzilla|behinder)\\.(php|jsp|asp|aspx|war|jspx)",
+      "pattern": "(uploader|b374k|c99|r57|weevely|chopper|antsword|godzilla|behinder|wso|adminer|k8cscan)\\.(php|jsp|asp|aspx|war|jspx)",
       "flags": "ignorecase",
-      "_meta": { "mitre_attack": "T1505.003" }
+      "_meta": {
+        "mitre_attack": "T1505.003",
+        "severity_changed_at": "P1-4",
+        "severity_changed_from": "high",
+        "severity_change_reason": "文件名仅为弱证据，不足以支撑 high",
+        "pattern_changed_at": "P1-4",
+        "pattern_removed_tokens": ["shell", "cmd"],
+        "pattern_removed_reason": "通用词，正常业务路由/运维脚本大量命中"
+      }
     },
-    "severity": "high",
+    "severity": "medium",
     "enabled": true,
-    "label": "WebShell 文件名检测",
+    "label": "WebShell 专有文件名检测",
     "source": "default"
   },
   {
     "name": "ws_webdir_activity",
-    "description": "WebShell Web 目录活动检测（上传/临时/缓存目录下的可执行脚本）",
+    "description": "WebShell Web 目录活动检测。【P1-1-C 已归并下线】原规则对 /static/index.php 这类正常站点文件即命中。已作为子条件并入 ws_suspicious_funcs 的 composite（Web 目录 + 脚本后缀 + 可疑函数三者同时成立），不再独立出告警。",
     "category": "webshell",
     "rule_type": "regex",
     "condition": {
       "field": "path",
       "pattern": "(upload|tmp|temp|cache|avatar|images|static|public|webapps).*\\.(php|jsp|asp|aspx|war|jspx)",
       "flags": "ignorecase",
-      "_meta": { "mitre_attack": "T1505.003" }
+      "_meta": {
+        "mitre_attack": "T1505.003",
+        "disabled_reason": "merged_into_composite",
+        "disabled_detail": "单独匹配 Web 目录 + 脚本后缀等价于'站点里有脚本文件'，无判别力",
+        "merged_into": "ws_suspicious_funcs",
+        "disabled_at": "P1-1-C"
+      }
     },
     "severity": "high",
-    "enabled": true,
-    "label": "WebShell Web 目录活动",
+    "enabled": false,
+    "label": "WebShell Web 目录活动（已归并至 ws_suspicious_funcs）",
     "source": "default"
   },
   {
     "name": "ws_suspicious_funcs",
-    "description": "WebShell 危险函数检测（eval/base64_decode/system/exec 等）",
+    "description": "WebShell 复合判定：Web 目录 + 脚本后缀 + 危险函数三者同时成立。【P1-1-C】原为单一 regex 匹配 suspicious_funcs，正常 PHP 框架大量使用 base64_decode/preg_replace 造成结构性误报；现改为 composite，并归并原 ws_webdir_activity 的路径条件。",
     "category": "webshell",
-    "rule_type": "regex",
+    "rule_type": "composite",
     "condition": {
-      "field": "suspicious_funcs",
-      "pattern": "(eval|base64_decode|base64_encode|system|exec|passthru|shell_exec|assert|create_function|preg_replace|proc_open|popen)",
-      "flags": "ignorecase",
-      "_meta": { "mitre_attack": "T1505.003" }
+      "logic": "AND",
+      "sub_rules": [
+        {
+          "type": "regex",
+          "field": "path",
+          "pattern": "(upload|tmp|temp|cache|avatar|images|static|public|webapps).*\\.(php|jsp|asp|aspx|war|jspx)",
+          "flags": "ignorecase"
+        },
+        {
+          "type": "regex",
+          "field": "suspicious_funcs",
+          "pattern": "(eval|base64_decode|system|exec|passthru|shell_exec|assert|create_function|proc_open|popen)",
+          "flags": "ignorecase"
+        }
+      ],
+      "_meta": {
+        "mitre_attack": "T1505.003",
+        "rule_type_changed_at": "P1-1-C",
+        "rule_type_changed_from": "regex",
+        "change_reason": "单一危险函数关键词在正常框架中普遍存在，须与 Web 目录路径共同成立",
+        "merged_from": ["ws_webdir_activity"],
+        "pattern_removed_tokens": ["base64_encode", "preg_replace"],
+        "pattern_removed_reason": "二者在正常业务代码中的使用频率远高于恶意场景"
+      }
     },
     "severity": "high",
     "enabled": true,
-    "label": "WebShell 危险函数",
+    "label": "WebShell 危险函数（Web 目录复合判定）",
     "source": "default"
   },
   {
@@ -282,14 +348,19 @@
   },
   {
     "name": "ws_behinder_godzilla",
-    "description": "WebShell 哥斯拉/冰蝎信号检测（behinder_godzilla_signal）",
+    "description": "WebShell 哥斯拉/冰蝎信号检测（behinder_godzilla_signal）。【P1-1-C】原用 regex `(true|1)` 匹配布尔字段属类型误用——任何含字符 1 的文本（如 \"score:10\"、\"false, 1 hit\"）均命中；现改为 exists + expected_value 的布尔语义比较。",
     "category": "webshell",
-    "rule_type": "regex",
+    "rule_type": "exists",
     "condition": {
       "field": "behinder_godzilla_signal",
-      "pattern": "(true|1)",
-      "flags": "ignorecase",
-      "_meta": { "mitre_attack": "T1505.003" }
+      "expected_value": true,
+      "value_type": "bool",
+      "_meta": {
+        "mitre_attack": "T1505.003",
+        "rule_type_changed_at": "P1-1-C",
+        "rule_type_changed_from": "regex",
+        "change_reason": "布尔字段不应使用 regex 匹配，`(true|1)` 会命中任意含 1 的字符串"
+      }
     },
     "severity": "high",
     "enabled": true,
@@ -298,18 +369,51 @@
   },
   {
     "name": "ms_anomaly_class",
-    "description": "内存马异常类检测（class_signals 含 MemShell/Filter/Servlet 等）",
+    "description": "内存马异常类复合判定：异常类名特征 AND 存在 Agent/线程侧佐证信号。【P1-1-C】原 regex 或组含 Spring/Servlet/Filter/ClassLoader 等正常 Java 框架标识，任何 Java Web 应用均命中；现拆为两层——强特征（MemShell/Godzilla/Behinder 等）单独成立，弱特征须与 agent_signals/thread_signals 共同成立。",
     "category": "memory_shell",
-    "rule_type": "regex",
+    "rule_type": "composite",
     "condition": {
-      "field": "class_signals",
-      "pattern": "(MemShell|Filter|Servlet|ClassLoader|Spring|StandardContext|EventHandler|Agent)",
-      "flags": "ignorecase",
-      "_meta": { "mitre_attack": "T1055" }
+      "logic": "OR",
+      "sub_rules": [
+        {
+          "type": "regex",
+          "field": "class_signals",
+          "pattern": "(MemShell|MemoryShell|Godzilla|Behinder|AntSword|Suo5|NeoreGeorg|InjectFilter|EvilFilter)",
+          "flags": "ignorecase"
+        },
+        {
+          "type": "composite",
+          "logic": "AND",
+          "sub_rules": [
+            {
+              "type": "regex",
+              "field": "class_signals",
+              "pattern": "(Filter|Servlet|ClassLoader|StandardContext|EventHandler|Valve|Listener)",
+              "flags": "ignorecase"
+            },
+            {
+              "type": "composite",
+              "logic": "OR",
+              "sub_rules": [
+                { "type": "exists", "field": "agent_signals" },
+                { "type": "exists", "field": "thread_signals" }
+              ]
+            }
+          ]
+        }
+      ],
+      "_meta": {
+        "mitre_attack": "T1055",
+        "rule_type_changed_at": "P1-1-C",
+        "rule_type_changed_from": "regex",
+        "change_reason": "Spring/Servlet/Filter 是正常框架标识，单一关键词无判别力",
+        "severity_changed_from": "high",
+        "severity_change_reason": "弱特征分支需佐证信号，整体定性下调一级，留待人工研判"
+      }
     },
-    "severity": "high",
+    "severity": "medium",
     "enabled": true,
-    "label": "内存马异常类",
+    "label": "内存马异常类（复合判定）",
     "source": "default"
   },
   {
@@ -330,18 +434,40 @@
   },
   {
     "name": "ms_filter_signal",
-    "description": "内存马 Filter 注入证据（evidence 含 Filter/addFilter/StandardContext）",
+    "description": "内存马 Filter 动态注入复合判定。【P1-1-C】原 regex 或组含 Filter/priority/servlet，任何 Java Web 应用的证据文本必含这些词；现要求'动态注册动作特征'（addFilter/FilterDef 等运行期注入 API）AND 佐证信号，且 severity medium→low。",
     "category": "memory_shell",
-    "rule_type": "regex",
+    "rule_type": "composite",
     "condition": {
-      "field": "evidence",
-      "pattern": "(Filter|addFilter|StandardContext|priority|servlet)",
-      "flags": "ignorecase",
-      "_meta": { "mitre_attack": "T1055" }
+      "logic": "AND",
+      "sub_rules": [
+        {
+          "type": "regex",
+          "field": "evidence",
+          "pattern": "(addFilter|FilterDef|FilterMap|addValve|addServlet|registerServlet|ClassFileTransformer|defineClass)",
+          "flags": "ignorecase"
+        },
+        {
+          "type": "composite",
+          "logic": "OR",
+          "sub_rules": [
+            { "type": "exists", "field": "agent_signals" },
+            { "type": "exists", "field": "thread_signals" },
+            { "type": "exists", "field": "class_signals" }
+          ]
+        }
+      ],
+      "_meta": {
+        "mitre_attack": "T1055",
+        "rule_type_changed_at": "P1-1-C",
+        "rule_type_changed_from": "regex",
+        "change_reason": "Filter/servlet/priority 为 Java Web 通用词汇；改为匹配运行期动态注册 API 并要求佐证",
+        "severity_changed_from": "medium",
+        "severity_change_reason": "作为佐证型信号，独立价值有限"
+      }
     },
-    "severity": "medium",
+    "severity": "low",
     "enabled": true,
-    "label": "内存马 Filter 信号",
+    "label": "内存马 Filter 动态注入信号（复合判定）",
     "source": "default"
   },
   {
@@ -362,18 +488,40 @@
   },
   {
     "name": "ms_conn_signal",
-    "description": "内存马外连信号（conn_signals 含可疑 IP:port）",
+    "description": "内存马外连复合信号：存在 IP:端口外连 AND 存在内存马类/Agent/线程佐证。【P1-1-C】原 regex 仅匹配任意 IP:端口，等价于'只要有连接就告警'；现改为 composite 子条件形式，不再独立出告警，severity high→low。",
     "category": "memory_shell",
-    "rule_type": "regex",
+    "rule_type": "composite",
     "condition": {
-      "field": "conn_signals",
-      "pattern": "(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}:\\d+)",
-      "flags": "ignorecase",
-      "_meta": { "mitre_attack": "T1071" }
+      "logic": "AND",
+      "sub_rules": [
+        {
+          "type": "regex",
+          "field": "conn_signals",
+          "pattern": "(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}:\\d+)",
+          "flags": "ignorecase"
+        },
+        {
+          "type": "composite",
+          "logic": "OR",
+          "sub_rules": [
+            { "type": "exists", "field": "class_signals" },
+            { "type": "exists", "field": "agent_signals" },
+            { "type": "exists", "field": "thread_signals" }
+          ]
+        }
+      ],
+      "_meta": {
+        "mitre_attack": "T1071",
+        "rule_type_changed_at": "P1-1-C",
+        "rule_type_changed_from": "regex",
+        "change_reason": "任意 IP:端口正则等价于'有连接即告警'，必须与内存马佐证共同成立",
+        "severity_changed_from": "high",
+        "severity_change_reason": "降为佐证型子条件，不独立定性"
+      }
     },
-    "severity": "high",
+    "severity": "low",
     "enabled": true,
-    "label": "内存马外连信号",
+    "label": "内存马外连信号（复合判定）",
     "source": "default"
   }
 ]

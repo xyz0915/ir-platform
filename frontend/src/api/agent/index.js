@@ -114,7 +114,7 @@ const agentApi = {
 
   // ── M1 运行统计（真实） ──
   stats: {
-    getAgentStats: () => getAgentStats(),
+    getAgentStats: (params) => getAgentStats(params),
   },
 
   // ── 设置页智能体列表（真实，带分页，区别于 M2 的 listAgents(enabledOnly)） ──

@@ -8,7 +8,15 @@ from app.rules.rule_engine import BEHAVIOR_PATTERNS, validate_behavior_pattern
 
 # ── 枚举约束 ────────────────────────────────────────────────────────
 SEVERITY_ENUM: List[str] = ["critical", "high", "medium", "low"]
-RULE_TYPE_ENUM: List[str] = ["regex", "list", "threshold", "behavior", "composite", "exists", "attack_chain"]
+RULE_TYPE_ENUM: List[str] = [
+    "regex", "list", "threshold", "behavior", "composite", "exists", "attack_chain",
+    # P0-2：Windows 安全事件日志计数型规则（消费 agent security 采集器的 event_ids_summary）
+    "event_log_summary",
+]
+
+# event_log_summary 允许的比较运算符与聚合方式（P0-2）
+EVENT_LOG_OPERATORS: List[str] = [">=", ">", "==", "<=", "<"]
+EVENT_LOG_AGGREGATES: List[str] = ["sum", "max", "any"]
 IOC_TYPE_ENUM: List[str] = ["ip", "domain", "url", "hash", "cert"]
 
 SeverityType = Literal["critical", "high", "medium", "low"]
@@ -279,6 +287,34 @@ def validate_condition(rule_type: str, condition: dict) -> None:
     elif rule_type == "exists":
         if not condition.get("field"):
             raise ValueError("exists 规则必须包含 field")
+    elif rule_type == "event_log_summary":
+        # P0-2：Windows 安全事件计数规则
+        # {"event_id": "4625", "operator": ">=", "count": 10}
+        # {"event_ids": ["4648","4624"], "aggregate": "sum", "operator": ">=", "count": 20}
+        event_id = condition.get("event_id")
+        event_ids = condition.get("event_ids")
+        if event_id is None and event_ids is None:
+            raise ValueError("event_log_summary 规则必须包含 event_id 或 event_ids")
+        if event_ids is not None:
+            if not isinstance(event_ids, list) or len(event_ids) == 0:
+                raise ValueError("event_log_summary 的 event_ids 必须是非空列表")
+        aggregate = condition.get("aggregate", "sum")
+        if aggregate not in EVENT_LOG_AGGREGATES:
+            raise ValueError(
+                f"event_log_summary 的 aggregate 非法: {aggregate!r}，应为 {EVENT_LOG_AGGREGATES}"
+            )
+        operator = condition.get("operator", ">=")
+        if operator not in EVENT_LOG_OPERATORS:
+            raise ValueError(
+                f"event_log_summary 的 operator 非法: {operator!r}，应为 {EVENT_LOG_OPERATORS}"
+            )
+        count = condition.get("count", 1)
+        try:
+            count_int = int(count)
+        except (TypeError, ValueError):
+            raise ValueError(f"event_log_summary 的 count 必须为整数，收到 {count!r}")
+        if count_int < 0:
+            raise ValueError("event_log_summary 的 count 不能为负数")
     elif rule_type == "attack_chain":
         # 跨维度顺序关联：ordered_steps 非空，每步含 dimension + match
         steps = condition.get("ordered_steps")

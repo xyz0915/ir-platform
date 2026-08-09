@@ -10,6 +10,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from app.database import get_connection, reset_default_rules
 from app.models.rule import Rule, RuleHistory
 from app.models.rule_draft import RuleDraft
+from app.models.policy import DetectionPolicy
 from app.schemas.analysis import RuleCreate, RuleUpdate, validate_condition
 from app.services.auth_service import get_current_user
 from app.services.rule_generator import RuleGenerator
@@ -22,7 +23,11 @@ router = APIRouter()
 
 def _search_rules(q: str, category: Optional[str], enabled: Optional[bool],
                   current_user: Optional[dict] = None,
-                  engine_type: Optional[str] = None) -> list:
+                  engine_type: Optional[str] = None,
+                  severity: Optional[str] = None,
+                  rule_type: Optional[str] = None,
+                  source: Optional[str] = None,
+                  status: Optional[str] = None) -> list:
     """按关键字搜索规则（T-P2-1）：name/label/description 模糊匹配 + 租户隔离."""
     tenant_id = getattr(current_user, "tenant_id", 0) if current_user else 0
     if not isinstance(tenant_id, int):
@@ -45,6 +50,18 @@ def _search_rules(q: str, category: Optional[str], enabled: Optional[bool],
         if engine_type is not None:
             query += " AND engine_type = ?"
             params.append(engine_type)
+        if severity:
+            query += " AND severity = ?"
+            params.append(severity)
+        if rule_type:
+            query += " AND rule_type = ?"
+            params.append(rule_type)
+        if source:
+            query += " AND source = ?"
+            params.append(source)
+        if status:
+            query += " AND status = ?"
+            params.append(status)
         query += " ORDER BY category, severity DESC, created_at"
         rows = conn.execute(query, params).fetchall()
         results = []
@@ -66,31 +83,60 @@ def list_rules(
     enabled: bool = Query(None, description="启用状态"),
     q: str = Query(None, description="关键字搜索（名称/中文名/描述）"),
     engine_type: str = Query(None, description="引擎类型: rule_engine / behavior_engine"),
+    severity: str = Query(None, description="严重度: critical/high/medium/low"),
+    rule_type: str = Query(None, description="规则类型: regex/list/behavior/threshold/composite/attack_chain/event_log_summary/exists"),
+    source: str = Query(None, description="来源: default/user/ai/import"),
+    status: str = Query(None, description="状态: active/pending_approval/deprecated"),
     current_user: dict = Depends(get_current_user),
 ):
-    """获取规则列表（支持类别、启用状态与关键字搜索 + 多租户）."""
+    """获取规则列表（支持类别/启用状态/关键字/引擎/严重度/规则类型/来源/状态 + 多租户）."""
     if q:
-        rules = _search_rules(q, category, enabled, current_user, engine_type=engine_type)
+        rules = _search_rules(q, category, enabled, current_user, engine_type=engine_type,
+                              severity=severity, rule_type=rule_type, source=source, status=status)
     else:
         # 非关键字查询也加租户隔离
         tenant_id = getattr(current_user, "tenant_id", 0) if current_user else 0
         if not isinstance(tenant_id, int):
             tenant_id = 0
-        rules = Rule.list(category=category, enabled=enabled, tenant_id=tenant_id, engine_type=engine_type)
+        rules = Rule.list(category=category, enabled=enabled, tenant_id=tenant_id, engine_type=engine_type,
+                          severity=severity, rule_type=rule_type, source=source, status=status)
+    # 统一附加 effective_active / in_active_policy / effective_reason（单一真值展示）
+    active = DetectionPolicy.get_active()
+    active_ids = set(active.get("rule_ids", [])) if active else set()
+    Rule.annotate_effective(rules, active_ids, active is not None)
     return {"code": 0, "data": rules, "message": "success"}
+
+
+@router.get("/ioc-dependency", summary="规则的动态 IOC 情报依赖巡检（P0-1）")
+def get_ioc_dependency(current_user: dict = Depends(get_current_user)):
+    """列出所有依赖 iocs 情报库的规则，并给出当前情报存量与满足情况.
+
+    P0-1 移除了规则中的占位虚构 IOC，C2 类规则改为完全由情报库驱动。
+    本接口把"规则依赖情报但情报库为空"这一隐性风险显性化，便于运营巡检。
+    """
+    try:
+        from app.rules.ioc_dependency import scan_ioc_dependent_rules
+        return scan_ioc_dependent_rules()
+    except Exception as exc:  # noqa: BLE001
+        logger.error("IOC 依赖巡检失败: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"IOC 依赖巡检失败: {exc}",
+        )
 
 
 @router.get("/selector")
 def list_rules_for_selector(
     page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=200),
+    page_size: int = Query(50, ge=1, le=500),
     category: str = Query(None, description="规则类别"),
     severity: str = Query(None, description="严重度"),
+    rule_type: str = Query(None, description="规则类型: regex/list/behavior/threshold/composite/attack_chain/event_log_summary/exists"),
     keyword: str = Query(None, description="关键字搜索"),
     engine_type: str = Query(None, description="引擎类型: rule_engine / behavior_engine"),
     current_user: dict = Depends(get_current_user),
 ):
-    """策略配置中的规则选择器 — 支持分页、类别、严重度、关键字、引擎类型筛选."""
+    """策略配置中的规则选择器 — 支持分页、类别、严重度、规则类型、关键字、引擎类型筛选."""
     try:
         with get_connection() as conn:
             conditions: list[str] = ["1=1"]
@@ -102,6 +148,9 @@ def list_rules_for_selector(
             if severity:
                 conditions.append("severity = ?")
                 params.append(severity)
+            if rule_type:
+                conditions.append("rule_type = ?")
+                params.append(rule_type)
             if keyword:
                 conditions.append("(name LIKE ? OR label LIKE ? OR description LIKE ?)")
                 like = f"%{keyword}%"
@@ -134,6 +183,11 @@ def list_rules_for_selector(
                         pass
                 item["enabled"] = bool(item.get("enabled"))
                 items.append(item)
+
+            # 统一附加 effective_active（单一真值展示）
+            active = DetectionPolicy.get_active()
+            active_ids = set(active.get("rule_ids", [])) if active else set()
+            Rule.annotate_effective(items, active_ids, active is not None)
 
             return {"code": 0, "data": {"items": items, "total": total}}
     except Exception as e:
@@ -807,8 +861,16 @@ def get_rule_stats(current_user: dict = Depends(get_current_user)):
         user_rules = conn.execute(f"SELECT COUNT(*) as c FROM rules WHERE source != 'default'{tw}", tp).fetchone()["c"]
         rule_engine_count = conn.execute(f"SELECT COUNT(*) as c FROM rules WHERE engine_type='rule_engine'{tw}", tp).fetchone()["c"]
         behavior_engine_count = conn.execute(f"SELECT COUNT(*) as c FROM rules WHERE engine_type='behavior_engine'{tw}", tp).fetchone()["c"]
+    # effective_active 计数（单一真值看板）
+    active = DetectionPolicy.get_active()
+    active_ids = set(active.get("rule_ids", [])) if active else set()
+    effective_active = 0
+    for r in Rule.list(tenant_id=tenant_id):
+        eff, _ = Rule.effective_active_of(r, active_ids, active is not None)
+        if eff:
+            effective_active += 1
     return {"code": 0, "data": {
-        "total": total, "enabled": enabled,
+        "total": total, "enabled": enabled, "effective_active": effective_active,
         "high_risk": high_risk, "medium_risk": medium_risk,
         "user_rules": user_rules,
         "rule_engine_count": rule_engine_count,

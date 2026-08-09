@@ -13,7 +13,7 @@ confidence 由数据驱动，并在 output 标注"LLM 摘要不可用"。绝不�
 import logging
 from typing import Any, Optional
 
-from app.shared.ai_constants import DEGRADED_MESSAGE_TEMPLATE
+from app.shared.ai_constants import build_degraded_message
 from app.services.agents.base_agent import BaseAgent, AgentResult
 from app.services.agents import prompts
 from app.services.agents import data_provider
@@ -93,6 +93,7 @@ class TriageAgent(BaseAgent):
 
         data_summary = self._build_data_summary(events, logs, rules_hit, priority)
         llm_unavailable = False
+        degraded_reason: Optional[str] = None  # P1-5：降级真实原因
 
         # 尝试 LLM 摘要（降级安全）
         try:
@@ -108,6 +109,8 @@ class TriageAgent(BaseAgent):
             )
             if resp.get("degraded") or not resp.get("content"):
                 llm_unavailable = True
+                # 优先用 LLM 层给出的精确原因（AgentLLM._degraded 的 error）
+                degraded_reason = resp.get("error") or "AI 服务返回空内容"
             else:
                 output = resp["content"]
                 # 累加 LLM 调用统计信息（token 用量、调用次数、耗时）
@@ -115,11 +118,13 @@ class TriageAgent(BaseAgent):
                 self._llm_usage = resp.get("usage", {}) or {}
                 self._llm_duration_ms = resp.get("execution_duration_ms") or 0
         except Exception as exc:  # noqa: BLE001
-            logger.warning("TriageAgent LLM 调用异常（降级）: %s", exc)
+            # P1-4：用 exception 保留 traceback，避免把编程错误伪装成"LLM 不可用"
+            logger.exception("TriageAgent LLM 调用异常（降级）: %s", exc)
             llm_unavailable = True
+            degraded_reason = f"{type(exc).__name__}: {exc}"[:200]
 
         if llm_unavailable:
-            output = data_summary + f"\n\n{DEGRADED_MESSAGE_TEMPLATE}"
+            output = data_summary + "\n\n" + build_degraded_message(degraded_reason)
 
         # P1-8: 当 host_id 为 None 时在 output 中加入提示
         if not host_id:
@@ -144,6 +149,8 @@ class TriageAgent(BaseAgent):
             usage=self._llm_usage,
             llm_calls_count=self._llm_calls_count,
             execution_duration_ms=self._llm_duration_ms,
+            error=degraded_reason,              # P1-4：错误透出
+            degraded_reason=degraded_reason,    # P2-13：结构化字段
         )
         # PII 脱敏（§8.6）
         self._apply_masking(result)

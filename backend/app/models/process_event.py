@@ -32,6 +32,7 @@ class ProcessEvent:
         event_time: Optional[str] = None,
         detail: Optional[Any] = None,
         collected_at: Optional[str] = None,
+        source: Optional[str] = None,
     ) -> int:
         """写入单条进程事件.
 
@@ -46,6 +47,7 @@ class ProcessEvent:
             detail: 事件细化数据（dict/list，自动 JSON 序列化；可承载 memory_sections/
                 etw_events/remote_thread_events 等）.
             collected_at: 采集时间.
+            source: 事件来源（process_events=常驻 daemon / triage=动态取证 等），用于溯源.
 
         Returns:
             新插入行的主键 id.
@@ -61,13 +63,13 @@ class ProcessEvent:
                 INSERT INTO process_events
                     (host_id, event_type, pid, ppid, process_name, process_path,
                      command_line, parent_name, session, start_time, event_time,
-                     detail, collected_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     detail, collected_at, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     host_id, event_type, pid, ppid, process_name, process_path,
                     command_line, parent_name, session, start_time, event_time,
-                    detail, collected_at,
+                    detail, collected_at, source,
                 ),
             )
             return int(cursor.lastrowid)
@@ -103,6 +105,7 @@ class ProcessEvent:
                 event_time=ev.get("event_time") or ev.get("timestamp"),
                 detail=ev.get("detail"),
                 collected_at=ev.get("collected_at"),
+                source=ev.get("source"),
             )
             count += 1
         return count

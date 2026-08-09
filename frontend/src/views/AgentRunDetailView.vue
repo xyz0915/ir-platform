@@ -57,6 +57,16 @@
         </div>
         <div class="cp-section" v-for="(step, i) in completedSteps" :key="i">
           <h4>{{ step.agent }} — {{ step.stage }}</h4>
+          <!-- P2-13: 降级原因用独立 el-alert（info 中性色）呈现，不再只混在正文里 -->
+          <el-alert
+            v-if="step.degraded_reason"
+            type="info"
+            :closable="false"
+            show-icon
+            title="本阶段 AI 摘要未生成"
+            :description="`原因：${step.degraded_reason}`"
+            class="cp-degraded-alert"
+          />
           <pre class="cp-output">{{ step.output }}</pre>
         </div>
       </div>
@@ -242,6 +252,7 @@ onMounted(async () => {
         const oj = step.output_json
         const ej = step.evidence_json
         let output = ''
+        let degradedReason = ''  // P2-13
         let evidence = { data_sources: [], evidence: [] }
 
         if (oj) {
@@ -249,11 +260,13 @@ onMounted(async () => {
             try {
               const parsed = JSON.parse(oj)
               output = parsed.output || parsed.summary || ''
+              degradedReason = parsed.degraded_reason || ''
             } catch {
               output = oj
             }
           } else {
             output = oj.output || oj.summary || ''
+            degradedReason = oj.degraded_reason || ''
           }
         }
 
@@ -272,6 +285,7 @@ onMounted(async () => {
           stage: step.stage || '',
           status: step.status || 'completed',
           output,
+          degraded_reason: degradedReason,  // P2-13
           evidence,
           evidence_json: evidence,
           started_at: step.created_at,
@@ -551,6 +565,10 @@ function goBack() {
   font-weight: 500;
   margin: 0 0 4px;
   color: #111827;
+}
+/* P2-13: 降级原因提示条，仅加间距，不改动现有布局 */
+.cp-degraded-alert {
+  margin: 0 0 8px;
 }
 .cp-output {
   margin: 0;

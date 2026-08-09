@@ -46,10 +46,11 @@ class AiConfigProfile:
 
     @staticmethod
     def get_active() -> Optional[dict]:
-        """获取当前激活的AI配置Profile."""
+        """获取当前激活的AI配置Profile（P2-14：多条 is_active=1 时确定性命中最近创建的一条）."""
         with get_connection() as conn:
             row = conn.execute(
-                "SELECT * FROM ai_config_profiles WHERE is_active = 1 LIMIT 1"
+                "SELECT * FROM ai_config_profiles WHERE is_active = 1 "
+                "ORDER BY id DESC LIMIT 1"  # P2-14: 补 ORDER BY，消除 SQLite 查询计划带来的不确定性
             ).fetchone()
             return dict(row) if row else None
 

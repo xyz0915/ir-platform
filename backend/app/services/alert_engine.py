@@ -94,13 +94,24 @@ class AlertEngine:
         return None
 
     def evaluate_events(self, host_id: int, events: list) -> list:
-        """批量评估事件列表，返回新产生的告警列表."""
+        """批量评估事件列表，返回新产生的告警列表.
+
+        进程类事件（含 daemon 的 ``process_start``）统一走进程专用评估
+        ``evaluate_process_event``（命令级检测 certutil/powershell/ recon/凭据窃取），
+        其余事件走通用 ``process_event``。两类最终都经 ``Alert.create_or_aggregate``
+        做 5 分钟窗口内按 (host, rule) 聚合，确保 daemon 高频进程流不会触发告警风暴。
+        """
+        _PROCESS_TYPES = {"process_start", "process_create", "process_term"}
         new_alerts = []
         for event in (events or []):
             if not isinstance(event, dict):
                 continue
             try:
-                result = self.process_event(host_id, event)
+                et = event.get("event_type", "")
+                if et in _PROCESS_TYPES:
+                    result = self.evaluate_process_event(host_id, event)
+                else:
+                    result = self.process_event(host_id, event)
                 if result:
                     new_alerts.append(result)
             except Exception as e:

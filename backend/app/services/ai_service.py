@@ -7,6 +7,7 @@ JSON 响应解析等功能。旧版 analyze_with_ai 保留向后兼容。
 import hashlib
 import json
 import logging
+import threading  # P2-9: _get_breaker 的分桶懒创建临界区
 import uuid
 import warnings
 from datetime import datetime, timedelta, timezone
@@ -53,8 +54,37 @@ DEFAULT_SYSTEM_PROMPT = """你是一个专业的网络安全应急响应分析�
 class AiService:
     """AI分析服务."""
 
-    # 断路器实例（类级别，所有请求共享熔断状态）
+    # 断路器实例（类级别）——兼容保留：默认桶，旧代码 / 测试仍可直接引用
     _ai_circuit_breaker = CircuitBreaker(failure_threshold=5, recovery_timeout=300)
+
+    # P2-9: 断路器按 bucket 分桶（key 形如 "profile:{id}"），
+    # 避免单个 profile 失败 5 次导致全站所有 AI 能力一起熔断 300 秒。
+    _breakers: dict = {}
+    _breaker_lock = threading.Lock()
+
+    @classmethod
+    def _get_breaker(cls, bucket: str = "default") -> CircuitBreaker:
+        """按 bucket 获取（懒创建）断路器实例（P2-9）。
+
+        Args:
+            bucket: 分桶键；``""`` / ``"default"`` 返回兼容保留的默认桶。
+
+        Returns:
+            该桶对应的 ``CircuitBreaker`` 实例。
+        """
+        if bucket in ("", "default") or bucket is None:
+            return cls._ai_circuit_breaker
+        with cls._breaker_lock:
+            br = cls._breakers.get(bucket)
+            if br is None:
+                # AI_CIRCUIT_BREAKER_THRESHOLD 在 app/config.py 未定义 → 字面量 5 兜底
+                # （与上方默认桶保持一致）；AI_CIRCUIT_BREAKER_TIMEOUT 已存在（config.py:128 = 300）
+                br = CircuitBreaker(
+                    failure_threshold=getattr(settings, "AI_CIRCUIT_BREAKER_THRESHOLD", 5),
+                    recovery_timeout=getattr(settings, "AI_CIRCUIT_BREAKER_TIMEOUT", 300),
+                )
+                cls._breakers[bucket] = br
+            return br
 
     # ================================================================
     # API Key 加解密（不变）
@@ -193,6 +223,7 @@ class AiService:
         max_tokens: int,
         temperature: float,
         audit_context: Optional[dict] = None,
+        breaker_bucket: str = "default",
     ) -> dict:
         """调用 OpenAI-compatible 格式的 LLM API（非流式）.
 
@@ -266,9 +297,20 @@ class AiService:
         import time as _time
         start_time = _time.monotonic()
         try:
-            result = await AiService._ai_circuit_breaker.call(_do_llm_request)
+            # P2-9: 按 bucket 取断路器，单 profile 熔断不再连坐全局
+            breaker = AiService._get_breaker(breaker_bucket)
+            result = await breaker.call(_do_llm_request)
             elapsed_ms = int((_time.monotonic() - start_time) * 1000)
-            AiService._write_audit(audit_context, result, elapsed_ms, "success", None)
+            # P1-2（§3.6.1）: HTTP 200 但包体含 error → 记 failed，避免"查 failed 永远空"。
+            # 注意：agent_llm.py 调用未传 audit_context，_write_audit 会在开头 return，
+            # 故该分支对 Agent 链路无实效，仅惠及传了 audit_context 的其它调用方。
+            gw_err = result.get("error") if isinstance(result, dict) else None
+            if gw_err:
+                AiService._write_audit(
+                    audit_context, result, elapsed_ms, "failed", str(gw_err)[:500]
+                )
+            else:
+                AiService._write_audit(audit_context, result, elapsed_ms, "success", None)
             return result
         except Exception as e:
             elapsed_ms = int((_time.monotonic() - start_time) * 1000)

@@ -160,20 +160,19 @@ class AnalysisService:
         # 1. 清除旧分析结果
         clear_analysis_by_host(host_id)
 
-        # 2. 加载规则（优先使用激活策略）
+        # 2. 加载规则（优先使用激活策略；取消静默回退，改由 ensure_active_policy 保证基线）
         from app.models.policy import DetectionPolicy
-        active_policy = DetectionPolicy.get_active()
+        active_policy = DetectionPolicy.ensure_active_policy()
         if active_policy and active_policy.get("rule_ids"):
             rules = RuleEngine.load_rules_by_ids(active_policy["rule_ids"])
-            # 过滤掉行为引擎规则（仅 ServiceRiskAnalyzer 使用）
+            # 过滤掉行为引擎规则（仅 ServiceRiskAnalyzer 使用，且已纳入同策略门控）
             rules = [r for r in rules if r.get("engine_type") != "behavior_engine"]
             policy_name = active_policy.get("name", "未命名")
             logger.info("Using active policy '%s': %d rules", policy_name, len(rules))
         else:
-            rules = RuleEngine.load_rules()
-            # 过滤掉行为引擎规则（仅 ServiceRiskAnalyzer 使用）
-            rules = [r for r in rules if r.get("engine_type") != "behavior_engine"]
-            logger.warning("No active policy — fallback to all enabled rules (%d rules)", len(rules))
+            # ensure_active_policy 兜底后仍无激活策略：绝不静默全量运行，返回空集并告警
+            logger.error("无激活策略且基线激活失败 — 中止规则加载，避免静默全量检测")
+            rules = []
 
         # 3. 构建主机画像
         profile_data = ProfileBuilder.build(raw_data)

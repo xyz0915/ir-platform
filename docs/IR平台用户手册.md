@@ -1,8 +1,8 @@
 # 个人应急响应平台（IR Platform）用户手册
 
-> **文档版本**: v1.2  
-> **日期**: 2026-07-14  
-> **适配平台版本**: commit `eaa4948`  
+> **文档版本**: v1.3  
+> **日期**: 2026-08-08  
+> **适配平台版本**: commit `0532fb7`  
 > **面向角色**: 👤 用户 / 🔧 运维 / 💻 开发
 
 ---
@@ -37,6 +37,22 @@
 20. [技术架构与数据流](#20-技术架构与数据流)
 21. [部署与运维](#21-部署与运维)
 22. [版本管理与维护策略](#22-版本管理与维护策略)
+23. [仪表盘（Dashboard）](#23-仪表盘dashboard)
+24. [统一告警中心](#24-统一告警中心)
+25. [事件裁决与处置](#25-事件裁决与处置)
+26. [事件聚类](#26-事件聚类)
+27. [根因分析](#27-根因分析)
+28. [分析中心](#28-分析中心)
+29. [事件详情与深度研判](#29-事件详情与深度研判)
+30. [日志检索与日志分析](#30-日志检索与日志分析)
+31. [策略配置](#31-策略配置)
+32. [工具箱](#32-工具箱)
+33. [规则草稿与自动调优](#33-规则草稿与自动调优)
+34. [KB 反馈与自进化](#34-kb-反馈与自进化)
+35. [AI 高级分析指挥台](#35-ai-高级分析指挥台)
+36. [智能体编排](#36-智能体编排)
+37. [主机 Agent 常驻管理](#37-主机-agent-常驻管理)
+38. [数据质量与对账](#38-数据质量与对账)
 
 ---
 
@@ -2827,4 +2843,596 @@ CMD ["python", "run.py"]
 
 ---
 
-*文档结束 — IR 平台用户手册 v1.0*
+## 23. 仪表盘（Dashboard）
+
+### 23.1 功能描述
+
+首页（`/`）全局态势总览，聚合 KPI 卡片、趋势图与三列清单，是登录后的默认入口。全部数据由单一接口 `GET /api/dashboard/stats?range=` 提供。
+
+### 23.2 KPI 卡片（6 张）
+
+| 卡片 | 说明 |
+|------|------|
+| 待处理告警 | 含严重数 + 环比 |
+| 活跃案件 | 今日新增 |
+| 已采集主机 | 待分析 / 近 24h |
+| 规则命中 | 活跃规则数 |
+| 知识库命中 | 覆盖率 % |
+| AI 分析 | 可用率 % + 趋势 |
+
+### 23.3 图表
+
+- **案件与规则命中趋势**：双轴图（堆叠柱 + 折线）
+- **告警类别分布**：按规则聚合 TOP8
+
+### 23.4 底部三列
+
+待处理告警、最近主机（风险等级）、规则命中 TOP8。时间范围切换：`24h / 7d / 30d / 全部`。
+
+> **面向角色**: 👤用户
+
+---
+
+## 24. 统一告警中心
+
+### 24.1 功能描述
+
+路由 `/alerts`。告警列表 + 统计卡片 + 趋势/饼图（ECharts）+ WebSocket 实时推送 + 批量确认/解决，是安全值守的核心工作台。
+
+> ⚠️ **历史说明**：旧版 `AlertCenterView.vue` 已废弃，当前 `/alerts` 加载的是 `UnifiedAlertCenter.vue`，多出告警趋势折线、严重度饼图、案件→主机级联筛选、主机在线状态侧栏等能力。
+
+### 24.2 告警状态流转
+
+```
+open → acknowledged → resolved / dismissed   （dismiss 可带 reason）
+```
+
+### 24.3 关键能力
+
+- 统计卡片 + 告警趋势折线 + 严重度饼图
+- 案件→主机级联筛选；小时新增 / 规则命中 / 事件速率 / 峰值指标
+- 主机在线状态侧栏
+- `WS /api/ws/alerts` 实时推送（JWT 校验失败关连接）
+
+### 24.4 关键 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/alerts` | 告警列表（host_id/severity/status/rule_name/case_id/日期/search/分页） |
+| GET | `/api/alerts/{alert_id}` | 告警详情（404 若不存在） |
+| PUT | `/api/alerts/{alert_id}/acknowledge` | 确认告警，记录操作人 |
+| PUT | `/api/alerts/{alert_id}/resolve` | 标记已解决 |
+| PUT | `/api/alerts/{alert_id}/dismiss` | 忽略告警（可带 reason） |
+| GET | `/api/alerts/stats/summary` | 统计汇总 |
+| GET | `/api/alerts/stats/trend` | 趋势（默认 24h，粒度 auto） |
+| WS | `/api/ws/alerts?token=` | 实时推送 |
+
+> **面向角色**: 🔧运维 💻开发（安全值守）
+
+---
+
+## 25. 事件裁决与处置
+
+### 25.1 功能描述
+
+对分析结果中的安全事件进行 **AI 裁决打标** 与 **人工处置**，形成完整调查闭环。这是两条相互独立的链路。
+
+### 25.2 AI 裁决（event_verdict）
+
+批量自动打标（非人工）。标签枚举：`suspicious` / `false_positive` / `benign` / `unknown`。
+
+- 单批去重后上限 **200 条**（超限返 400，非 500）
+- `confidence < confidence_threshold`（默认 0.6）时，即使 LLM 判 suspicious 也降级为 benign
+- LLM 熔断 / 解析失败写 `unknown`，整批仍 2xx
+
+**API**: `POST /api/security-events/ai-verdict`
+
+### 25.3 人工处置（disposition）
+
+对事件追加处置记录，仅追加不覆盖，形成审计轨迹：
+
+| 动作 | 含义 |
+|------|------|
+| `isolate` | 隔离主机 |
+| `kill_process` | 结束进程 |
+| `block_ip` | 封锁 IP |
+| `add_rule` | 添加规则 |
+| `escalate` | 上报 |
+| `ignore` | 忽略 |
+
+附 `operator` + `comment`。
+
+**API**:
+- `POST /api/events/{event_id}/dispositions` — 新增处置记录
+- `GET /api/events/{event_id}/dispositions` — 处置记录列表（分页）
+
+### 25.4 在分析中心的使用
+
+分析中心（第 28 章）事件表格支持内联改状态、指派、批量操作（`batch-status` / `batch-assign` / `batch-link-case`）。
+
+> **面向角色**: 👤用户 🔧运维
+
+---
+
+## 26. 事件聚类
+
+### 26.1 功能描述
+
+路由 `/incident-clusters`。把分散的 `security_events` 聚成「案件级」归并簇，便于按攻击行动整体研判。
+
+### 26.2 两种聚类模式
+
+| 模式 | 说明 | 落库 |
+|------|------|------|
+| `keyword`（默认） | 按规则名 + 攻击链阶段分组 | `incident_correlations` |
+| `semantic` | 跨主机对 suspicious 事件做 AI 语义聚类（前端按钮固定用此模式） | `incident_clusters` |
+
+### 26.3 簇详情
+
+涉及主机列表、成员事件 ID（可跳转 `/analysis-center/event/{id}`）、AI 研判聚合（标签分布 / 平均置信度 / 攻击类型）、置信度与严重度。
+
+### 26.4 关键 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/ai/correlate-incidents?mode=semantic` | 事件归并（可指定 host_id/时间窗） |
+| GET | `/api/ai/incidents/clusters` | 语义归并簇列表（severity 过滤 + 分页） |
+
+> **面向角色**: 👤用户（分析师）
+
+---
+
+## 27. 根因分析
+
+### 27.1 功能描述
+
+路由 `/root-cause`。输入**主机 ID（必填）** + 事件 ID（可选），发起进程树回溯根因分析，定位「某主机上一条安全事件的攻击起点」。基于 `ProcessTreeBuilder` 回溯真实 `process_events` / `normalized_logs`。
+
+### 27.2 输出
+
+`root_node`（根因进程）、`causal_chain`（因果链）、`confidence`、`evidence`、`summary`、`llm_explanation`、`process_tree`，全部经 `data_masking` 脱敏。LLM 不可用时自动降级为结构化因果链，不报错。
+
+### 27.3 关键 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/analysis/root-cause` | 入参 `{host_id, event_id?}` |
+
+> **面向角色**: 👤用户 💻开发
+
+---
+
+## 28. 分析中心
+
+### 28.1 功能描述
+
+路由 `/analysis-center`。以「案件→主机」为轴的**规则匹配与 AI 降噪工作台**：左侧事件列表 + 右侧详情面板。
+
+### 28.2 核心能力
+
+- **案件/主机级联选择器**（CaseHostSelector），主机列表随案件联动过滤
+- **统计卡片**：总数 / 已匹配 / 未匹配 / 命中规则数 / 今日新增
+- **视图切换**：全部 / 已匹配 / 未匹配 + AI 三态（`recommended` / `suspicious` / `false_positive`）
+- **高级筛选**：严重度、事件类型、时间范围、规则分类、规则置信度下限、采集器来源、关键词
+- **规则名称筛选**（仅「已匹配」视图显示命中规则清单）
+- **事件表格**：分页、排序、多选、内联改状态；滚动头部吸顶
+- **AI 操作**：① 降噪研判（按案件整体跑 LLM）② 研判打标（批量写回 ai_verdict）
+- **右侧详情面板**：改状态、指派、关联事件
+- **事件书签**：纯前端 localStorage 持久化
+
+### 28.3 关键 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/analysis/events` | 事件列表（分页/筛选/AI 标签） |
+| GET | `/api/analysis/events/stats` | 统计卡片 |
+| GET | `/api/analysis/events/filters` | 筛选元数据（案件/主机/命中规则） |
+| GET | `/api/analysis/events/timeline` | 攻击链时间线 |
+| POST | `/api/ai/noise-reduce` | AI 降噪研判（按案件） |
+| POST | `/api/security-events/ai-verdict` | AI 批量研判打标 |
+| GET | `/api/analysis/events/export/csv` | 事件导出 |
+
+> **面向角色**: 👤用户 💻开发
+
+---
+
+## 29. 事件详情与深度研判
+
+### 29.1 功能描述
+
+路由 `/analysis-center/event/:id`。单条安全事件的三栏深度研判页（攻击链 / 证据 / AI 研判）。
+
+### 29.2 三栏布局
+
+- **左**：攻击链时间线（按 12 个 MITRE 攻击阶段聚合，高亮当前阶段）
+- **中**：事件摘要卡（含频次）、命中规则列表、进程链树、证据双视图（原始/解析，按事件类型自适应进程/网络/持久化主体）、关联事件
+- **右**：AI 研判面板、IOC 指标、关联告警、修复建议、主机概览统计、处置记录（可新增）
+
+顶部：面包屑 + 案件跳转、复制 32 位原始事件 ID、决策条（风险评分 / 改状态 / 深度调查）。数据分三阶段加载，增强数据失败不阻断渲染。
+
+### 29.3 关键 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/analysis/events/{id}` | 事件详情 |
+| GET | `/api/analysis/events/{id}/display` | v2.1 展示投影（必填/辅助 + 证据双视图） |
+| GET | `/api/analysis/events/{id}/process-tree` | 进程链 |
+| GET | `/api/analysis/events/{id}/related` | 关联事件 |
+| GET | `/api/analysis/events/{id}/context` | 前后 N 分钟上下文 |
+| GET | `/api/analysis/events/{id}/host-stats`、 `/impact` | 主机统计、影响面 |
+| PATCH | `/api/analysis/events/{id}/status`、 `/assign` | 改状态、指派 |
+| GET | `/api/events/{id}/dispositions` | 处置记录 |
+
+> **面向角色**: 👤用户 💻开发
+
+---
+
+## 30. 日志检索与日志分析
+
+### 30.1 功能描述
+
+两个互补的日志模块：
+
+- **日志检索 LogSearch**（路由 `/log-search`，查 `security_events`）：面向调查取证的检索（DSL + 全文 + 跨表 + 脱敏导出）
+- **日志分析 LogAnalysis**（路由 `/logs`，查 `normalized_logs`）：按 Windows 事件类型做统计与专题分析
+
+### 30.2 日志检索（LogSearch）
+
+- **搜索语法**：轻量字段 DSL（`field_dsl.py`），白名单字段 + 操作符 `== != >= <= > < ~ in between`，支持 `and/or/not` 与括号；裸词按 keyword contains，多裸词隐式 AND（如 `powershell -enc`）。DSL 非空时覆盖 keyword，解析失败返 400
+- **检索范围三选**：安全事件（events）/ 原始日志（imports）/ 全部（走 `/unified-search` 跨表）
+- **筛选**：事件类型、严重度、攻击阶段、采集引擎（osquery 规则引擎 / cm 行为分析）、状态；时间快捷 5m/1h/24h/7d/自定义（默认 24h）
+- **导出**：JSON/CSV，带「脱敏导出」开关（IP/用户名/路径等），导出行为写 `export_audit_log`
+- **附加**：NL 自然语言检索面板；从导入记录一键生成 SecurityEvent
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/log-search/search` | 事件检索（keyword + DSL） |
+| GET | `/api/log-search/search/advanced` | 字段 DSL 高级检索 |
+| GET | `/api/log-search/unified-search` | 跨表统一检索 |
+| GET | `/api/log-search/search/export` | 导出（脱敏 + 审计） |
+| GET | `/api/log-search/trend` | 日志量趋势 |
+| POST | `/api/ai/nl-log-search` | 自然语言检索 |
+
+### 30.3 日志分析（LogAnalysis）
+
+- **5 个专题视图**：概览 / 暴破分析 / 横向移动 / 进程溯源 / 威胁告警
+- **KPI**：总事件、严重+高危、暴力破解、进程创建、敏感操作、威胁标签
+- **图表**：事件时间线（按小时聚合可缩放）+ 类型分布 TOP10
+- **pivot 透视下钻**：来源 IP / 用户名 / 进程名 / 全文，详情抽屉「重建会话」，MITRE 技术号外链
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/logs/search` | 检索 |
+| GET | `/api/logs/stats/summary` | 统计汇总 |
+| GET | `/api/logs/stats/timeline` | 时间线 |
+| GET | `/api/logs/patterns/brute-force` | 暴破检测 |
+| GET | `/api/logs/pivot` | 透视下钻 |
+
+> **面向角色**: 👤用户 💻开发
+
+---
+
+## 31. 策略配置
+
+### 31.1 功能描述
+
+路由 `/policies`。配置**检测策略集**：每个策略含 `name` / `description` / `enable_rag`（RAG 增强）/ `enable_attack_chain`（攻击链分析）/ `tags`，并挂载一批检测规则。左侧策略列表 + 右侧详情双栏。**全局仅一个激活策略**供分析引擎读取。
+
+### 31.2 多选批量开关（重点能力）
+
+规则选择器支持按分类（进程/网络/登录/文件/持久化/IOC/WebShell/内存）、严重度、关键词筛选，提供**本页全选、反选、跨页保持选中**（`selectedRuleIds` + `_checked` 双轨同步），统一 `PUT /api/policies/{id}/rules` 批量保存。
+
+### 31.3 策略级操作
+
+激活 / 停用 / 复制 / 删除（**激活中的策略不可删除**）；有未保存修改切换策略时弹确认框。
+
+### 31.4 关键 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/policies` | 策略列表 |
+| POST | `/api/policies` | 新建策略 |
+| GET | `/api/policies/{id}` | 策略详情（含 rules） |
+| PUT | `/api/policies/{id}` | 更新策略 |
+| DELETE | `/api/policies/{id}` | 删除（激活策略禁止） |
+| POST | `/api/policies/{id}/activate` | 激活 |
+| POST | `/api/policies/{id}/deactivate` | 停用 |
+| POST | `/api/policies/{id}/duplicate` | 复制 |
+| GET | `/api/policies/{id}/rules` | 已挂载规则 |
+| PUT | `/api/policies/{id}/rules` | **批量设置规则**（rule_ids 数组） |
+| GET | `/api/rules/selector` | 规则选择器多维筛选 |
+| GET | `/api/policies/active/info` | 当前激活策略 |
+
+> **面向角色**: 🔧运维 👤用户（分析师）
+
+---
+
+## 32. 工具箱
+
+### 32.1 功能描述
+
+路由 `/tools`。集中管理应急响应现场使用的**可执行工具**，供一线下载取用。
+
+### 32.2 分类
+
+固定 6 类：内存取证、恶意分析、查杀清理、网络检测、日志分析、实用工具。
+
+### 32.3 上传与版本
+
+- **上传字段**：名称、描述、分类、版本号、标签、更新日志、工具文件、操作文档
+- **文件限制**：工具包 `.exe/.zip/.tar.gz/.py/.ps1`，最大 **200MB**；文档可选，最大 **50MB**
+- **多版本管理**：发布新版本、版本历史、按版本下载；下载计数统计、文档在线预览
+
+### 32.4 关键 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/tools` | 工具列表 |
+| POST | `/api/tools` | 上传工具 |
+| GET | `/api/tools/stats` | 统计 |
+| GET | `/api/tools/categories` | 分类 |
+| POST | `/api/tools/{id}/versions` | 发布新版本 |
+
+> **面向角色**: 👤用户 🔧运维
+
+---
+
+## 33. 规则草稿与自动调优
+
+### 33.1 功能描述
+
+路由 `/rule-drafts`。**AI 自动生成的检测规则草稿工作流**：生成 → 影子运行 → 人审启用。
+
+> ⚠️ **与知识草稿的区别**：第 17 章「知识草稿」沉淀的是**情报知识**（MITRE/C2/Malware 文本），本模块沉淀的是**检测规则**（condition 表达式/severity/category）。二者流程、状态、存储完全独立，切勿混淆。
+
+### 33.2 状态机
+
+```
+draft → shadow → pending_review → enabled / rejected
+```
+
+### 33.3 独有能力
+
+- AI 自动生成检测规则
+- **影子运行（shadow）**：只统计命中不产告警
+- 命中统计
+- **自动调优**：依误报样本产新版本
+- 人审启用（需 admin）
+
+### 33.4 关键 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/rules/generate` | AI 生成规则 |
+| GET/POST/PUT/DELETE | `/api/rules/drafts*` | 规则草稿 CRUD |
+| POST | `/api/rules/drafts/{id}/shadow` | 影子运行 |
+
+> **面向角色**: 👤用户（分析师）🔧运维（admin 启用）
+
+---
+
+## 34. KB 反馈与自进化
+
+### 34.1 功能描述
+
+路由 `/kb-feedback`。对检测结果做知识层面的反馈闭环，驱动**知识库自进化**。
+
+### 34.2 反馈类型
+
+| 类型 | 含义 |
+|------|------|
+| `false_positive` | 误报 |
+| `true_positive` | 真阳性 |
+| `suppress` | 抑制 |
+
+可关联规则名、`host_id`、`event_id` 与说明。
+
+### 34.3 自进化
+
+触发把全部未沉淀反馈自动沉淀为「抑制规则 + 知识条目（approved）」。列表按类型、是否已沉淀（applied）筛选；统计卡展示总数 / 已沉淀 / 未沉淀 / 各类型计数。
+
+### 34.4 关键 API
+
+由 `/api/kb/*` 提供反馈提交、列表、统计与「沉淀」触发端点。
+
+> **面向角色**: 👤用户（分析师）
+
+---
+
+## 35. AI 高级分析指挥台
+
+### 35.1 功能描述
+
+路由 `/ai-advanced`。多 Tab 的 AI 安全分析指挥台（平台内最大的单页），面向高级分析师的深度研判与指挥。
+
+### 35.2 功能 Tab
+
+- **自然语言指挥台**：对话式提问，SSE 流式输出、会话持久化（localStorage）、会话搜索、快捷问句、文件上传解析、上下文主机指示
+- **事件关联**：`correlate-incidents` 聚类攻击事件、`incidents/clusters` 列表、`narrate-incident` 生成攻击叙事
+- **风险排行**：主机沦陷风险评分榜
+- **误报管理**：标记 / 查询 / 删除误报模式
+- **调查剧本 Playbook**：启动 / 状态 / 单步 / 控制，配可视化攻击路径图、热力时间线
+- **其他**：报告生成、动作执行（带二次确认）、会话摘要、反馈统计、AI 审计日志、预案模板
+
+### 35.3 关键 API
+
+复用第 16、19 章的 `/api/ai/*`，另含 `correlate-incidents` / `narrate-incident` / 风险排行 / 误报管理 / playbook 等端点。
+
+> **面向角色**: 👤用户（分析师）
+
+---
+
+## 36. 智能体编排
+
+### 36.1 模块总述
+
+路由前缀 `/agent-orchestration`。IR 平台的 **LLM 多智能体自动化研判中枢**：把安全事件交给编排引擎，由多个 LLM 智能体按流水线接力完成「分诊 → 调查 → 处置 → 报告」，并在高危处置动作前插入**人工审批（HITL）**与**护栏（Guardrail）**拦截。
+
+> ⚠️ **重要区分**：本模块是**服务端 AI 智能体**（软件角色，只做推理编排），与第 4 章「主机端点采集 Agent」（`agent/` 目录，部署在目标主机上的采集客户端）**完全不同**，只是同名「Agent」。旧路径 `/agent-management` 已重定向到本模块的智能体库页。
+
+### 36.2 子页面与路由
+
+| 页面 | 路由 | 功能 |
+|------|------|------|
+| 编排容器 | `/agent-orchestration` | 九模块导航，含待审 HITL 红点、明暗主题 |
+| 编排总览 | `/agent-orchestration/dashboard` | 运行中智能体/成功率/待审 HITL/护栏拦截 + 趋势 + 近期运行 |
+| 智能体库 | `/agent-orchestration/agents` | 新建/编辑/删除/启停智能体，绑定工具与模型 Profile |
+| 流水线 | `/agent-orchestration/pipeline` | DAG 画布：拖拽节点、配置、调试、预设、「设为默认流程」 |
+| MCP 工具 | `/agent-orchestration/tools` | MCP 服务器状态卡 + 工具清单 schema，在线离线筛选/搜索 |
+| 记忆/RAG | `/agent-orchestration/memory` | 知识库/向量库概览 + 长期记忆检索/写入/删除 |
+| 人工审核 | `/agent-orchestration/hitl` | 待审任务列表 + 上下文面板 + 批准/拒绝（仅管理员） |
+| 护栏 | `/agent-orchestration/guardrail` | 护栏策略 CRUD：动作模式/风险等级/强制确认/回滚预案/启停 |
+| 运行 | `/agent-orchestration/runs` | 启动闭环（事件/批量/案件 ID）、运行记录 |
+| 运行详情 | `/agent-orchestration/runs/:runId` | 三 Tab：调查过程(SSE)/调查结论/可观测性 |
+| 设置 | `/agent-orchestration/settings` | 多模型 Profile + 部署配置只读展示 |
+
+### 36.3 核心概念
+
+- **Agent（智能体）**：有明确职责、绑定 LLM 模型与工具集的 AI 角色（分诊/调查/处置/报告）
+- **Pipeline（流水线）**：多智能体 DAG 编排流程，可存为 **Preset（预设）**
+- **默认流程规则**：按事件类别 + 优先级（P0–P3）自动匹配预设
+- **Tool（工具）**：智能体可调用原子能力，带 JSON schema/幂等键/超时/重试
+- **MCP**：Model Context Protocol，标准化工具服务器接入协议
+- **Memory（长期记忆）**：跨运行沉淀的结构化经验，可按事件/主机/智能体/类型检索复用
+- **Guardrail（护栏）**：对拟执行动作的安全门禁，命中即拦截 + 记录
+- **HITL**：人机协同审批，高危动作暂停等管理员批准（`hitl_approval + resume` 协议）
+- **Run / Step**：一次编排执行实例及步骤轨迹，通过 SSE 实时推送
+
+### 36.4 操作流程
+
+1. **准备智能体**：新建/启用，绑定模型 Profile 与工具
+2. **设计流水线**：拖拽 DAG → 配置 → 调试/模拟分支 → 校验保存预设
+3. **设为默认（可选）**：按事件类别 + 优先级绑定
+4. **发起运行**：填入事件/批量/案件 ID → 启动闭环
+5. **实时观察**：运行详情 SSE 刷新步骤卡与 DAG 图
+6. **人工审批**：走到处置节点变 `waiting_hitl`，管理员批准/拒绝后续跑/终止
+7. **查看结果**：调查结论 + 可观测性
+
+### 36.5 关键 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/agents/run` | 启动一次编排闭环（超时 180s） |
+| GET | `/api/agents/runs` | 运行记录列表 |
+| GET | `/api/agents/runs/{run_id}` | 运行详情（含 steps[]） |
+| GET | `/api/agents/runs/{run_id}/stream` | SSE 实时步骤（step_* 协议） |
+| POST | `/api/agents/runs/{run_id}/cancel` | 取消运行 |
+| POST | `/api/agents/runs/{run_id}/approve` | HITL 批准并续跑（管理员） |
+| POST | `/api/agents/runs/{run_id}/reject` | HITL 拒绝（管理员） |
+| GET | `/api/agents/approvals` | 待审批 HITL 列表 |
+| GET | `/api/agents/dashboard?range=7d` | 编排总览聚合指标 |
+| WS | `/api/agents/ws` | 状态变更 WebSocket 广播 |
+| GET/POST | `/api/agents/default-pipelines` | 默认流程规则 |
+| PUT/DELETE | `/api/agents/default-pipelines/{rule_id}` | 编辑/删除默认规则 |
+| GET | `/api/agents/default-pipelines/resolve` | 预览将命中的默认流程 |
+| GET/POST/PUT/DEL | `/api/agent-management/agents` | 智能体定义 CRUD |
+| POST | `/api/agent-management/pipeline/validate` | DAG 合法性校验 |
+| POST | `/api/agent-management/pipeline/run` | 执行流水线（202 异步） |
+| POST | `/api/agent-management/pipeline/node/run` | 单节点调试 |
+| POST | `/api/agent-management/pipeline/node/simulate-branch` | 分支条件模拟 |
+| GET/POST | `/api/agent-management/pipeline/presets` | 流水线预设 |
+| GET | `/api/mcp/servers`、`/api/mcp/tools` | MCP 服务器状态、工具 schema |
+| GET/POST/PUT/DEL | `/api/agent-guardrails/policies` | 护栏策略 CRUD |
+| POST | `/api/agent-guardrails/evaluate` | 评估动作是否放行 |
+| GET | `/api/agent-guardrails/hits` | 护栏命中记录 |
+| GET/POST/DEL | `/api/memories`、`/search`、`/{id}` | 长期记忆 |
+| GET | `/api/knowledge/bases` | 知识库与向量库聚合 |
+
+> **面向角色**: 💻开发 🔧运维（管理员审核）
+
+---
+
+## 37. 主机 Agent 常驻管理
+
+### 37.1 功能描述
+
+路由 `/settings/agents`（设置 → 主机 Agent）。管理部署在目标主机上的**采集 daemon** 的常驻运行（上线 / 心跳 / Token）。与第 36 章「智能体编排」无关——这里是真实采集客户端的上线运维。
+
+### 37.2 概览与列表
+
+- 三张统计卡：Agent 总数 / 在线 / 离线（`GET /api/agents/stats`）
+- 列表以 **hosts 主表 LEFT JOIN agents**（`GET /api/agents`），**未注册 / 未生成 Token 的主机也显示**，可直接对其生成 Token
+- 字段：主机名、Agent 版本、操作系统、状态、心跳时间（相对时间）、IP
+- **在线判定**：`last_heartbeat` 90 秒窗口惰性折算。心跳 SQLite 按 UTC 写入，前端 `parseServerTime` 按 UTC 解析（否则恒差 8 小时）
+
+### 37.3 部署操作流程
+
+1. 列表找到目标主机 → 点【生成 Token】（已有则【重置 Token】）→ `POST /api/agents/{host_id}/token`
+2. 弹窗展示**明文 Token（仅此一次可见，关闭不可再查；重置后旧 Token 立即失效）**，接口只存 hash，不回传明文
+3. 弹窗生成**部署命令**，一键复制：
+   ```
+   python agent.py --daemon --server <origin>:8000 --token <token> --daemon-id <host_id>
+   ```
+4. 主机侧执行后，daemon 凭 Token 调 `POST /api/agents/bootstrap` 自举注册（认领 host_id，刷新 IP/OS/版本/采集器元数据）
+5. 周期性 `POST /api/hosts/{host_id}/heartbeat` 上报心跳（token 认证 + host_id 绑定校验）；退出 `POST /api/hosts/{host_id}/disconnect`
+6. Agent 安装包经 `GET /api/agent/download/{os_type}` 获取
+
+> ⚠️ 缺 `--daemon-id` 启动会进入 snapshot-only 模式（不认领主机、不上线），这是最常见的「部署后不在线」原因。
+
+### 37.4 关键 API（主机 Agent）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/agents` | Agent 列表（hosts 主表 LEFT JOIN） |
+| GET | `/api/agents/stats` | 总数/在线/离线统计 |
+| POST | `/api/agents/{host_id}/token` | 生成/重置 Token（明文仅回一次） |
+| POST | `/api/agents/bootstrap` | daemon 凭 Token 自举注册 |
+| POST | `/api/agents/register` | 注册 Agent |
+| POST | `/api/hosts/{host_id}/heartbeat` | 心跳上报（90s 在线窗口） |
+| POST | `/api/hosts/{host_id}/disconnect` | Agent 主动断开 |
+| GET | `/api/agents/online` | 在线主机列表 |
+| GET | `/api/agents/online-status` | 全部主机在线/离线状态 |
+| GET | `/api/agent/download/{os_type}` | 下载 Agent 安装包 |
+
+> **面向角色**: 🔧运维（核心）
+
+---
+
+## 38. 数据质量与对账
+
+### 38.1 功能描述
+
+运维级数据质量看板，监控采集/分析数据的完整性与一致性（字段填充率、覆盖率、数据差异、对账）。
+
+### 38.2 关键 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/dq/metrics` | 质量指标 |
+| GET | `/api/dq/field-fill` | 字段填充率 |
+| GET | `/api/dq/coverage` | 覆盖率 |
+| GET | `/api/dq/divergence` | 数据差异 |
+| GET | `/api/dq/reconcile` | 对账 |
+
+> **面向角色**: 🔧运维 💻开发
+
+---
+
+## 附录 B：新增功能文件映射（v1.3）
+
+本版（v1.3）新增章节对应的关键源码文件，供后续维护同步：
+
+| # | 章节 | 关键前端文件 | 关键后端文件 |
+|---|------|--------------|--------------|
+| 1 | 仪表盘 (23) | `frontend/src/views/DashboardView.vue` | `backend/app/api/dashboard.py` |
+| 2 | 统一告警中心 (24) | `frontend/src/views/UnifiedAlertCenter.vue` | `backend/app/api/alerts.py` |
+| 3 | 事件裁决与处置 (25) | `frontend/src/views/AnalysisCenterView.vue` | `backend/app/api/event_verdict.py`、`backend/app/api/disposition.py` |
+| 4 | 事件聚类 (26) | `frontend/src/views/IncidentClusterView.vue` | `backend/app/api/ai.py`（correlate-incidents） |
+| 5 | 根因分析 (27) | `frontend/src/views/RootCauseView.vue` | `backend/app/api/analysis.py`（root-cause） |
+| 6 | 分析中心 (28) | `frontend/src/views/AnalysisCenterView.vue` | `backend/app/api/analysis.py`、`backend/app/api/ai_noise.py` |
+| 7 | 事件详情 (29) | `frontend/src/views/EventDetailView.vue` | `backend/app/api/analysis.py`、`backend/app/api/events.py` |
+| 8 | 日志检索/分析 (30) | `frontend/src/views/LogSearchView.vue`、`LogAnalysisView.vue` | `backend/app/api/log_search.py`、`backend/app/api/logs`（logs 模块） |
+| 9 | 策略配置 (31) | `frontend/src/views/PolicyConfigView.vue` | `backend/app/api/policies.py` |
+| 10 | 工具箱 (32) | `frontend/src/views/toolbox/*` | `backend/app/api/tools.py` |
+| 11 | 规则草稿 (33) | `frontend/src/views/RuleDraftView.vue` | `backend/app/api/rules.py`（/rules/drafts） |
+| 12 | KB 反馈 (34) | `frontend/src/views/KbFeedbackView.vue` | `backend/app/api/kb*`（kb 反馈） |
+| 13 | AI 高级 (35) | `frontend/src/views/AiAdvancedView.vue` | `backend/app/api/ai_advanced.py`、`ai.py` |
+| 14 | 智能体编排 (36) | `frontend/src/views/agent-orchestration/*` | `backend/app/api/agents.py`、`agent_management.py`、`mcp.py`、`agent_guardrails.py`、`memories.py` |
+| 15 | 主机 Agent 常驻 (37) | `frontend/src/views/settings/AgentManagement.vue` | `backend/app/api/agents.py`、`agent.py` |
+| 16 | 数据质量 (38) | — | `backend/app/api/dq.py` |
+
+> **说明**：`RealTimeMonitorView.vue` 与 `AlertCenterView.vue` 为未挂载的孤儿页面（无路由、图表为随机假数据），未收入本手册。
+
+---
+
+*文档结束 — IR 平台用户手册 v1.3*

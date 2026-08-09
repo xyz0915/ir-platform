@@ -20,15 +20,42 @@
   },
   {
     "name": "msbuild_inline_task_execution",
-    "description": "检测 MSBuild 内联任务（InlineTasks/UsingTask）执行，典型的无文件 LOLBin 利用",
+    "description": "检测 MSBuild 内联任务（InlineTasks/UsingTask）执行，典型的无文件 LOLBin 利用。【P1-4】原规则仅匹配进程名 msbuild.exe，开发机每次正常构建均命中；现改为 composite——进程名 AND（内联任务关键字 或 项目文件位于用户可写/临时目录）。",
     "category": "execution",
-    "rule_type": "regex",
+    "rule_type": "composite",
     "condition": {
-      "field": "name",
-      "pattern": "msbuild\\.exe",
-      "flags": "ignorecase",
+      "logic": "AND",
+      "sub_rules": [
+        {
+          "type": "regex",
+          "field": "name",
+          "pattern": "msbuild\\.exe",
+          "flags": "ignorecase"
+        },
+        {
+          "type": "composite",
+          "logic": "OR",
+          "sub_rules": [
+            {
+              "type": "regex",
+              "field": "command_line",
+              "pattern": "(UsingTask|InlineTask|CodeTaskFactory|TaskFactory\\s*=|Microsoft\\.Build\\.Tasks\\.v4\\.0\\.dll)",
+              "flags": "ignorecase"
+            },
+            {
+              "type": "regex",
+              "field": "command_line",
+              "pattern": "(\\\\users\\\\[^\\\\]+\\\\(appdata|downloads|desktop)\\\\|\\\\windows\\\\temp\\\\|\\\\programdata\\\\|/tmp/).*\\.(xml|csproj|proj|targets)\\b",
+              "flags": "ignorecase"
+            }
+          ]
+        }
+      ],
       "_meta": {
-        "mitre_attack": "T1127/001"
+        "mitre_attack": "T1127/001",
+        "rule_type_changed_at": "P1-4",
+        "rule_type_changed_from": "regex",
+        "change_reason": "裸进程名匹配对开发机 100% 误报；须附加内联任务或可写目录项目文件特征"
       }
     },
     "severity": "high",
@@ -37,15 +64,30 @@
   },
   {
     "name": "msiexec_remote_lolbin",
-    "description": "检测 MSIExec 从远程 URL 下载并执行 (.msi)，典型的 LOLBin 远程加载",
+    "description": "检测 MSIExec 从远程 URL 下载并执行 (.msi)，典型的 LOLBin 远程加载。【P1-4】原规则仅匹配进程名 msiexec.exe，正常软件安装均命中；现改为 composite——进程名 AND 命令行含远程 URL（http/https/UNC）。这也让实现与规则描述真正一致。",
     "category": "execution",
-    "rule_type": "regex",
+    "rule_type": "composite",
     "condition": {
-      "field": "name",
-      "pattern": "msiexec\\.exe",
-      "flags": "ignorecase",
+      "logic": "AND",
+      "sub_rules": [
+        {
+          "type": "regex",
+          "field": "name",
+          "pattern": "msiexec\\.exe",
+          "flags": "ignorecase"
+        },
+        {
+          "type": "regex",
+          "field": "command_line",
+          "pattern": "(https?://|ftp://|\\\\\\\\[a-z0-9._-]+\\\\)",
+          "flags": "ignorecase"
+        }
+      ],
       "_meta": {
-        "mitre_attack": "T1218/007"
+        "mitre_attack": "T1218/007",
+        "rule_type_changed_at": "P1-4",
+        "rule_type_changed_from": "regex",
+        "change_reason": "规则描述为'从远程 URL 下载并执行'，但实现只判进程名；补齐远程源特征"
       }
     },
     "severity": "high",
@@ -54,33 +96,41 @@
   },
   {
     "name": "suspicious_scheduled_task_xml_exists",
-    "description": "检测数据项中存在可疑计划任务 XML 定义（计划任务持久化迹象）",
+    "description": "检测数据项中存在可疑计划任务 XML 定义（计划任务持久化迹象）。【P0-3 已下线】当前无任何采集器产出 scheduled_task_xml 字段，规则永不命中，属虚假覆盖，故置为 enabled=false。",
     "category": "persistence",
     "rule_type": "exists",
     "condition": {
       "field": "scheduled_task_xml",
       "_meta": {
-        "mitre_attack": "T1053/005"
+        "mitre_attack": "T1053/005",
+        "disabled_reason": "no_producer_field",
+        "disabled_detail": "backend/agent 采集链路中不存在产出 scheduled_task_xml 字段的采集器，exists 规则恒为 False",
+        "depends_on": "P3-2：新增计划任务 XML 采集器（scheduled_task_exists）后可复活",
+        "disabled_at": "P0-3"
       }
     },
     "severity": "high",
-    "enabled": true,
-    "label": "存在可疑计划任务定义"
+    "enabled": false,
+    "label": "存在可疑计划任务定义（已下线·待采集器补齐）"
   },
   {
     "name": "suspicious_service_reg_exists",
-    "description": "检测数据项中存在可疑服务镜像路径注册项（服务持久化迹象）",
+    "description": "检测数据项中存在可疑服务镜像路径注册项（服务持久化迹象）。【P0-3 已下线】当前无任何采集器产出 service_image_path 字段，规则永不命中，属虚假覆盖，故置为 enabled=false。",
     "category": "persistence",
     "rule_type": "exists",
     "condition": {
       "field": "service_image_path",
       "_meta": {
-        "mitre_attack": "T1543/003"
+        "mitre_attack": "T1543/003",
+        "disabled_reason": "no_producer_field",
+        "disabled_detail": "backend/agent 采集链路中不存在产出 service_image_path 字段的采集器，exists 规则恒为 False",
+        "depends_on": "P3-2：服务注册项采集器补齐 service_image_path 后可复活",
+        "disabled_at": "P0-3"
       }
     },
     "severity": "high",
-    "enabled": true,
-    "label": "存在可疑服务注册项"
+    "enabled": false,
+    "label": "存在可疑服务注册项（已下线·待采集器补齐）"
   },
   {
     "name": "powershell_encoded_command",
@@ -139,15 +189,36 @@
   },
   {
     "name": "bitsadmin_download",
-    "description": "bitsadmin 用于下载文件",
+    "description": "bitsadmin 用于下载文件。【P1-4】原规则仅匹配进程名 bitsadmin.exe，系统正常更新即命中；现改为 composite——进程名 AND /transfer|/addfile|/create 传输动作 AND 远程 URL。",
     "category": "process",
-    "rule_type": "regex",
+    "rule_type": "composite",
     "condition": {
-      "field": "name",
-      "pattern": "bitsadmin\\.exe",
-      "flags": "ignorecase",
+      "logic": "AND",
+      "sub_rules": [
+        {
+          "type": "regex",
+          "field": "name",
+          "pattern": "bitsadmin\\.exe",
+          "flags": "ignorecase"
+        },
+        {
+          "type": "regex",
+          "field": "command_line",
+          "pattern": "/(transfer|addfile|create|setnotifycmdline)\\b",
+          "flags": "ignorecase"
+        },
+        {
+          "type": "regex",
+          "field": "command_line",
+          "pattern": "(https?://|ftp://|\\\\\\\\[a-z0-9._-]+\\\\)",
+          "flags": "ignorecase"
+        }
+      ],
       "_meta": {
-        "mitre_attack": "T1197"
+        "mitre_attack": "T1197",
+        "rule_type_changed_at": "P1-4",
+        "rule_type_changed_from": "regex",
+        "change_reason": "裸进程名对系统更新误报；须同时具备传输动作与远程源"
       }
     },
     "severity": "medium",
@@ -230,15 +301,54 @@
   },
   {
     "name": "cmd_powershell_chain",
-    "description": "cmd 启动 powershell（常见于恶意脚本链）",
+    "description": "cmd 启动 powershell（常见于恶意脚本链）。【P1-4】原规则仅匹配进程名 cmd.exe，每台 Windows 每天数百次正常执行均命中；现改为 composite——进程名 AND 命令行确实存在 cmd→powershell 的链式调用（/c|/k 后接 powershell/pwsh），且带编码或下载特征时才成立。",
     "category": "process",
-    "rule_type": "regex",
+    "rule_type": "composite",
     "condition": {
-      "field": "name",
-      "pattern": "cmd\\.exe",
-      "flags": "ignorecase",
+      "logic": "AND",
+      "sub_rules": [
+        {
+          "type": "regex",
+          "field": "name",
+          "pattern": "cmd\\.exe",
+          "flags": "ignorecase"
+        },
+        {
+          "type": "regex",
+          "field": "command_line",
+          "pattern": "/(c|k)\\b[^\\n]*\\b(powershell|pwsh)\\b",
+          "flags": "ignorecase"
+        },
+        {
+          "type": "composite",
+          "logic": "OR",
+          "sub_rules": [
+            {
+              "type": "regex",
+              "field": "command_line",
+              "pattern": "\\s-(enc|encodedcommand|e|ec)\\b",
+              "flags": "ignorecase"
+            },
+            {
+              "type": "regex",
+              "field": "command_line",
+              "pattern": "(downloadstring|downloadfile|invoke-expression|\\biex\\b|invoke-webrequest|\\bcurl\\b|\\bwget\\b|frombase64string)",
+              "flags": "ignorecase"
+            },
+            {
+              "type": "regex",
+              "field": "command_line",
+              "pattern": "-(w|windowstyle)\\s+hidden|-nop\\b|-noprofile\\b|-ep\\s+bypass|-executionpolicy\\s+bypass",
+              "flags": "ignorecase"
+            }
+          ]
+        }
+      ],
       "_meta": {
-        "mitre_attack": "T1059/001"
+        "mitre_attack": "T1059/001",
+        "rule_type_changed_at": "P1-4",
+        "rule_type_changed_from": "regex",
+        "change_reason": "cmd.exe 是最常见的正常进程，裸名匹配噪声极大；须验证真实链式调用与恶意参数特征"
       }
     },
     "severity": "high",
@@ -311,118 +421,65 @@
     "label": "非系统目录进程"
   },
   {
-    "name": "c2_port_4444",
-    "description": "连接 Metasploit 默认端口 4444",
+    "name": "c2_suspicious_port_high",
+    "description": "连接高置信 C2/反弹端口（Metasploit 4444 / IRC 6667 / 1337 / 4443 / ADB 5555 / 8888 / 31337）。这些端口无公认合法服务占用，出现即高度可疑。端口清单与引擎 _C2_PORTS 共用 c2_ports.json（P2-1 SSOT）",
     "category": "network",
     "rule_type": "list",
     "condition": {
       "field": "remote_port",
       "values": [
-        4444
+        1337,
+        4443,
+        4444,
+        5555,
+        6667,
+        8888,
+        31337
       ],
       "match_mode": "exact",
       "_meta": {
-        "mitre_attack": "T1571"
+        "mitre_attack": "T1571",
+        "ssot": "app/rules/c2_ports.json#high_confidence",
+        "requires_hitl": false,
+        "superseded_by": null,
+        "supersedes": [
+          "c2_port_4444",
+          "c2_port_6667",
+          "c2_port_1337",
+          "c2_port_4443",
+          "c2_port_5555",
+          "c2_port_8888"
+        ]
       }
     },
     "severity": "high",
     "enabled": true,
-    "label": "C2 端口 4444"
+    "label": "C2 可疑端口（高置信）"
   },
   {
-    "name": "c2_port_6667",
-    "description": "连接 IRC 端口 6667（可能为 C2 通信）",
+    "name": "c2_suspicious_port_low",
+    "description": "连接低置信 C2/代理端口（SOCKS 1080 / VNC 5900 / HTTPS-alt 8443 / 9999）。这些端口存在合法用途，单看端口不足以定性，需结合进程名与路径判定，故定为 medium。端口清单与引擎 _C2_PORTS 共用 c2_ports.json（P2-1 SSOT）",
     "category": "network",
     "rule_type": "list",
     "condition": {
       "field": "remote_port",
       "values": [
-        6667
+        1080,
+        5900,
+        8443,
+        9999
       ],
       "match_mode": "exact",
       "_meta": {
-        "mitre_attack": "T1571"
+        "mitre_attack": "T1571",
+        "ssot": "app/rules/c2_ports.json#low_confidence",
+        "requires_hitl": false,
+        "needs_context": "建议结合进程名/路径与资产基线复核，企业内 SOCKS 代理与 VNC 远程支持为常见合法场景"
       }
     },
-    "severity": "high",
+    "severity": "medium",
     "enabled": true,
-    "label": "C2 端口 6667 (IRC)"
-  },
-  {
-    "name": "c2_port_1337",
-    "description": "连接黑客常用端口 1337",
-    "category": "network",
-    "rule_type": "list",
-    "condition": {
-      "field": "remote_port",
-      "values": [
-        1337
-      ],
-      "match_mode": "exact",
-      "_meta": {
-        "mitre_attack": "T1571"
-      }
-    },
-    "severity": "high",
-    "enabled": true,
-    "label": "C2 端口 1337"
-  },
-  {
-    "name": "c2_port_4443",
-    "description": "连接可疑端口 4443",
-    "category": "network",
-    "rule_type": "list",
-    "condition": {
-      "field": "remote_port",
-      "values": [
-        4443
-      ],
-      "match_mode": "exact",
-      "_meta": {
-        "mitre_attack": "T1571"
-      }
-    },
-    "severity": "high",
-    "enabled": true,
-    "label": "C2 端口 4443"
-  },
-  {
-    "name": "c2_port_5555",
-    "description": "连接 Android Debug 端口 5555",
-    "category": "network",
-    "rule_type": "list",
-    "condition": {
-      "field": "remote_port",
-      "values": [
-        5555
-      ],
-      "match_mode": "exact",
-      "_meta": {
-        "mitre_attack": "T1571"
-      }
-    },
-    "severity": "high",
-    "enabled": true,
-    "label": "C2 端口 5555 (ADB)"
-  },
-  {
-    "name": "c2_port_8888",
-    "description": "连接可疑端口 8888",
-    "category": "network",
-    "rule_type": "list",
-    "condition": {
-      "field": "remote_port",
-      "values": [
-        8888
-      ],
-      "match_mode": "exact",
-      "_meta": {
-        "mitre_attack": "T1571"
-      }
-    },
-    "severity": "high",
-    "enabled": true,
-    "label": "C2 端口 8888"
+    "label": "C2 可疑端口（低置信，需复核）"
   },
   {
     "name": "known_bad_ip_1",
@@ -487,19 +544,21 @@
   },
   {
     "name": "suspicious_c2_domain",
-    "description": "连接已知恶意 C2 域名",
+    "description": "连接已知恶意 C2 域名/IP（由 iocs 情报库动态驱动，情报库为空时不产生任何告警）",
     "category": "network",
     "rule_type": "list",
     "condition": {
       "field": "remote_address",
-      "values": [
-        "malware-c2.example.com",
-        "botnet-cc.example.net",
-        "trojan-download.example.org"
+      "values": [],
+      "ioc_types": [
+        "domain",
+        "ip"
       ],
       "match_mode": "contains",
       "_meta": {
-        "mitre_attack": "T1571"
+        "mitre_attack": "T1571",
+        "requires_ioc": true,
+        "ioc_note": "P0-1：原有 3 条硬编码占位域名均为虚构指标，已移除。本规则改为完全依赖 iocs 表中 enabled=1 的 domain/ip 类指标，导入情报后即时生效，无需重启。"
       }
     },
     "severity": "high",
@@ -627,15 +686,20 @@
   },
   {
     "name": "remote_desktop_suspicious",
-    "description": "检测到远程控制软件运行",
+    "description": "检测到远程控制软件运行。【P1-4】企业内远程办公工具属正常资产，无法用命令行参数区分善恶，故维持 low 且不复合化；标注 needs_baseline，待资产基线可信后按'该主机是否历史常见'判定。",
     "category": "behavior",
     "rule_type": "regex",
     "condition": {
       "field": "name",
-      "pattern": "(teamviewer|anydesk|vnc|rustdesk|sunlogin)",
+      "pattern": "(teamviewer|anydesk|vnc|rustdesk|sunlogin|todesk|ammyy|radmin)",
       "flags": "ignorecase",
       "_meta": {
-        "mitre_attack": "T1219"
+        "mitre_attack": "T1219",
+        "needs_baseline": true,
+        "baseline_metric": "remote_tool_presence",
+        "baseline_scope": "host",
+        "baseline_note": "P1-5 已建 behavior_baselines 表；基线可信（sample_count>=7）后仅对该主机历史未出现的远控工具告警",
+        "reviewed_at": "P1-4"
       }
     },
     "severity": "low",
@@ -1123,6 +1187,7 @@
       "pattern": "credential_dump",
       "description": "凭据转储行为检测",
       "_meta": {
+        "requires_hitl": true,
         "mitre_attack": "T1003/001"
       }
     },
@@ -1174,6 +1239,7 @@
       "pattern": "(dpapi|CryptUnprotectData|vaultcmd|vaultcli)",
       "flags": "ignorecase",
       "_meta": {
+        "requires_hitl": true,
         "mitre_attack": "T1003/004"
       }
     },
@@ -1191,6 +1257,7 @@
       "pattern": "(Login Data|Web Data|logins\\.json|key4\\.db|cookies\\.sqlite|places\\.sqlite)",
       "flags": "ignorecase",
       "_meta": {
+        "requires_hitl": true,
         "mitre_attack": "T1003"
       }
     },
@@ -1463,7 +1530,7 @@
   },
   {
     "name": "dns_c2_beaconing",
-    "description": "DNS C2 Beaconing 检测（固定间隔 DNS 查询）",
+    "description": "DNS C2 Beaconing 检测（固定间隔 DNS 查询）。【P1 补注】该规则原为 enabled=false 但未记录下线原因；实测全代码库仅规则定义本身引用 dns_query_count，无任何采集器产出该字段，故补齐标注。",
     "category": "network",
     "rule_type": "threshold",
     "condition": {
@@ -1471,7 +1538,11 @@
       "operator": ">",
       "value": 100,
       "_meta": {
-        "mitre_attack": "T1571"
+        "mitre_attack": "T1571",
+        "disabled_reason": "no_producer_field",
+        "disabled_detail": "全仓检索 dns_query_count 仅命中本规则定义，backend/agent 均无产出",
+        "depends_on": "P3-2：DNS 查询计数采集器接入后可复活；beaconing 还需间隔方差统计而非单纯计数",
+        "disabled_at": "pre-P0（原因由 P1 补注）"
       }
     },
     "severity": "high",
@@ -1480,7 +1551,7 @@
   },
   {
     "name": "domain_fronting_detection",
-    "description": "域前置检测（CDN 域名到非预期后端通信）",
+    "description": "域前置检测（CDN 域名到非预期后端通信）。【P1 补注】该规则原为 enabled=false 但未记录下线原因；其 field 为 command_line 却试图匹配 HTTP Host 头，属字段选择错误——进程命令行不含 HTTP 报文，即便启用也恒不命中，故补齐标注。",
     "category": "network",
     "rule_type": "regex",
     "condition": {
@@ -1488,7 +1559,11 @@
       "pattern": "(cloudfront\\.net|azureedge\\.net|akamaiedge\\.net).*Host:",
       "flags": "ignorecase",
       "_meta": {
-        "mitre_attack": "T1572"
+        "mitre_attack": "T1572",
+        "disabled_reason": "field_semantics_mismatch",
+        "disabled_detail": "在 command_line 中匹配 HTTP Host 头：数据源不含 HTTP 报文，语义不成立",
+        "depends_on": "P3-2：需 TLS SNI / HTTP Host 采集（如流量侧元数据）并改用专用字段后重写",
+        "disabled_at": "pre-P0（原因由 P1 补注）"
       }
     },
     "severity": "high",
@@ -1521,6 +1596,7 @@
       "pattern": "ransomware_behavior",
       "description": "勒索软件行为检测",
       "_meta": {
+        "requires_hitl": true,
         "mitre_attack": "T1486"
       }
     },
@@ -1547,19 +1623,24 @@
   },
   {
     "name": "credential_dump_behavior",
-    "description": "凭据导出综合行为检测（LSASS/SAM/注册表凭据访问）",
+    "description": "凭据导出综合行为检测（LSASS/SAM/注册表凭据访问）。【P1-2 已下线】与 lsass_dump_detection 的 condition 完全一致（同为 pattern=credential_dump），同一份数据会产生两条 critical 告警，导致主机风险评分重复计入。保留语义更明确的 lsass_dump_detection。",
     "category": "credential",
     "rule_type": "behavior",
     "condition": {
       "pattern": "credential_dump",
       "description": "综合凭据导出行为检测",
       "_meta": {
-        "mitre_attack": "T1003"
+        "requires_hitl": true,
+        "mitre_attack": "T1003",
+        "disabled_reason": "duplicate_pattern",
+        "disabled_detail": "condition 除 description 外与 lsass_dump_detection 完全相同，重复产生 critical 告警",
+        "duplicate_of": "lsass_dump_detection",
+        "disabled_at": "P1-2"
       }
     },
     "severity": "critical",
-    "enabled": true,
-    "label": "凭据导出综合行为"
+    "enabled": false,
+    "label": "凭据导出综合行为（已下线·与 lsass_dump_detection 重复）"
   },
   {
     "name": "webshell_process_activity",
@@ -1631,6 +1712,7 @@
       "pattern": "(DCSync|Get-ADReplAccount|mimikatz.*lsadump::dcsync)",
       "flags": "ignorecase",
       "_meta": {
+        "requires_hitl": true,
         "mitre_attack": "T1003/006"
       }
     },
@@ -1657,19 +1739,23 @@
   },
   {
     "name": "dll_hijack_behavior",
-    "description": "DLL 侧加载行为检测",
+    "description": "DLL 侧加载行为检测。【P1-2 已下线】与 dll_search_order_hijack 的 condition 完全一致（同为 pattern=dll_sideload），重复出告警。保留对应 MITRE T1574.001 技战术更明确的 dll_search_order_hijack。",
     "category": "persistence",
     "rule_type": "behavior",
     "condition": {
       "pattern": "dll_sideload",
       "description": "DLL 侧加载行为检测",
       "_meta": {
-        "mitre_attack": "T1574/002"
+        "mitre_attack": "T1574/002",
+        "disabled_reason": "duplicate_pattern",
+        "disabled_detail": "condition 除 description 外与 dll_search_order_hijack 完全相同，重复产生 high 告警",
+        "duplicate_of": "dll_search_order_hijack",
+        "disabled_at": "P1-2"
       }
     },
     "severity": "high",
-    "enabled": true,
-    "label": "DLL 侧加载行为"
+    "enabled": false,
+    "label": "DLL 侧加载行为（已下线·与 dll_search_order_hijack 重复）"
   },
   {
     "name": "parent_pid_spoofing",

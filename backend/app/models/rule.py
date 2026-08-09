@@ -166,14 +166,22 @@ class Rule:
     @staticmethod
     def list(category: Optional[str] = None, enabled: Optional[bool] = None,
              tenant_id: Optional[int] = None,
-             engine_type: Optional[str] = None) -> list:
-        """获取规则列表（支持按类别、启用状态过滤 + 多租户隔离）.
+             engine_type: Optional[str] = None,
+             severity: Optional[str] = None,
+             rule_type: Optional[str] = None,
+             source: Optional[str] = None,
+             status: Optional[str] = None) -> list:
+        """获取规则列表（支持类别/启用状态/严重度/规则类型/来源/状态过滤 + 多租户隔离）.
 
         Args:
             category: 规则类别过滤.
             enabled: 启用状态过滤.
             tenant_id: 租户 ID（T-P2-1）。若 >0 则添加 ``WHERE tenant_id=? OR tenant_id=0``.
             engine_type: 引擎类型过滤（rule_engine / behavior_engine）.
+            severity: 严重度过滤.
+            rule_type: 规则类型过滤.
+            source: 来源过滤（default/user/ai/import）。
+            status: 规则状态过滤（active/pending_approval/deprecated）。
         """
         with get_connection() as conn:
             query = "SELECT * FROM rules WHERE 1=1"
@@ -190,6 +198,18 @@ class Rule:
             if engine_type is not None:
                 query += " AND engine_type = ?"
                 params.append(engine_type)
+            if severity:
+                query += " AND severity = ?"
+                params.append(severity)
+            if rule_type:
+                query += " AND rule_type = ?"
+                params.append(rule_type)
+            if source:
+                query += " AND source = ?"
+                params.append(source)
+            if status:
+                query += " AND status = ?"
+                params.append(status)
             query += " ORDER BY category, severity DESC, created_at"
             rows = conn.execute(query, params).fetchall()
             results = []
@@ -226,6 +246,35 @@ class Rule:
                 item["enabled"] = bool(item.get("enabled"))
                 results.append(Rule._normalize_mitre(item))
             return results
+
+    @staticmethod
+    def effective_active_of(rule: dict, active_ids: set, policy_active: bool) -> "tuple[bool, str]":
+        """计算单条规则的 (effective_active, reason).
+
+        effective_active = enabled AND (not policy_active OR rule_id in active_ids)
+        reason ∈ {生效中, 未选入激活策略, 已禁用, 无激活策略}
+        """
+        enabled = bool(rule.get("enabled"))
+        rid = rule.get("id")
+        in_policy = (rid in active_ids) if active_ids is not None else False
+        if not enabled:
+            return False, "已禁用"
+        if not policy_active:
+            return False, "无激活策略"
+        if not in_policy:
+            return False, "未选入激活策略"
+        return True, "生效中"
+
+    @staticmethod
+    def annotate_effective(rules: list, active_ids: set, policy_active: bool) -> list:
+        """为规则列表附加 in_active_policy / effective_active / effective_reason。"""
+        for r in rules:
+            in_policy = (r.get("id") in active_ids) if active_ids is not None else False
+            eff, reason = Rule.effective_active_of(r, active_ids, policy_active)
+            r["in_active_policy"] = in_policy
+            r["effective_active"] = eff
+            r["effective_reason"] = reason
+        return rules
 
     @staticmethod
     def list_categories(categories: list, enabled: Optional[bool] = None) -> list:

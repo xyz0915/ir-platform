@@ -130,11 +130,14 @@ class TestMatcherRegistry(unittest.TestCase):
         r = MatcherRegistry.dispatch("nonexistent", {}, {})
         self.assertFalse(r)
 
-    def test_registered_types_include_all_7(self):
+    def test_registered_types_include_all_8(self):
         from app.rules.matchers.registry import MatcherRegistry
+        # P0 起规则引擎共 8 类：regex/list/threshold/behavior/composite/exists/
+        # attack_chain/event_log_summary（event_log_summary 在 P0 事件日志汇总能力中加入）
         types = set(MatcherRegistry.registered_types())
         self.assertEqual(types, {"regex", "list", "threshold", "behavior",
-                                  "composite", "exists", "attack_chain"})
+                                  "composite", "exists", "attack_chain",
+                                  "event_log_summary"})
 
 
 # ===================================================================

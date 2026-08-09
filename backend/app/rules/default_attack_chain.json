@@ -31,8 +31,13 @@
           "match": {
             "type": "list",
             "field": "remote_address",
-            "values": ["evil.example.com", "c2.attacker.net", "185.174.137.11"],
-            "match_mode": "exact"
+            "values": [],
+            "ioc_types": ["domain", "ip"],
+            "match_mode": "contains",
+            "_meta": {
+              "requires_ioc": true,
+              "ioc_note": "P0-1：原有 3 条硬编码占位域名/IP 为虚构指标，会导致本步永不命中、整条 critical 攻击链失效。已移除并改为依赖 iocs 表动态指标。"
+            }
           }
         },
         {
@@ -163,6 +168,7 @@
     "mitre_attack": "T1110/T1570/T1003.001/T1021.002",
     "condition": {
       "_meta": {
+        "requires_hitl": true,
         "mitre_attack": "T1110/T1570/T1003.001/T1021.002"
       },
       "window_minutes": 60,
@@ -268,6 +274,7 @@
     "mitre_attack": "T1210/T1003.006/T1558.001",
     "condition": {
       "_meta": {
+        "requires_hitl": true,
         "mitre_attack": "T1210/T1003.006/T1558.001"
       },
       "window_minutes": 60,

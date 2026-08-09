@@ -1,5 +1,5 @@
 <template>
-  <div ref="chartRef" class="timeline-chart"></div>
+  <div ref="chartRef" class="timeline-chart" :style="{ height: chartHeight + 'px' }"></div>
 </template>
 
 <script setup>
@@ -9,6 +9,13 @@ import { SEVERITY, EVENT_TYPE, SLA } from '@/constants/design-tokens.js'
 
 /** Maximum number of data points rendered per series to prevent chart.setOption from blocking */
 const MAX_RENDER_POINTS = 2000
+
+/** 最小有效时间（2000-01-01），早于该时间的时间戳视为脏数据 */
+const MIN_VALID_MS = Date.UTC(2000, 0, 1)
+
+/** 单泳道高度 / 图表非绘图区（legend + 轴标签 + dataZoom）预留高度 */
+const LANE_H = 34
+const CHROME_H = 110
 
 const props = defineProps({
   events: { type: Array, default: () => [] },
@@ -21,6 +28,14 @@ const emit = defineEmits(['highlight-change'])
 
 const chartRef = ref(null)
 let chart = null
+let ro = null
+
+/** 实际渲染的 Y 轴泳道数量，用于图表高度自适应 */
+const laneCount = ref(7)
+
+const chartHeight = computed(() => {
+  return Math.min(420, Math.max(180, laneCount.value * LANE_H + CHROME_H))
+})
 
 onMounted(() => {
   // Defer to nextTick so the DOM (container dimensions) is settled before ECharts init.
@@ -29,10 +44,26 @@ onMounted(() => {
     initChart()
   })
   window.addEventListener('resize', handleResize)
+
+  // 容器尺寸变化（tab 切换、折叠展开、高度自适应）时重新初始化/重绘
+  if (chartRef.value && typeof ResizeObserver !== 'undefined') {
+    ro = new ResizeObserver(() => {
+      if (!chartRef.value) return
+      const { width, height } = chartRef.value.getBoundingClientRect()
+      if (width === 0 || height === 0) return
+      if (!chart) initChart()
+      else chart.resize()
+    })
+    ro.observe(chartRef.value)
+  }
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize)
+  if (ro) {
+    ro.disconnect()
+    ro = null
+  }
   if (chart) {
     chart.dispose()
     chart = null
@@ -71,6 +102,7 @@ function normalizeTimestamp(ts) {
     const ms = ts < 10000000000 ? ts * 1000 : ts
     const d = new Date(ms)
     if (isNaN(d.getTime())) return ''
+    if (d.getTime() < MIN_VALID_MS) return ''
     return d.toISOString()
   }
   // ── 字符串类型 ──
@@ -83,6 +115,7 @@ function normalizeTimestamp(ts) {
   ts = ts.replace(/^(\d{4}-\d{2}-\d{2})\s(\d{2}:\d{2}:\d{2})/, '$1T$2')
   const parsed = new Date(ts)
   if (isNaN(parsed.getTime())) return ''
+  if (parsed.getTime() < MIN_VALID_MS) return ''
   return ts
 }
 
@@ -176,27 +209,16 @@ function initChart() {
 
   const events = props.events || []
 
-  // DEBUG: 打印前 3 条事件的原始 timestamp 格式，用于诊断后端返回格式
-  if (events.length > 0) {
-    const sampleTypes = events.slice(0, 3).map(e => ({
-      raw: e.timestamp,
-      type: typeof e.timestamp,
-      normalized: normalizeTimestamp(e.timestamp),
-    }))
-    console.log('[TimelineChart] DEBUG timestamp samples:', sampleTypes)
-  }
-
   const validEvents = events
     .map(e => ({ ...e, _normalized_ts: normalizeTimestamp(e.timestamp) }))
     .filter(e => e._normalized_ts !== '')
 
-  // Cap data points to prevent chart.setOption from blocking the main thread
+  // Cap data points to prevent chart.setOption from blocking the main thread.
+  // 事件已按时间升序排列，截断时保留尾部（最新事件）而非头部。
   if (validEvents.length > MAX_RENDER_POINTS) {
-    console.warn(`[TimelineChart] Truncating ${validEvents.length} events to ${MAX_RENDER_POINTS} for rendering performance`)
-    validEvents.length = MAX_RENDER_POINTS
+    console.warn(`[TimelineChart] Truncating ${validEvents.length} → ${MAX_RENDER_POINTS} (保留最新)`)
+    validEvents.splice(0, validEvents.length - MAX_RENDER_POINTS)
   }
-
-  console.log('[TimelineChart] total events:', events.length, 'valid (timestamp parsed):', validEvents.length)
 
   if (validEvents.length === 0) {
     try {
@@ -219,9 +241,44 @@ function initChart() {
   }
 
   // ── V1-2: dataZoom 底部留空间（事件少时进一步压缩） ──
-  const grid = eventsToRender.length < 10
-    ? { left: '3%', right: '4%', bottom: 20, top: 32, containLabel: true }
-    : { left: '3%', right: '4%', bottom: 50, top: 36, containLabel: true }
+  // 统一紧凑 grid：左侧留给 Y 轴标签，顶部给 legend，底部按需给 dataZoom
+  const showZoom = eventsToRender.length > 50
+  const grid = {
+    left: 40,
+    right: 16,
+    top: 28,
+    bottom: showZoom ? 48 : 24,
+    containLabel: true,
+  }
+
+  /**
+   * 计算默认聚焦视窗：少量极早/极晚离群点会把绝大多数事件压成一条竖线，
+   * 用 1% 分位数作为左边界，让默认视图聚焦在数据密集区。
+   * 若离群点不明显（聚焦区已覆盖 60% 以上跨度）则不做裁剪。
+   */
+  function computeFocusWindow(items) {
+    const tsList = items
+      .map(e => new Date(e._normalized_ts).getTime())
+      .filter(t => !isNaN(t))
+      .sort((a, b) => a - b)
+    const n = tsList.length
+    if (n < 10) return null
+    const lo = tsList[Math.floor(n * 0.01)]
+    const hi = tsList[n - 1]
+    const full = tsList[n - 1] - tsList[0]
+    if (full <= 0) return null
+    if ((hi - lo) / full > 0.6) return null
+    const pad = Math.max((hi - lo) * 0.05, 60 * 1000)
+    return { startValue: lo - pad, endValue: hi + pad }
+  }
+  const focus = computeFocusWindow(eventsToRender)
+  const tsListForSpan = eventsToRender
+    .map(e => new Date(e._normalized_ts).getTime())
+    .filter(t => !isNaN(t))
+    .sort((a, b) => a - b)
+  const fullSpanMs = tsListForSpan.length >= 2
+    ? tsListForSpan[tsListForSpan.length - 1] - tsListForSpan[0]
+    : 0
 
   // ── V1-1: 按 severity 分组为多个 scatter series ──
   const severityGroups = { high: [], medium: [], low: [], info: [] }
@@ -324,9 +381,16 @@ function initChart() {
   if (iocEvents.length > 0) legendData.push('IOC 命中')
   if (aggregatedBubbles.length > 0) legendData.push('聚合事件')
 
-  // ── Y 轴类别 ──
-  const typeCategories = Object.keys(EVENT_TYPE.LABEL).map(k => EVENT_TYPE.LABEL[k])
-  const yAxisData = typeCategories
+  // ── Y 轴类别：只保留本次数据中实际出现的类型，避免空泳道 ──
+  const allCategories = Object.keys(EVENT_TYPE.LABEL).map(k => EVENT_TYPE.LABEL[k])
+  const presentSet = new Set(eventsToRender.map(e => EVENT_TYPE.LABEL[e.event_type] || e.event_type || '其他'))
+  // 聚合气泡也占用泳道，其类别同样需要保留
+  for (const b of aggregatedBubbles) {
+    presentSet.add(EVENT_TYPE.LABEL[b.value[1]] || b.value[1] || '其他')
+  }
+  const yAxisData = allCategories.filter(c => presentSet.has(c))
+  if (yAxisData.length === 0) yAxisData.push('其他')
+  laneCount.value = yAxisData.length
 
   // ── V3-6: SLA markLine（24h 前时间边界）──
   const markLineData = []
@@ -340,6 +404,10 @@ function initChart() {
       label: { formatter: '24h SLA 边界', color: '#A32D2D', fontSize: 10 },
     })
   }
+
+  const dataZoomCommon = focus
+    ? { startValue: focus.startValue, endValue: focus.endValue }
+    : { start: 0, end: 100 }
 
   const option = {
     tooltip: {
@@ -370,17 +438,17 @@ function initChart() {
     xAxis: {
       type: 'time',
       axisLabel: {
-        rotate: 30,
-        fontSize: 11,
+        rotate: 20,
+        fontSize: 10,
         color: '#5F5E5A',
         formatter: function (value) {
           const d = new Date(value)
           if (isNaN(d.getTime())) return value
-          const month = String(d.getMonth() + 1).padStart(2, '0')
-          const day = String(d.getDate()).padStart(2, '0')
-          const hours = String(d.getHours()).padStart(2, '0')
-          const minutes = String(d.getMinutes()).padStart(2, '0')
-          return `${month}-${day} ${hours}:${minutes}`
+          const p = n => String(n).padStart(2, '0')
+          const spanMs = focus ? focus.endValue - focus.startValue : fullSpanMs
+          if (spanMs > 365 * 864e5) return `${d.getFullYear()}-${p(d.getMonth() + 1)}`
+          if (spanMs > 3 * 864e5) return `${p(d.getMonth() + 1)}-${p(d.getDate())}`
+          return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
         },
       },
       axisLine: { lineStyle: { color: '#e5e5e5' } },
@@ -389,28 +457,27 @@ function initChart() {
     yAxis: {
       type: 'category',
       data: yAxisData,
-      axisLabel: { interval: 0, fontSize: 11, color: '#5F5E5A' },
+      axisLabel: { interval: 0, fontSize: 10, color: '#5F5E5A', width: 56, overflow: 'break' },
       axisLine: { lineStyle: { color: '#e5e5e5' } },
       axisTick: { show: false },
     },
-    // 仅当事件数 > 50 时才显示缩放条，避免少量数据时占大量空白
-    dataZoom: eventsToRender.length > 50 ? [{
-      type: 'slider',
-      bottom: 10,
-      height: 18,
-      show: true,
-      start: 0,
-      end: 100,
-      textStyle: { color: '#5F5E5A', fontSize: 10 },
-      borderColor: 'transparent',
-      backgroundColor: 'rgba(0,0,0,0.02)',
-      fillerColor: 'rgba(99, 153, 34, 0.08)',
-      handleStyle: { color: '#639922', borderColor: '#639922' },
-    }, {
-      type: 'inside',
-      start: 0,
-      end: 100,
-    }] : [],
+    // slider 仅在事件数 > 50 时显示（避免少量数据时占大量空白），
+    // inside 始终启用以支持滚轮缩放；默认视窗按分位数聚焦到数据密集区
+    dataZoom: [
+      {
+        type: 'slider',
+        bottom: 6,
+        height: 16,
+        show: showZoom,
+        ...dataZoomCommon,
+        textStyle: { color: '#5F5E5A', fontSize: 10 },
+        borderColor: 'transparent',
+        backgroundColor: 'rgba(0,0,0,0.02)',
+        fillerColor: 'rgba(99,153,34,0.08)',
+        handleStyle: { color: '#639922', borderColor: '#639922' },
+      },
+      { type: 'inside', ...dataZoomCommon },
+    ],
     series: severitySeries.length > 0 ? severitySeries : [{
       type: 'scatter',
       data: [],
@@ -439,7 +506,5 @@ function initChart() {
 <style scoped>
 .timeline-chart {
   width: 100%;
-  min-height: 220px;
-  max-height: 480px;
 }
 </style>

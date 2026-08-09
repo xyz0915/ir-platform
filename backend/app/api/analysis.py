@@ -26,10 +26,17 @@ def analyze_host(host_id: int, current_user: dict = Depends(get_current_user)):
             detail="主机不存在",
         )
     if host.get("status") not in ("imported", "analyzed"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="主机尚未导入采集数据，无法分析",
-        )
+        # 常驻 daemon 主机：有已注册 Agent 或实时进程事件亦允许触发分析
+        from app.models.agent_model import AgentModel
+        from app.models.process_event import ProcessEvent
+
+        agent_registered = AgentModel.get_token_status(host_id).get("token_set")
+        has_events = bool(ProcessEvent.list_by_host(host_id))
+        if not agent_registered and not has_events:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="主机尚未导入采集数据，且无在线 Agent / 实时进程事件，无法分析",
+            )
     try:
         # 1. 主机分析
         result = AnalysisService.analyze(host_id)

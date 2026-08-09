@@ -20,7 +20,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { User, Document, Monitor, Files, Tools, Brush, SetUp } from '@element-plus/icons-vue'
+import { User, Document, Files, Tools, Brush, SetUp } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -33,7 +33,6 @@ const router = useRouter()
 const menuItems = [
   { icon: User, label: '用户与权限', path: '/settings/users' },
   { icon: Document, label: '审计日志', path: '/settings/audit-logs' },
-  { icon: Monitor, label: '主机 Agent', path: '/settings/agents' },
   { icon: Files, label: '数据与存储', path: '/settings/storage' },
   { icon: Tools, label: '系统参数', path: '/settings/params' },
   { icon: Brush, label: '主题与外观', path: '/settings/theme' },

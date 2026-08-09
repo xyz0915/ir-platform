@@ -112,7 +112,47 @@
         <div style="padding:0 20px 20px;">
           <div class="section-title">
             规则选择
-            <span class="count">已选 <strong style="color:var(--color-success-fg)">{{ selectedRuleIds.length }}</strong> 条 / 策略含 <strong>{{ detail?.rule_count || 0 }}</strong> 条</span>
+            <span class="count">
+              已选 <strong style="color:var(--color-success-fg)">{{ selectedRuleIds.length }}</strong> 条
+              / 全部 <strong>{{ coverageStats.total }}</strong> 条
+              / 未选 <strong style="color:var(--color-danger-fg)">{{ coverageStats.unselected }}</strong> 条
+            </span>
+          </div>
+
+          <!-- 应急覆盖度看板：一眼识别策略盲区 -->
+          <div class="coverage-panel">
+            <div class="coverage-row">
+              <div class="coverage-total">
+                <div class="cv-num">{{ coverageStats.selected }}/{{ coverageStats.total }}</div>
+                <div class="cv-label">规则覆盖</div>
+                <div class="cv-bar"><div class="cv-fill" :style="{ width: (coverageStats.total ? (coverageStats.selected / coverageStats.total * 100) : 0) + '%' }"></div></div>
+              </div>
+              <div class="coverage-sev" v-for="s in ['critical','high','medium','low']" :key="s"
+                   :class="[s, { active: filterSeverity === s }]"
+                   @click="filterSeverity === s ? clearQuickFilter('severity') : applyQuickFilter('severity', s)">
+                <div class="cv-dot" :class="s"></div>
+                <div class="cv-info">
+                  <div class="cv-count">{{ (coverageStats.bySeverity[s]?.selected || 0) }}/{{ (coverageStats.bySeverity[s]?.total || 0) }}</div>
+                  <div class="cv-label">{{ sevLabel(s) }}</div>
+                </div>
+              </div>
+              <button class="btn btn-danger" @click="fillHighRiskGaps" :disabled="!coverageStats.unselected">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                一键补全高危未选
+              </button>
+              <button class="btn btn-warning" @click="alignEnabledHighRisk" :disabled="!hasEnabledHighRiskGap">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                对齐已启用高危
+              </button>
+            </div>
+            <div class="coverage-cats">
+              <div v-for="[cat, stat] in Object.entries(coverageStats.byCategory).sort((a,b) => b[1].total - a[1].total)" :key="cat"
+                   class="coverage-chip" :class="{ active: filterCategory === cat }"
+                   @click="filterCategory === cat ? clearQuickFilter('category') : applyQuickFilter('category', cat)">
+                <span class="cc-name">{{ catLabel(cat) }}</span>
+                <span class="cc-count" :class="{ gap: stat.selected < stat.total }">{{ stat.selected }}/{{ stat.total }}</span>
+              </div>
+            </div>
           </div>
 
           <div class="rule-filter">
@@ -125,7 +165,27 @@
               <option value="critical">严重</option>
               <option value="high">高危</option>
               <option value="medium">中危</option>
+              <option value="low">低危</option>
             </select>
+            <select class="select" v-model="filterRuleType" @change="fetchRules" style="width:110px;">
+              <option value="">全部类型</option>
+              <option v-for="t in ruleTypes" :key="t" :value="t">{{ typeLabel(t) }}</option>
+            </select>
+            <select class="select" v-model="filterSelection" @change="fetchRules" style="width:100px;">
+              <option value="all">全部状态</option>
+              <option value="selected">已选</option>
+              <option value="unselected">未选</option>
+            </select>
+            <label class="filter-chip" :class="{ active: filterHitlOnly }">
+              <input type="checkbox" v-model="filterHitlOnly" @change="fetchRules" />
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              需审批
+            </label>
+            <label class="filter-chip" :class="{ active: filterAttackChainOnly }">
+              <input type="checkbox" v-model="filterAttackChainOnly" @change="fetchRules" />
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+              攻击链
+            </label>
             <div class="search-bar" style="width:160px;">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
               <input v-model="filterKeyword" placeholder="规则名/关键词" @keyup.enter="fetchRules" />
@@ -135,9 +195,25 @@
             <button class="btn btn-primary" @click="saveRules" :disabled="!dirtyRules">保存规则选择</button>
           </div>
 
+          <!-- 批量操作 -->
+          <div class="rule-batch-bar" v-if="rules.length">
+            <label class="batch-checkbox">
+              <input type="checkbox" :checked="isPageAllSelected" :indeterminate="isPageIndeterminate" @change="togglePageSelectAll($event.target.checked)" />
+              <span>全选本页</span>
+            </label>
+            <div class="batch-actions">
+              <button class="btn btn-sm" @click="batchSelectAll(true)">开启本页全部</button>
+              <button class="btn btn-sm" @click="batchSelectAll(false)">关闭本页全部</button>
+              <button class="btn btn-sm" @click="batchInvert">反选本页</button>
+            </div>
+            <span class="batch-count">已选 {{ selectedRuleIds.length }} 条</span>
+          </div>
           <!-- 规则列表 -->
           <div class="rule-list" v-if="rules.length">
             <div v-for="r in rules" :key="r.id" :class="['rule-item', { checked: r._checked }]">
+              <label class="row-checkbox">
+                <input type="checkbox" :checked="r._checked" @change="onRuleCheck(r, $event.target.checked)" />
+              </label>
               <div class="rule-icon">
                 <svg v-if="r.category === 'process' || r.category === 'webshell'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17l6-6-6-6"/><path d="M12 19h8"/></svg>
                 <svg v-else-if="r.category === 'connection'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/></svg>
@@ -153,6 +229,7 @@
               <span class="rule-tag">{{ catLabel(r.category) }}</span>
               <span class="sev-dots"><span :class="['sev-dot', r.severity]"></span></span>
               <span style="font-size:10px;color:var(--color-fg-subtle);width:24px;">{{ sevLabel(r.severity) }}</span>
+              <span :class="['badge', effState(r).on ? 'badge-active' : 'badge-low']" :title="effState(r).reason" style="margin-left:2px;">{{ effState(r).on ? '生效中' : effState(r).reason }}</span>
               <label class="toggle">
                 <input type="checkbox" :checked="r._checked" @change="onRuleCheck(r, $event.target.checked)" />
                 <div class="toggle-slider"></div>
@@ -171,7 +248,7 @@
 
         <!-- info-tip -->
         <div class="info-tip">
-          <strong>策略激活提示</strong>：激活策略后分析引擎只执行该策略内的规则。切换策略时当前策略自动停用。无激活策略时降级为全量检测。
+          <strong>策略激活提示</strong>：激活策略 = 受控「部署」，分析引擎只执行该策略内且已启用的规则（策略选中集会同步写入规则启用态）。切换策略时当前策略自动停用。无激活策略时系统自动激活基线策略（不再静默全量检测）。列表中的「生效中 / 未生效原因」反映该规则的真实告警状态。
           <br><strong>复制派生</strong>：点击"复制派生" → 生成包含完全相同配置和规则的新策略 → 可单独修改规则后独立保存。
         </div>
       </div>
@@ -242,24 +319,92 @@ const ruleTotal = ref(0)
 const rulePage = ref(1)
 const selectedRuleIds = ref([])
 const dirtyRules = ref(false)
+
+// 当前策略是否处于激活态（用于计算规则真实生效态）
+const isCurrentActive = computed(() => {
+  const p = policies.value.find(p => p.id === selectedId.value)
+  return !!p?.is_active
+})
+function effState(r) {
+  if (!r.enabled) return { on: false, reason: '已禁用' }
+  if (!isCurrentActive.value) return { on: false, reason: '策略未激活' }
+  if (!r._checked) return { on: false, reason: '未选入本策略' }
+  return { on: true, reason: '生效中' }
+}
+
 const filterCategory = ref('')
 const filterSeverity = ref('')
 const filterKeyword = ref('')
-const categories = ['process', 'connection', 'logon', 'file', 'persistence', 'ioc', 'webshell', 'memory']
+const filterRuleType = ref('')
+const filterSelection = ref('all')
+const filterHitlOnly = ref(false)
+const filterAttackChainOnly = ref(false)
+const allRules = ref([])
+
+// 类别/类型从实际规则动态推导，避免新增 category（如 impact/lateral）后前端下拉缺失
+const categories = computed(() => Array.from(new Set(allRules.value.map(r => r.category).filter(Boolean))).sort())
+const ruleTypes = computed(() => Array.from(new Set(allRules.value.map(r => r.rule_type).filter(Boolean))).sort())
 
 function sevType(s) { return { critical: 'danger', high: 'warning', medium: 'primary' }[s] || 'info' }
 function sevLabel(s) { return { critical: '严重', high: '高危', medium: '中危', low: '低危' }[s] || s || '信息' }
-const CAT_LABELS = { process: '进程行为', connection: '网络连接', logon: '登录事件', file: '文件操作', persistence: '持久化', ioc: 'IOC', webshell: 'WebShell', memory: '内存', behavior: '行为', discovery: '发现' }
-const TYPE_LABELS = { regex: '正则匹配', list: '列表匹配', behavior: '行为分析', threshold: '阈值检测', attack_chain: '攻击链', composite: '复合规则' }
+const CAT_LABELS = {
+  process: '进程行为', connection: '网络连接', logon: '登录事件', file: '文件操作',
+  persistence: '持久化', ioc: 'IOC', webshell: 'WebShell', memory: '内存',
+  behavior: '行为', discovery: '发现', impact: '影响', lateral: '横向移动',
+  exfiltration: '数据外渗', execution: '执行', defense_evasion: '防御规避',
+  credential: '凭据窃取', authentication: '认证', privilege: '权限提升',
+  'privilege_escalation': '权限提升', startup: '启动项', network: '网络',
+  'memory_shell': '内存马', 'system': '系统', 'registry': '注册表'
+}
+const TYPE_LABELS = {
+  regex: '正则匹配', list: '列表匹配', behavior: '行为分析', threshold: '阈值检测',
+  attack_chain: '攻击链', composite: '复合规则', event_log_summary: '事件日志聚合',
+  exists: '存在性检测'
+}
 function catLabel(c) { return CAT_LABELS[c] || c || '-' }
 function typeLabel(t) { return TYPE_LABELS[t] || t || '-' }
 function catType(c) {
-  const m = { process: 'primary', connection: 'warning', logon: 'success', file: 'info', persistence: 'danger', ioc: 'danger', webshell: 'danger', memory: 'warning' }
+  const m = {
+    process: 'primary', connection: 'warning', logon: 'success', file: 'info',
+    persistence: 'danger', ioc: 'danger', webshell: 'danger', memory: 'warning',
+    impact: 'danger', lateral: 'warning', exfiltration: 'warning', execution: 'primary',
+    defense_evasion: 'danger', credential: 'danger', authentication: 'success',
+    privilege: 'danger', privilege_escalation: 'danger', startup: 'info',
+    network: 'warning', memory_shell: 'danger'
+  }
   return m[c] || ''
 }
 function typeType(t) {
-  const m = { regex: '', list: 'info', behavior: 'primary', threshold: 'warning', attack_chain: 'danger', composite: 'success' }
+  const m = {
+    regex: '', list: 'info', behavior: 'primary', threshold: 'warning',
+    attack_chain: 'danger', composite: 'success', event_log_summary: 'warning',
+    exists: 'info'
+  }
   return m[t] || ''
+}
+
+// 应急视角覆盖度统计：总数 / 已选 / 未选，按严重度与类别分布
+const coverageStats = computed(() => {
+  const total = allRules.value.length
+  const selected = selectedRuleIds.value.length
+  const bySeverity = {}
+  const byCategory = {}
+  allRules.value.forEach(r => {
+    const sev = r.severity || 'info'
+    bySeverity[sev] = bySeverity[sev] || { total: 0, selected: 0 }
+    bySeverity[sev].total++
+    if (selectedRuleIds.value.includes(r.id)) bySeverity[sev].selected++
+
+    const cat = r.category || 'unknown'
+    byCategory[cat] = byCategory[cat] || { total: 0, selected: 0 }
+    byCategory[cat].total++
+    if (selectedRuleIds.value.includes(r.id)) byCategory[cat].selected++
+  })
+  return { total, selected, unselected: total - selected, bySeverity, byCategory }
+})
+
+function hasHitl(r) {
+  return !!(r.condition && r.condition._meta && r.condition._meta.requires_hitl)
 }
 function markDirty() { dirty.value = true }
 function onRuleCheck(row, checked) {
@@ -268,7 +413,41 @@ function onRuleCheck(row, checked) {
     ? Array.from(new Set([...selectedRuleIds.value, row.id]))
     : selectedRuleIds.value.filter(id => id !== row.id)
   dirtyRules.value = true
+  // 已选/未选筛选项下，切换后立即刷新当前页
+  if (filterSelection.value !== 'all') fetchRules()
 }
+
+const pageSelectedCount = computed(() => rules.value.filter(r => r._checked).length)
+const isPageAllSelected = computed(() => rules.value.length > 0 && rules.value.every(r => r._checked))
+const isPageIndeterminate = computed(() => pageSelectedCount.value > 0 && pageSelectedCount.value < rules.value.length)
+
+function togglePageSelectAll(checked) {
+  rules.value.forEach(r => { r._checked = checked })
+  const pageIds = rules.value.map(r => r.id)
+  selectedRuleIds.value = checked
+    ? Array.from(new Set([...selectedRuleIds.value, ...pageIds]))
+    : selectedRuleIds.value.filter(id => !pageIds.includes(id))
+  dirtyRules.value = true
+  if (filterSelection.value !== 'all') fetchRules()
+}
+
+function batchSelectAll(checked) {
+  togglePageSelectAll(checked)
+}
+
+function batchInvert() {
+  rules.value.forEach(r => {
+    r._checked = !r._checked
+    if (r._checked) {
+      if (!selectedRuleIds.value.includes(r.id)) selectedRuleIds.value.push(r.id)
+    } else {
+      selectedRuleIds.value = selectedRuleIds.value.filter(id => id !== r.id)
+    }
+  })
+  dirtyRules.value = true
+  if (filterSelection.value !== 'all') fetchRules()
+}
+
 function rowClass({ row }) {
   return row._checked ? 'rule-row-checked' : ''
 }
@@ -302,18 +481,54 @@ async function selectPolicy(id) {
   await fetchRules()
 }
 
-async function fetchRules() {
-  const params = { page: rulePage.value, page_size: 50 }
-  if (filterCategory.value) params.category = filterCategory.value
-  if (filterSeverity.value) params.severity = filterSeverity.value
-  if (filterKeyword.value) params.keyword = filterKeyword.value
-  const res = await getRuleSelector(params)
-  rules.value = (res.data?.items || []).map(r => ({
+async function fetchRules(force = false) {
+  // 策略配置页规则量级通常 <1000，一次性拉全后在前端做分页与多维度筛选，保证应急场景下交互零延迟
+  if (!allRules.value.length || force) {
+    const res = await getRuleSelector({ page: 1, page_size: 500 })
+    allRules.value = (res.data?.items || []).map(r => ({ ...r }))
+  }
+
+  let filtered = allRules.value
+
+  if (filterCategory.value) {
+    filtered = filtered.filter(r => r.category === filterCategory.value)
+  }
+  if (filterSeverity.value) {
+    filtered = filtered.filter(r => r.severity === filterSeverity.value)
+  }
+  if (filterRuleType.value) {
+    filtered = filtered.filter(r => r.rule_type === filterRuleType.value)
+  }
+  if (filterKeyword.value) {
+    const kw = filterKeyword.value.toLowerCase()
+    filtered = filtered.filter(r =>
+      (r.name || '').toLowerCase().includes(kw) ||
+      (r.label || '').toLowerCase().includes(kw) ||
+      (r.description || '').toLowerCase().includes(kw)
+    )
+  }
+  if (filterSelection.value === 'selected') {
+    filtered = filtered.filter(r => selectedRuleIds.value.includes(r.id))
+  } else if (filterSelection.value === 'unselected') {
+    filtered = filtered.filter(r => !selectedRuleIds.value.includes(r.id))
+  }
+  if (filterHitlOnly.value) {
+    filtered = filtered.filter(r => hasHitl(r))
+  }
+  if (filterAttackChainOnly.value) {
+    filtered = filtered.filter(r => r.rule_type === 'attack_chain')
+  }
+
+  ruleTotal.value = filtered.length
+
+  const pageSize = 50
+  const start = (rulePage.value - 1) * pageSize
+  const pageItems = filtered.slice(start, start + pageSize)
+
+  rules.value = pageItems.map(r => ({
     ...r,
-    // 标记已选中
     _checked: selectedRuleIds.value.includes(r.id)
   }))
-  ruleTotal.value = res.data?.total || 0
 }
 
 function onRuleSelect(selection) {
@@ -327,14 +542,74 @@ function onRuleSelect(selection) {
   rules.value.forEach(r => { r._checked = newSelected.includes(r.id) })
   selectedRuleIds.value = newSelected
   dirtyRules.value = true
+  if (filterSelection.value !== 'all') fetchRules()
 }
 
 function resetFilters() {
   filterCategory.value = ''
   filterSeverity.value = ''
   filterKeyword.value = ''
+  filterRuleType.value = ''
+  filterSelection.value = 'all'
+  filterHitlOnly.value = false
+  filterAttackChainOnly.value = false
   rulePage.value = 1
   fetchRules()
+}
+
+function applyQuickFilter(type, value) {
+  if (type === 'severity') filterSeverity.value = value
+  if (type === 'category') filterCategory.value = value
+  if (type === 'selection') filterSelection.value = value
+  if (type === 'rule_type') filterRuleType.value = value
+  rulePage.value = 1
+  fetchRules()
+}
+
+function clearQuickFilter(type) {
+  if (type === 'severity') filterSeverity.value = ''
+  if (type === 'category') filterCategory.value = ''
+  if (type === 'selection') filterSelection.value = 'all'
+  if (type === 'rule_type') filterRuleType.value = ''
+  rulePage.value = 1
+  fetchRules()
+}
+
+function fillHighRiskGaps() {
+  // 一键补全：把所有 critical/high 且未选的规则加入当前策略（应急专家常用操作）
+  const toAdd = allRules.value
+    .filter(r => (r.severity === 'critical' || r.severity === 'high') && !selectedRuleIds.value.includes(r.id))
+    .map(r => r.id)
+  if (!toAdd.length) {
+    ElMessage.info('暂无高危未选规则')
+    return
+  }
+  selectedRuleIds.value = Array.from(new Set([...selectedRuleIds.value, ...toAdd]))
+  dirtyRules.value = true
+  fetchRules()
+  ElMessage.success(`已自动勾选 ${toAdd.length} 条高危规则`)
+}
+
+// 一键对齐：把「已启用但未被本策略选中」的 critical/high 规则批量补选（消除静默空洞）
+const hasEnabledHighRiskGap = computed(() =>
+  allRules.value.some(r =>
+    (r.severity === 'critical' || r.severity === 'high') &&
+    r.enabled &&
+    !selectedRuleIds.value.includes(r.id)
+  )
+)
+function alignEnabledHighRisk() {
+  const toAdd = allRules.value
+    .filter(r => (r.severity === 'critical' || r.severity === 'high') && r.enabled && !selectedRuleIds.value.includes(r.id))
+    .map(r => r.id)
+  if (!toAdd.length) {
+    ElMessage.info('无「已启用但未选」的高危规则')
+    return
+  }
+  selectedRuleIds.value = Array.from(new Set([...selectedRuleIds.value, ...toAdd]))
+  dirtyRules.value = true
+  fetchRules()
+  ElMessage.success(`已对齐 ${toAdd.length} 条已启用高危规则，保存并激活后生效`)
 }
 
 async function saveRules() {
@@ -552,6 +827,55 @@ onMounted(loadPolicies)
 .fi:focus { border-color: var(--color-accent-fg); }
 .fta { width: 100%; padding: 8px 10px; border: 0.5px solid var(--color-border-default); border-radius: 6px; font-size: 12px; outline: none; resize: vertical; font-family: var(--font-mono); line-height: 1.5; min-height: 60px; background: var(--color-canvas-default); color: var(--color-fg-default); }
 .fta:focus { border-color: var(--color-accent-fg); }
+
+/* ── Batch Selection ── */
+.rule-batch-bar { display: flex; align-items: center; gap: 12px; padding: 8px 10px; margin-bottom: 8px; border: 0.5px solid var(--color-border-default); border-radius: 6px; background: var(--color-canvas-subtle); }
+.batch-checkbox { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: var(--color-fg-default); cursor: pointer; user-select: none; }
+.batch-checkbox input { width: 14px; height: 14px; cursor: pointer; accent-color: var(--color-accent-fg); }
+.batch-actions { display: flex; align-items: center; gap: 8px; }
+.batch-actions .btn-sm { height: 26px; padding: 0 10px; font-size: 11px; font-weight: 500; border: 0.5px solid var(--color-border-default); border-radius: 4px; background: var(--color-canvas-default); color: var(--color-fg-default); cursor: pointer; transition: 0.12s; }
+.batch-actions .btn-sm:hover { background: var(--color-canvas-inset); border-color: var(--color-fg-light); }
+.batch-count { margin-left: auto; font-size: 11px; color: var(--color-fg-subtle); }
+.row-checkbox { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex-shrink: 0; cursor: pointer; }
+.row-checkbox input { width: 14px; height: 14px; cursor: pointer; accent-color: var(--color-accent-fg); }
+
+/* ── Coverage Panel ── */
+.coverage-panel { background: var(--color-canvas-subtle); border: 0.5px solid var(--color-border-default); border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; }
+.coverage-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.coverage-total { min-width: 120px; padding-right: 10px; border-right: 0.5px solid var(--color-border-default); }
+.cv-num { font-size: 18px; font-weight: 600; color: var(--color-fg-default); line-height: 1; }
+.cv-label { font-size: 11px; color: var(--color-fg-subtle); margin-top: 4px; }
+.cv-bar { width: 100%; height: 4px; background: var(--color-border-default); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+.cv-fill { height: 100%; background: var(--color-success-fg); border-radius: 2px; transition: width 0.2s; }
+.coverage-sev { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 6px; border: 0.5px solid transparent; cursor: pointer; transition: 0.12s; }
+.coverage-sev:hover { background: var(--color-canvas-inset); }
+.coverage-sev.active { background: var(--color-canvas-default); border-color: var(--color-accent-fg); }
+.cv-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.cv-dot.critical { background: #dc2626; }
+.cv-dot.high { background: #ef4444; }
+.cv-dot.medium { background: var(--color-warning-fg); }
+.cv-dot.low { background: var(--color-accent-fg); }
+.cv-info { min-width: 50px; }
+.cv-count { font-size: 13px; font-weight: 600; color: var(--color-fg-default); }
+.coverage-cats { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.coverage-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 4px; background: var(--color-canvas-default); border: 0.5px solid var(--color-border-default); font-size: 11px; cursor: pointer; transition: 0.12s; }
+.coverage-chip:hover { background: var(--color-canvas-inset); }
+.coverage-chip.active { background: var(--color-accent-subtle); border-color: var(--color-accent-fg); }
+.cc-name { color: var(--color-fg-default); }
+.cc-count { color: var(--color-fg-subtle); }
+.cc-count.gap { color: #dc2626; font-weight: 600; }
+
+/* ── Filter Chips ── */
+.filter-chip { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 10px; font-size: 11px; font-weight: 500; color: var(--color-fg-muted); background: var(--color-canvas-default); border: 0.5px solid var(--color-border-default); border-radius: 6px; cursor: pointer; user-select: none; transition: 0.12s; }
+.filter-chip:hover { background: var(--color-canvas-subtle); }
+.filter-chip.active { color: var(--color-accent-fg); background: var(--color-accent-subtle); border-color: var(--color-accent-fg); }
+.filter-chip input { position: absolute; opacity: 0; width: 0; height: 0; }
+.filter-chip svg { width: 12px; height: 12px; }
+
+/* ── Danger Button ── */
+.btn-danger { background: #dc2626; color: white; border-color: #dc2626; }
+.btn-danger:hover { background: #b91c1c; }
+.btn-danger svg { width: 13px; height: 13px; }
 
 /* ── Responsive ── */
 @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }

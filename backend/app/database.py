@@ -398,7 +398,8 @@ DDL_STATEMENTS = [
         pid             INTEGER,
         process_name    TEXT,
         collected_at    TEXT,
-        source_timestamp TEXT    -- 原始事件时间戳 ISO 8601
+        source_timestamp TEXT,    -- 原始事件时间戳 ISO 8601
+        source          TEXT      -- 数据来源：snapshot(导入) / triage(动态取证)
     )
     """,
     # file_hashes — 文件哈希表（数据采集增强 P1-3）
@@ -415,7 +416,22 @@ DDL_STATEMENTS = [
         product_name    TEXT,
         product_version TEXT,
         collected_at    TEXT,
-        source_timestamp TEXT    -- 原始事件时间戳 ISO 8601
+        source_timestamp TEXT,    -- 原始事件时间戳 ISO 8601
+        source          TEXT      -- 数据来源：snapshot(导入) / triage(动态取证)
+    )
+    """,
+    # triage_tasks — 动态取证任务表（应急动态取证方案 Phase 2）
+    """
+    CREATE TABLE IF NOT EXISTS triage_tasks (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        host_id         INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+        scope           TEXT NOT NULL,   -- JSON list: ["file_hashes","network","process_subtree"]
+        status          TEXT NOT NULL DEFAULT 'pending',  -- pending/running/done/failed
+        summary         TEXT,            -- JSON：各 scope 采集条数
+        error           TEXT,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+        started_at      TEXT,
+        finished_at     TEXT
     )
     """,
     # wmi_subscriptions — WMI 订阅表（数据采集增强 P1-5）
@@ -462,7 +478,8 @@ DDL_STATEMENTS = [
         start_time      TEXT,
         event_time      TEXT,        -- 事件时间戳（用于注入窗口/快照间消失判定）
         detail          TEXT,         -- JSON：memory_sections / etw_events / remote_thread_events 等
-        collected_at    TEXT
+        collected_at    TEXT,
+        source          TEXT          -- 事件来源：process_events(常驻 daemon) / triage(动态取证) 等
     )
     """,
     # webshells — WebShell 文件型检测命中表（融合扩充 A §2.2）
@@ -1364,13 +1381,26 @@ def _import_default_rules(conn: sqlite3.Connection) -> dict:
     """
     from app.rules import loader
 
-    rules_data = loader.load_default_rules()
+    rules_data, load_report = loader.load_default_rules_with_report()
     if not rules_data:
         logger.warning("默认规则加载为空，跳过导入")
-        return {"updated": 0, "inserted": 0, "preserved": 0, "total": 0}
+        return {
+            "updated": 0, "inserted": 0, "preserved": 0, "total": 0,
+            **load_report.to_dict(),
+        }
 
     cursor = conn.execute("SELECT name, source FROM rules")
     existing: dict[str, str] = {row["name"]: row["source"] for row in cursor.fetchall()}
+
+    # P2-3 孤儿检测：DB 中 source='default' 但已不在任何规则 JSON 中的行。
+    # 典型来源是"第二套合法规则源"（如 service_risk_analyzer 的 detector 型
+    # 规则 P0-1-TAMPER/P0-2-SHADOW/P1-PRIVESC/P1-REGISTRY）。
+    # 仅暴露、绝不自动清理——自动删除会静默摧毁这些子系统的检测能力。
+    json_names = {r.get("name") for r in rules_data}
+    load_report.orphans = sorted(
+        name for name, src in existing.items()
+        if src == "default" and name not in json_names
+    )
 
     updated = 0
     inserted = 0
@@ -1395,8 +1425,7 @@ def _import_default_rules(conn: sqlite3.Connection) -> dict:
 
         if name in existing:
             if existing[name] == "user":
-                # 用户自定义规则，绝不覆盖
-                preserved += 1
+                # 用户自定义规则，绝不覆盖（统计在循环后统一计算，覆盖被跳过的情况）
                 continue
             conn.execute(
                 """
@@ -1423,11 +1452,28 @@ def _import_default_rules(conn: sqlite3.Connection) -> dict:
             )
             inserted += 1
 
+    # P2-3 修正 preserved 语义：保留的用户规则数 = DB 中全部 source='user' 行
+    # （无论是否与默认规则 JSON 同名，import 都不会触碰它们）。
+    preserved = sum(1 for src in existing.values() if src == "user")
+
     logger.info(
         "Default rules import: updated=%d, inserted=%d, preserved(user)=%d, total_default=%d",
         updated, inserted, preserved, len(rules_data),
     )
-    return {"updated": updated, "inserted": inserted, "preserved": preserved, "total": len(rules_data)}
+    if load_report.orphans:
+        # 非致命，但必须可见：这些行不会被 upsert 覆盖，也不会被删除。
+        logger.warning(
+            "[RULE-LOAD] 检测到 %d 条 source='default' 孤儿规则"
+            "（DB 有 / JSON 无，未做任何处置）: %s",
+            len(load_report.orphans), ", ".join(load_report.orphans),
+        )
+    return {
+        "updated": updated,
+        "inserted": inserted,
+        "preserved": preserved,
+        "total": len(rules_data),  # 语义不变：装载成功数（向后兼容）
+        **load_report.to_dict(),
+    }
 
 
 def reset_default_rules() -> dict:
@@ -1801,6 +1847,51 @@ def _create_agent_baselines_table(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_agent_baselines_host ON agent_baselines(host_id)"
+    )
+
+
+def _create_behavior_baselines_table(conn: sqlite3.Connection) -> None:
+    """创建 behavior_baselines 表（P1-5 行为基线存储骨架）.
+
+    与 ``agent_baselines`` 的区别——二者互补，不重复：
+
+    - ``agent_baselines``：整机**差分快照**（known_items 全量 JSON），
+      用于"这台机器上出现了以前没有过的东西"的集合比对。
+    - ``behavior_baselines``：按 (scope, metric, window) 维度的**统计量**
+      （mean/stddev/p95/max），用于把规则里的全局固定阈值替换为
+      "相对该主机自身历史的偏离程度"。
+
+    本阶段仅建表与提供读写接口，**不接入任何规则判定**，
+    因此对现有告警行为零影响（见 p1/01-design.md §2.7）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS behavior_baselines (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope_type   TEXT NOT NULL,
+            scope_key    TEXT NOT NULL,
+            metric       TEXT NOT NULL,
+            window       TEXT NOT NULL DEFAULT '1d',
+            sample_count INTEGER NOT NULL DEFAULT 0,
+            mean         REAL,
+            stddev       REAL,
+            p95          REAL,
+            max_value    REAL,
+            updated_at   TEXT DEFAULT (datetime('now'))
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_behavior_baselines_uniq
+        ON behavior_baselines(scope_type, scope_key, metric, window)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_behavior_baselines_metric
+        ON behavior_baselines(metric, window)
+        """
     )
 
 
@@ -2664,6 +2755,8 @@ def init_db() -> None:
         # v1.3.0 作战化新表
         _create_agent_baselines_table(conn)
         _create_ai_evidence_refills_table(conn)
+        # P1-5：行为基线统计表（仅骨架，暂不参与规则判定）
+        _create_behavior_baselines_table(conn)
         # 分析中心规则匹配降噪：security_events 加 matched_rules 列
         _alter_security_events_add_matched_rules(conn)
         # AI 降噪研判结果列：security_events 加 ai_verdict 列（避免 event_stats 等接口 500）
@@ -2710,6 +2803,11 @@ def init_db() -> None:
         _ensure_index("agents", "idx_agents_agent_id", "agent_id")
         # agent token 认证：agents 表加 token_hash/token_created_at 列 + 唯一索引
         _alter_agents_token_table(conn)
+        # 进程事件来源标记（区分常驻 daemon / 动态取证 triage，支持事件流溯源）
+        _alter_add_column("process_events", "source", "TEXT")
+        # 文件哈希 / 网络连接来源标记（动态取证 triage 追加，不污染快照存量）
+        _alter_add_column("file_hashes", "source", "TEXT")
+        _alter_add_column("network_connections", "source", "TEXT")
         # source_timestamp 迁移：CM 分析表追加列
         _migrate_source_timestamp(conn)
         # F7/F8 护栏与 MCP 表索引（DDL 已建表，此处补索引）

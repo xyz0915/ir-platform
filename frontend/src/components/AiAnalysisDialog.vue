@@ -550,6 +550,7 @@ import dayjs from 'dayjs'
 import { exportAiReportPdf, getAiReportByVersion, chatWithAi } from '@/api/ai'
 import { useAiStore } from '@/stores/ai'
 import { renderMarkdown } from '@/utils/markdown'
+import { formatServerTime } from '@/utils/time'
 import InputQualityPanel from '@/components/ai/InputQualityPanel.vue'
 import EvidenceTracePanel from '@/components/ai/EvidenceTracePanel.vue'
 import StructuredTimelinePanel from '@/components/ai/StructuredTimelinePanel.vue'
@@ -1170,7 +1171,7 @@ async function onVersionSelectVisible(visible) {
       const versions = await store.fetchReportVersions(currentHostId.value)
       reportVersions.value = versions.map((v) => ({
         ...v,
-        label: `v${v.version} - ${dayjs(v.created_at).format('MM-DD HH:mm')}`,
+        label: `v${v.version} - ${formatServerTime(v.created_at, 'MM-DD HH:mm')}`,
       }))
     } catch {
       reportVersions.value = []
@@ -1354,7 +1355,7 @@ function formatNumber(n) {
 
 function formatTime(t) {
   if (!t) return '-'
-  return dayjs(t).format('YYYY-MM-DD HH:mm:ss')
+  return formatServerTime(t)
 }
 
 /** 格式化阶段耗时（毫秒 → 可读文本） */

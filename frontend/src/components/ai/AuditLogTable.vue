@@ -146,8 +146,8 @@
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
-import dayjs from 'dayjs'
 import { getAiAuditLogs, getAiAuditLogDetail } from '@/api/ai'
+import { formatServerTime } from '@/utils/time'
 
 // ============================================================
 // State
@@ -238,7 +238,7 @@ async function openDetail(row) {
 // ============================================================
 function formatTime(t) {
   if (!t) return '-'
-  return dayjs(t).format('YYYY-MM-DD HH:mm:ss')
+  return formatServerTime(t)
 }
 
 function formatNumber(n) {

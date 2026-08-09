@@ -1,0 +1,118 @@
+[
+  {
+    "name": "evt_4625_failed_logon_burst",
+    "description": "Windows 安全日志中登录失败事件（4625）在单次采集窗口内异常聚集，提示密码爆破 / 口令喷洒。阈值 10 高于实测正常基线（样本值 1）。",
+    "category": "credential",
+    "rule_type": "event_log_summary",
+    "condition": {
+      "event_id": "4625",
+      "operator": ">=",
+      "count": 10,
+      "_meta": {
+        "mitre_attack": "T1110",
+        "baseline_note": "purge_snapshots 正常样本 4625=1，阈值 10 留足冗余",
+        "source": "agent.collectors.security.event_ids_summary"
+      }
+    },
+    "severity": "high",
+    "enabled": true,
+    "label": "登录失败爆发（疑似爆破）"
+  },
+  {
+    "name": "evt_4648_explicit_cred_burst",
+    "description": "显式凭据登录事件（4648）异常增多，常见于横向移动中使用 runas / PsExec / 显式凭据发起远程连接。",
+    "category": "lateral",
+    "rule_type": "event_log_summary",
+    "condition": {
+      "event_id": "4648",
+      "operator": ">=",
+      "count": 15,
+      "_meta": {
+        "mitre_attack": "T1078",
+        "baseline_note": "正常样本 4648=8，阈值 15 约为基线 2 倍",
+        "source": "agent.collectors.security.event_ids_summary"
+      }
+    },
+    "severity": "medium",
+    "enabled": true,
+    "label": "显式凭据登录异常增多"
+  },
+  {
+    "name": "evt_4662_dcsync_suspect",
+    "description": "目录服务对象操作事件（4662）出现，在普通成员主机上属高度异常，是 DCSync 凭据窃取的关键指征。",
+    "category": "credential",
+    "rule_type": "event_log_summary",
+    "condition": {
+      "event_id": "4662",
+      "operator": ">=",
+      "count": 1,
+      "_meta": {
+        "requires_hitl": true,
+        "mitre_attack": "T1003/006",
+        "baseline_note": "正常样本中 4662=0（不出现），故阈值取 1",
+        "tuning_hint": "域控主机会正常产生 4662，应通过白名单或主机分组豁免 DC",
+        "source": "agent.collectors.security.event_ids_summary"
+      }
+    },
+    "severity": "critical",
+    "enabled": true,
+    "label": "目录服务对象访问（疑似 DCSync）"
+  },
+  {
+    "name": "evt_4769_kerberoasting_suspect",
+    "description": "Kerberos 服务票据请求事件（4769）大量出现，提示 Kerberoasting 批量导出 SPN 票据离线破解。",
+    "category": "credential",
+    "rule_type": "event_log_summary",
+    "condition": {
+      "event_id": "4769",
+      "operator": ">=",
+      "count": 30,
+      "_meta": {
+        "mitre_attack": "T1558/003",
+        "baseline_note": "非域样本中 4769=0；域环境需按实际基线调整",
+        "source": "agent.collectors.security.event_ids_summary"
+      }
+    },
+    "severity": "high",
+    "enabled": true,
+    "label": "Kerberos 票据请求激增（疑似 Kerberoasting）"
+  },
+  {
+    "name": "evt_4672_special_privilege_anomaly",
+    "description": "特权登录事件（4672）异常增多，提示提权后频繁以高权限身份登录，或存在凭据滥用。",
+    "category": "privilege",
+    "rule_type": "event_log_summary",
+    "condition": {
+      "event_id": "4672",
+      "operator": ">=",
+      "count": 50,
+      "_meta": {
+        "mitre_attack": "T1078/002",
+        "baseline_note": "正常样本 4672=31，阈值 50 高于基线约 60%",
+        "source": "agent.collectors.security.event_ids_summary"
+      }
+    },
+    "severity": "medium",
+    "enabled": true,
+    "label": "特权登录异常增多"
+  },
+  {
+    "name": "evt_4624_logon_volume_anomaly",
+    "description": "成功登录事件（4624）总量异常，单独出现时价值有限，主要用于为其它高危告警提供上下文佐证。",
+    "category": "authentication",
+    "rule_type": "event_log_summary",
+    "condition": {
+      "event_id": "4624",
+      "operator": ">=",
+      "count": 100,
+      "_meta": {
+        "mitre_attack": "T1078",
+        "baseline_note": "正常样本 4624=33，阈值 100 约为基线 3 倍",
+        "source": "agent.collectors.security.event_ids_summary"
+      }
+    },
+    "severity": "low",
+    "enabled": true,
+    "label": "登录总量异常"
+  }
+]

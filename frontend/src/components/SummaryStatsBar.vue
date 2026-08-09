@@ -91,20 +91,20 @@ watch(() => props.hostId, () => {
 
 <style scoped>
 .summary-stats-bar {
-  margin-bottom: 16px;
+  margin-bottom: 10px;
 }
 .stat-card {
   text-align: center;
-  padding: 4px 0;
+  padding: 2px 0;
 }
 .stat-value {
-  font-size: 24px;
+  font-size: 18px;
   font-weight: 700;
   line-height: 1.2;
 }
 .stat-label {
-  font-size: 12px;
+  font-size: 11px;
   color: #909399;
-  margin-top: 4px;
+  margin-top: 2px;
 }
 </style>

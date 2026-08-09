@@ -136,6 +136,7 @@ import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { getUsers, createUser, updateUser, deleteUser, resetPassword, toggleUserActive } from '@/api/users'
+import { formatServerTime } from '@/utils/time'
 
 const loading = ref(false)
 const submitting = ref(false)
@@ -192,9 +193,7 @@ function roleLabel(role) {
 
 function formatTime(val) {
   if (!val) return ''
-  const d = new Date(val)
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  return formatServerTime(val, 'YYYY-MM-DD HH:mm')
 }
 
 async function fetchUsers() {

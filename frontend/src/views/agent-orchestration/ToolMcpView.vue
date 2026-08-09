@@ -60,6 +60,7 @@ import { ref, computed, onMounted } from 'vue'
 import { Search } from '@element-plus/icons-vue'
 import { useToolsStore } from '@/stores/tools'
 import ToolSchemaCard from '@/components/agents/ToolSchemaCard.vue'
+import { parseServerTime } from '@/utils/time'
 
 const store = useToolsStore()
 
@@ -110,8 +111,8 @@ const filteredToolCount = computed(() =>
 /** 心跳相对时间：刚刚 / X 分钟前 / X 小时前 / X 天前 */
 function relativeTime(iso) {
   if (!iso) return '—'
-  const t = new Date(iso)
-  if (Number.isNaN(t.getTime())) return iso
+  const t = parseServerTime(iso)
+  if (!t) return iso
   const diffMs = Date.now() - t.getTime()
   const sec = Math.floor(diffMs / 1000)
   if (sec < 60) return '刚刚'

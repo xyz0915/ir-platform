@@ -198,6 +198,7 @@ from app.api import knowledge_draft  # noqa: E402  # AI 自动知识入库
 from app.api import knowledge_bases  # noqa: E402  # L2 知识库聚合端点
 from app.api import knowledge  # noqa: E402  # P2-H 知识库自进化闭环
 from app.api import process_events  # noqa: E402  # T-P2-3 进程事件流入口（PoC）
+from app.api import triage_tasks  # noqa: E402  # Phase 2 动态取证任务
 from app.api import rule_suppression  # noqa: E402  # #18 规则抑制
 from app.api import dashboard  # noqa: E402  # 全局态势仪表盘
 from app.api import alerts  # noqa: E402  # 实时告警管理
@@ -244,6 +245,7 @@ app.include_router(knowledge_draft.router, prefix="/api/knowledge", tags=["知�
 app.include_router(knowledge_bases.router, prefix="/api/knowledge", tags=["知识库"])
 app.include_router(knowledge.router, prefix="/api/kb", tags=["知识自进化"])  # P2-H 自进化闭环
 app.include_router(process_events.router, prefix="/api", tags=["进程事件"])  # T-P2-3 进程事件流入口
+app.include_router(triage_tasks.router, prefix="/api", tags=["动态取证"])  # Phase 2 动态取证任务
 app.include_router(rule_suppression.router, prefix="/api", tags=["规则抑制"])  # #18 规则抑制
 app.include_router(dashboard.router, prefix="/api", tags=["仪表盘"])  # 全局态势仪表盘
 app.include_router(alerts.router, prefix="/api", tags=["告警"])  # 实时告警
