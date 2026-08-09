@@ -10,6 +10,10 @@ export default {
   get(id) {
     return request.get(`/cases/${id}`)
   },
+  // ── 案件详情聚合态势（告警/资产/处置/取证/IOC/TTP/AI/时间线）──
+  summary(id) {
+    return request.get(`/cases/${id}/summary`)
+  },
   update(id, data) {
     return request.put(`/cases/${id}`, data)
   },

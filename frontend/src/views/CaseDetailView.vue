@@ -8,7 +8,7 @@
           <el-icon><Back /></el-icon> 返回
         </el-button>
       </div>
-      <el-descriptions :column="2" border v-loading="loading">
+      <el-descriptions :column="3" border v-loading="loading">
         <el-descriptions-item label="案件名称">{{ caseData?.name }}</el-descriptions-item>
         <el-descriptions-item label="案件编号">{{ caseData?.case_number || '未分配' }}</el-descriptions-item>
         <el-descriptions-item label="状态">
@@ -16,9 +16,238 @@
             {{ caseData?.status === 'open' ? '进行中' : '已关闭' }}
           </el-tag>
         </el-descriptions-item>
+        <el-descriptions-item label="优先级">
+          <el-tag :type="priorityType(caseData?.priority)" size="small" effect="plain" class="status-tag">
+            {{ priorityLabel(caseData?.priority) }}
+          </el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="派生严重度">
+          <el-tag :type="sevType(summary?.case?.derived_severity)" size="small" effect="dark" class="status-tag">
+            {{ sevLabel(summary?.case?.derived_severity) }}
+          </el-tag>
+          <span class="muted-hint">（取关联告警最高严重度）</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="关联资产 / 日志">
+          {{ caseData?.host_count || 0 }} 台 / {{ caseData?.log_count || 0 }} 条
+        </el-descriptions-item>
         <el-descriptions-item label="创建时间">{{ caseData?.created_at }}</el-descriptions-item>
-        <el-descriptions-item label="描述" :span="2">{{ caseData?.description || '无' }}</el-descriptions-item>
+        <el-descriptions-item label="更新时间">{{ caseData?.updated_at }}</el-descriptions-item>
+        <el-descriptions-item label="描述" :span="3">{{ caseData?.description || '无' }}</el-descriptions-item>
       </el-descriptions>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- P0+P1：案件研判聚合态势                                       -->
+    <!-- ============================================================ -->
+    <div v-loading="summaryLoading">
+      <!-- 告警态势（P0） -->
+      <div class="card-box" v-if="summary">
+        <div class="flex-between mb-20">
+          <h3>告警态势</h3>
+          <span class="muted-hint">共 {{ summary.alert_stats.total }} 条</span>
+        </div>
+        <div class="stat-row mb-15">
+          <div class="stat-chip" v-for="s in severityOrder" :key="s">
+            <span class="stat-dot" :style="{ background: sevColor(s) }"></span>
+            <span class="stat-label">{{ sevLabel(s) }}</span>
+            <span class="stat-num">{{ summary.alert_stats.by_severity[s] || 0 }}</span>
+          </div>
+        </div>
+        <div class="stat-row mb-15">
+          <div class="stat-chip ghost" v-for="st in alertStatusOrder" :key="st">
+            <span class="stat-label">{{ alertStatusLabel(st) }}</span>
+            <span class="stat-num">{{ summary.alert_stats.by_status[st] || 0 }}</span>
+          </div>
+        </div>
+        <el-table :data="summary.top_alerts" border stripe size="small" v-if="summary.top_alerts.length">
+          <el-table-column prop="rule_label" label="规则" min-width="160" show-overflow-tooltip />
+          <el-table-column prop="severity" label="严重度" width="90">
+            <template #default="{ row }">
+              <el-tag :type="sevType(row.severity)" size="small" effect="dark">{{ sevLabel(row.severity) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="status" label="状态" width="90">
+            <template #default="{ row }">
+              <el-tag :type="alertStatusType(row.status)" size="small" effect="plain">{{ alertStatusLabel(row.status) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="source_process" label="来源进程" min-width="120" show-overflow-tooltip />
+          <el-table-column prop="source_ip" label="源IP" width="130" />
+          <el-table-column prop="count" label="次数" width="70" />
+          <el-table-column prop="last_seen_at" label="最近" width="170" />
+        </el-table>
+        <el-empty v-else description="暂无告警" :image-size="48" />
+      </div>
+
+      <!-- 受影响资产态势（P1） -->
+      <div class="card-box" v-if="summary">
+        <div class="flex-between mb-20">
+          <h3>受影响资产态势</h3>
+          <span class="muted-hint">在线 Agent {{ summary.host_stats.online_agents }} 个</span>
+        </div>
+        <div class="stat-row mb-15">
+          <div class="stat-chip">
+            <span class="stat-label">主机总数</span>
+            <span class="stat-num">{{ summary.host_stats.total }}</span>
+          </div>
+          <div class="stat-chip ghost" v-for="st in ['pending','imported','analyzed']" :key="st">
+            <span class="stat-label">{{ hostStatusLabel(st) }}</span>
+            <span class="stat-num">{{ summary.host_stats.by_status[st] || 0 }}</span>
+          </div>
+        </div>
+        <el-table :data="summary.host_stats.risk_top" border stripe size="small" v-if="summary.host_stats.risk_top.length">
+          <el-table-column prop="hostname" label="主机名" min-width="120" />
+          <el-table-column prop="ip_address" label="IP" width="140" />
+          <el-table-column label="风险指标(IOC命中)" width="140">
+            <template #default="{ row }">
+              <el-tag :type="row.risk_score > 0 ? 'danger' : 'info'" size="small" effect="plain">{{ row.risk_score }}</el-tag>
+            </template>
+          </el-table-column>
+        </el-table>
+        <el-empty v-else description="暂无风险主机" :image-size="48" />
+      </div>
+
+      <!-- 响应时间线（P0） -->
+      <div class="card-box" v-if="summary && summary.timeline.length">
+        <h3 class="mb-20">响应时间线</h3>
+        <el-timeline>
+          <el-timeline-item
+            v-for="(ev, i) in summary.timeline"
+            :key="i"
+            :timestamp="ev.time"
+            :type="timelineType(ev.type)"
+            placement="top"
+          >
+            <strong>{{ ev.title }}</strong>
+            <div class="muted-hint">{{ ev.detail }}</div>
+          </el-timeline-item>
+        </el-timeline>
+      </div>
+
+      <!-- 处置闭环进度（P1） -->
+      <div class="card-box" v-if="summary">
+        <div class="flex-between mb-20">
+          <h3>处置闭环进度</h3>
+          <span class="muted-hint">{{ summary.remediation_progress.done }} / {{ summary.remediation_progress.total }}</span>
+        </div>
+        <el-progress
+          :percentage="summary.remediation_progress.percent"
+          :stroke-width="10"
+          :status="summary.remediation_progress.percent === 100 ? 'success' : ''"
+          class="mb-15"
+        />
+        <el-table :data="summary.remediation_progress.items" border stripe size="small" v-if="summary.remediation_progress.items.length">
+          <el-table-column label="处置项" min-width="220" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span :class="{ 'done-text': row.checked }">{{ row.text }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="90">
+            <template #default="{ row }">
+              <el-tag :type="row.checked ? 'success' : 'info'" size="small" effect="plain">
+                {{ row.checked ? '已完成' : '待处理' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="source" label="来源" width="90" />
+        </el-table>
+        <el-empty v-else description="暂无处置清单" :image-size="48" />
+      </div>
+
+      <!-- 取证任务进度（P1） -->
+      <div class="card-box" v-if="summary">
+        <h3 class="mb-20">动态取证进度</h3>
+        <div class="stat-row">
+          <div class="stat-chip ghost" v-for="st in ['pending','running','done','failed']" :key="st">
+            <span class="stat-label">{{ triageLabel(st) }}</span>
+            <span class="stat-num">{{ summary.triage_progress[st] || 0 }}</span>
+          </div>
+          <div class="stat-chip">
+            <span class="stat-label">总计</span>
+            <span class="stat-num">{{ summary.triage_progress.total }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 威胁指标 IOC（P1） -->
+      <div class="card-box" v-if="summary">
+        <h3 class="mb-20">威胁指标 IOC</h3>
+        <el-table :data="summary.ioc_summary" border stripe size="small" v-if="summary.ioc_summary.length">
+          <el-table-column prop="ioc_type" label="类型" width="90" />
+          <el-table-column prop="ioc_value" label="指标值" min-width="180" show-overflow-tooltip />
+          <el-table-column prop="severity" label="严重度" width="90">
+            <template #default="{ row }">
+              <el-tag :type="sevType(row.severity)" size="small" effect="dark">{{ sevLabel(row.severity) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="hit_count" label="命中" width="70" />
+          <el-table-column label="情报" min-width="160">
+            <template #default="{ row }">
+              <template v-if="row.intel">
+                <el-tag v-if="row.intel.risk_score" type="danger" size="small" effect="plain">
+                  风险 {{ row.intel.risk_score }}
+                </el-tag>
+                <el-tag v-for="j in (row.intel.judgments || [])" :key="j" size="small" effect="plain" class="ml-5">
+                  {{ j }}
+                </el-tag>
+                <span v-if="row.intel.provider" class="muted-hint ml-5">{{ row.intel.provider }}</span>
+              </template>
+              <span v-else class="muted-hint">未命中情报</span>
+            </template>
+          </el-table-column>
+        </el-table>
+        <el-empty v-else description="暂无 IOC 命中" :image-size="48" />
+      </div>
+
+      <!-- 攻击链 / TTP（P1） -->
+      <div class="card-box" v-if="summary">
+        <h3 class="mb-20">攻击链 / TTP</h3>
+        <div class="mb-15" v-if="summary.ttp_summary.kill_chain.length">
+          <div class="muted-hint mb-8">Kill Chain 阶段分布</div>
+          <el-tag
+            v-for="k in summary.ttp_summary.kill_chain"
+            :key="k.stage"
+            class="ml-5 mb-5"
+            :type="k.count ? 'warning' : 'info'"
+            effect="plain"
+          >
+            {{ k.label }} ({{ k.count }})
+          </el-tag>
+        </div>
+        <div v-if="summary.ttp_summary.techniques.length">
+          <div class="muted-hint mb-8">MITRE 技战术</div>
+          <el-tag
+            v-for="t in summary.ttp_summary.techniques"
+            :key="t.technique_id"
+            class="ml-5 mb-5"
+            type="danger"
+            effect="plain"
+          >
+            {{ t.technique_id }} {{ t.name ? '· ' + t.name : '' }} ({{ t.count }})
+          </el-tag>
+        </div>
+        <el-empty v-if="!summary.ttp_summary.kill_chain.length && !summary.ttp_summary.techniques.length"
+                  description="暂无 TTP 数据" :image-size="48" />
+      </div>
+
+      <!-- AI 分析结论（P2 增强） -->
+      <div class="card-box" v-if="summary && summary.ai_summary.latest_at">
+        <div class="flex-between mb-20">
+          <h3>AI 分析结论</h3>
+          <span class="muted-hint">{{ summary.ai_summary.latest_at }}</span>
+        </div>
+        <el-descriptions :column="2" border size="small">
+          <el-descriptions-item label="风险评分">
+            <el-tag :type="aiRiskType(summary.ai_summary.risk_score)" size="small" effect="dark">
+              {{ summary.ai_summary.risk_score ?? '—' }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="攻击链">{{ summary.ai_summary.attack_chain || '—' }}</el-descriptions-item>
+          <el-descriptions-item label="处置建议" :span="2">
+            <div class="ai-reco">{{ summary.ai_summary.recommendation || '—' }}</div>
+          </el-descriptions-item>
+        </el-descriptions>
+      </div>
     </div>
 
     <!-- 主机列表 -->
@@ -286,6 +515,10 @@ const loading = ref(false)
 const hosts = ref([])
 const hostsLoading = ref(false)
 
+// P0+P1：案件研判聚合态势
+const summary = ref(null)
+const summaryLoading = ref(false)
+
 const addHostDialogVisible = ref(false)
 const adding = ref(false)
 const hostForm = reactive({
@@ -312,9 +545,14 @@ const batchDone = ref(false)
 const batchReport = ref(null)
 let batchStreamController = null
 
+// 枚举顺序
+const severityOrder = ['critical', 'high', 'medium', 'low']
+const alertStatusOrder = ['open', 'acknowledged', 'resolved', 'dismissed']
+
 onMounted(() => {
   loadCase()
   loadHosts()
+  loadSummary()
 })
 
 async function loadCase() {
@@ -329,6 +567,18 @@ async function loadCase() {
   }
 }
 
+async function loadSummary() {
+  summaryLoading.value = true
+  try {
+    const res = await casesApi.summary(route.params.id)
+    summary.value = res.data
+  } catch (error) {
+    // handled
+  } finally {
+    summaryLoading.value = false
+  }
+}
+
 async function loadHosts() {
   hostsLoading.value = true
   try {
@@ -339,6 +589,44 @@ async function loadHosts() {
   } finally {
     hostsLoading.value = false
   }
+}
+
+// ── 标签 / 颜色辅助 ──
+function sevLabel(s) {
+  return ({ critical: '严重', high: '高危', medium: '中危', low: '低危', none: '无', info: '信息' })[s] || s || '—'
+}
+function sevType(s) {
+  return ({ critical: 'danger', high: 'warning', medium: 'info', low: 'info', none: 'info', info: 'info' })[s] || 'info'
+}
+function sevColor(s) {
+  return ({ critical: '#DC2626', high: '#EF4444', medium: '#EAB308', low: '#3B82F6', none: '#9CA3AF', info: '#9CA3AF' })[s] || '#9CA3AF'
+}
+function priorityLabel(p) {
+  return ({ critical: '紧急', high: '高', medium: '中', low: '低' })[p] || p || '未设置'
+}
+function priorityType(p) {
+  return ({ critical: 'danger', high: 'warning', medium: 'info', low: 'info' })[p] || 'info'
+}
+function alertStatusLabel(st) {
+  return ({ open: '未处理', acknowledged: '已确认', resolved: '已处置', dismissed: '已忽略' })[st] || st
+}
+function alertStatusType(st) {
+  return ({ open: 'danger', acknowledged: 'warning', resolved: 'success', dismissed: 'info' })[st] || 'info'
+}
+function hostStatusLabel(st) {
+  return ({ pending: '待采集', imported: '已导入', analyzed: '已分析' })[st] || st
+}
+function triageLabel(st) {
+  return ({ pending: '待执行', running: '执行中', done: '已完成', failed: '失败' })[st] || st
+}
+function timelineType(t) {
+  return ({ case: 'primary', host: 'success', alert: 'warning', triage: 'info', remediation: 'danger' })[t] || 'primary'
+}
+function aiRiskType(score) {
+  if (score == null) return 'info'
+  if (score >= 80) return 'danger'
+  if (score >= 50) return 'warning'
+  return 'success'
 }
 
 function showAddHostDialog() {
@@ -563,7 +851,6 @@ function renderBatchMarkdown(text) {
   color: var(--color-fg-default);
 }
 
-/* Markdown styles for batch result */
 .batch-result-content :deep(table) {
   border-collapse: collapse;
   width: 100%;
@@ -621,6 +908,9 @@ function renderBatchMarkdown(text) {
 .ml-5 { margin-left: 5px; }
 
 .text-muted { color: var(--color-fg-muted); }
+.muted-hint { color: var(--color-fg-muted); font-size: 12px; }
+.done-text { color: var(--color-fg-muted); text-decoration: line-through; }
+.ai-reco { white-space: pre-wrap; line-height: 1.7; font-size: 13px; color: var(--color-fg-default); }
 
 .attack-path-card {
   font-size: 13px;
@@ -648,6 +938,23 @@ function renderBatchMarkdown(text) {
 }
 .flex-between { display: flex; justify-content: space-between; align-items: center; }
 .mb-20 { margin-bottom: 20px; }
+
+/* 态势统计 chips */
+.stat-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.stat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 0.5px solid var(--color-border-default, #e5e5e5);
+  border-radius: 8px;
+  background: var(--color-canvas-inset, #f7f7f8);
+  font-size: 13px;
+}
+.stat-chip.ghost { background: transparent; }
+.stat-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.stat-label { color: var(--color-fg-subtle, #888); }
+.stat-num { font-weight: 600; color: var(--color-fg-default, #111); }
 
 /* descriptions 弱化 */
 .card-box :deep(.el-descriptions__label) {

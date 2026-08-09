@@ -87,6 +87,24 @@ def purge(req: PurgeRequest, request: Request,
     return {"code": 0, "data": result, "message": "案件已清空"}
 
 
+@router.get("/{case_id}/summary")
+def get_case_summary(case_id: int, current_user: dict = Depends(get_current_user)):
+    """获取案件详情聚合态势（告警/资产/处置/取证/IOC/TTP/AI/时间线）.
+
+    应急研判一站式数据，避免前端多次往返。详见 app.services.case_summary。
+    """
+    from app.services.case_summary import get_case_summary as build_summary
+
+    case = CaseService.get_case(case_id)
+    if not case:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="案件不存在",
+        )
+    data = build_summary(case_id)
+    return {"code": 0, "data": data, "message": "success"}
+
+
 @router.get("/{case_id}")
 def get_case(case_id: int, current_user: dict = Depends(get_current_user)):
     """获取案件详情."""
