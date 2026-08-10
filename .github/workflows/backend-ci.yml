@@ -45,6 +45,9 @@ jobs:
           else
             echo "no tests found in backend/app/tests/ — skipping"
           fi
+          # 核心回归（新增案件详情聚合 + 规则治理/导入/策略治理）
+          # --noconftest 规避既有 torch 导入段错误（环境问题，与本次改动无关）
+          cd backend && python -m pytest tests/test_case_summary.py tests/test_enable_ssot.py tests/test_rules_import.py tests/test_p2_rule_governance.py -v --noconftest
 
   build:
     needs: test

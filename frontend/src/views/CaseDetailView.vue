@@ -28,7 +28,7 @@
           <span class="muted-hint">（取关联告警最高严重度）</span>
         </el-descriptions-item>
         <el-descriptions-item label="关联资产 / 日志">
-          {{ caseData?.host_count || 0 }} 台 / {{ caseData?.log_count || 0 }} 条
+          {{ (summary?.host_stats?.total ?? caseData?.host_count) || 0 }} 台 / {{ caseData?.log_count || 0 }} 条
         </el-descriptions-item>
         <el-descriptions-item label="创建时间">{{ caseData?.created_at }}</el-descriptions-item>
         <el-descriptions-item label="更新时间">{{ caseData?.updated_at }}</el-descriptions-item>

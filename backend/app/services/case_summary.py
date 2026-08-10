@@ -13,7 +13,7 @@
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from app.database import get_connection
 from app.models.security_event import ATTACK_STAGE_LABELS
