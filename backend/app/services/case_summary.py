@@ -365,7 +365,31 @@ def _ioc_section(conn, host_ids: List[int]):
 
 
 def _ttp_section(conn, host_ids: List[int], intel_by_ioc: Dict[int, dict]):
-    kill_chain: List[Dict[str, Any]] = []
+    """攻击链 / TTP — 应急专家三视角拆分.
+
+    security_events.attack_stage 字段实际是「MITRE 战术名（12 选 1）+ 进程调用链字符串」的混合。
+    本函数按语义拆分为三个独立维度，避免前端 tag 平铺混乱：
+
+    - tactics:      MITRE 12 战术的命中数（按 ATTACK_STAGE_LABELS 已知枚举过滤）
+    - attack_paths: 进程调用链（排除已知战术名后的非空值），按命中数倒序 Top10
+    - techniques:   ATT&CK 技术列表（来自 threat_intel.attck JSON）
+
+    应急专家使用逻辑：
+    - tactics      → 一眼看出攻击走到 MITRE 哪一步（12 阶段进度条）
+    - attack_paths → 还原"谁启动谁"的具体攻击链（取证视角）
+    - techniques   → 情报视角：用了什么 Txxxx 技术
+    """
+    TACTIC_ORDER = [
+        "initial_access", "execution", "persistence", "privilege_escalation",
+        "defense_evasion", "credential_access", "discovery", "lateral_movement",
+        "collection", "command_and_control", "exfiltration", "impact",
+    ]
+    TACTIC_SET = set(TACTIC_ORDER) | {"unknown"}
+
+    known_counts: Dict[str, int] = {k: 0 for k in TACTIC_ORDER}
+    unknown_count = 0
+    attack_paths: List[Dict[str, Any]] = []
+
     if host_ids:
         placeholder = _in_clause(host_ids)
         stage_rows = conn.execute(
@@ -376,15 +400,33 @@ def _ttp_section(conn, host_ids: List[int], intel_by_ioc: Dict[int, dict]):
         ).fetchall()
         for r in stage_rows:
             stage = r["attack_stage"]
-            kill_chain.append(
-                {
-                    "stage": stage,
-                    "label": ATTACK_STAGE_LABELS.get(stage, stage),
-                    "count": r["c"],
-                }
-            )
+            count = r["c"]
+            if stage in TACTIC_SET:
+                if stage == "unknown":
+                    unknown_count += count
+                else:
+                    known_counts[stage] = known_counts.get(stage, 0) + count
+            else:
+                # 非战术名 → 视为进程调用链（攻击路径）
+                attack_paths.append({"path": stage, "count": count})
 
-    # 技战术：从威胁情报 attck 字段聚合
+    # 战术按固定 12 阶段顺序输出，未触发的补 0
+    tactics: List[Dict[str, Any]] = [
+        {
+            "stage": t,
+            "label": ATTACK_STAGE_LABELS.get(t, t),
+            "count": known_counts.get(t, 0),
+        }
+        for t in TACTIC_ORDER
+    ]
+    if unknown_count:
+        tactics.append({"stage": "unknown", "label": "未知", "count": unknown_count})
+
+    # 进程链按命中数倒序，取 Top10
+    attack_paths.sort(key=lambda x: -x["count"])
+    attack_paths = attack_paths[:10]
+
+    # 技战术：从威胁情报 attck 字段聚合（情报视角）
     tech_counter: Dict[str, Dict[str, Any]] = {}
     for ti in intel_by_ioc.values():
         attck = ti.get("attck") or []
@@ -404,7 +446,7 @@ def _ttp_section(conn, host_ids: List[int], intel_by_ioc: Dict[int, dict]):
             tech_counter[tid]["count"] += 1
     techniques = sorted(tech_counter.values(), key=lambda x: -x["count"])
 
-    return {"kill_chain": kill_chain, "techniques": techniques}
+    return {"tactics": tactics, "attack_paths": attack_paths, "techniques": techniques}
 
 
 def _ai_section(conn, host_ids: List[int]) -> Dict[str, Any]:

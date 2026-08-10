@@ -100,34 +100,67 @@
         </div>
       </div>
 
-      <!-- 攻击链 / TTP（P1） -->
+      <!-- 攻击链 / TTP（应急专家三视角：A 战术进度 + B 攻击路径 + C ATT&CK 技术） -->
       <div class="card-box" v-if="summary">
         <h3 class="mb-20">攻击链 / TTP</h3>
-        <div class="mb-15" v-if="summary.ttp_summary.kill_chain.length">
-          <div class="muted-hint mb-8">Kill Chain 阶段分布</div>
-          <el-tag
-            v-for="k in summary.ttp_summary.kill_chain"
-            :key="k.stage"
-            class="ml-5 mb-5"
-            :type="k.count ? 'warning' : 'info'"
-            effect="plain"
-          >
-            {{ k.label }} ({{ k.count }})
-          </el-tag>
+
+        <!-- A. Kill Chain 进度（MITRE 12 战术顺序进度条） -->
+        <div class="mb-20" v-if="summary.ttp_summary.tactics.length">
+          <div class="muted-hint mb-10">① Kill Chain 阶段进度（MITRE 战术）</div>
+          <div class="kill-chain-bar">
+            <div
+              v-for="t in summary.ttp_summary.tactics"
+              :key="t.stage"
+              class="kill-chain-cell"
+              :class="tacticClass(t.count)"
+              :title="`${t.label} · 命中 ${t.count}`"
+            >
+              <span class="tactic-name">{{ t.label }}</span>
+              <span class="tactic-count">{{ t.count || '' }}</span>
+            </div>
+          </div>
         </div>
+
+        <!-- B. 攻击路径（Top 进程调用链，还原"谁启动谁"） -->
+        <div class="mb-20" v-if="summary.ttp_summary.attack_paths.length">
+          <div class="muted-hint mb-10">② 攻击路径（进程调用链 Top {{ summary.ttp_summary.attack_paths.length }}）</div>
+          <el-table
+            :data="summary.ttp_summary.attack_paths"
+            border stripe size="small"
+            :row-class-name="pathRowClass"
+          >
+            <el-table-column label="进程调用链" min-width="380">
+              <template #default="{ row }">
+                <span class="path-cell">{{ row.path }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="count" label="命中数" width="90" align="center">
+              <template #default="{ row }">
+                <el-tag :type="row.count >= 10 ? 'danger' : row.count >= 5 ? 'warning' : 'info'" size="small" effect="dark">
+                  {{ row.count }}
+                </el-tag>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+
+        <!-- C. 触发的 ATT&CK 技术（情报视角，威胁情报 attck 回灌） -->
         <div v-if="summary.ttp_summary.techniques.length">
-          <div class="muted-hint mb-8">MITRE 技战术</div>
-          <el-tag
-            v-for="t in summary.ttp_summary.techniques"
-            :key="t.technique_id"
-            class="ml-5 mb-5"
-            type="danger"
-            effect="plain"
-          >
-            {{ t.technique_id }} {{ t.name ? '· ' + t.name : '' }} ({{ t.count }})
-          </el-tag>
+          <div class="muted-hint mb-10">③ 触发的 ATT&CK 技术（情报）</div>
+          <div class="tech-group">
+            <el-tag
+              v-for="t in summary.ttp_summary.techniques"
+              :key="t.technique_id"
+              class="ml-5 mb-5"
+              type="danger"
+              effect="plain"
+            >
+              {{ t.technique_id }} {{ t.name ? '· ' + t.name : '' }} ({{ t.count }})
+            </el-tag>
+          </div>
         </div>
-        <el-empty v-if="!summary.ttp_summary.kill_chain.length && !summary.ttp_summary.techniques.length"
+
+        <el-empty v-if="!summary.ttp_summary.tactics.length && !summary.ttp_summary.attack_paths.length && !summary.ttp_summary.techniques.length"
                   description="暂无 TTP 数据" :image-size="48" />
       </div>
 
@@ -530,6 +563,17 @@ function aiRiskType(score) {
   return 'success'
 }
 
+// 攻击链 / TTP：战术进度颜色（未触发=灰、<10=黄、>=10=红）
+function tacticClass(count) {
+  if (!count) return 'tactic-none'
+  if (count >= 10) return 'tactic-hot'
+  return 'tactic-warm'
+}
+// 进程调用链表格行高亮（命中>=10 加底色）
+function pathRowClass({ row }) {
+  return row.count >= 10 ? 'path-row-hot' : row.count >= 5 ? 'path-row-warm' : ''
+}
+
 function showAddHostDialog() {
   hostForm.hostname = ''
   hostForm.ip_address = ''
@@ -715,6 +759,75 @@ function renderBatchMarkdown(text) {
 }
 .batch-host-tag {
   margin-right: 0;
+}
+
+/* ====== 攻击链 / TTP（应急专家三视角） ====== */
+.kill-chain-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.kill-chain-cell {
+  flex: 1 1 110px;
+  min-width: 100px;
+  padding: 10px 8px;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+  border: 1px solid var(--color-border-default, #e5e7eb);
+  background: var(--color-bg-soft, #f8f9fa);
+  transition: transform .12s ease;
+}
+.kill-chain-cell:hover {
+  transform: translateY(-1px);
+}
+.tactic-name {
+  font-size: 12px;
+  color: var(--color-fg-muted, #6b7280);
+}
+.tactic-count {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-fg-muted, #9ca3af);
+}
+.tactic-warm {
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+.tactic-warm .tactic-count {
+  color: #ea580c;
+}
+.tactic-warm .tactic-name {
+  color: #9a3412;
+}
+.tactic-hot {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+.tactic-hot .tactic-count {
+  color: #dc2626;
+}
+.tactic-hot .tactic-name {
+  color: #991b1b;
+  font-weight: 600;
+}
+.path-cell {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 13px;
+  color: var(--color-fg-default, #1f2937);
+}
+:deep(.path-row-hot) td {
+  background: #fef2f2 !important;
+}
+:deep(.path-row-warm) td {
+  background: #fff7ed !important;
+}
+.tech-group {
+  display: flex;
+  flex-wrap: wrap;
 }
 .batch-host-ip {
   font-size: 11px;

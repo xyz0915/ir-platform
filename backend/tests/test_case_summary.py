@@ -7,7 +7,7 @@ P0+P1 改造验证：
   - 处置闭环进度（done/total/percent）
   - 取证任务进度
   - IOC 命中关联威胁情报（intel 回灌）
-  - TTP（kill chain + 技战术，来自 threat_intel.attck）
+  - TTP（tactics/attack_paths 拆分 + techniques，来自 threat_intel.attck）
   - AI 分析结论解析（risk_score / attack_chain / recommendation）
 
 测试隔离：重定向 settings.DB_PATH 到临时库并 init_db()，不污染运行库。
@@ -144,6 +144,12 @@ def _seed():
             "VALUES ('evt-2', ?, 'process_start', 'medium', 'proc-1', 'execution', NULL, '2026-08-01 11:35:00')",
             (h2,),
         )
+        # 进程调用链（非 MITRE 战术名，应被拆入 attack_paths 而非 tactics）
+        conn.execute(
+            "INSERT INTO security_events (id, host_id, event_type, severity, event_key, attack_stage, ai_analysis, timestamp) "
+            "VALUES ('evt-3', ?, 'process_tree', 'medium', 'proc-2', 'explorer.exe → cmd.exe → powershell.exe', NULL, '2026-08-01 11:40:00')",
+            (h1,),
+        )
 
     return case_id
 
@@ -208,15 +214,37 @@ def test_ioc_joins_threat_intel():
     assert ip_entry["intel"]["judgments"] == ["malicious"]
 
 
-def test_ttp_from_threat_intel_attck():
+def test_ttp_tactics_split_from_attack_paths():
+    """验证 attack_stage 字段（MITRE 战术名 + 进程链混合）被正确拆分到 tactics / attack_paths."""
+    case_id = _seed()
+    s = get_case_summary(case_id)
+    ttp = s["ttp_summary"]
+
+    # MITRE 战术名进入 tactics，且按 ATTACK_STAGE_LABELS 翻译
+    tactic_stages = {k["stage"] for k in ttp["tactics"]}
+    assert "command_and_control" in tactic_stages
+    assert "execution" in tactic_stages
+    assert "unknown" not in tactic_stages  # seed 中无 unknown
+    c2 = next(k for k in ttp["tactics"] if k["stage"] == "command_and_control")
+    assert c2["label"] == "C2" and c2["count"] == 1
+    exe = next(k for k in ttp["tactics"] if k["stage"] == "execution")
+    assert exe["count"] == 1
+
+    # 进程链字符串进入 attack_paths，按命中数倒序
+    path_strs = [p["path"] for p in ttp["attack_paths"]]
+    assert "explorer.exe → cmd.exe → powershell.exe" in path_strs
+    # 进程链不应混入 tactics
+    for k in ttp["tactics"]:
+        assert " → " not in k["stage"]
+
+
+def test_ttp_techniques_from_threat_intel_attck():
+    """验证 techniques 仍从 threat_intel.attck 聚合（情报视角）."""
     case_id = _seed()
     s = get_case_summary(case_id)
     tech_ids = {t["technique_id"] for t in s["ttp_summary"]["techniques"]}
     assert "T1071" in tech_ids
     assert "T1059" in tech_ids
-    stages = {k["stage"] for k in s["ttp_summary"]["kill_chain"]}
-    assert "command_and_control" in stages
-    assert "execution" in stages
 
 
 def test_ai_summary_parsed():
