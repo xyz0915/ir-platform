@@ -40,45 +40,6 @@
     <!-- P0+P1：案件研判聚合态势                                       -->
     <!-- ============================================================ -->
     <div v-loading="summaryLoading">
-      <!-- 告警态势（P0） -->
-      <div class="card-box" v-if="summary">
-        <div class="flex-between mb-20">
-          <h3>告警态势</h3>
-          <span class="muted-hint">共 {{ summary.alert_stats.total }} 条</span>
-        </div>
-        <div class="stat-row mb-15">
-          <div class="stat-chip" v-for="s in severityOrder" :key="s">
-            <span class="stat-dot" :style="{ background: sevColor(s) }"></span>
-            <span class="stat-label">{{ sevLabel(s) }}</span>
-            <span class="stat-num">{{ summary.alert_stats.by_severity[s] || 0 }}</span>
-          </div>
-        </div>
-        <div class="stat-row mb-15">
-          <div class="stat-chip ghost" v-for="st in alertStatusOrder" :key="st">
-            <span class="stat-label">{{ alertStatusLabel(st) }}</span>
-            <span class="stat-num">{{ summary.alert_stats.by_status[st] || 0 }}</span>
-          </div>
-        </div>
-        <el-table :data="summary.top_alerts" border stripe size="small" v-if="summary.top_alerts.length">
-          <el-table-column prop="rule_label" label="规则" min-width="160" show-overflow-tooltip />
-          <el-table-column prop="severity" label="严重度" width="90">
-            <template #default="{ row }">
-              <el-tag :type="sevType(row.severity)" size="small" effect="dark">{{ sevLabel(row.severity) }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="status" label="状态" width="90">
-            <template #default="{ row }">
-              <el-tag :type="alertStatusType(row.status)" size="small" effect="plain">{{ alertStatusLabel(row.status) }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="source_process" label="来源进程" min-width="120" show-overflow-tooltip />
-          <el-table-column prop="source_ip" label="源IP" width="130" />
-          <el-table-column prop="count" label="次数" width="70" />
-          <el-table-column prop="last_seen_at" label="最近" width="170" />
-        </el-table>
-        <el-empty v-else description="暂无告警" :image-size="48" />
-      </div>
-
       <!-- 受影响资产态势（P1） -->
       <div class="card-box" v-if="summary">
         <div class="flex-between mb-20">
@@ -124,36 +85,6 @@
         </el-timeline>
       </div>
 
-      <!-- 处置闭环进度（P1） -->
-      <div class="card-box" v-if="summary">
-        <div class="flex-between mb-20">
-          <h3>处置闭环进度</h3>
-          <span class="muted-hint">{{ summary.remediation_progress.done }} / {{ summary.remediation_progress.total }}</span>
-        </div>
-        <el-progress
-          :percentage="summary.remediation_progress.percent"
-          :stroke-width="10"
-          :status="summary.remediation_progress.percent === 100 ? 'success' : ''"
-          class="mb-15"
-        />
-        <el-table :data="summary.remediation_progress.items" border stripe size="small" v-if="summary.remediation_progress.items.length">
-          <el-table-column label="处置项" min-width="220" show-overflow-tooltip>
-            <template #default="{ row }">
-              <span :class="{ 'done-text': row.checked }">{{ row.text }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="状态" width="90">
-            <template #default="{ row }">
-              <el-tag :type="row.checked ? 'success' : 'info'" size="small" effect="plain">
-                {{ row.checked ? '已完成' : '待处理' }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="source" label="来源" width="90" />
-        </el-table>
-        <el-empty v-else description="暂无处置清单" :image-size="48" />
-      </div>
-
       <!-- 取证任务进度（P1） -->
       <div class="card-box" v-if="summary">
         <h3 class="mb-20">动态取证进度</h3>
@@ -167,36 +98,6 @@
             <span class="stat-num">{{ summary.triage_progress.total }}</span>
           </div>
         </div>
-      </div>
-
-      <!-- 威胁指标 IOC（P1） -->
-      <div class="card-box" v-if="summary">
-        <h3 class="mb-20">威胁指标 IOC</h3>
-        <el-table :data="summary.ioc_summary" border stripe size="small" v-if="summary.ioc_summary.length">
-          <el-table-column prop="ioc_type" label="类型" width="90" />
-          <el-table-column prop="ioc_value" label="指标值" min-width="180" show-overflow-tooltip />
-          <el-table-column prop="severity" label="严重度" width="90">
-            <template #default="{ row }">
-              <el-tag :type="sevType(row.severity)" size="small" effect="dark">{{ sevLabel(row.severity) }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="hit_count" label="命中" width="70" />
-          <el-table-column label="情报" min-width="160">
-            <template #default="{ row }">
-              <template v-if="row.intel">
-                <el-tag v-if="row.intel.risk_score" type="danger" size="small" effect="plain">
-                  风险 {{ row.intel.risk_score }}
-                </el-tag>
-                <el-tag v-for="j in (row.intel.judgments || [])" :key="j" size="small" effect="plain" class="ml-5">
-                  {{ j }}
-                </el-tag>
-                <span v-if="row.intel.provider" class="muted-hint ml-5">{{ row.intel.provider }}</span>
-              </template>
-              <span v-else class="muted-hint">未命中情报</span>
-            </template>
-          </el-table-column>
-        </el-table>
-        <el-empty v-else description="暂无 IOC 命中" :image-size="48" />
       </div>
 
       <!-- 攻击链 / TTP（P1） -->
