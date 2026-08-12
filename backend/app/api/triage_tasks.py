@@ -13,7 +13,7 @@
 import json
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from app.database import get_connection
@@ -45,6 +45,15 @@ class TriageResult(BaseModel):
 def create_triage_task(host_id: int, body: TriageTaskCreate,
                        current_user: dict = Depends(get_current_user)):
     """平台侧：下发动态取证任务."""
+    # D-1 修复：校验主机存在，不存在返回 404（避免外键约束异常暴露 500）
+    with get_connection() as conn:
+        host_exists = conn.execute(
+            "SELECT 1 FROM hosts WHERE id=?", [host_id]
+        ).fetchone()
+    if not host_exists:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="主机不存在"
+        )
     scope = [s for s in (body.scope or DEFAULT_SCOPE) if s in ALLOWED_SCOPE]
     if not scope:
         scope = DEFAULT_SCOPE
@@ -72,18 +81,52 @@ def poll_pending_task(host_id: int, agent: dict = Depends(get_current_agent)):
 @router.post("/hosts/{host_id}/triage-tasks/{task_id}/result")
 def report_triage_result(host_id: int, task_id: int, body: TriageResult,
                          agent: dict = Depends(get_current_agent)):
-    """daemon 侧：回传取证结果，落库到专用表（source='triage'）。"""
-    assert_host_binding(agent, host_id)
-    written = {"file_hashes": 0, "network_connections": 0, "process_events": 0}
+    """daemon 侧：回传取证结果，落库到专用表（source='triage'）。
 
-    if body.file_hashes:
-        written["file_hashes"] = _insert_file_hashes(host_id, body.file_hashes)
-    if body.network_connections:
-        written["network_connections"] = _insert_network(host_id, body.network_connections)
-    if body.process_events:
-        # process_events 复用现有模型，标记 source='triage'
-        events = [{**e, "source": "triage"} for e in body.process_events]
-        written["process_events"] = ProcessEvent.batch_create(host_id, events)
+    - D-2 幂等保护：仅 running 状态任务允许回传（done/failed/pending 均拒绝，防重复写库）；
+    - D-3 输入防御：process_events 非 dict 元素直接过滤；写库异常时兜底标记 failed，
+      保证任务状态闭合（不再永久卡 running）。
+    """
+    assert_host_binding(agent, host_id)
+
+    # D-2：校验任务存在且处于 running（daemon 经 get_pending 后才会持有 running 任务）
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT status FROM triage_tasks WHERE id=? AND host_id=?",
+            [task_id, host_id],
+        ).fetchone()
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="取证任务不存在"
+        )
+    if row["status"] != "running":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"任务状态为 {row['status']}，仅 running 任务可回传结果",
+        )
+
+    written = {"file_hashes": 0, "network_connections": 0, "process_events": 0}
+    try:
+        if body.file_hashes:
+            written["file_hashes"] = _insert_file_hashes(host_id, body.file_hashes)
+        if body.network_connections:
+            written["network_connections"] = _insert_network(host_id, body.network_connections)
+        if body.process_events:
+            # D-3 修复：过滤非 dict 元素，避免 {**e, ...} 抛 TypeError → 500
+            events = [
+                {**e, "source": "triage"}
+                for e in body.process_events
+                if isinstance(e, dict)
+            ]
+            written["process_events"] = ProcessEvent.batch_create(host_id, events)
+    except Exception as exc:
+        # D-3 兜底：写库异常时仍闭合任务状态（标记 failed），避免永久卡 running
+        logger.exception("动态取证结果落库失败 host=%d task=%d", host_id, task_id)
+        TriageTask.complete(task_id, None, error=f"result 落库失败: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"取证结果落库失败: {exc}",
+        )
 
     TriageTask.complete(task_id, body.summary or written, error=body.error)
     logger.info("动态取证结果回传 host=%d task=%d written=%s error=%s",

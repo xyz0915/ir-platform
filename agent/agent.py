@@ -283,10 +283,14 @@ def _maybe_run_triage(server: str, token: str, host_id: int) -> None:
         result = TriageCollector.collect_triage(task.get("scope") or [])
         summary = {k: len(v) for k, v in result.items() if isinstance(v, list)}
         ok = _report_triage_result(server, token, host_id, task_id, result, summary)
+        if not ok:
+            # D-4：网络/服务瞬时异常时重试 1 次；仍失败则交由服务端超时回收（recover_stale）兜底
+            logger.warning("动态取证结果回传失败 task=%d，重试 1 次", task_id)
+            ok = _report_triage_result(server, token, host_id, task_id, result, summary)
         if ok:
             logger.info("动态取证完成 task=%d summary=%s", task_id, summary)
         else:
-            logger.warning("动态取证结果回传失败 task=%d", task_id)
+            logger.warning("动态取证结果回传仍失败 task=%d，等待服务端超时回收", task_id)
     except Exception as exc:
         logger.warning("动态取证执行失败 task=%d: %s", task_id, exc)
         _report_triage_result(server, token, host_id, task_id,
